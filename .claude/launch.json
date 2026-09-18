@@ -1,0 +1,32 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "imessage-demo",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "backend/scripts/serve-demo.mjs"
+      ],
+      "port": 4321
+    },
+    {
+      "name": "jarvis-web",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "expo",
+        "start",
+        "--web",
+        "--port",
+        "8082"
+      ],
+      "cwd": "jarvis/app",
+      "port": 8082
+    },
+    {
+      "name": "affiliate-portal",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "http-server", "C:/Users/thoma/OneDrive/Documents/GitHub/affiliate.edgeformmarketing.com", "-p", "5500", "-c-1", "--silent"],
+      "port": 5500
+    }
+  ]
+}

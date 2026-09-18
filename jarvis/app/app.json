@@ -1,0 +1,79 @@
+{
+  "expo": {
+    "name": "OVOA",
+    "slug": "ovoa",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.ovoa.app",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "OVOA connects to your ES100 recorder over Bluetooth to pull in what it captured."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "OVOA counts your steps and detects falls using motion data."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "OVOA includes your location in emergency alerts."
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "OVOA looks up, adds, and edits contacts when you ask the assistant to."
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "OVOA reads and adds calendar events when you ask the assistant to.",
+          "remindersPermission": "OVOA reads and adds reminders when you ask the assistant to."
+        }
+      ],
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "OVOA reads your steps, heart rate, sleep, and workouts to answer your questions about them.",
+          "NSHealthUpdateUsageDescription": false,
+          "background": false
+        }
+      ],
+      "expo-mail-composer",
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "OVOA listens when you tap the mic so you can talk to the assistant."
+        }
+      ]
+    ],
+    "scheme": "ovoa",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["UteBleModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.uteble.UteBleModule"],
+    "gradleAarProjects": [
+      {
+        "name": "ute-sdk",
+        "aarFilePath": "android/libs/uteWatchSdk.aar"
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+.env
+.env.local
+data/
+*.sqlite
+*.sqlite-journal
+.DS_Store
+.dev.vars
+.wrangler/
+
+# ShortcutsBench dataset (144 MB); jarvis/api/src/shortcuts/catalog.json is generated from it
+IOS SHORTCUTS DB/
+
+# Old app; has its own git repo, and jarvis/app is the live one
+mobile/

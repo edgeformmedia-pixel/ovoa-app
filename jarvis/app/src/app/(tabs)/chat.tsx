@@ -1,0 +1,148 @@
+import { Ionicons } from "@expo/vector-icons";
+import { useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ApprovalCard } from "../../components/ApprovalCard";
+import { DevLogPanel } from "../../components/DevLogPanel";
+import { useAssistant } from "../../lib/assistant";
+import { useSession } from "../../lib/auth";
+import { colors } from "../../lib/theme";
+import type { VoicePhase } from "../../lib/voice";
+
+/** The assistant, by voice only. Listening itself runs in AssistantProvider. */
+export default function Assistant() {
+  const { user } = useSession();
+  const a = useAssistant();
+  const [showLogs, setShowLogs] = useState(false);
+  const assistantName = user?.settings.assistantName ?? "OVOA";
+  const on = a.alwaysListen || !!a.enabled;
+  // Map roughly -60..-10 dBFS onto the halo while listening.
+  const loudness = a.phase === "listening" ? Math.max(0, Math.min(1, (a.level + 60) / 50)) : 0;
+
+  const onOrb = () => {
+    if (a.phase === "speaking") a.interrupt();
+    else if (!a.alwaysListen) a.toggleEnabled();
+  };
+
+  return (
+    <View style={styles.screen}>
+      <Pressable style={styles.logsToggle} hitSlop={10} onPress={() => setShowLogs((s) => !s)}>
+        <Ionicons name="terminal-outline" size={16} color={showLogs ? colors.accent : colors.textDim} />
+        <Text style={[styles.logsText, showLogs && { color: colors.accent }]}>Logs</Text>
+      </Pressable>
+
+      <View style={styles.center}>
+        <Pressable
+          onPress={onOrb}
+          disabled={a.enabled === null}
+          style={[styles.orbWrap, showLogs && styles.orbWrapSmall]}
+          accessibilityRole="button"
+          accessibilityLabel={on ? `Stop listening to ${assistantName}` : `Start listening to ${assistantName}`}
+        >
+          {on && (
+            <View
+              style={[styles.halo, { transform: [{ scale: 1 + loudness * 0.5 }], opacity: 0.2 + loudness * 0.5 }]}
+            />
+          )}
+          <View style={[styles.orb, !on && styles.orbOff, a.phase === "speaking" && styles.orbSpeaking]}>
+            {a.phase === "thinking" ? (
+              <ActivityIndicator size="large" color={colors.bg} />
+            ) : (
+              <Ionicons
+                name={!on ? "mic-off" : a.phase === "speaking" ? "volume-high" : "mic"}
+                size={56}
+                color={on ? colors.bg : colors.textDim}
+              />
+            )}
+          </View>
+        </Pressable>
+        <Text style={styles.label}>{label(on, a.phase, a.status)}</Text>
+        {!!a.words && (
+          <Text style={styles.words} numberOfLines={4}>
+            {a.words}
+          </Text>
+        )}
+        <Text style={styles.hint}>{hint(on, a.alwaysListen, a.phase)}</Text>
+        {a.error && <Text style={styles.error}>{a.error}</Text>}
+      </View>
+
+      {(a.approvals.length > 0 || a.autoRunning) && (
+        <ScrollView style={styles.cards} contentContainerStyle={{ paddingBottom: 8 }}>
+          {a.autoRunning && (
+            <View style={styles.autoRow}>
+              <ActivityIndicator size="small" color={colors.accent} />
+              <Text style={styles.hint}>Doing it for you…</Text>
+            </View>
+          )}
+          {a.approvals.map((action) => (
+            <ApprovalCard
+              key={action.id}
+              action={action}
+              onApprove={(approval) => a.approve(action, approval)}
+              onCancel={() => a.cancel(action.id)}
+            />
+          ))}
+        </ScrollView>
+      )}
+
+      {showLogs && (
+        <DevLogPanel
+          live={`${on ? a.phase : "off"} · mic ${a.phase === "listening" ? `${Math.round(a.level)} dB` : "—"}${a.alwaysListen ? " · always listen" : ""}`}
+          onClose={() => setShowLogs(false)}
+        />
+      )}
+    </View>
+  );
+}
+
+function label(on: boolean, phase: VoicePhase, status: string | null) {
+  if (!on) return "Tap to start listening";
+  if (phase === "thinking") return status ?? "Thinking…";
+  if (phase === "speaking") return "Speaking";
+  return "Listening";
+}
+
+function hint(on: boolean, always: boolean, phase: VoicePhase) {
+  if (!on) return "";
+  if (always) return phase === "speaking" ? "Talk or tap to interrupt" : "Always listen is on";
+  return phase === "speaking" ? "Tap to interrupt" : "Tap to stop listening";
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.bg },
+  logsToggle: {
+    position: "absolute",
+    top: 10,
+    right: 14,
+    zIndex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+  },
+  logsText: { color: colors.textDim, fontSize: 13, fontWeight: "600" },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 24 },
+  orbWrap: { width: 240, height: 240, alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  orbWrapSmall: { transform: [{ scale: 0.6 }], marginVertical: -60 },
+  halo: { position: "absolute", width: 170, height: 170, borderRadius: 85, backgroundColor: colors.accent },
+  orb: {
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  orbOff: { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1 },
+  orbSpeaking: { backgroundColor: colors.success },
+  label: { color: colors.text, fontSize: 22, fontWeight: "600" },
+  hint: { color: colors.textDim, fontSize: 14 },
+  words: { color: colors.text, fontSize: 18, lineHeight: 25, textAlign: "center", opacity: 0.85 },
+  error: { color: colors.danger, textAlign: "center", marginTop: 8 },
+  cards: { maxHeight: "45%", flexGrow: 0 },
+  autoRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
+});

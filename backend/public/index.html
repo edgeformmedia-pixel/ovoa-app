@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<title>OVOA</title>
+<style>
+  :root {
+    --bg: #ffffff; --surface: #f6f7f9; --border: #e3e6ea;
+    --text: #14171a; --muted: #697079; --accent: #3b6ef5; --accent-fg: #ffffff;
+    --danger: #c0392b; --ok: #2ea043; --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0d10; --surface: #15181d; --border: #262b33;
+      --text: #e8eaed; --muted: #8b939e; --accent: #5b87ff; --accent-fg: #0b0d10;
+      --danger: #ff6b5e; --ok: #3fb950;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b0d10; --surface: #15181d; --border: #262b33;
+    --text: #e8eaed; --muted: #8b939e; --accent: #5b87ff; --accent-fg: #0b0d10;
+    --danger: #ff6b5e; --ok: #3fb950;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 0 16px calc(84px + env(safe-area-inset-bottom));
+    max-width: 680px; margin: 0 auto;
+    overflow-wrap: break-word;
+  }
+  header {
+    position: sticky; top: 0; background: var(--bg); z-index: 5;
+    padding: 14px 0 10px; display: flex; align-items: baseline; gap: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 19px; margin: 0; letter-spacing: -0.01em; }
+  .status { font-size: 12px; color: var(--muted); margin-left: auto; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+         background: var(--muted); margin-right: 5px; vertical-align: middle; }
+  .dot.ok { background: var(--ok); }
+  .dot.bad { background: var(--danger); }
+
+  nav { display: flex; gap: 6px; margin: 14px 0; }
+  nav button {
+    flex: 1; padding: 9px; font-size: 14px; font-weight: 500;
+    border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+    border-radius: var(--radius); cursor: pointer;
+  }
+  nav button[aria-selected="true"] {
+    background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
+  }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; margin-bottom: 10px;
+  }
+  .card h3 { margin: 0 0 4px; font-size: 15px; }
+  .card time { font-size: 12px; color: var(--muted); display: block; margin-bottom: 8px; }
+  .card p { margin: 0 0 8px; font-size: 14px; }
+  .card ul { margin: 8px 0 0; padding-left: 18px; font-size: 14px; }
+  .card li { margin-bottom: 3px; }
+  .pill {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px;
+    background: var(--border); color: var(--muted); margin-left: 6px;
+  }
+
+  input, textarea, button { font: inherit; font-size: 16px; }
+  .field {
+    width: 100%; padding: 11px 13px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  }
+  .btn {
+    padding: 11px 16px; border-radius: var(--radius); border: none;
+    background: var(--accent); color: var(--accent-fg); font-weight: 600; cursor: pointer;
+  }
+  .btn.ghost {
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); font-weight: 500;
+  }
+  .btn:disabled { opacity: .5; }
+  .row { display: flex; gap: 8px; }
+
+  .answer { white-space: pre-wrap; font-size: 15px; min-height: 1.5em; }
+  .tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .tool {
+    font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 3px 8px; border-radius: 99px; background: var(--border); color: var(--muted);
+  }
+  .muted { color: var(--muted); font-size: 14px; }
+  .err { color: var(--danger); font-size: 14px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+
+  .composer {
+    position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg);
+    border-top: 1px solid var(--border);
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  }
+  .composer .inner { max-width: 680px; margin: 0 auto; display: flex; gap: 8px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>OVOA</h1>
+  <span class="status" id="status"><span class="dot"></span>connecting</span>
+</header>
+
+<section id="gate" class="hidden">
+  <div class="card">
+    <h3>Connect</h3>
+    <p class="muted">Enter the <code>DEVICE_TOKEN</code> from <code>backend/.env</code>. It is stored on this device only.</p>
+    <input class="field" id="tokenInput" type="password" placeholder="DEVICE_TOKEN" autocomplete="off">
+    <div style="height:8px"></div>
+    <button class="btn" id="saveToken" style="width:100%">Connect</button>
+    <p class="err hidden" id="gateErr"></p>
+  </div>
+</section>
+
+<main id="app" class="hidden">
+  <nav role="tablist">
+    <button role="tab" id="tabAsk" aria-selected="true">Ask</button>
+    <button role="tab" id="tabCaptures" aria-selected="false">Captures</button>
+  </nav>
+
+  <section id="paneAsk">
+    <div class="tools" id="tools"></div>
+    <div class="answer" id="answer"><span class="muted">Ask about anything your pendant heard.</span></div>
+    <p class="err hidden" id="askErr"></p>
+  </section>
+
+  <section id="paneCaptures" class="hidden">
+    <div class="row" style="margin-bottom:12px">
+      <button class="btn ghost" id="refresh" style="flex:1">Refresh</button>
+      <button class="btn ghost" id="simulate" style="flex:1">Test capture</button>
+    </div>
+    <div id="list"></div>
+  </section>
+</main>
+
+<div class="composer hidden" id="composer">
+  <div class="inner">
+    <input class="field" id="q" placeholder="Where's my kid?" autocomplete="off" enterkeyhint="send">
+    <button class="btn" id="send">Ask</button>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// localStorage can throw in private mode, so every access is guarded and the
+// page still renders (as the token gate) when it comes back empty.
+const store = {
+  get token() { try { return localStorage.getItem("ovoa_token") || ""; } catch { return ""; } },
+  set token(v) { try { localStorage.setItem("ovoa_token", v); } catch {} },
+};
+
+const headers = () => ({ Authorization: "Bearer " + store.token });
+
+function setStatus(cls, text) {
+  $("status").innerHTML = '<span class="dot ' + cls + '"></span>' + text;
+}
+
+async function checkHealth() {
+  try {
+    const h = await (await fetch("/health")).json();
+    const ok = h.claude === "configured";
+    setStatus(ok ? "ok" : "bad", ok ? "stt: " + h.stt : "no API key");
+  } catch {
+    setStatus("bad", "server unreachable");
+  }
+}
+
+// Probe an authenticated route so a wrong token fails at the gate rather than
+// halfway through the first question.
+async function tokenWorks() {
+  try {
+    const r = await fetch("/v1/captures", { headers: headers() });
+    return r.ok;
+  } catch { return false; }
+}
+
+async function boot() {
+  await checkHealth();
+  if (store.token && await tokenWorks()) return showApp();
+  $("gate").classList.remove("hidden");
+}
+
+function showApp() {
+  $("gate").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  $("composer").classList.remove("hidden");
+  loadCaptures();
+}
+
+$("saveToken").onclick = async () => {
+  store.token = $("tokenInput").value.trim();
+  if (await tokenWorks()) {
+    $("gateErr").classList.add("hidden");
+    showApp();
+  } else {
+    $("gateErr").textContent = "That token was rejected. Check DEVICE_TOKEN in backend/.env.";
+    $("gateErr").classList.remove("hidden");
+  }
+};
+$("tokenInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("saveToken").click();
+});
+
+function selectTab(ask) {
+  $("tabAsk").setAttribute("aria-selected", String(ask));
+  $("tabCaptures").setAttribute("aria-selected", String(!ask));
+  $("paneAsk").classList.toggle("hidden", !ask);
+  $("paneCaptures").classList.toggle("hidden", ask);
+  $("composer").classList.toggle("hidden", !ask);
+}
+$("tabAsk").onclick = () => selectTab(true);
+$("tabCaptures").onclick = () => { selectTab(false); loadCaptures(); };
+
+// Transcripts are attacker-influenced text in the general case: anyone who
+// speaks near the pendant chooses what lands in them. Never innerHTML them raw.
+function esc(s) {
+  return String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
+}
+
+async function loadCaptures() {
+  try {
+    const data = await (await fetch("/v1/captures", { headers: headers() })).json();
+    const rows = data.captures || [];
+    if (!rows.length) {
+      $("list").innerHTML = '<p class="muted">Nothing recorded yet. Tap <b>Test capture</b> to create one.</p>';
+      return;
+    }
+    $("list").innerHTML = rows.map((c) => {
+      const pill = c.status !== "ready" ? '<span class="pill">' + esc(c.status) + "</span>" : "";
+      const summary = c.summary ? "<p>" + esc(c.summary) + "</p>" : "";
+      const error = c.error ? '<p class="err">' + esc(c.error) + "</p>" : "";
+      const actions = (c.actionItems && c.actionItems.length)
+        ? "<ul>" + c.actionItems.map((a) => "<li>" + esc(a) + "</li>").join("") + "</ul>"
+        : "";
+      return '<div class="card">'
+        + "<h3>" + esc(c.title || "Processing") + pill + "</h3>"
+        + "<time>" + new Date(c.startedAt).toLocaleString()
+        + " · " + Math.round(c.durationSec || 0) + "s</time>"
+        + summary + error + actions
+        + "</div>";
+    }).join("");
+  } catch {
+    $("list").innerHTML = '<p class="err">Could not load captures.</p>';
+  }
+}
+$("refresh").onclick = loadCaptures;
+
+$("simulate").onclick = async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.textContent = "Recording";
+  try {
+    const c = await (await fetch("/v1/captures", { method: "POST", headers: headers() })).json();
+    await fetch("/v1/captures/" + c.id + "/chunk", {
+      method: "POST",
+      headers: Object.assign({}, headers(), { "Content-Type": "application/octet-stream" }),
+      body: new Uint8Array(32000), // 1s of silence; the mock transcriber ignores the bytes
+    });
+    await fetch("/v1/captures/" + c.id + "/close", { method: "POST", headers: headers() });
+
+    btn.textContent = "Processing";
+    // Enrichment is a live model call, so poll for the result rather than
+    // guessing how long it will take.
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const s = await (await fetch("/v1/captures/" + c.id, { headers: headers() })).json();
+      if (s.status === "ready" || s.status === "failed") break;
+    }
+    await loadCaptures();
+  } catch {
+    $("list").innerHTML = '<p class="err">Could not create a test capture.</p>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Test capture";
+  }
+};
+
+let busy = false;
+async function ask() {
+  const question = $("q").value.trim();
+  if (!question || busy) return;
+  busy = true;
+  $("send").disabled = true;
+  $("q").value = "";
+  $("askErr").classList.add("hidden");
+  $("tools").innerHTML = "";
+  $("answer").textContent = "";
+
+  try {
+    const res = await fetch("/v1/chat", {
+      method: "POST",
+      headers: Object.assign({}, headers(), { "Content-Type": "application/json" }),
+      body: JSON.stringify({ turns: [{ role: "user", content: question }] }),
+    });
+    if (!res.ok || !res.body) throw new Error(String(res.status));
+
+    // EventSource cannot issue a POST, so SSE frames are parsed by hand.
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buf += dec.decode(chunk.value, { stream: true });
+      const frames = buf.split("\n\n");
+      buf = frames.pop() || "";
+      for (const f of frames) {
+        const evMatch = f.match(/^event: (.+)$/m);
+        const dataMatch = f.match(/^data: (.+)$/m);
+        if (!evMatch || !dataMatch) continue;
+        const ev = evMatch[1];
+        const p = JSON.parse(dataMatch[1]);
+        if (ev === "token") {
+          $("answer").textContent += p.text;
+          window.scrollTo(0, document.body.scrollHeight);
+        } else if (ev === "tool") {
+          const chip = document.createElement("span");
+          chip.className = "tool";
+          chip.textContent = p.name;
+          $("tools").appendChild(chip);
+        } else if (ev === "error") {
+          $("askErr").textContent = p.message;
+          $("askErr").classList.remove("hidden");
+        }
+      }
+    }
+    if (!$("answer").textContent) {
+      $("answer").innerHTML = '<span class="muted">No answer returned.</span>';
+    }
+  } catch {
+    $("askErr").textContent = "Request failed. Is the server still running?";
+    $("askErr").classList.remove("hidden");
+  } finally {
+    busy = false;
+    $("send").disabled = false;
+  }
+}
+$("send").onclick = ask;
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });
+
+boot();
+</script>
+</body>
+</html>
