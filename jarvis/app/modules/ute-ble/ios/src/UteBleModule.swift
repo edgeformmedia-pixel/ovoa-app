@@ -368,9 +368,9 @@ public class UteBleModule: Module {
     case .AVO: return "avo"
     case .opus: return "opus"
     case .MP3: return "mp3"
-    case .TypeSBC: return "sbc"
-    case .TypePCM: return "pcm"
-    case .TypeWAV: return "wav"
+    case .typeSBC: return "sbc"
+    case .typePCM: return "pcm"
+    case .typeWAV: return "wav"
     @unknown default: return "bin"
     }
   }
