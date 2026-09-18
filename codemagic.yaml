@@ -1,6 +1,7 @@
 # Builds the OVOA iPhone app (jarvis/app, Expo) and uploads it to TestFlight.
 # Needs an App Store Connect API key added in Codemagic under
-# Personal Account settings > Integrations > Developer Portal, named "codemagic".
+# Personal Account settings > Integrations > Developer Portal, named "codemagic",
+# and a secret CERTIFICATE_PRIVATE_KEY (an RSA key) in the app's "signing" variable group.
 workflows:
   ios-testflight:
     name: iOS TestFlight
@@ -9,9 +10,9 @@ workflows:
     integrations:
       app_store_connect: codemagic
     environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.ovoa.app
+      # Holds CERTIFICATE_PRIVATE_KEY, which signs the distribution certificate the build creates.
+      groups:
+        - signing
       node: 22
       xcode: latest
       cocoapods: default
@@ -25,7 +26,12 @@ workflows:
         working_directory: jarvis/app
         script: npx expo prebuild --platform ios --non-interactive
       - name: Set up code signing
-        script: xcode-project use-profiles
+        # Creates the App Store certificate and profile at Apple on the first run, reuses them after.
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files com.ovoa.app --type IOS_APP_STORE --create
+          keychain add-certificates
+          xcode-project use-profiles
       - name: Set build number
         working_directory: jarvis/app/ios
         # Codemagic's BUILD_NUMBER goes up by one every build, so TestFlight never sees a repeat.
