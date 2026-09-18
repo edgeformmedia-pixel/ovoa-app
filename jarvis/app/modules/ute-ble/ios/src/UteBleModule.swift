@@ -364,14 +364,15 @@ public class UteBleModule: Module {
   }
 
   private static func fileExtension(for type: UTERecordingFileType) -> String {
-    switch type {
-    case .AVO: return "avo"
-    case .opus: return "opus"
-    case .MP3: return "mp3"
-    case .typeSBC: return "sbc"
-    case .typePCM: return "pcm"
-    case .typeWAV: return "wav"
-    @unknown default: return "bin"
+    // Raw values from UTERecordMgr.h; the Swift names of these cases vary between Xcode versions.
+    switch type.rawValue {
+    case 0: return "avo"
+    case 1: return "opus"
+    case 2: return "mp3"
+    case 3: return "sbc"
+    case 4: return "pcm"
+    case 5: return "wav"
+    default: return "bin"
     }
   }
 }
