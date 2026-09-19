@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,6 +18,7 @@ import { VoicePicker } from "../../components/VoicePicker";
 import { api, type Memory } from "../../lib/api";
 import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
+import { autoSendTextsPref, SEND_TEXT_SHORTCUT } from "../../lib/storage";
 import { colors } from "../../lib/theme";
 
 export default function Settings() {
@@ -27,9 +29,37 @@ export default function Settings() {
   const [personality, setPersonality] = useState(user?.settings.personality ?? "");
   const [saving, setSaving] = useState(false);
   const [memories, setMemories] = useState<Memory[] | null>(null);
+  const [autoSendTexts, setAutoSendTexts] = useState(false);
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const { alwaysListen, setAlwaysListen, listenMode, setListenMode } = useAssistant();
+
+  useEffect(() => {
+    autoSendTextsPref.get().then(setAutoSendTexts);
+  }, []);
+
+  const toggleAutoSendTexts = (on: boolean) => {
+    setAutoSendTexts(on);
+    autoSendTextsPref.set(on).catch(() => {});
+    if (on) {
+      Alert.alert(
+        `Build the "${SEND_TEXT_SHORTCUT}" shortcut`,
+        `iOS never lets an app send a text on its own, but the Shortcuts app can.
+
+` +
+          `1. Open Shortcuts, tap +, and name it exactly "${SEND_TEXT_SHORTCUT}".
+` +
+          `2. Add "Split Text" with Shortcut Input, split by New Lines.
+` +
+          `3. Add "Send Message": Recipients = Item 1 of Split Text, Message = Item 2 of Split Text.
+` +
+          `4. Open the Send Message action's settings and turn "Show When Run" off.
+
+` +
+          `The first text asks iOS for permission once. Until the shortcut exists, texts open in Messages as before.`,
+      );
+    }
+  };
 
   useEffect(() => {
     api.memories(token).then((r) => setMemories(r.memories)).catch(() => setMemories([]));
@@ -236,13 +266,29 @@ export default function Settings() {
         <Button label="Sign out" onPress={signOut} />
       </Section>
 
+      <Section title="Texts">
+        <View style={styles.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.label}>Send texts automatically</Text>
+            <Text style={styles.meta}>
+              Hands each text to your "{SEND_TEXT_SHORTCUT}" shortcut instead of opening Messages, so it goes
+              without tapping Send. Your phone switches to Shortcuts for a moment and comes back.
+            </Text>
+          </View>
+          <Switch value={autoSendTexts} onValueChange={toggleAutoSendTexts} trackColor={{ true: colors.accent, false: colors.border }} />
+        </View>
+        {autoSendTexts && (
+          <Button label="Open Shortcuts" onPress={() => Linking.openURL("shortcuts://create-shortcut")} />
+        )}
+      </Section>
+
       <Section title="Danger zone">
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Approve for me</Text>
             <Text style={styles.meta}>
               Skip approval cards: {assistantName || "your assistant"} sends emails, deletes things, and changes your
-              contacts, calendar, and reminders right away. iOS still asks you to tap Send for texts and emails.
+              contacts, calendar, and reminders right away. iOS still asks you to tap Send for emails, and for texts unless "Send texts automatically" is on.
             </Text>
           </View>
           <Switch

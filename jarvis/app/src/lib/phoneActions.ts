@@ -2,6 +2,7 @@ import * as MailComposer from "expo-mail-composer";
 import * as SMS from "expo-sms";
 import { Linking } from "react-native";
 import type { PendingAction, PhoneCall, PhoneCaps } from "./api";
+import { autoSendTextsPref, SEND_TEXT_SHORTCUT } from "./storage";
 import { healthAvailable, healthSummary } from "./health";
 import {
   completeReminder,
@@ -106,6 +107,19 @@ export async function runPhoneAction(action: PendingAction, { contactId, prep }:
       return completeReminder(args as any);
 
     case "phone_message_compose": {
+      // iOS never lets an app send a text by itself: the Messages sheet waits for a tap on Send.
+      // The Shortcuts app can, so "Send texts automatically" hands the text to the user's
+      // "OVOA Send Text" shortcut (number, then the message, one per line) and comes back here.
+      if (await autoSendTextsPref.get()) {
+        const input = `${resolved(prep).join(", ")}
+${args.body}`;
+        const url =
+          `shortcuts://x-callback-url/run-shortcut?name=${encodeURIComponent(SEND_TEXT_SHORTCUT)}` +
+          `&input=text&text=${encodeURIComponent(input)}&x-success=${encodeURIComponent("ovoa://")}`;
+        if (!(await Linking.canOpenURL(url))) throw new Error("The Shortcuts app isn't available.");
+        await Linking.openURL(url);
+        return `handed your text to the "${SEND_TEXT_SHORTCUT}" shortcut`;
+      }
       if (!(await SMS.isAvailableAsync())) throw new Error("This device can't send texts.");
       const { result } = await SMS.sendSMSAsync(resolved(prep), args.body);
       if (result === "cancelled") throw new Error("You cancelled the text.");
