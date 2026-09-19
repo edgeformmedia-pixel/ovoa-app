@@ -13,6 +13,8 @@ export default function ES100() {
   const [devices, setDevices] = useState<ute.UteDevice[]>([]);
   const [scanning, setScanning] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const connectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [device, setDevice] = useState<ute.ConnectedDevice | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [files, setFiles] = useState<ute.RecordFile[] | null>(null);
@@ -20,7 +22,7 @@ export default function ES100() {
   const [log, setLog] = useState<string[]>([]);
 
   const say = useCallback((line: string) => {
-    setLog((prev) => [`${new Date().toLocaleTimeString()}  ${line}`, ...prev].slice(0, 40));
+    setLog((prev) => [`${new Date().toLocaleTimeString()}  ${line}`, ...prev].slice(0, 80));
   }, []);
 
   // Keep the latest logger without re-running the subscription effect.
@@ -61,6 +63,7 @@ export default function ES100() {
         sayRef.current(`recording stopped #${event.sessionId}, ${event.fileSize} bytes`);
       }),
       ute.addListener("onSyncProgress", setProgress),
+      ute.addListener("onLog", ({ message }) => sayRef.current(`sdk: ${message}`)),
     ];
 
     ute
@@ -71,7 +74,10 @@ export default function ES100() {
       })
       .catch((err: Error) => sayRef.current(`init failed — ${err.message}`));
 
-    return () => subs.forEach((s) => s.remove());
+    return () => {
+      subs.forEach((s) => s.remove());
+      if (connectTimer.current) clearTimeout(connectTimer.current);
+    };
   }, []);
 
   const run = async (label: string, fn: () => Promise<void>) => {

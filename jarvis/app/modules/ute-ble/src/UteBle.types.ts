@@ -136,4 +136,6 @@ export type UteBleEvents = {
   onRecordStop: (event: RecordStopEvent) => void;
   onSyncProgress: (progress: SyncProgress) => void;
   onClipData: (data: ClipDataEvent) => void;
+  /** iOS only: vendor SDK log lines while a connect is in flight. */
+  onLog: (event: { message: string }) => void;
 };

@@ -11,6 +11,7 @@ static NSString *UteString(NSString *_Nullable value) {
 // connectDevice: wants the scanned UTEModelDevice back, so scan results are kept by identifier.
 @property (nonatomic, strong) NSMutableDictionary<NSString *, UTEModelDevice *> *discovered;
 @property (nonatomic, assign) BOOL recordListenersRegistered;
+@property (nonatomic, assign) BOOL connecting;
 @end
 
 @implementation UteBleBridge
@@ -46,6 +47,8 @@ static NSString *UteString(NSString *_Nullable value) {
   [mgr initUTEMgr];
   // The manager holds its delegate weakly; this singleton keeps itself alive.
   mgr.delegate = self;
+  // The clip only talks BLE; the default classic-Bluetooth pairing leaves connect hanging.
+  mgr.isClassicBluetoothConnect = NO;
   [self registerRecordListeners];
   return UteString([mgr sdkVersion]);
 }
@@ -62,7 +65,17 @@ static NSString *UteString(NSString *_Nullable value) {
 - (BOOL)connectDeviceWithId:(NSString *)deviceId {
   UTEModelDevice *model = self.discovered[deviceId];
   if (!model) return NO;
-  [[self mgr] connectDevice:model];
+  self.connecting = YES;
+  UTEModelDevice *stale = [self mgr].connnectModel;
+  if (stale && ![self connected]) {
+    // Vendor advice for a stuck connect: disconnect, wait 0.3 s, connect again.
+    [[self mgr] disconnectDevices:stale];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [[self mgr] connectDevice:model];
+    });
+  } else {
+    [[self mgr] connectDevice:model];
+  }
   return YES;
 }
 
@@ -110,6 +123,7 @@ static NSString *UteString(NSString *_Nullable value) {
 }
 
 - (void)uteDevicesStatus:(UTEDevicesStatus)status error:(NSError *)error userInfo:(NSDictionary *)info {
+  if (status != UTEDevicesStatusConnecting) self.connecting = NO;
   void (^handler)(NSInteger, BOOL, NSString *_Nullable) = self.onConnectionChange;
   if (handler) handler(status, status == UTEDevicesStatusConnected, error.localizedDescription);
 }
@@ -117,6 +131,11 @@ static NSString *UteString(NSString *_Nullable value) {
 - (void)uteBluetoothStatus:(UTEBluetoothStatus)status {
   void (^handler)(NSInteger, BOOL) = self.onBluetoothState;
   if (handler) handler(status, status == UTEBluetoothStatusOpen);
+}
+
+- (void)uteSDKLog:(NSString *)str {
+  void (^handler)(NSString *) = self.onLog;
+  if (self.connecting && str.length && handler) handler(str);
 }
 
 - (void)uteDeviceRecordingClip:(NSData *)data error:(NSError *)error {

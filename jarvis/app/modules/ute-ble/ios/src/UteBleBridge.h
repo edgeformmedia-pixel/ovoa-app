@@ -23,6 +23,8 @@ NS_SWIFT_NAME(UteBleBridge)
 @property (nonatomic, copy, nullable) void (^onRecordStop)(NSDictionary<NSString *, id> *info);
 @property (nonatomic, copy, nullable) void (^onSyncProgress)(BOOL completed, NSInteger sessionId, NSInteger size, NSData *_Nullable data);
 @property (nonatomic, copy, nullable) void (^onSyncComplete)(NSInteger sessionId);
+/// Vendor SDK log lines, forwarded only while a connect is in flight.
+@property (nonatomic, copy, nullable) void (^onLog)(NSString *line);
 
 - (NSString *)setUp NS_SWIFT_NAME(setUp());
 - (void)startScan NS_SWIFT_NAME(startScan());

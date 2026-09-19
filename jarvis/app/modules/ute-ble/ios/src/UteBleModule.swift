@@ -18,7 +18,8 @@ public class UteBleModule: Module {
       "onRecordStart",
       "onRecordStop",
       "onSyncProgress",
-      "onClipData"
+      "onClipData",
+      "onLog"
     )
 
     // The SDK touches CoreBluetooth on setup, so it stays on main.
@@ -35,6 +36,9 @@ public class UteBleModule: Module {
       }
       self.bridge.onBluetoothState = { [weak self] state, poweredOn in
         self?.sendEvent("onBluetoothState", ["state": state, "poweredOn": poweredOn])
+      }
+      self.bridge.onLog = { [weak self] line in
+        self?.sendEvent("onLog", ["message": line])
       }
       self.bridge.onClip = { [weak self] data in
         self?.sendEvent("onClipData", ["bytes": data.count, "base64": data.base64EncodedString()])
