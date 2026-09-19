@@ -15,6 +15,9 @@ Pod::Spec.new do |s|
 
   s.dependency 'ExpoModulesCore'
 
+  # OpusWav.swift decodes the clip's opus recordings with iOS's own decoder.
+  s.frameworks = 'AVFoundation', 'AudioToolbox'
+
   # Straight off the vendor demo's Podfile.lock. AMapSearch (AutoNavi maps) is
   # deliberately left out — it is only there for the navigation feature we don't
   # use. If the linker complains about missing AMap symbols, add it back.

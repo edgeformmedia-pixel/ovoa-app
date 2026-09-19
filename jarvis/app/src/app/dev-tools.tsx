@@ -14,8 +14,9 @@ import {
 } from "expo-sensors";
 import type { EventSubscription } from "expo-modules-core";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import * as clip from "../lib/clip";
 import { createFallDetector } from "../lib/fallDetector";
 import { colors } from "../lib/theme";
 
@@ -62,6 +63,15 @@ const n = (value: number | undefined, digits = 2) => (value === undefined ? "—
 export default function DevTools() {
   const router = useRouter();
   const [motionOn, setMotionOn] = useState(true);
+  const clipState = clip.useClip();
+
+  // The clip only reports some values when asked.
+  useEffect(() => {
+    if (clipState.phase !== "connected") return;
+    clip.refreshInfo().catch(() => {});
+    const timer = setInterval(() => clip.pollLive().catch(() => {}), 3000);
+    return () => clearInterval(timer);
+  }, [clipState.phase]);
 
   const accelerometer = useSensor<{ x: number; y: number; z: number }>(Accelerometer, motionOn);
   const gyroscope = useSensor<{ x: number; y: number; z: number }>(Gyroscope, motionOn);
@@ -167,6 +177,10 @@ export default function DevTools() {
           <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
         </Pressable>
 
+        <ClipInputs state={clipState} />
+
+        <Text style={styles.section}>Phone</Text>
+
         <View style={styles.toggleRow}>
           <Text style={styles.itemText}>Motion sensors</Text>
           <Switch
@@ -269,6 +283,110 @@ export default function DevTools() {
   );
 }
 
+const yesNo = (value: boolean | null | undefined) => (value === undefined || value === null ? "—" : value ? "yes" : "no");
+
+/** Everything the ES100 reports: live values, its own events, and the features its firmware claims. */
+function ClipInputs({ state }: { state: clip.ClipState }) {
+  const connected = state.phase === "connected";
+  const supported = Object.entries(state.capabilities ?? {})
+    .filter(([, on]) => on)
+    .map(([name]) => name.replace(/^has/, ""))
+    .sort();
+  const motion = supported.filter((name) => /sensor|gyro|motion|accel|posture|wear/i.test(name));
+  return (
+    <>
+      <Text style={styles.section}>ES100 clip</Text>
+      <Card title="Clip — live" available={state.phase === "unavailable" ? false : true}>
+        <Row label="connection" value={state.phase} good={connected} />
+        <Row
+          label="battery"
+          value={
+            state.battery
+              ? `${state.battery.percent}%${state.battery.charging ? " · charging" : state.battery.full ? " · full" : ""}${state.battery.low ? " · low" : ""}`
+              : "—"
+          }
+        />
+        <Row label="signal" value={state.rssi !== null ? `${state.rssi} dBm` : "—"} mono />
+        <Row label="recording" value={state.recording ? (state.recording.paused ? "paused" : "yes") : connected ? "no" : "—"} />
+        <Row label="record state" value={state.status ? String(state.status.state) : "—"} mono />
+        <Row label="button (key state)" value={state.status?.keyState !== undefined ? String(state.status.keyState) : "—"} mono />
+        <Row label="privacy mode" value={yesNo(state.status?.privacyMode)} />
+        <Row label="USB mode" value={yesNo(state.status?.usbConnected)} />
+        <Row label="mic mode" value={state.status?.micMode !== undefined ? (state.status.micMode ? "mixed" : "normal") : "—"} />
+        <Row
+          label="storage"
+          value={
+            state.storageInfo
+              ? `${Math.round(state.storageInfo.freeKB / 1024)} / ${Math.round(state.storageInfo.totalKB / 1024)} MB free`
+              : "—"
+          }
+        />
+        {state.formats?.map((f, i) => (
+          <Row key={i} label={`format ${f.type}`} value={`${f.channels} ch · ${f.sampleRate} Hz · ${f.bitRate} bps`} mono />
+        ))}
+      </Card>
+
+      <Card title="Clip — motion" available={state.phase === "unavailable" ? false : true}>
+        <Row label="accelerometer (firmware)" value={yesNo(state.sensors?.accelerometer)} />
+        <Row label="gyroscope (firmware)" value={yesNo(state.sensors?.gyroscope)} />
+        <Row label="motion-stream flag (hasGame)" value={yesNo(state.capabilities?.hasGame)} />
+        <Row label="gyro x / y / z" value={state.gyro ? `${state.gyro.x} / ${state.gyro.y} / ${state.gyro.z}` : "—"} mono />
+        <Row
+          label="stream x / y / speed"
+          value={state.motion.last ? `${state.motion.last[0]} / ${state.motion.last[1]} / ${state.motion.last[2]}` : "—"}
+          mono
+        />
+        <Row label="stream samples" value={String(state.motion.count)} mono />
+        <View style={styles.row}>
+          <Pressable
+            style={styles.button}
+            disabled={!connected}
+            onPress={() => clip.readGyro().catch((err) => Alert.alert("Gyro", err instanceof Error ? err.message : String(err)))}
+          >
+            <Text style={styles.buttonText}>Read gyro</Text>
+          </Pressable>
+          <Pressable
+            style={styles.button}
+            disabled={!connected}
+            onPress={() =>
+              clip
+                .setMotionStream(!state.motion.on)
+                .catch((err) => Alert.alert("Motion stream", err instanceof Error ? err.message : String(err)))
+            }
+          >
+            <Text style={styles.buttonText}>{state.motion.on ? "Stop motion stream" : "Start motion stream"}</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.hint}>
+          The SDK is shared with watches, so these may not exist on the ES100. A timeout here means the firmware has no such sensor.
+        </Text>
+      </Card>
+
+      <Card title="Clip — events" available={state.phase === "unavailable" ? false : true}>
+        {state.inputs.length === 0 && (
+          <Text style={styles.dim}>Press the clip's button, plug it in, or record with it; what it reports shows up here.</Text>
+        )}
+        {state.inputs.slice(0, 12).map((input, i) => (
+          <Row key={i} label={`${new Date(input.time).toLocaleTimeString()} ${input.label}`} value={input.value} />
+        ))}
+      </Card>
+
+      <Card title="Clip — firmware features" available={state.phase === "unavailable" ? false : true}>
+        {!state.capabilities ? (
+          <Text style={styles.dim}>Connect the clip to read what it supports.</Text>
+        ) : (
+          <>
+            <Row label="motion sensor flags" value={motion.length ? motion.join(", ") : "none"} />
+            <Text style={styles.hint}>
+              {supported.length} of {Object.keys(state.capabilities).length} flags on: {supported.join(", ")}
+            </Text>
+          </>
+        )}
+      </Card>
+    </>
+  );
+}
+
 function Card({
   title,
   unit,
@@ -308,6 +426,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   body: { padding: 20, gap: 10, paddingBottom: 48 },
   title: { color: colors.text, fontSize: 26, fontWeight: "600" },
+  section: { color: colors.text, fontSize: 17, fontWeight: "600", marginTop: 16 },
   dim: { color: colors.textDim, fontSize: 13 },
   hint: { color: colors.textDim, fontSize: 12, marginTop: 6, lineHeight: 17 },
   error: { color: colors.danger, fontSize: 12, marginTop: 6 },

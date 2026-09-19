@@ -1,4 +1,5 @@
 #import "UteBleBridge.h"
+#import <objc/runtime.h>
 #import <UTEBluetoothRYApi/UTEBluetoothRYApi.h>
 #import <UTEBluetoothRYApi/UTEDeviceMgr.h>
 #import <UTEBluetoothRYApi/UTERecordMgr.h>
@@ -7,11 +8,32 @@ static NSString *UteString(NSString *_Nullable value) {
   return value ?: @"";
 }
 
+/// The SDK reports success as UTEDeviceErrorNil (100000) on most calls and 0 on a few.
+static NSInteger UteNormalize(NSInteger code) {
+  return (code == UTEDeviceErrorNil || code == UTEDeviceErrorNone) ? 0 : code;
+}
+
+/// How many times a short transfer is resumed from where it stopped, as the vendor demo does.
+static const NSInteger UteMaxSyncResumes = 5;
+/// A transfer that goes this long without data is over.
+static const NSTimeInterval UteSyncStallSeconds = 15;
+
 @interface UteBleBridge () <UTEBluetoothDelegate>
 // connectDevice: wants the scanned UTEModelDevice back, so scan results are kept by identifier.
 @property (nonatomic, strong) NSMutableDictionary<NSString *, UTEModelDevice *> *discovered;
 @property (nonatomic, assign) BOOL recordListenersRegistered;
 @property (nonatomic, assign) BOOL connecting;
+
+// The transfer in flight. The SDK hands data over in small pieces and sometimes stops
+// short of the end; the demo appends the pieces itself and asks again for the rest.
+@property (nonatomic, assign) NSInteger syncSession;
+@property (nonatomic, assign) NSInteger syncFileType;
+@property (nonatomic, assign) NSInteger syncExpected;
+@property (nonatomic, assign) NSInteger syncResumes;
+@property (nonatomic, assign) NSInteger syncGeneration;
+@property (nonatomic, assign) BOOL syncSegmentEnded;
+@property (nonatomic, strong, nullable) NSMutableData *syncBuffer;
+@property (nonatomic, strong, nullable) NSDate *syncLastData;
 @end
 
 @implementation UteBleBridge
@@ -44,7 +66,10 @@ static NSString *UteString(NSString *_Nullable value) {
 
 - (NSString *)setUp {
   UTEBluetoothMgr *mgr = [self mgr];
-  [mgr initUTEMgr];
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    [mgr initUTEMgr];
+  });
   // The manager holds its delegate weakly; this singleton keeps itself alive.
   mgr.delegate = self;
   __weak UteBleBridge *weakSelf = self;
@@ -53,20 +78,46 @@ static NSString *UteString(NSString *_Nullable value) {
     [weakSelf reportPairing:pair message:pair ? @"device confirmed pairing" : @"device cancelled pairing"];
   }];
   [self registerRecordListeners];
+  [self registerInputListeners];
   return UteString([mgr sdkVersion]);
 }
 
 - (void)startScan {
   // Keep earlier results: a retry may reconnect to a device found by a previous scan.
   [[self mgr] startScanDevices];
+  // A clip that iOS already holds a link to (it is bonded, and ANCS keeps the link up)
+  // stops advertising, so a scan alone would never find it again.
+  for (UTEModelDevice *model in [self systemConnectedDevices]) {
+    [self uteDiscoverDevices:model];
+  }
 }
 
 - (void)stopScan {
   [[self mgr] stopScanDevices];
 }
 
+- (NSArray<UTEModelDevice *> *)systemConnectedDevices {
+  // 56FF is the service the SDK reports reading from the ES100 on connect.
+  NSMutableArray<NSString *> *services = [NSMutableArray arrayWithObject:@"56FF"];
+  NSString *sdkService = [self mgr].SERVICE_UUID;
+  if (sdkService.length && ![services containsObject:sdkService]) [services addObject:sdkService];
+  @try {
+    return [[self mgr] retrieveConnectedDeviceWithServers:services] ?: @[];
+  } @catch (NSException *exception) {
+    return @[];
+  }
+}
+
 - (BOOL)connectDeviceWithId:(NSString *)deviceId {
   UTEModelDevice *model = self.discovered[deviceId];
+  if (!model) {
+    for (UTEModelDevice *candidate in [self systemConnectedDevices]) {
+      if ([candidate.identifier isEqualToString:deviceId]) {
+        model = candidate;
+        self.discovered[deviceId] = candidate;
+      }
+    }
+  }
   if (!model) return NO;
   self.connecting = YES;
   UTEModelDevice *stale = [self mgr].connnectModel;
@@ -94,6 +145,7 @@ static NSString *UteString(NSString *_Nullable value) {
   if (!model || ![self connected]) return nil;
   UTEModelDeviceElement *element = model.element;
   return @{
+    @"id" : UteString(model.identifier),
     @"name" : UteString(model.name),
     @"address" : UteString(model.addressStr),
     @"model" : UteString(element.model),
@@ -102,6 +154,27 @@ static NSString *UteString(NSString *_Nullable value) {
     @"hasAIRecording" : @(model.hasAIRecording),
     @"hasAIRecordRealTime" : @(model.hasAIRecordRealTime),
   };
+}
+
+- (NSDictionary<NSString *, NSNumber *> *)capabilities {
+  UTEModelDevice *model = [self mgr].connnectModel;
+  if (!model) return @{};
+  NSMutableDictionary<NSString *, NSNumber *> *flags = [NSMutableDictionary new];
+  unsigned int count = 0;
+  objc_property_t *properties = class_copyPropertyList([UTEModelDevice class], &count);
+  for (unsigned int i = 0; i < count; i++) {
+    NSString *name = @(property_getName(properties[i]));
+    const char *attributes = property_getAttributes(properties[i]);
+    // BOOL is encoded "TB" on arm64 ("Tc" on older ABIs).
+    BOOL isBool = attributes && (strncmp(attributes, "TB", 2) == 0 || strncmp(attributes, "Tc", 2) == 0);
+    if (!isBool || ![name hasPrefix:@"has"]) continue;
+    @try {
+      flags[name] = @([[model valueForKey:name] boolValue]);
+    } @catch (NSException *exception) {
+    }
+  }
+  free(properties);
+  return flags;
 }
 
 #pragma mark - UTEBluetoothDelegate
@@ -129,6 +202,10 @@ static NSString *UteString(NSString *_Nullable value) {
   NSString *message = error ? [NSString stringWithFormat:@"%@ (CB %ld)", error.localizedDescription, (long)error.code] : nil;
   if (handler) handler(status, status == UTEDevicesStatusConnected, message);
   if (status == UTEDevicesStatusConnected) [self handshake];
+  // A dropped link ends any transfer; hand back what arrived instead of hanging.
+  if (status == UTEDevicesStatusDisconnected && self.syncBuffer) {
+    [self finishSync:@"the clip disconnected during the transfer"];
+  }
 }
 
 /// What the vendor demo does on every connect: send our account id, and if the
@@ -177,6 +254,14 @@ static NSString *UteString(NSString *_Nullable value) {
   if (handler) handler(paired, message);
 }
 
+- (void)reportInput:(NSDictionary<NSString *, id> *)input {
+  void (^handler)(NSDictionary<NSString *, id> *) = self.onInput;
+  if (!handler) return;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    handler(input);
+  });
+}
+
 - (void)uteBluetoothStatus:(UTEBluetoothStatus)status {
   void (^handler)(NSInteger, BOOL) = self.onBluetoothState;
   if (handler) handler(status, status == UTEBluetoothStatusOpen);
@@ -197,8 +282,9 @@ static NSString *UteString(NSString *_Nullable value) {
 - (void)bindWithToken:(NSString *)token verify:(NSInteger)verify completion:(UteBleResultCallback)completion {
   // osType 1 = iOS; the vendor says BleVersion is always 0.
   [[self recordMgr] appBindRecordDevice:1 BleVersion:0 Verify:verify Token:token Block:^(NSInteger errorCode, UTEModelRecordBindInfo *model) {
-    if (errorCode != 0 || !model) {
-      completion(errorCode, nil);
+    NSInteger code = UteNormalize(errorCode);
+    if (code != 0 || !model) {
+      completion(code ?: -601, nil);
       return;
     }
     completion(0, @{
@@ -212,8 +298,9 @@ static NSString *UteString(NSString *_Nullable value) {
 
 - (void)fetchStatus:(UteBleResultCallback)completion {
   [[self recordMgr] getRecordStatusBlock:^(NSInteger errorCode, UTEModelRecordStatus *model) {
-    if (errorCode != 0 || !model) {
-      completion(errorCode, nil);
+    NSInteger code = UteNormalize(errorCode);
+    if (code != 0 || !model) {
+      completion(code ?: -601, nil);
       return;
     }
     completion(0, @{
@@ -221,14 +308,17 @@ static NSString *UteString(NSString *_Nullable value) {
       @"recording" : @(model.state == UTERecordStateTypeRecording),
       @"usbConnected" : @(model.udisk == 1),
       @"privacyMode" : @(model.privacy == 1),
+      @"keyState" : @(model.key_state),
+      @"micMode" : @(model.mic_mode),
     });
   }];
 }
 
 - (void)fetchStorageInfo:(UteBleResultCallback)completion {
   [[self recordMgr] getStorageCapacityInfoBlock:^(NSInteger errorCode, UTEModelRecordStorageInfo *model) {
-    if (errorCode != 0 || !model) {
-      completion(errorCode, nil);
+    NSInteger code = UteNormalize(errorCode);
+    if (code != 0 || !model) {
+      completion(code ?: -601, nil);
       return;
     }
     completion(0, @{
@@ -240,13 +330,153 @@ static NSString *UteString(NSString *_Nullable value) {
   }];
 }
 
+- (void)fetchBattery:(UteBleResultCallback)completion {
+  [[UTEDeviceMgr sharedInstance] getBatteryInfoModel:^(UTEModelBatteryInfo *model, NSInteger errorCode) {
+    NSInteger code = UteNormalize(errorCode);
+    if (code != 0 || !model) {
+      completion(code ?: -601, nil);
+      return;
+    }
+    completion(0, @{
+      @"percent" : @(model.value),
+      // 0 on battery, 1 charging, 2 fully charged.
+      @"charging" : @(model.status == UTEBatteryStatusCharging),
+      @"full" : @(model.status == UTEBatteryStatusChargingFully),
+      @"low" : @(model.lowBattery == 1),
+    });
+  }];
+}
+
+- (void)fetchRssi:(UteBleResultCallback)completion {
+  if (![self connected]) {
+    completion(-1000, nil);
+    return;
+  }
+  [[self mgr] readDeviceRSSI:^(NSInteger rssi) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      completion(0, @{@"rssi" : @(rssi)});
+    });
+  }];
+}
+
+- (void)fetchEncodingConfig:(UteBleResultCallback)completion {
+  [[self recordMgr] getRecordEncodingConfigurationBlock:^(NSInteger errorCode, NSArray<UTEModelRecordEncodingConfig *> *configArray) {
+    NSInteger code = UteNormalize(errorCode);
+    if (code != 0) {
+      completion(code, nil);
+      return;
+    }
+    NSMutableArray<NSDictionary<NSString *, id> *> *formats = [NSMutableArray new];
+    for (UTEModelRecordEncodingConfig *config in configArray ?: @[]) {
+      [formats addObject:@{
+        @"type" : @(config.type),
+        @"channels" : @(config.channal),
+        @"sampleRate" : @(config.sampleRate),
+        @"bits" : @(config.sampleBit),
+        @"bitRate" : @(config.bitRate),
+      }];
+    }
+    completion(0, @{@"formats" : formats});
+  }];
+}
+
+#pragma mark - Motion
+
+/// Some factory commands never answer on firmware that lacks the feature; this makes sure the caller hears back once.
+static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInterval timeout) {
+  __block BOOL done = NO;
+  UteBleResultCallback once = ^(NSInteger errorCode, NSDictionary<NSString *, id> *_Nullable result) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (done) return;
+      done = YES;
+      completion(errorCode, result);
+    });
+  };
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    once(408, nil);
+  });
+  return once;
+}
+
+- (void)probeSensors:(UteBleResultCallback)completion {
+  UteBleResultCallback reply = UteOnce(completion, 5);
+  [[UTEDeviceMgr sharedInstance] checkFactoryFuntion:^(UTEModelFactoryFuntion *model) {
+    if (!model) {
+      reply(-601, nil);
+      return;
+    }
+    reply(0, @{
+      @"accelerometer" : @(model.isSupportG_sensorTest || model.isSupportGsensorTest),
+      @"gyroscope" : @(model.isSupportGyroscopeTest),
+      @"button" : @(model.isSupportKeyTest),
+      @"motor" : @(model.isSupportMotorSwitchTest),
+    });
+  }];
+}
+
+- (void)readGyro:(UteBleResultCallback)completion {
+  UteBleResultCallback reply = UteOnce(completion, 3);
+  [[UTEDeviceMgr sharedInstance] factoryReadGyroData:^(NSInteger range, NSInteger x, NSInteger y, NSInteger z) {
+    reply(0, @{@"range" : @(range), @"x" : @(x), @"y" : @(y), @"z" : @(z)});
+  }];
+}
+
+- (void)setMotionStream:(BOOL)on completion:(void (^)(NSInteger))completion {
+  UTEMgrGame *game = [UTEDeviceMgr sharedInstance].game;
+  if (on) {
+    __weak UteBleBridge *weakSelf = self;
+    [game onNotifyGameOperateBlock:^(NSInteger errorCode, NSArray<UTEModelGameOperate *> *arrayModels) {
+      void (^handler)(NSArray<NSArray<NSNumber *> *> *) = weakSelf.onMotion;
+      if (!handler || UteNormalize(errorCode) != 0 || !arrayModels.count) return;
+      NSMutableArray<NSArray<NSNumber *> *> *samples = [NSMutableArray arrayWithCapacity:arrayModels.count];
+      for (UTEModelGameOperate *m in arrayModels) {
+        [samples addObject:@[ @(m.x), @(m.y), @(m.Speed), @(m.X_Throw), @(m.Y_Throw), @(m.Speed_Throw) ]];
+      }
+      dispatch_async(dispatch_get_main_queue(), ^{
+        handler(samples);
+      });
+    }];
+  }
+  // 1 start, 0 stop.
+  [game sendGameStatus:on ? 1 : 0 Block:^(NSInteger errorCode) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      completion(UteNormalize(errorCode));
+    });
+  }];
+}
+
 #pragma mark - Recording
 
 - (void)beginRecording:(UteBleResultCallback)completion {
   // type 1 = normal recording; 2 is simultaneous-translation mode.
   [[self recordMgr] startRecord:1 Block:^(NSInteger errorCode, UTEModelRecordInfo *model) {
-    if (errorCode != 0 || !model) {
-      completion(errorCode, nil);
+    NSInteger code = UteNormalize(errorCode);
+    if (code != 0 || !model) {
+      completion(code ?: -601, nil);
+      return;
+    }
+    // result: 0 started, 1 storage full, 2 USB mode, 3 hardware error, 4 already recording, 5 Wi-Fi mode.
+    completion(0, @{@"sessionId" : @(model.sessionID), @"result" : @(model.reslut), @"scene" : @(model.scene)});
+  }];
+}
+
+- (void)pauseRecordingSession:(NSInteger)sessionId completion:(UteBleResultCallback)completion {
+  [[self recordMgr] pauseRecord:sessionId Block:^(NSInteger errorCode, UTEModelRecordPauseInfo *model) {
+    NSInteger code = UteNormalize(errorCode);
+    if (code != 0 || !model) {
+      completion(code ?: -601, nil);
+      return;
+    }
+    // result: 0 paused, 1 already paused, 2 wrong session, 3 unknown error.
+    completion(0, @{@"sessionId" : @(model.sessionID), @"result" : @(model.reslut)});
+  }];
+}
+
+- (void)resumeRecordingSession:(NSInteger)sessionId completion:(UteBleResultCallback)completion {
+  [[self recordMgr] resetRecord:sessionId withScene:UTERecordingSceneNormal Block:^(NSInteger errorCode, UTEModelRecordInfo *model) {
+    NSInteger code = UteNormalize(errorCode);
+    if (code != 0 || !model) {
+      completion(code ?: -601, nil);
       return;
     }
     completion(0, @{@"sessionId" : @(model.sessionID), @"result" : @(model.reslut)});
@@ -255,8 +485,9 @@ static NSString *UteString(NSString *_Nullable value) {
 
 - (void)endRecording:(UteBleResultCallback)completion {
   [[self recordMgr] stopRecordBlock:^(NSInteger errorCode, UTEModelRecordStopInfo *model) {
-    if (errorCode != 0 || !model) {
-      completion(errorCode, nil);
+    NSInteger code = UteNormalize(errorCode);
+    if (code != 0 || !model) {
+      completion(code ?: -601, nil);
       return;
     }
     completion(0, @{
@@ -272,13 +503,14 @@ static NSString *UteString(NSString *_Nullable value) {
 - (void)fetchFileList:(UteBleResultCallback)completion {
   // The device ignores this while it is recording or in USB mode.
   [[self recordMgr] getRecordFileList:0 StartSession:0 OnlyOne:0 Block:^(NSInteger errorCode, UTEModelRecordFileListInfo *model) {
-    if (errorCode != 0 || !model) {
-      completion(errorCode, nil);
+    NSInteger code = UteNormalize(errorCode);
+    if (code != 0 || !model) {
+      completion(code ?: -601, nil);
       return;
     }
     NSMutableArray<NSDictionary<NSString *, id> *> *files = [NSMutableArray new];
     for (UTEModelRecordFileInfo *file in model.fileArray ?: @[]) {
-      // fileName is the sessionID, as an integer.
+      // fileName is the sessionID, as an integer; it is also the recording's start time (unix seconds).
       [files addObject:@{@"sessionId" : @(file.fileName), @"size" : @(file.fileSize), @"type" : @(file.type)}];
     }
     completion(0, @{@"count" : @(model.count), @"files" : files});
@@ -289,18 +521,95 @@ static NSString *UteString(NSString *_Nullable value) {
                    fileType:(NSInteger)fileType
                        size:(NSInteger)size
                  completion:(UteBleStatusCallback)completion {
-  [[self recordMgr] syncRecordData:sessionId
-                        startIndex:0
-                          endIndex:size
-                          fileType:(UTERecordingFileType)fileType
+  self.syncGeneration++;
+  self.syncSession = sessionId;
+  self.syncFileType = fileType;
+  self.syncExpected = size;
+  self.syncResumes = 0;
+  self.syncBuffer = [NSMutableData new];
+  [self requestSyncFrom:0 completion:completion];
+  [self watchSyncStall:self.syncGeneration];
+}
+
+- (void)requestSyncFrom:(NSInteger)start completion:(nullable UteBleStatusCallback)completion {
+  self.syncSegmentEnded = NO;
+  self.syncLastData = [NSDate date];
+  __weak UteBleBridge *weakSelf = self;
+  [[self recordMgr] syncRecordData:self.syncSession
+                        startIndex:start
+                          endIndex:self.syncExpected
+                          fileType:(UTERecordingFileType)self.syncFileType
                              Block:^(NSInteger errorCode, NSInteger sessionID, NSInteger result) {
-                               completion(errorCode, result);
+                               NSInteger code = UteNormalize(errorCode);
+                               BOOL refused = code != 0 || result != 0;
+                               // result: 0 ok, 1 filesystem error, 2 missing, 3 interrupted. No data follows a refusal.
+                               if (completion) {
+                                 if (refused) {
+                                   // The caller hears about it through `completion`; drop the transfer quietly.
+                                   weakSelf.syncBuffer = nil;
+                                   weakSelf.syncGeneration++;
+                                 }
+                                 completion(code, result);
+                               } else if (refused) {
+                                 [weakSelf finishSync:[NSString stringWithFormat:@"resume refused (error %ld, result %ld)", (long)code, (long)result]];
+                               }
                              }];
 }
 
+- (void)watchSyncStall:(NSInteger)generation {
+  __weak UteBleBridge *weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    UteBleBridge *strongSelf = weakSelf;
+    if (!strongSelf || !strongSelf.syncBuffer || strongSelf.syncGeneration != generation) return;
+    if ([[NSDate date] timeIntervalSinceDate:strongSelf.syncLastData] > UteSyncStallSeconds) {
+      [strongSelf finishSync:@"the clip stopped sending data"];
+      return;
+    }
+    [strongSelf watchSyncStall:generation];
+  });
+}
+
+/// Called when the clip says a segment is done: resume if short, otherwise hand the data over.
+- (void)syncSegmentDidEnd {
+  if (!self.syncBuffer || self.syncSegmentEnded) return;
+  self.syncSegmentEnded = YES;
+  NSInteger generation = self.syncGeneration;
+  // Both "completed" callbacks fire, in either order; let the second one land before deciding.
+  __weak UteBleBridge *weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    UteBleBridge *strongSelf = weakSelf;
+    if (!strongSelf || !strongSelf.syncBuffer || strongSelf.syncGeneration != generation) return;
+    NSInteger have = (NSInteger)strongSelf.syncBuffer.length;
+    if (have < strongSelf.syncExpected && strongSelf.syncResumes < UteMaxSyncResumes) {
+      strongSelf.syncResumes++;
+      [strongSelf requestSyncFrom:have completion:nil];
+      return;
+    }
+    [strongSelf finishSync:nil];
+  });
+}
+
+- (void)finishSync:(nullable NSString *)error {
+  NSMutableData *data = self.syncBuffer;
+  if (!data) return;
+  self.syncBuffer = nil;
+  self.syncGeneration++;
+  void (^handler)(NSInteger, NSData *, NSString *_Nullable) = self.onSyncFinished;
+  NSString *reason = data.length ? nil : (error ?: @"the clip sent no data");
+  if (handler) handler(self.syncSession, data, reason);
+}
+
 - (void)cancelSync:(void (^)(NSInteger))completion {
+  __weak UteBleBridge *weakSelf = self;
   [[self recordMgr] stopSyncRecordDataBlock:^(NSInteger errorCode) {
-    completion(errorCode);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      UteBleBridge *strongSelf = weakSelf;
+      if (strongSelf.syncBuffer) {
+        strongSelf.syncBuffer = [NSMutableData new];
+        [strongSelf finishSync:@"cancelled"];
+      }
+      completion(UteNormalize(errorCode));
+    });
   }];
 }
 
@@ -308,7 +617,7 @@ static NSString *UteString(NSString *_Nullable value) {
   [[self recordMgr] deletelRecordFile:sessionId
                              fileType:(UTERecordingFileType)fileType
                                 Block:^(NSInteger errorCode, NSInteger sessionID, NSInteger result) {
-                                  completion(errorCode, result);
+                                  completion(UteNormalize(errorCode), result);
                                 }];
 }
 
@@ -337,20 +646,70 @@ static NSString *UteString(NSString *_Nullable value) {
     if (!model || !handler) return;
     handler(@{
       @"sessionId" : @(model.sessionID),
+      @"startedByDevice" : @(model.type == 1),
       @"saved" : @(model.file_exist == 1),
       @"fileSize" : @(model.file_size),
     });
   }];
 
   [recordMgr onNotifySyncRecordDataBlock:^(BOOL isCompleted, NSInteger sessionID, NSInteger size, NSData *subData, NSData *completeData) {
-    void (^handler)(BOOL, NSInteger, NSInteger, NSData *_Nullable) = weakSelf.onSyncProgress;
-    if (handler) handler(isCompleted, sessionID, size, completeData);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      UteBleBridge *strongSelf = weakSelf;
+      if (!strongSelf || !strongSelf.syncBuffer || sessionID != strongSelf.syncSession) return;
+      strongSelf.syncLastData = [NSDate date];
+      if (!isCompleted) {
+        if (subData.length) [strongSelf.syncBuffer appendData:subData];
+      } else if (completeData.length > strongSelf.syncBuffer.length && completeData.length <= (NSUInteger)strongSelf.syncExpected) {
+        // Only trust the SDK's own copy when it holds more than we assembled (a single, unresumed segment).
+        [strongSelf.syncBuffer setData:completeData];
+      }
+      void (^progress)(NSInteger, NSInteger, NSInteger) = strongSelf.onSyncProgress;
+      if (progress) progress(sessionID, (NSInteger)strongSelf.syncBuffer.length, strongSelf.syncExpected);
+      if (isCompleted) [strongSelf syncSegmentDidEnd];
+    });
   }];
 
   [recordMgr onNotifySyncRecordDataCompleteBlock:^(NSInteger sessionID) {
-    void (^handler)(NSInteger) = weakSelf.onSyncComplete;
-    if (handler) handler(sessionID);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      UteBleBridge *strongSelf = weakSelf;
+      if (!strongSelf || sessionID != strongSelf.syncSession) return;
+      [strongSelf syncSegmentDidEnd];
+    });
   }];
+}
+
+/// Everything else the clip reports unprompted, forwarded as onInput events.
+- (void)registerInputListeners {
+  static dispatch_once_t once;
+  __weak UteBleBridge *weakSelf = self;
+  dispatch_once(&once, ^{
+    UTEDeviceMgr *device = [UTEDeviceMgr sharedInstance];
+
+    [device onNofityBatteryModel:^(UTEModelBatteryInfo *model) {
+      if (!model) return;
+      [weakSelf reportInput:@{
+        @"kind" : @"battery",
+        @"value" : @(model.value),
+        @"detail" : model.status == UTEBatteryStatusCharging ? @"charging"
+                    : model.status == UTEBatteryStatusChargingFully ? @"full"
+                    : model.lowBattery == 1 ? @"low" : @"on battery",
+      }];
+    }];
+
+    // The clip's AI/voice button, if its firmware has one: 1 enter, 2 start recording,
+    // 3 stop recording, 4 exit, 5 "open the app", 6/7 recognition failed/succeeded.
+    [device.chatGPT onNotifyChatGPTStatus:^(UTEChatGPTStatus status) {
+      [weakSelf reportInput:@{@"kind" : @"voiceButton", @"value" : @(status)}];
+    }];
+
+    // Audio the voice button captured, as opus.
+    [device.chatGPT onNotifyChatGPTVoiceData:^(NSInteger errorCode, NSData *opus) {
+      [weakSelf reportInput:@{@"kind" : @"voiceData", @"value" : @(opus.length), @"detail" : @"complete"}];
+    }];
+    [device.chatGPT onNotifyUploadVoiceDataBlock:^(BOOL isCompleted, NSData *opus) {
+      [weakSelf reportInput:@{@"kind" : @"voiceData", @"value" : @(opus.length), @"detail" : isCompleted ? @"complete" : @"streaming"}];
+    }];
+  });
 }
 
 @end

@@ -1,177 +1,23 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as ute from "../../modules/ute-ble";
-import { devlog } from "../lib/devlog";
+import * as clip from "../lib/clip";
 import { colors } from "../lib/theme";
 
-// Bring-up screen for the ES100 recording clip: scan, pair, and pull a file off
-// the device. Reachable from Settings → Developer, or the /es100 route.
+// Bring-up screen for the ES100 recording clip: the raw connection, pairing, the
+// file list on the device, and the SDK's log. Everyday recording lives in the
+// Record tab; both share one connection (lib/clip.ts).
 
 export default function ES100() {
-  const [sdkVersion, setSdkVersion] = useState<string | null>(null);
-  const [devices, setDevices] = useState<ute.UteDevice[]>([]);
-  const [scanning, setScanning] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const connectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [device, setDevice] = useState<ute.ConnectedDevice | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const state = clip.useClip();
   const [files, setFiles] = useState<ute.RecordFile[] | null>(null);
-  const [progress, setProgress] = useState<ute.SyncProgress | null>(null);
-  const [log, setLog] = useState<string[]>([]);
+  const connected = state.phase === "connected";
+  const idle = state.busy === null;
 
-  const say = useCallback((line: string) => {
-    devlog("ble", line);
-    setLog((prev) => [`${new Date().toLocaleTimeString()}  ${line}`, ...prev].slice(0, 80));
-  }, []);
-
-  // Keep the latest logger without re-running the subscription effect.
-  const sayRef = useRef(say);
-  sayRef.current = say;
-
-  useEffect(() => {
-    if (!ute.uteAvailable) return;
-
-    const subs = [
-      ute.addListener("onDeviceFound", (device) => {
-        setDevices((prev) => (prev.some((d) => d.id === device.id) ? prev : [...prev, device]));
-      }),
-      ute.addListener("onConnectionChange", (change) => {
-        setConnected(change.connected);
-        sayRef.current(`connection status ${change.status}${change.error ? ` — ${change.error}` : ""}`);
-        // 4 = still connecting; anything else ends the attempt.
-        if (change.status !== 4) {
-          setConnecting(false);
-          if (connectTimer.current) clearTimeout(connectTimer.current);
-        }
-        // CoreBluetooth 14/15: iOS kept pairing keys the clip has since deleted. Only the
-        // user can clear them (the SDK says: forget the device in iOS Bluetooth settings).
-        if (/\(CB 1[45]\)/.test(change.error ?? "")) {
-          if (connectTimer.current) clearTimeout(connectTimer.current);
-          sayRef.current("iPhone's saved pairing with the clip is out of date; it must be forgotten in Settings");
-          Alert.alert(
-            "Forget the ES100 in Bluetooth settings",
-            "Your iPhone still has an old pairing for the clip, which the clip has deleted, so iOS refuses to connect.\n\n" +
-              "1. Open Settings → Bluetooth.\n" +
-              "2. Tap the ⓘ next to ES100 → Forget This Device.\n" +
-              "3. Come back, Scan, and tap ES100.\n" +
-              "4. Accept the iPhone's pairing pop-up, then press the clip's button when it vibrates.",
-          );
-        }
-        if (!change.connected) return setDevice(null);
-        ute
-          .connectedDevice()
-          .then((info) => {
-            setDevice(info);
-            if (info && info.hasAIRecording === false) {
-              sayRef.current("warning: this firmware does not support the recording protocol");
-            }
-          })
-          .catch(() => {});
-      }),
-      ute.addListener("onPairingChange", ({ paired, message }) => {
-        sayRef.current(message ?? (paired ? "device accepted pairing" : "device refused pairing — disconnecting"));
-      }),
-      ute.addListener("onBluetoothState", (state) => {
-        sayRef.current(`bluetooth ${state.poweredOn ? "on" : `state ${state.state}`}`);
-      }),
-      ute.addListener("onRecordStart", (event) => {
-        sayRef.current(`recording started (${event.startedByDevice ? "device button" : "app"}) #${event.sessionId}`);
-      }),
-      ute.addListener("onRecordStop", (event) => {
-        sayRef.current(`recording stopped #${event.sessionId}, ${event.fileSize} bytes`);
-      }),
-      ute.addListener("onSyncProgress", setProgress),
-      ute.addListener("onLog", ({ message }) => sayRef.current(`sdk: ${message}`)),
-    ];
-
-    ute
-      .initialize()
-      .then((version) => {
-        setSdkVersion(version);
-        sayRef.current(`SDK ${version} ready`);
-      })
-      .catch((err: Error) => sayRef.current(`init failed — ${err.message}`));
-
-    return () => {
-      subs.forEach((s) => s.remove());
-      if (connectTimer.current) clearTimeout(connectTimer.current);
-    };
-  }, []);
-
-  const run = async (label: string, fn: () => Promise<void>) => {
-    setBusy(label);
-    try {
-      await fn();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      say(`${label} failed — ${message}`);
-      Alert.alert(`${label} failed`, message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const scan = () =>
-    run("Scan", async () => {
-      setDevices([]);
-      setScanning(true);
-      await ute.startScan();
-      say("scanning…");
-      // The SDK scans until told to stop.
-      setTimeout(() => {
-        ute.stopScan().catch(() => {});
-        setScanning(false);
-      }, 10_000);
-    });
-
-  const connectTo = (device: ute.UteDevice) =>
-    run("Connect", async () => {
-      await ute.stopScan();
-      setScanning(false);
-      say(`connecting to ${device.name || device.id}…`);
-      setConnecting(true);
-      await ute.connect(device.id);
-      if (connectTimer.current) clearTimeout(connectTimer.current);
-      connectTimer.current = setTimeout(() => {
-        // The vendor's advice for a stuck connect: drop it and try again, once.
-        sayRef.current("no connection after 20 s; retrying once");
-        ute.connect(device.id).catch((err: Error) => sayRef.current(`retry failed: ${err.message}`));
-        connectTimer.current = setTimeout(() => {
-          setConnecting(false);
-          sayRef.current("still no connection. Press the clip's button when it vibrates to accept pairing, then tap it again");
-        }, 20_000);
-      }, 20_000);
-    });
-
-  const pair = () =>
-    run("Pair", async () => {
-      const result = await ute.bind();
-      if (result.bound) say(result.ssn ? `paired, SSN ${result.ssn}` : "paired");
-      else say(result.refuseCause === null ? "not paired" : `device refused pairing (cause ${result.refuseCause})`);
-    });
-
-  const refresh = () =>
-    run("Read device", async () => {
-      const [status, storageInfo, list] = await Promise.all([
-        ute.getStatus(),
-        ute.getStorageInfo(),
-        ute.listFiles(),
-      ]);
-      setFiles(list.files);
-      say(`state ${status.state}, ${Math.round(storageInfo.freeKB / 1024)} MB free, ${list.count} files`);
-    });
-
-  const download = (file: ute.RecordFile) =>
-    run("Download", async () => {
-      setProgress(null);
-      say(`downloading #${file.sessionId} (${file.size} bytes)…`);
-      const result = await ute.syncFile(file.sessionId, file.type, file.size);
-      say(`saved ${result.bytes} bytes to ${result.path}`);
-      Alert.alert("Downloaded", `${result.bytes} bytes\n\n${result.path}`);
-    });
+  const run = (label: string, fn: () => Promise<unknown>) =>
+    fn().catch((err) => Alert.alert(`${label} failed`, err instanceof Error ? err.message : String(err)));
 
   if (!ute.uteAvailable) {
     return (
@@ -193,71 +39,72 @@ export default function ES100() {
       <ScrollView contentContainerStyle={styles.body}>
         <Text style={styles.title}>ES100</Text>
         <Text style={styles.dim}>
-          {sdkVersion ? `SDK ${sdkVersion}` : "starting…"} · {connected ? "connected" : connecting ? "connecting…" : "not connected"}
+          {state.sdkVersion ? `SDK ${state.sdkVersion}` : "starting…"} · {state.phase}
+          {state.savedDeviceId ? ` · saved ${state.savedDeviceId.slice(0, 8)}` : ""}
         </Text>
+        {state.problem && <Text style={styles.problem}>{state.problem}</Text>}
 
-        {device && (
+        {state.device && (
           <View style={styles.item}>
             <View>
-              <Text style={styles.itemText}>{device.name || device.model || "Device"}</Text>
+              <Text style={styles.itemText}>{state.device.name || state.device.model || "Device"}</Text>
               <Text style={styles.dim}>
-                {device.address} · fw {device.firmware || "?"}
+                {state.device.address} · fw {state.device.firmware || "?"}
               </Text>
             </View>
-            <Text style={[styles.dim, device.hasAIRecording === true && styles.good]}>
-              {device.hasAIRecording === null ? "recording ?" : device.hasAIRecording ? "recording ✓" : "no recording"}
+            <Text style={[styles.dim, state.device.hasAIRecording === true && styles.good]}>
+              {state.device.hasAIRecording === null ? "recording ?" : state.device.hasAIRecording ? "recording ✓" : "no recording"}
             </Text>
           </View>
         )}
 
         <View style={styles.row}>
-          <Button label={scanning ? "Scanning…" : "Scan"} onPress={scan} disabled={scanning || busy !== null} />
-          <Button label="Pair" onPress={pair} disabled={!connected || busy !== null} />
-          <Button label="Read" onPress={refresh} disabled={!connected || busy !== null} />
+          <Button label={state.phase === "scanning" ? "Scanning…" : "Scan"} onPress={() => run("Scan", clip.scan)} disabled={state.phase !== "idle"} />
+          {connected ? (
+            <Button label="Disconnect" onPress={() => run("Disconnect", clip.disconnect)} />
+          ) : (
+            <Button
+              label="Connect saved"
+              onPress={() => run("Connect", () => clip.connect(state.savedDeviceId!))}
+              disabled={!state.savedDeviceId || state.phase !== "idle"}
+            />
+          )}
+          <Button label="Forget" onPress={() => run("Forget", clip.forget)} disabled={!state.savedDeviceId} />
         </View>
 
         <View style={styles.row}>
           <Button
-            label="Start recording"
-            onPress={() => run("Start recording", async () => void (await ute.startRecord()))}
-            disabled={!connected || busy !== null}
+            label="Pair (bind)"
+            onPress={() =>
+              run("Pair", async () => {
+                const r = await ute.bind();
+                Alert.alert("Bind", `bound ${r.bound}, SSN ${r.ssn ?? "?"}, refuse cause ${r.refuseCause ?? "-"}`);
+              })
+            }
+            disabled={!connected || !idle}
           />
+          <Button label="Read info" onPress={() => run("Read", clip.refreshInfo)} disabled={!connected || !idle} />
           <Button
-            label="Stop"
-            onPress={() => run("Stop recording", async () => void (await ute.stopRecord()))}
-            disabled={!connected || busy !== null}
+            label="List files"
+            onPress={() => run("List", async () => setFiles((await ute.listFiles()).files))}
+            disabled={!connected || !idle || !!state.recording}
           />
         </View>
 
-        {busy && (
-          <View style={styles.busy}>
-            <ActivityIndicator color={colors.accent} />
-            <Text style={styles.dim}>{busy}…</Text>
-          </View>
-        )}
+        {state.busy && <Text style={styles.dim}>{state.busy}…</Text>}
 
-        {progress && !progress.completed && (
-          <Text style={styles.dim}>
-            {progress.received} / {progress.total} bytes
-          </Text>
-        )}
-
-        {devices.length > 0 && !connected && (
+        {state.devices.length > 0 && !connected && (
           <>
             <Text style={styles.heading}>Found</Text>
-            {/* Likely UTE devices first, then strongest signal. */}
-            {[...devices]
+            {[...state.devices]
               .sort((a, b) => Number(!!b.likelyUte) - Number(!!a.likelyUte) || b.rssi - a.rssi)
               .map((device) => (
-                <Pressable key={device.id} style={styles.item} onPress={() => connectTo(device)}>
+                <Pressable key={device.id} style={styles.item} onPress={() => run("Connect", () => clip.connect(device.id))}>
                   <View>
                     <Text style={styles.itemText}>{device.name || "(no name)"}</Text>
-                    <Text style={styles.dim}>{device.address}</Text>
+                    <Text style={styles.dim}>{device.address || device.id}</Text>
                   </View>
-                  <View style={styles.itemRight}>
-                    {device.likelyUte && <Text style={[styles.dim, styles.good]}>UTE</Text>}
-                    <Text style={styles.dim}>{device.rssi} dBm</Text>
-                  </View>
+                  <Text style={styles.dim}>{device.rssi ? `${device.rssi} dBm` : "linked"}</Text>
                 </Pressable>
               ))}
           </>
@@ -265,14 +112,18 @@ export default function ES100() {
 
         {files && (
           <>
-            <Text style={styles.heading}>Recordings</Text>
+            <Text style={styles.heading}>On the clip</Text>
             {files.length === 0 && <Text style={styles.dim}>Nothing on the device.</Text>}
             {files.map((file) => (
-              <Pressable key={file.sessionId} style={styles.item} onPress={() => download(file)}>
+              <Pressable
+                key={file.sessionId}
+                style={styles.item}
+                onPress={() => run("Download", () => clip.importSession(file.sessionId, file.size))}
+              >
                 <View>
                   <Text style={styles.itemText}>#{file.sessionId}</Text>
                   <Text style={styles.dim}>
-                    {Math.round(file.size / 1024)} KB · type {file.type}
+                    {new Date(file.sessionId * 1000).toLocaleString()} · {Math.round(file.size / 1024)} KB · type {file.type}
                   </Text>
                 </View>
                 <Ionicons name="download-outline" size={18} color={colors.accent} />
@@ -282,7 +133,7 @@ export default function ES100() {
         )}
 
         <Text style={styles.heading}>Log</Text>
-        {log.map((line, i) => (
+        {state.log.map((line, i) => (
           <Text key={i} style={styles.logLine}>
             {line}
           </Text>
@@ -307,16 +158,11 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: 26, fontWeight: "600" },
   heading: { color: colors.text, fontSize: 15, fontWeight: "600", marginTop: 18 },
   dim: { color: colors.textDim, fontSize: 13 },
+  problem: { color: colors.warning, fontSize: 13, lineHeight: 18 },
   row: { flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 8 },
-  button: {
-    backgroundColor: colors.accentDim,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-  },
+  button: { backgroundColor: colors.accentDim, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14 },
   buttonOff: { backgroundColor: colors.surface },
   buttonText: { color: colors.accent, fontWeight: "600", fontSize: 14 },
-  busy: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
   item: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
@@ -328,7 +174,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   itemText: { color: colors.text, fontSize: 15 },
-  itemRight: { alignItems: "flex-end", gap: 2 },
   good: { color: colors.success },
   logLine: { color: colors.textDim, fontSize: 11, fontFamily: "Menlo" },
 });

@@ -3,9 +3,14 @@ import { PermissionsAndroid, Platform, type Permission } from "react-native";
 import type { EventSubscription } from "expo-modules-core";
 
 import type {
+  BatteryInfo,
   BindResult,
   ConnectedDevice,
+  DecodeResult,
   DeviceStatus,
+  EncodingFormat,
+  GyroReading,
+  SensorSupport,
   RecordFile,
   RecordFileType,
   StorageInfo,
@@ -29,14 +34,24 @@ type UteBleNativeModule = {
   disconnect(): Promise<boolean>;
   isConnected(): Promise<boolean>;
   connectedDevice(): Promise<ConnectedDevice | null>;
+  capabilities(): Promise<Record<string, boolean>>;
   bind(token: string, verify: number): Promise<BindResult>;
   getStatus(): Promise<DeviceStatus>;
   getStorageInfo(): Promise<StorageInfo>;
+  getBattery(): Promise<BatteryInfo>;
+  getRssi(): Promise<{ rssi: number }>;
+  getEncodingConfig(): Promise<{ formats: EncodingFormat[] }>;
+  probeSensors(): Promise<SensorSupport>;
+  readGyro(): Promise<GyroReading>;
+  setMotionStream(on: boolean): Promise<void>;
   startRecord(): Promise<{ sessionId: number; result: number }>;
+  pauseRecord(sessionId: number): Promise<{ sessionId: number; result: number }>;
+  resumeRecord(sessionId: number): Promise<{ sessionId: number; result: number }>;
   stopRecord(): Promise<{ sessionId: number; saved: boolean; fileSize: number }>;
   listFiles(): Promise<{ count: number; files: RecordFile[] }>;
   syncFile(sessionId: number, fileType: RecordFileType, size: number): Promise<SyncResult>;
   stopSync(): Promise<void>;
+  decodeFile(path: string): Promise<DecodeResult>;
   deleteFile(sessionId: number, fileType: RecordFileType): Promise<boolean>;
   addListener<K extends keyof UteBleEvents>(event: K, listener: UteBleEvents[K]): EventSubscription;
 };
@@ -102,19 +117,46 @@ export const connectedDevice = () => native().connectedDevice();
  */
 export const bind = (token = "", verify = 0) => native().bind(token, verify);
 
+/** Every `has…` capability flag the connected clip reports, by name. iOS only. */
+export const capabilities = () => native().capabilities();
+
 export const getStatus = () => native().getStatus();
 export const getStorageInfo = () => native().getStorageInfo();
+/** iOS only. */
+export const getBattery = () => native().getBattery();
+/** Signal strength of the live link, in dBm. iOS only. */
+export const getRssi = () => native().getRssi();
+/** The formats the clip records in. iOS only. */
+export const getEncodingConfig = () => native().getEncodingConfig();
+
+/** Which sensor self-tests (accelerometer, gyroscope…) the firmware claims. Times out if unsupported. iOS only. */
+export const probeSensors = () => native().probeSensors();
+/** One gyroscope reading through the factory command. Times out if the firmware has none. iOS only. */
+export const readGyro = () => native().readGyro();
+/** Turns the clip's motion stream on or off; samples arrive as onMotion events. iOS only. */
+export const setMotionStream = (on: boolean) => native().setMotionStream(on);
+
+/** Resolves even when the clip declines; check `result` (StartRecordResult). */
 export const startRecord = () => native().startRecord();
+/** iOS only. */
+export const pauseRecord = (sessionId: number) => native().pauseRecord(sessionId);
+/** iOS only. */
+export const resumeRecord = (sessionId: number) => native().resumeRecord(sessionId);
 export const stopRecord = () => native().stopRecord();
 
 /** The device ignores this while recording or while in USB mode. */
 export const listFiles = () => native().listFiles();
 
-/** Downloads one recording over BLE into the app's cache directory. */
+/**
+ * Downloads one recording over BLE into Documents/recordings and, on iOS, decodes
+ * it to a WAV next to it. Always pass RecordFileType.Opus for something playable.
+ */
 export const syncFile = (sessionId: number, fileType: RecordFileType, size: number) =>
   native().syncFile(sessionId, fileType, size);
 
 export const stopSync = () => native().stopSync();
+/** Decodes a raw clip file already on the phone to a WAV next to it. iOS only. */
+export const decodeFile = (path: string) => native().decodeFile(path);
 export const deleteFile = (sessionId: number, fileType: RecordFileType) => native().deleteFile(sessionId, fileType);
 
 /** Subscribe to a device event. Remember to `.remove()` the subscription. */

@@ -44,6 +44,8 @@ export type BluetoothState = {
 };
 
 export type ConnectedDevice = {
+  /** The same id scans report, so it can be saved and reconnected to later. iOS only. */
+  id?: string;
   name: string;
   address: string;
   model: string;
@@ -71,6 +73,46 @@ export type DeviceStatus = {
   recording: boolean;
   usbConnected: boolean | null;
   privacyMode: boolean | null;
+  /** Raw state of the clip's button, as the firmware reports it. iOS only. */
+  keyState?: number;
+  /** 0 normal, 1 mixed. iOS only. */
+  micMode?: number;
+};
+
+export type BatteryInfo = {
+  percent: number;
+  charging: boolean;
+  full: boolean;
+  low: boolean;
+};
+
+/** One recording format the clip can produce. */
+export type EncodingFormat = {
+  type: RecordFileType;
+  channels: number;
+  sampleRate: number;
+  bits: number;
+  bitRate: number;
+};
+
+/** startRecord's `result`. */
+export enum StartRecordResult {
+  Started = 0,
+  StorageFull = 1,
+  USBMode = 2,
+  HardwareError = 3,
+  AlreadyRecording = 4,
+  WiFiMode = 5,
+  Stopped = 6,
+  Unknown = 10,
+}
+
+/** Something the clip reported on its own. */
+export type InputEvent = {
+  /** battery: percent; voiceButton: AI/voice button state 1-7; voiceData: bytes of opus the button captured. */
+  kind: "battery" | "voiceButton" | "voiceData";
+  value: number;
+  detail?: string;
 };
 
 /** The device's answer to the post-connect pairing handshake. */
@@ -104,11 +146,22 @@ export type SyncProgress = {
 
 export type SyncResult = {
   sessionId: number;
-  /** Absolute path in the app's cache directory. */
+  /** The raw file as the clip stores it, in Documents/recordings. */
   path: string;
   uri: string;
   bytes: number;
+  /** The playable WAV next to it. Missing when decoding failed (see decodeError). */
+  wavPath?: string;
+  wavUri?: string;
+  seconds?: number;
+  channels?: number;
+  sampleRate?: number;
+  /** Packets that wouldn't decode and became silence. */
+  badPackets?: number;
+  decodeError?: string;
 };
+
+export type DecodeResult = Required<Pick<SyncResult, "wavPath" | "wavUri" | "seconds" | "channels" | "sampleRate" | "badPackets">>;
 
 export type RecordStartEvent = {
   sessionId: number;
@@ -119,6 +172,8 @@ export type RecordStartEvent = {
 
 export type RecordStopEvent = {
   sessionId: number;
+  /** iOS only. */
+  startedByDevice?: boolean;
   saved: boolean;
   fileSize: number;
 };
@@ -129,6 +184,14 @@ export type ClipDataEvent = {
   base64: string;
 };
 
+/** Which sensor self-tests the firmware claims to support. */
+export type SensorSupport = { accelerometer: boolean; gyroscope: boolean; button: boolean; motor: boolean };
+
+export type GyroReading = { range: number; x: number; y: number; z: number };
+
+/** One motion-stream sample: [x, y, speed, xThrow, yThrow, speedThrow]. Units unknown (vendor gives none). */
+export type MotionSample = [number, number, number, number, number, number];
+
 export type UteBleEvents = {
   onDeviceFound: (device: UteDevice) => void;
   onConnectionChange: (change: ConnectionChange) => void;
@@ -138,6 +201,10 @@ export type UteBleEvents = {
   onRecordStop: (event: RecordStopEvent) => void;
   onSyncProgress: (progress: SyncProgress) => void;
   onClipData: (data: ClipDataEvent) => void;
+  /** iOS only: battery changes and the voice button. */
+  onInput: (event: InputEvent) => void;
+  /** iOS only: batches from the motion stream, while it is on. */
+  onMotion: (event: { samples: MotionSample[] }) => void;
   /** iOS only: vendor SDK log lines while a connect is in flight. */
   onLog: (event: { message: string }) => void;
 };

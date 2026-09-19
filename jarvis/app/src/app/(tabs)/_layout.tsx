@@ -1,8 +1,9 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { Tabs } from "expo-router";
-import type { ComponentProps } from "react";
+import { useEffect, type ComponentProps } from "react";
 import { Image } from "react-native";
 import { AssistantProvider } from "../../lib/assistant";
+import { startClip } from "../../lib/clip";
 import { useAuth } from "../../lib/auth";
 import { SafetyProvider } from "../../lib/safety";
 import { colors } from "../../lib/theme";
@@ -15,6 +16,9 @@ const icon =
 
 export default function TabsLayout() {
   const { user } = useAuth();
+
+  // Reconnect to the ES100 as soon as the app is open, not only once Record is visited.
+  useEffect(() => startClip(), []);
 
   return (
     <SafetyProvider>
@@ -47,6 +51,7 @@ export default function TabsLayout() {
               ),
             }}
           />
+          <Tabs.Screen name="record" options={{ title: "Record", tabBarIcon: icon("radio-button-on") }} />
           <Tabs.Screen name="safety" options={{ title: "Safety", tabBarIcon: icon("shield-checkmark") }} />
           <Tabs.Screen name="settings" options={{ title: "Settings", tabBarIcon: icon("settings") }} />
         </Tabs>
