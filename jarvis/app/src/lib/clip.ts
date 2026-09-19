@@ -92,6 +92,19 @@ export function useClip() {
   );
 }
 
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => {
+    listeners.delete(l);
+  };
+};
+
+/** Whether a clip is paired (remembered), without re-rendering on every motion reading. */
+export function useClipPaired() {
+  ensureStarted();
+  return useSyncExternalStore(subscribe, () => !!state.savedDeviceId);
+}
+
 function say(line: string) {
   devlog("ble", line);
   set({ log: [`${new Date().toLocaleTimeString()}  ${line}`, ...state.log].slice(0, 120) });

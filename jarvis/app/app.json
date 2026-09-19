@@ -11,7 +11,8 @@
       "bundleIdentifier": "com.ovoa.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSBluetoothAlwaysUsageDescription": "OVOA connects to your ES100 recorder over Bluetooth to pull in what it captured."
+        "NSBluetoothAlwaysUsageDescription": "OVOA connects to your ES100 recorder over Bluetooth to pull in what it captured.",
+        "UIBackgroundModes": ["audio", "bluetooth-central"]
       }
     },
     "android": {

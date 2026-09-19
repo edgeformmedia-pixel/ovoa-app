@@ -10,6 +10,7 @@ import {
 import { fetch } from "expo/fetch";
 import { File, Paths } from "expo-file-system";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
 import { API_URL, ApiError } from "./api";
 import { devlog } from "./devlog";
 import { openEar, stopStream, useLiveStream } from "./liveListen";
@@ -516,7 +517,9 @@ const LIVE_RETRY_MS = 60_000;
  * aloud, listen again, until `end` is called. `onUserSaid` sends the words to
  * the assistant and returns the reply to read aloud (or null to skip speaking).
  * With `interruptible`, the user can talk over the reply to cut it off. With
- * `background` (Always listen) it only answers when called by `name`.
+ * `background` (Always listen) it only answers when called by `name`. With
+ * `standby` (twist mode) the microphone runs between turns, nothing sent, so a
+ * twist can start a turn while the app is in the background.
  */
 export function useConversation(
   token: string,
@@ -526,7 +529,7 @@ export function useConversation(
     onSentence?: (sentence: string) => void,
     signal?: AbortSignal,
   ) => Promise<string | null>,
-  { interruptible = false, background = false, name = "OVOA" } = {},
+  { interruptible = false, background = false, standby = false, name = "OVOA" } = {},
 ) {
   const recorder = useAudioRecorder(RECORDING);
   const [phase, setPhaseState] = useState<VoicePhase>("off");
@@ -556,6 +559,10 @@ export function useConversation(
   // A twist or the clip's button: what's said until then counts as addressed.
   const summonedUntil = useRef(0);
   const gateRef = useRef<TurnGate | null>(null);
+  const standbyRef = useRef(standby);
+  standbyRef.current = standby;
+  /** Audio stays up in the background: Always listen, or the twist standby. */
+  const keepsAudio = () => background || standbyRef.current;
 
   useEffect(() => {
     speaker.current = createSpeaker(token);
@@ -587,10 +594,10 @@ export function useConversation(
     let finished = () => {};
     running.current = new Promise<void>((r) => (finished = r));
     await previous;
-    backgroundAudio = background;
-    if (background) {
+    backgroundAudio = keepsAudio();
+    if (backgroundAudio) {
       await applyAudioMode(true).catch((err) => devlog("err", "background audio mode failed", String(err)));
-      devlog("voice", "background listening on");
+      if (background) devlog("voice", "background listening on");
     }
 
     /**
@@ -700,7 +707,7 @@ export function useConversation(
           state.down = err;
           wake(null);
         },
-      });
+      }, { reuse: keepsAudio() });
       const timer = setInterval(() => {
         if (cancelled()) wake(null);
         else handle(gate.tick(Date.now()));
@@ -749,7 +756,7 @@ export function useConversation(
     const hearRecorded = async (noSpeechMs: number) => {
       // In the background, iOS suspends the app the moment no audio is running, which
       // froze the reply request for 15 minutes once. Keep the stream going as a keep-alive.
-      if (background && stream && !stream.isStreaming) {
+      if (keepsAudio() && stream && !stream.isStreaming) {
         await stream.start().catch((err) => devlog("err", "background keep-alive mic failed", String(err)));
       }
       const uri = await recordUtterance(recorder, cancelled, setLevel, noSpeechMs);
@@ -809,7 +816,7 @@ export function useConversation(
               liveFailures.current < 2 ? "live transcription failed; trying again" : "live transcription keeps failing; switching to recording",
               err instanceof Error ? err.message : String(err),
             );
-            if (!background) stopStream(stream);
+            if (!keepsAudio()) stopStream(stream);
             await sleep(1000);
           }
           continue;
@@ -824,14 +831,69 @@ export function useConversation(
         await sleep(RETRY_MS);
       }
     }
-    stopStream(stream);
-    if (background) {
-      backgroundAudio = false;
-      await applyAudioMode(false).catch(() => {});
+    // The twist standby keeps the microphone (and the app) running for the next twist.
+    if (!standbyRef.current) {
+      stopStream(stream);
+      if (backgroundAudio) {
+        backgroundAudio = false;
+        await applyAudioMode(false).catch(() => {});
+      }
     }
     finished();
     return true;
   }, [recorder, stream, token, background]);
+
+  // Twist standby: iOS won't let a backgrounded app start the microphone, and suspends one with
+  // no audio running. So in twist mode the mic stream runs between turns (its audio goes
+  // nowhere) and a twist in another app can start a turn. It can only be started in the
+  // foreground; if iOS stops it (a phone call, another app's audio) it's started again, and
+  // failing that, the next time the app is opened.
+  useEffect(() => {
+    if (!standby || !stream) return;
+    let stopped = false;
+    let lastAudioAt = Date.now();
+    let failedOnce = false;
+    const sub = stream.addListener("audioStreamBuffer", () => (lastAudioAt = Date.now()));
+    const hold = async (why: string) => {
+      if (stopped || phaseRef.current !== "off") return;
+      if (stream.isStreaming && Date.now() - lastAudioAt < STANDBY_SILENT_MS) return;
+      const { granted } = await requestRecordingPermissionsAsync();
+      if (!granted || stopped || phaseRef.current !== "off") return;
+      backgroundAudio = true;
+      try {
+        await applyAudioMode(true);
+        if (stream.isStreaming) stopStream(stream);
+        await stream.start();
+        lastAudioAt = Date.now();
+        failedOnce = false;
+        devlog("voice", `twist standby: microphone on (${why}); nothing is sent until a twist`);
+      } catch (err) {
+        if (failedOnce) return;
+        failedOnce = true;
+        devlog("err", `twist standby: couldn't turn the microphone on (${why}, app ${AppState.currentState})`, err instanceof Error ? err.message : String(err));
+      }
+    };
+    hold("twist mode").catch(() => {});
+    const timer = setInterval(() => hold("it had stopped").catch(() => {}), STANDBY_CHECK_MS);
+    const appState = AppState.addEventListener("change", (s) => {
+      if (s === "active") hold("app opened").catch(() => {});
+    });
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      appState.remove();
+      sub.remove();
+      // A turn in progress keeps the mic; its loop stops it at the end now that standby is off.
+      if (phaseRef.current === "off") {
+        stopStream(stream);
+        devlog("voice", "twist standby: microphone off");
+        if (!background) {
+          backgroundAudio = false;
+          applyAudioMode(false).catch(() => {});
+        }
+      }
+    };
+  }, [standby, stream, background]);
 
   /** While speaking: cut the reply short and listen again. */
   const interrupt = useCallback(() => speaker.current.stop(), []);
@@ -855,6 +917,10 @@ export function useConversation(
 
   return { phase, currentPhase, level, error, setError, words, start, end, interrupt, summon };
 }
+
+/** Twist standby: how often the mic is checked, and how long without audio means iOS stopped it. */
+const STANDBY_CHECK_MS = 5000;
+const STANDBY_SILENT_MS = 3000;
 
 /** After a twist, how long speech counts as addressed without the name. */
 const SUMMON_MS = 8000;

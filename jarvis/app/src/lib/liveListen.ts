@@ -83,7 +83,13 @@ export type Ear = { close: () => void };
  * Starts the microphone and keeps a live transcription connection open until
  * `close`. Resolves once the first connection is open; throws if it can't be.
  */
-export async function openEar(stream: AudioStream, apiToken: string, events: EarEvents): Promise<Ear> {
+export async function openEar(
+  stream: AudioStream,
+  apiToken: string,
+  events: EarEvents,
+  /** Use the mic as it is if it's running: in the background iOS may not let it start again. */
+  { reuse = false } = {},
+): Promise<Ear> {
   const pending: ArrayBuffer[] = [];
   let ws: WebSocket | null = null;
   let closed = false;
@@ -230,8 +236,9 @@ export async function openEar(stream: AudioStream, apiToken: string, events: Ear
   }
 
   try {
-    // Always a fresh engine: one left "running" earlier may be dead.
-    await restart(stream);
+    // Otherwise a fresh engine: one left "running" earlier may be dead. A reused one that is
+    // dead is restarted by the no-audio check above.
+    if (!reuse || !stream.isStreaming) await restart(stream);
     lastAudioAt = Date.now();
     await connect();
     failures = 0;

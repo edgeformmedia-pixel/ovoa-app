@@ -184,17 +184,20 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   };
 
   ambientRef.current = alwaysListen;
+  const twistOn = listenMode !== "wake";
+  const clipPaired = clip.useClipPaired();
   const conversation = useConversation(token, ask, {
     interruptible: alwaysListen,
     background: alwaysListen,
+    // Twist mode without Always listen: keep the mic (and the app) running so a twist works from other apps.
+    standby: twistOn && !alwaysListen && clipPaired,
     name: user?.settings.assistantName || "OVOA",
   });
   const { start, end, summon, currentPhase } = conversation;
 
   // --- Twist to listen (ES100) -------------------------------------------------
   // A twist, or the clip's button when the clip has no motion data, starts an
-  // addressed turn. In "twist" mode the microphone is closed until then.
-  const twistOn = listenMode !== "wake";
+  // addressed turn. In "twist" mode nothing is heard until then (the mic only idles, see standby).
   /** Listening was opened by a summon (not by a switch): close it again once it goes idle. */
   const summonedOpen = useRef(false);
 
