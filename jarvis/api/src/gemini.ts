@@ -8,18 +8,21 @@ type GenerateOptions = {
   system: string;
   turns: Turn[];
   json?: { schema: Record<string, unknown> };
+  /** Skip most of the model's thinking, for quick yes/no calls. */
+  fast?: boolean;
 };
 
-export async function generate({ apiKey, model, system, turns, json }: GenerateOptions): Promise<string> {
+export async function generate({ apiKey, model, system, turns, json, fast }: GenerateOptions): Promise<string> {
   const res = await fetch(`${BASE}/${model}:generateContent`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
       contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
-      ...(json && {
-        generationConfig: { responseMimeType: "application/json", responseSchema: json.schema },
-      }),
+      generationConfig: {
+        ...(json && { responseMimeType: "application/json", responseSchema: json.schema }),
+        ...(fast && { thinkingConfig: { thinkingLevel: "minimal" } }),
+      },
     }),
   });
 

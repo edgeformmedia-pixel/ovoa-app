@@ -201,7 +201,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", gap: 12 },
   label: { color: colors.text, fontSize: 16, fontWeight: "600" },
   dim: { color: colors.textDim, fontSize: 13, lineHeight: 18 },
-  warn: { color: "#f5c26b", fontSize: 12, lineHeight: 17 },
+  warn: { color: colors.warning, fontSize: 12, lineHeight: 17 },
   contact: { flexDirection: "row", alignItems: "center", gap: 12 },
   contactName: { color: colors.text, fontSize: 15 },
   remove: { color: colors.danger, fontSize: 13 },

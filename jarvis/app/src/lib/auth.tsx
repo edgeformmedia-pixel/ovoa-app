@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, type User } from "./api";
+import { setLogToken } from "./remoteLog";
 import { storage } from "./storage";
 
 // Storage key kept from the original app name so existing sign-ins survive.
@@ -27,6 +28,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [onboarding, setOnboarding] = useState(false);
+
+  // Server-side logs get tagged with whoever is signed in.
+  useEffect(() => setLogToken(token), [token]);
 
   const clear = useCallback(async () => {
     await storage.remove(TOKEN_KEY);

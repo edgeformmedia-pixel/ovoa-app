@@ -18,6 +18,7 @@ import { isPhoneTool, type PhoneCaps } from "./phone";
 import { isShortcutTool, shortcutAssistant, shortcutFiles } from "./shortcuts/assistant";
 import type { Env, Vars } from "./types";
 import { voice } from "./voice";
+import { logs } from "./logs";
 
 const HISTORY_TURNS = 30;
 const MAX_MEMORIES = 100;
@@ -54,6 +55,7 @@ app.get("/", (c) => c.json({ ok: true, service: "jarvis-api" }));
 
 app.route("/", googlePublic);
 app.route("/", shortcutFiles);
+app.route("/", logs);
 
 // ---------- Auth ----------
 

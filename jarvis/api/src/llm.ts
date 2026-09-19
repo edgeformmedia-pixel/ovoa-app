@@ -15,6 +15,11 @@ type Options = {
   system: string;
   turns: Turn[];
   json?: { schema: Record<string, unknown> };
+  /**
+   * Quick yes/no calls: tried on Workers AI first so they don't spend the
+   * Gemini/DeepSeek quota, and Gemini (if reached) skips most of its thinking.
+   */
+  fast?: boolean;
 };
 
 export type ToolSpec = { name: string; description: string; parameters: Record<string, unknown> };
@@ -72,7 +77,8 @@ function logFallback(from: Engine, to: Engine, err: unknown) {
 }
 
 export async function generateText(env: LlmEnv, opts: Options): Promise<string> {
-  const order = engines(env);
+  const all = engines(env);
+  const order: Engine[] = opts.fast ? ["workers", ...all.filter((e) => e !== "workers")] : all;
   for (const [i, engine] of order.entries()) {
     try {
       return engine === "gemini"

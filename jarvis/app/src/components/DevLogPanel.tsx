@@ -9,6 +9,9 @@ const KIND_COLORS: Record<LogKind, string> = {
   res: colors.success,
   err: colors.danger,
   voice: colors.textDim,
+  log: colors.textDim,
+  warn: colors.danger,
+  ble: colors.accent,
 };
 
 /** Live log of app ↔ API traffic and the voice engine, for debugging. */

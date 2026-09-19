@@ -8,6 +8,7 @@ import {
   Text,
   TextInput,
   View,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../lib/auth";
@@ -40,8 +41,7 @@ export default function SignIn() {
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.container}>
-        <View style={styles.orb} />
-        <Text style={styles.title}>OVOA</Text>
+        <Image source={require("../../assets/logo-wordmark.png")} style={styles.logo} resizeMode="contain" accessibilityLabel="OVOA" />
         <Text style={styles.subtitle}>{isSignup ? "Create your account" : "Welcome back"}</Text>
 
         {isSignup && (
@@ -113,20 +113,7 @@ export default function SignIn() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   container: { flex: 1, justifyContent: "center", paddingHorizontal: 28, gap: 12 },
-  orb: {
-    alignSelf: "center",
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 2,
-    borderColor: colors.accent,
-    backgroundColor: colors.accentDim,
-    shadowColor: colors.accent,
-    shadowOpacity: 0.8,
-    shadowRadius: 20,
-    marginBottom: 12,
-  },
-  title: { color: colors.text, fontSize: 32, fontWeight: "700", letterSpacing: 8, textAlign: "center" },
+  logo: { width: "86%", height: 110, alignSelf: "center", marginBottom: 8 },
   subtitle: { color: colors.textDim, fontSize: 16, textAlign: "center", marginBottom: 20 },
   input: {
     backgroundColor: colors.surface,

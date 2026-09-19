@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as ute from "../../modules/ute-ble";
+import { devlog } from "../lib/devlog";
 import { colors } from "../lib/theme";
 
 // Bring-up screen for the ES100 recording clip: scan, pair, and pull a file off
@@ -22,6 +23,7 @@ export default function ES100() {
   const [log, setLog] = useState<string[]>([]);
 
   const say = useCallback((line: string) => {
+    devlog("ble", line);
     setLog((prev) => [`${new Date().toLocaleTimeString()}  ${line}`, ...prev].slice(0, 80));
   }, []);
 
@@ -120,8 +122,13 @@ export default function ES100() {
       await ute.connect(device.id);
       if (connectTimer.current) clearTimeout(connectTimer.current);
       connectTimer.current = setTimeout(() => {
-        setConnecting(false);
-        sayRef.current("no connection after 20 s, tap the device again to retry");
+        // The vendor's advice for a stuck connect: drop it and try again, once.
+        sayRef.current("no connection after 20 s; retrying once");
+        ute.connect(device.id).catch((err: Error) => sayRef.current(`retry failed: ${err.message}`));
+        connectTimer.current = setTimeout(() => {
+          setConnecting(false);
+          sayRef.current("still no connection. Press the clip's button when it vibrates to accept pairing, then tap it again");
+        }, 20_000);
       }, 20_000);
     });
 

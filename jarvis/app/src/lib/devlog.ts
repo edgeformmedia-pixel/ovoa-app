@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from "react";
 
 // In-memory log of traffic between the app and the API and of what the voice
-// engine is doing, shown in the Assistant tab's Logs panel. Never leaves the phone.
+// engine is doing, shown in the Assistant tab's Logs panel. remoteLog.ts also
+// uploads it to the server (D1 table device_logs) for remote debugging.
 
-export type LogKind = "req" | "res" | "err" | "voice";
+export type LogKind = "req" | "res" | "err" | "voice" | "log" | "warn" | "ble";
 export type LogEntry = { id: number; time: number; kind: LogKind; text: string; detail?: string };
 
 const MAX_ENTRIES = 400;
@@ -12,12 +13,20 @@ const MAX_DETAIL = 1500;
 let entries: LogEntry[] = [];
 let nextId = 1;
 const listeners = new Set<() => void>();
+const entryListeners = new Set<(entry: LogEntry) => void>();
+
+/** Called with every new entry (the remote uploader). */
+export function onDevLog(fn: (entry: LogEntry) => void) {
+  entryListeners.add(fn);
+  return () => entryListeners.delete(fn);
+}
 
 export function devlog(kind: LogKind, text: string, detail?: unknown) {
   const entry: LogEntry = { id: nextId++, time: Date.now(), kind, text };
   if (detail !== undefined) entry.detail = clip(typeof detail === "string" ? detail : safeJson(detail));
   entries = [...entries.slice(-(MAX_ENTRIES - 1)), entry];
   listeners.forEach((l) => l());
+  entryListeners.forEach((l) => l(entry));
 }
 
 export function clearDevLog() {

@@ -492,7 +492,10 @@ export function useConversation(
     running.current = new Promise<void>((r) => (finished = r));
     await previous;
     backgroundAudio = background;
-    if (background) await setAudioModeAsync(audioMode(true)).catch(() => {});
+    if (background) {
+      await setAudioModeAsync(audioMode(true)).catch((err) => devlog("err", "background audio mode failed", String(err)));
+      devlog("voice", "background listening on");
+    }
 
     /** One sentence from the user, or "" if nobody spoke. */
     const hear = async (noSpeechMs: number, before = "") => {

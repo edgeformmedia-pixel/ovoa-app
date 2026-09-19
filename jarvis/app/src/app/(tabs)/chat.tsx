@@ -1,11 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { ApprovalCard } from "../../components/ApprovalCard";
 import { DevLogPanel } from "../../components/DevLogPanel";
 import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
-import { colors } from "../../lib/theme";
+import { colors, shadow } from "../../lib/theme";
 import type { VoicePhase } from "../../lib/voice";
 
 /** The assistant, by voice only. Listening itself runs in AssistantProvider. */
@@ -40,19 +40,27 @@ export default function Assistant() {
         >
           {on && (
             <View
-              style={[styles.halo, { transform: [{ scale: 1 + loudness * 0.5 }], opacity: 0.2 + loudness * 0.5 }]}
+              style={[
+                styles.halo,
+                a.phase === "speaking" && { backgroundColor: colors.success },
+                { transform: [{ scale: 1 + loudness * 0.35 }], opacity: 0.12 + loudness * 0.35 },
+              ]}
             />
           )}
-          <View style={[styles.orb, !on && styles.orbOff, a.phase === "speaking" && styles.orbSpeaking]}>
-            {a.phase === "thinking" ? (
-              <ActivityIndicator size="large" color={colors.bg} />
-            ) : (
-              <Ionicons
-                name={!on ? "mic-off" : a.phase === "speaking" ? "volume-high" : "mic"}
-                size={56}
-                color={on ? colors.bg : colors.textDim}
-              />
-            )}
+          {/* The logo's white ring is the orb; the glow behind it shows what it's doing. */}
+          <View style={[styles.orb, !on && styles.orbOff]}>
+            <Image source={require("../../../assets/orb-ring.png")} style={styles.ring} resizeMode="cover" />
+            <View style={styles.orbIcon}>
+              {a.phase === "thinking" ? (
+                <ActivityIndicator size="large" color={colors.accent} />
+              ) : (
+                <Ionicons
+                  name={!on ? "mic-off" : a.phase === "speaking" ? "volume-high" : "mic"}
+                  size={34}
+                  color={!on ? colors.textDim : a.phase === "speaking" ? colors.success : colors.accent}
+                />
+              )}
+            </View>
           </View>
         </Pressable>
         <Text style={styles.label}>{label(on, a.phase, a.status)}</Text>
@@ -128,18 +136,20 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 24 },
   orbWrap: { width: 240, height: 240, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   orbWrapSmall: { transform: [{ scale: 0.6 }], marginVertical: -60 },
-  halo: { position: "absolute", width: 170, height: 170, borderRadius: 85, backgroundColor: colors.accent },
+  halo: { position: "absolute", width: 210, height: 210, borderRadius: 105, backgroundColor: colors.accent },
   orb: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: colors.accent,
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: colors.bg,
     alignItems: "center",
     justifyContent: "center",
+    ...shadow,
   },
-  orbOff: { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1 },
-  orbSpeaking: { backgroundColor: colors.success },
-  label: { color: colors.text, fontSize: 22, fontWeight: "600" },
+  orbOff: { opacity: 0.55 },
+  ring: { position: "absolute", width: 180, height: 180, borderRadius: 90 },
+  orbIcon: { alignItems: "center", justifyContent: "center" },
+  label: { color: colors.text, fontSize: 22, fontWeight: "300", letterSpacing: 1 },
   hint: { color: colors.textDim, fontSize: 14 },
   words: { color: colors.text, fontSize: 18, lineHeight: 25, textAlign: "center", opacity: 0.85 },
   error: { color: colors.danger, textAlign: "center", marginTop: 8 },

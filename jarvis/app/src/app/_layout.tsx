@@ -2,6 +2,8 @@ import { Stack, type ErrorBoundaryProps } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { AuthProvider, useAuth } from "../lib/auth";
+import { devlog } from "../lib/devlog";
+import { startRemoteLog } from "../lib/remoteLog";
 import { colors } from "../lib/theme";
 
 // Release builds close the app on an uncaught JS error; show it instead so it can be reported.
@@ -12,6 +14,9 @@ if (errorUtils && !__DEV__) {
     Alert.alert(fatal ? "OVOA crashed" : "OVOA error", `${error?.message}\n\n${error?.stack?.slice(0, 800) ?? ""}`);
   });
 }
+
+// After the handler above, which it wraps, so errors also reach the server log.
+startRemoteLog(devlog);
 
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   return (
@@ -61,7 +66,7 @@ function RootStack() {
 export default function RootLayout() {
   return (
     <AuthProvider>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <RootStack />
     </AuthProvider>
   );

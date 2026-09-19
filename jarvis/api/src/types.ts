@@ -6,6 +6,8 @@ export type Env = {
   DEEPSEEK_API_KEY?: string;
   DEEPSEEK_MODEL: string;
   CHAT_MODEL: string;
+  /** Secret for the /debug routes; unset turns them off. */
+  DEBUG_KEY?: string;
   MEMORY_MODEL: string;
   FALLBACK_MODEL: string;
   GOOGLE_CLIENT_ID: string;
