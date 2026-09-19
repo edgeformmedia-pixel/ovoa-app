@@ -6,6 +6,7 @@ import { useSession } from "./auth";
 import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type Approval } from "./phoneActions";
 import { devlog } from "./devlog";
 import * as clip from "./clip";
+import { showIsland } from "./island";
 import { createTwistDetector, twistKind, type Sample, type TwistKind, type TwistProfiles } from "./twist";
 import {
   alwaysListenPref,
@@ -186,11 +187,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   ambientRef.current = alwaysListen;
   const twistOn = listenMode !== "wake";
   const clipPaired = clip.useClipPaired();
+  // Twist mode without Always listen: keep the mic (and the app) running so a twist works from other apps.
+  const standby = twistOn && !alwaysListen && clipPaired;
   const conversation = useConversation(token, ask, {
     interruptible: alwaysListen,
     background: alwaysListen,
-    // Twist mode without Always listen: keep the mic (and the app) running so a twist works from other apps.
-    standby: twistOn && !alwaysListen && clipPaired,
+    standby,
     name: user?.settings.assistantName || "OVOA",
   });
   const { start, end, summon, currentPhase } = conversation;
@@ -295,6 +297,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const shouldListen = held === 0 && (alwaysListen || (inForeground && !!enabled && onAssistantTab));
+
+  // Listening on or off, in the Dynamic Island: while a conversation runs, or twist standby is on.
+  // Retried when the app comes to the front (a Live Activity can only start from there).
+  const islandStatus = conversation.phase !== "off" ? conversation.phase : standby ? "off" : null;
+  useEffect(() => showIsland(islandStatus), [islandStatus, inForeground]);
 
   // A summoned turn with nothing else keeping the microphone open: close it after a quiet spell.
   useEffect(() => {

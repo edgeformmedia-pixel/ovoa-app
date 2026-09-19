@@ -1,0 +1,72 @@
+diff --git a/node_modules/expo-live-activity/ios-files/LiveActivityWidget.swift b/node_modules/expo-live-activity/ios-files/LiveActivityWidget.swift
+index 24cd8c5..9685809 100644
+--- a/node_modules/expo-live-activity/ios-files/LiveActivityWidget.swift
++++ b/node_modules/expo-live-activity/ios-files/LiveActivityWidget.swift
+@@ -79,7 +79,11 @@ struct LiveActivityWidget: Widget {
+           }
+         }
+       } compactLeading: {
+-        if let dynamicIslandImageName = context.state.dynamicIslandImageName {
++        // OVOA: "sf:<symbol>#<hex>" draws an SF Symbol in that colour instead of an asset.
++        if let spec = context.state.dynamicIslandImageName, spec.hasPrefix("sf:") {
++          symbolImage(spec)
++            .applyWidgetURL(from: context.attributes.deepLinkUrl)
++        } else if let dynamicIslandImageName = context.state.dynamicIslandImageName {
+           resizableImage(imageName: dynamicIslandImageName)
+             .frame(maxWidth: 23, maxHeight: 23)
+             .applyWidgetURL(from: context.attributes.deepLinkUrl)
+@@ -91,6 +95,14 @@ struct LiveActivityWidget: Widget {
+             timerType: context.attributes.timerType ?? .circular,
+             progressViewTint: context.attributes.progressViewTint
+           ).applyWidgetURL(from: context.attributes.deepLinkUrl)
++        } else {
++          // OVOA: no timer, so the title ("Listening", "Off") goes here.
++          Text(context.state.title)
++            .font(.system(size: 13, weight: .semibold))
++            .lineLimit(1)
++            .minimumScaleFactor(0.7)
++            .frame(maxWidth: 70)
++            .applyWidgetURL(from: context.attributes.deepLinkUrl)
+         }
+       } minimal: {
+         if let date = context.state.timerEndDateInMilliseconds {
+@@ -99,11 +111,24 @@ struct LiveActivityWidget: Widget {
+             timerType: context.attributes.timerType ?? .circular,
+             progressViewTint: context.attributes.progressViewTint
+           ).applyWidgetURL(from: context.attributes.deepLinkUrl)
++        } else if let spec = context.state.dynamicIslandImageName, spec.hasPrefix("sf:") {
++          symbolImage(spec)
++            .applyWidgetURL(from: context.attributes.deepLinkUrl)
+         }
+       }
+     }
+   }
+ 
++  // OVOA: "sf:mic.fill#34C759" -> the mic.fill symbol in green.
++  private func symbolImage(_ spec: String) -> some View {
++    let parts = spec.dropFirst(3).split(separator: "#", maxSplits: 1).map(String.init)
++    let name = parts.first ?? "mic.fill"
++    let color = parts.count > 1 ? Color(hex: parts[1]) : Color.white
++    return Image(systemName: name)
++      .font(.system(size: 15, weight: .semibold))
++      .foregroundStyle(color)
++  }
++
+   @ViewBuilder
+   private func compactTimer(
+     endDate: Double,
+diff --git a/node_modules/expo-live-activity/ios/ExpoLiveActivityModule.swift b/node_modules/expo-live-activity/ios/ExpoLiveActivityModule.swift
+index 6fdf9f5..c491044 100644
+--- a/node_modules/expo-live-activity/ios/ExpoLiveActivityModule.swift
++++ b/node_modules/expo-live-activity/ios/ExpoLiveActivityModule.swift
+@@ -214,6 +214,10 @@ public class ExpoLiveActivityModule: Module {
+       }
+ 
+       do {
++        // OVOA: one activity at a time; end any left over from an earlier launch.
++        for old in Activity<LiveActivityAttributes>.activities {
++          Task { await old.end(nil, dismissalPolicy: .immediate) }
++        }
+         let config = maybeConfig ?? LiveActivityConfig()
+ 
+         let attributes = LiveActivityAttributes(

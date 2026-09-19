@@ -63,6 +63,7 @@
           "background": false
         }
       ],
+      "expo-live-activity",
       "expo-mail-composer",
       "expo-font",
       "expo-web-browser",
