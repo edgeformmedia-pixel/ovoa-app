@@ -524,13 +524,17 @@ function motionUnavailable(why: string) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Waits for samples newer than `since`. */
-async function samplesSince(since: number, ms: number) {
+/** A source must send at least this many samples in FIRST_SAMPLES_MS: one reading isn't a stream. */
+const MIN_FIRST_SAMPLES = 5;
+
+/** Waits for a steady stream: MIN_FIRST_SAMPLES samples within `ms`. */
+async function streamStarted(ms: number) {
+  const start = state.motion.count;
   for (let waited = 0; waited < ms; waited += 100) {
-    if (lastBatchAt !== null && lastBatchAt > since) return true;
+    if (state.motion.count - start >= MIN_FIRST_SAMPLES) return true;
     await sleep(100);
   }
-  return lastBatchAt !== null && lastBatchAt > since;
+  return state.motion.count - start >= MIN_FIRST_SAMPLES;
 }
 
 /** Starts motion if someone wants it: the source that worked, or the next one to try. */
@@ -540,7 +544,6 @@ async function ensureMotion(reason: string) {
   try {
     while (sourceIndex < MOTION_SOURCES.length && motionListeners.size && state.phase === "connected") {
       const source = MOTION_SOURCES[sourceIndex];
-      const since = Date.now();
       try {
         await ute.setMotionSource(source, true);
       } catch (err) {
@@ -548,7 +551,7 @@ async function ensureMotion(reason: string) {
         sourceIndex++;
         continue;
       }
-      if (await samplesSince(since, FIRST_SAMPLES_MS)) {
+      if (await streamStarted(FIRST_SAMPLES_MS)) {
         activeSource = source;
         set({ motion: { ...state.motion, on: true, source } });
         say(`twist: motion from ${source} (${reason})`);
@@ -559,7 +562,7 @@ async function ensureMotion(reason: string) {
         }
         return;
       }
-      say(`motion: ${source} sent nothing in ${FIRST_SAMPLES_MS / 1000} s`);
+      say(`motion: ${source} sent fewer than ${MIN_FIRST_SAMPLES} samples in ${FIRST_SAMPLES_MS / 1000} s`);
       await ute.setMotionSource(source, false).catch(() => {});
       sourceIndex++;
     }

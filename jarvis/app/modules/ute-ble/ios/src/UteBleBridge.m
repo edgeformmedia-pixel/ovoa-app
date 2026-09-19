@@ -28,6 +28,8 @@ static const NSTimeInterval UteSyncStallSeconds = 15;
 @property (nonatomic, assign) BOOL linked;
 /// Polls the gyroscope while the "gyro" motion source is on (it answers one reading per request).
 @property (nonatomic, strong, nullable) NSTimer *gyroTimer;
+/// Same for the g-sensor test: on the ES100 each open answers one reading (device log, 2026-09-19).
+@property (nonatomic, strong, nullable) NSTimer *gsensorTimer;
 
 // The transfer in flight. The SDK hands data over in small pieces and sometimes stops
 // short of the end; the demo appends the pieces itself and asks again for the rest.
@@ -498,14 +500,24 @@ static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInter
     return;
   }
 
-  // Watch factory accelerometer test: range, x, y, z, speed. The command itself has no reply.
+  // Watch factory accelerometer test: range, x, y, z, speed. The command itself has no reply,
+  // and the ES100 sends one reading per open, so re-open it 10 times a second.
   if ([source isEqualToString:@"gsensor"]) {
+    [self.gsensorTimer invalidate];
+    self.gsensorTimer = nil;
     if (on) {
       [dev factoryGsensorTestBlock:^(NSInteger range, NSInteger x, NSInteger y, NSInteger z, NSInteger speed) {
         [weakSelf reportMotion:@"gsensor" samples:@[ @[ @(x), @(y), @(z), @(speed) ] ]];
       }];
+      [dev factoryOpenTestGsensor:YES];
+      self.gsensorTimer = [NSTimer scheduledTimerWithTimeInterval:0.1
+                                                          repeats:YES
+                                                            block:^(NSTimer *_Nonnull timer) {
+        [[UTEDeviceMgr sharedInstance] factoryOpenTestGsensor:YES];
+      }];
+    } else {
+      [dev factoryOpenTestGsensor:NO];
     }
-    [dev factoryOpenTestGsensor:on];
     reply(0, nil);
     return;
   }
