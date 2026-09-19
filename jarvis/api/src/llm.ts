@@ -88,8 +88,13 @@ async function safeCall(callTool: CallTool, name: string, args: Record<string, u
 const cooldownUntil = new Map<Engine, number>();
 
 function coolDown(engine: Engine, err: unknown) {
-  if (engine === "workers") return; // the last resort is always tried
   const text = String(err);
+  if (engine === "workers") {
+    // The last resort is always tried, unless its free daily allocation is used up (4006):
+    // then skip it until it resets at midnight UTC, so quick calls go to the others instead.
+    if (/4006|daily free allocation/.test(text)) cooldownUntil.set(engine, new Date().setUTCHours(24, 0, 0, 0));
+    return;
+  }
   const status = Number(/ (\d{3}):/.exec(text)?.[1] ?? 0);
   // 429: rate limited, back soon, unless the (daily) quota is used up. 401/402/403/404: key,
   // credit or model problems that won't fix themselves.
@@ -112,7 +117,15 @@ function coolDown(engine: Engine, err: unknown) {
 function engines(env: LlmEnv): Engine[] {
   const now = Date.now();
   const keyed: (Engine | false)[] = [!!env.GEMINI_API_KEY && "gemini", !!env.DEEPSEEK_API_KEY && "deepseek"];
-  return [...keyed.filter((e): e is Engine => !!e && (cooldownUntil.get(e) ?? 0) < now), "workers"];
+  const ready = [...keyed, "workers" as const].filter((e): e is Engine => !!e && (cooldownUntil.get(e) ?? 0) < now);
+  return ready.length ? ready : ["workers"];
+}
+
+/** The last engine's error, naming what the earlier ones failed with. */
+function finalError(err: unknown, failures: string[]) {
+  if (!failures.length) return err;
+  const brief = (e: unknown) => String(e instanceof Error ? e.message : e).slice(0, 200);
+  return new Error(`${brief(err)} (earlier: ${failures.join("; ")})`);
 }
 
 function logFallback(from: Engine, to: Engine, err: unknown) {
@@ -122,14 +135,19 @@ function logFallback(from: Engine, to: Engine, err: unknown) {
 
 export async function generateText(env: LlmEnv, opts: Options): Promise<string> {
   const all = engines(env);
-  const order: Engine[] = opts.fast ? ["workers", ...all.filter((e) => e !== "workers")] : all;
+  const order: Engine[] = opts.fast && all.includes("workers") ? ["workers", ...all.filter((e) => e !== "workers")] : all;
+  const failures: string[] = [];
   for (const [i, engine] of order.entries()) {
     try {
       return engine === "gemini"
         ? await geminiGenerate({ apiKey: env.GEMINI_API_KEY!, ...opts })
         : await openAiGenerate(env, engine, opts);
     } catch (err) {
-      if (i === order.length - 1) throw err;
+      if (i === order.length - 1) {
+        coolDown(engine, err);
+        throw finalError(err, failures);
+      }
+      failures.push(`${ENGINE_NAMES[engine]}: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`);
       logFallback(engine, order[i + 1], err);
     }
   }
@@ -165,7 +183,10 @@ export async function chatWithTools(
         return await geminiToolLoop(env.GEMINI_API_KEY!, { ...opts, onText }, state);
       } catch (err) {
         // Out of quota halfway through: finish the turn on Workers AI with what's been looked up.
-        if (streamed) throw err;
+        if (streamed || (cooldownUntil.get("workers") ?? 0) > Date.now()) {
+          coolDown("gemini", err);
+          throw err;
+        }
         logFallback("gemini", "workers", err);
         const messages = geminiToOpenAi(opts.system, state.contents);
         return openAiToolLoop(env, "workers", opts, { engine: "workers", round: state.round, messages, slots: [] });
@@ -187,6 +208,7 @@ export async function chatWithTools(
       }
     : undefined;
   const order = engines(env);
+  const failures: string[] = [];
   for (const [i, engine] of order.entries()) {
     try {
       const run = { ...opts, callTool: tracked, onText };
@@ -194,7 +216,11 @@ export async function chatWithTools(
         ? await geminiToolLoop(env.GEMINI_API_KEY!, run)
         : await openAiToolLoop(env, engine, run);
     } catch (err) {
-      if (committed || i === order.length - 1) throw err;
+      if (committed || i === order.length - 1) {
+        coolDown(engine, err);
+        throw finalError(err, failures);
+      }
+      failures.push(`${ENGINE_NAMES[engine]}: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`);
       logFallback(engine, order[i + 1], err);
     }
   }
