@@ -4,6 +4,7 @@ import { AppState } from "react-native";
 import { api, type ChatResponse, type PendingAction, type PhoneResult } from "./api";
 import { useSession } from "./auth";
 import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type Approval } from "./phoneActions";
+import { devlog } from "./devlog";
 import { alwaysListenPref, listeningPref, useConversation, type VoicePhase } from "./voice";
 
 // The voice assistant lives above the tabs so "Always listen" works on every
@@ -62,6 +63,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const busy = useRef(false);
   const tabRef = useRef(onAssistantTab);
   tabRef.current = onAssistantTab;
+  const ambientRef = useRef(false);
 
   useEffect(() => {
     listeningPref.get().then(setEnabled);
@@ -126,7 +128,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     // Actions from every step of the turn; shown (or auto-run) once the reply is in.
     const parked: PendingAction[] = [];
     try {
-      let res: ChatResponse = await api.send(token, text, phoneCaps, true);
+      // Always-listening hears everything, so the server first decides whether this was meant for the assistant.
+      let res: ChatResponse = await api.send(token, text, phoneCaps, true, ambientRef.current);
+      if (res.ignored) {
+        devlog("voice", "not meant for the assistant; staying quiet", text);
+        return null;
+      }
       // The assistant may pause to look things up on this phone, possibly more than once.
       while (res.paused) {
         const { turnId, calls } = res.paused;
@@ -146,7 +153,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const conversation = useConversation(token, ask, { interruptible: alwaysListen });
+  ambientRef.current = alwaysListen;
+  const conversation = useConversation(token, ask, { interruptible: alwaysListen, background: alwaysListen });
   const { start, end } = conversation;
 
   // Pick up actions waiting from Siri or an earlier session.
@@ -161,8 +169,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       .catch(() => {});
   }, [token, onAssistantTab]);
 
-  // iOS stops recording in the background. ("inactive" also fires for the
-  // microphone permission prompt, so only a real trip to the background counts.)
+  // The Assistant tab's orb stops in the background; Always listen keeps going
+  // (the app has the "audio" background mode). "inactive" also fires for the
+  // microphone permission prompt, so only a real trip to the background counts.
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "background") setInForeground(false);
@@ -171,7 +180,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     return () => sub.remove();
   }, []);
 
-  const shouldListen = inForeground && held === 0 && (alwaysListen || (!!enabled && onAssistantTab));
+  const shouldListen = held === 0 && (alwaysListen || (inForeground && !!enabled && onAssistantTab));
 
   useEffect(() => {
     if (!shouldListen) return;

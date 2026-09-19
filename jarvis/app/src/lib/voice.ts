@@ -52,6 +52,22 @@ const RECORDING: RecordingOptions = {
 const TICK_MS = 100;
 const SPEECH_START_MS = 200; // this much sound above the room's noise counts as talking
 const END_SILENCE_MS = 900; // this much quiet after talking ends the turn
+/**
+ * Always-listening keeps the audio session alive in the background (the app
+ * has the "audio" background mode), and never drops the mic while speaking,
+ * because iOS won't let a backgrounded app turn it back on.
+ */
+let backgroundAudio = false;
+
+function audioMode(allowsRecording: boolean) {
+  return {
+    allowsRecording: allowsRecording || backgroundAudio,
+    playsInSilentMode: true,
+    shouldPlayInBackground: backgroundAudio,
+    allowsBackgroundRecording: backgroundAudio,
+  };
+}
+
 const NO_SPEECH_MS = 20_000; // nobody spoke: throw the recording away and start a fresh one
 const MAX_UTTERANCE_MS = 15_000;
 const SPEECH_DB = 10; // talking is this far above the room's noise...
@@ -204,7 +220,7 @@ export function createSpeaker(token: string) {
     stop();
     const mine = generation;
     const voice = await voicePref.get();
-    await setAudioModeAsync({ allowsRecording: keepMic, playsInSilentMode: true });
+    await setAudioModeAsync(audioMode(keepMic));
     const chunks = speechChunks(text);
     // Fetch the next piece while the current one plays.
     let next = chunks.length ? fetchClip(token, chunks[0], voice) : null;
@@ -245,7 +261,7 @@ async function recordUtterance(
   onLevel: (level: number) => void,
   noSpeechMs = NO_SPEECH_MS,
 ) {
-  await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+  await setAudioModeAsync(audioMode(true));
   await recorder.prepareToRecordAsync(RECORDING);
   recorder.record();
 
@@ -421,7 +437,7 @@ const RETRY_MS = 3000;
 export function useConversation(
   token: string,
   onUserSaid: (text: string) => Promise<string | null>,
-  { interruptible = false } = {},
+  { interruptible = false, background = false } = {},
 ) {
   const recorder = useAudioRecorder(RECORDING);
   const [phase, setPhaseState] = useState<VoicePhase>("off");
@@ -475,6 +491,8 @@ export function useConversation(
     let finished = () => {};
     running.current = new Promise<void>((r) => (finished = r));
     await previous;
+    backgroundAudio = background;
+    if (background) await setAudioModeAsync(audioMode(true)).catch(() => {});
 
     /** One sentence from the user, or "" if nobody spoke. */
     const hear = async (noSpeechMs: number, before = "") => {
@@ -486,6 +504,7 @@ export function useConversation(
             onLevel: setLevel,
             noSpeechMs,
             maxMs: MAX_UTTERANCE_MS * 2,
+            keepRunning: background,
           });
           liveFailures.current = 0;
           return text;
@@ -552,9 +571,14 @@ export function useConversation(
         await sleep(RETRY_MS);
       }
     }
+    if (background) {
+      stream?.stop();
+      backgroundAudio = false;
+      await setAudioModeAsync(audioMode(false)).catch(() => {});
+    }
     finished();
     return true;
-  }, [recorder, stream, token]);
+  }, [recorder, stream, token, background]);
 
   /** While speaking: cut the reply short and listen again. */
   const interrupt = useCallback(() => speaker.current.stop(), []);

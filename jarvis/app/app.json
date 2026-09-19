@@ -68,7 +68,8 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "OVOA listens when you tap the mic so you can talk to the assistant."
+          "microphonePermission": "OVOA listens when you tap the mic, or all the time if you turn on Always listen, so you can talk to the assistant.",
+          "enableBackgroundRecording": true
         }
       ]
     ],

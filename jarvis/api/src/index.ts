@@ -9,6 +9,7 @@ import {
   sessionForToken,
   verifyPassword,
 } from "./auth";
+import { isMeantForAssistant } from "./ambient";
 import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
 import { googleAuthed, googlePublic } from "./google/oauth";
@@ -269,6 +270,8 @@ const chatSchema = z.object({
   phone: phoneCapsSchema.optional(),
   // The user is talking out loud and the reply will be read aloud.
   voice: z.boolean().optional(),
+  // Overheard by always-listening: reply only if it was said to the assistant.
+  ambient: z.boolean().optional(),
 });
 
 const resumeSchema = z.object({
@@ -398,6 +401,13 @@ authed.post("/chat", async (c) => {
   if (!parsed.success) return c.json({ error: "Message is required" }, 400);
   const db = c.env.DB;
   const userId = c.var.userId;
+  if (parsed.data.ambient) {
+    const { assistant_name } = await getSettings(db, userId);
+    if (!(await isMeantForAssistant(c.env, userId, parsed.data.message, assistant_name))) {
+      // Not for us: nothing is saved and nothing is said.
+      return c.json({ messages: [], pendingActions: [], ignored: true });
+    }
+  }
   const timeZone = validTimeZone(parsed.data.timeZone);
   await db.batch([
     // Drop turns the app never resumed; they can hold looked-up phone data.

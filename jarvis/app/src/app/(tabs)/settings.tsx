@@ -82,7 +82,7 @@ export default function Settings() {
     if (!on) return setAlwaysListen(false);
     Alert.alert(
       "Always listen?",
-      `While OVOA is open, on any screen, the microphone stays on and everything it hears goes to ${assistantName || "your assistant"}, including TV and other people. You can talk over replies to interrupt.`,
+      `The microphone stays on, even with OVOA in the background or the phone locked. Everything it hears, including TV and other people, is checked by ${assistantName || "your assistant"}, which only answers when you're talking to it. You can talk over replies to interrupt.`,
       [
         { text: "Cancel", style: "cancel" },
         { text: "Turn on", style: "destructive", onPress: () => setAlwaysListen(true) },
@@ -240,8 +240,8 @@ export default function Settings() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Always listen</Text>
             <Text style={styles.meta}>
-              The microphone stays on while the app is open, on every screen. Talk over a reply to interrupt it. iOS
-              stops it when you leave the app or lock the phone.
+              The microphone stays on, even in the background or with the phone locked. It only answers when you
+              talk to it: say its name, ask something, or reply to it. Talk over a reply to interrupt.
             </Text>
           </View>
           <Switch

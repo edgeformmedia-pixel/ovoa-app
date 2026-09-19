@@ -40,8 +40,8 @@ export type PhoneCaps = { lookups: boolean; capabilities: string[] };
 export type PhoneCall = { id: string; name: string; args: Record<string, any> };
 /** A chat turn either finishes, or pauses until the app sends lookup results to `resume`. */
 export type ChatResponse =
-  | { messages: Message[]; pendingActions: PendingAction[]; paused?: undefined }
-  | { paused: { turnId: string; calls: PhoneCall[] }; pendingActions: PendingAction[]; messages?: undefined };
+  | { messages: Message[]; pendingActions: PendingAction[]; paused?: undefined; ignored?: boolean }
+  | { paused: { turnId: string; calls: PhoneCall[] }; pendingActions: PendingAction[]; messages?: undefined; ignored?: undefined };
 /** A connected Google account. `label` is the tag the user (or the assistant) gave it. */
 export type GoogleAccount = {
   id: string;
@@ -111,11 +111,15 @@ export const api = {
   deleteAccount: (token: string) => request("/me", token, { method: "DELETE" }),
 
   messages: (token: string) => request<{ messages: Message[] }>("/chat/messages", token),
-  /** `voice`: the user spoke this and the reply will be read aloud. */
-  send: (token: string, message: string, phone: PhoneCaps, voice = false) =>
+  /**
+   * `voice`: the user spoke this and the reply will be read aloud.
+   * `ambient`: overheard by always-listening; the server replies only if it was
+   * meant for the assistant, and otherwise answers `ignored` and saves nothing.
+   */
+  send: (token: string, message: string, phone: PhoneCaps, voice = false, ambient = false) =>
     request<ChatResponse>("/chat", token, {
       method: "POST",
-      body: JSON.stringify({ message, timeZone: timeZone(), phone, voice }),
+      body: JSON.stringify({ message, timeZone: timeZone(), phone, voice, ambient }),
     }),
   resume: (token: string, turnId: string, results: Record<string, unknown>) =>
     request<ChatResponse>("/chat/resume", token, { method: "POST", body: JSON.stringify({ turnId, results }) }),

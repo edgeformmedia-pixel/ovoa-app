@@ -45,6 +45,11 @@ type ListenOptions = {
   /** Give up (return "") if nobody says anything for this long. */
   noSpeechMs: number;
   maxMs: number;
+  /**
+   * Leave the microphone running afterwards. In the background iOS suspends the
+   * app the moment audio stops, so always-listening never lets it stop.
+   */
+  keepRunning?: boolean;
 };
 
 /**
@@ -153,7 +158,7 @@ export async function listenLive(stream: AudioStream, apiToken: string, opts: Li
     });
   } finally {
     sub.remove();
-    stream.stop();
+    if (!opts.keepRunning) stream.stop();
     opts.onLevel(-160);
     if (ws) {
       const socket = ws;
