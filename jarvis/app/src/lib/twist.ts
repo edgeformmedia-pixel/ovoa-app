@@ -64,6 +64,19 @@ export function calibrate(kind: TwistKind, rest: Sample[], twists: Sample[][]): 
   return kind === "spin" ? calibrateSpin(rest, twists) : { profile: calibrateTilt(rest, twists), note: null };
 }
 
+/**
+ * Our own buzz can leave the gyroscope test off: after every twist summon's buzz (motor test, option
+ * 3) no reading came for 9 s, until the watchdog turned it on again (device_logs 2421-2512). So after
+ * a buzz the test is turned on once more, `afterMs` from the buzz's start: always for the factory
+ * buzzes (2, 3), about half a second after the motor stops; for "find my device" (1) only when no
+ * reading has come by then.
+ */
+export function motionAfterBuzz(option: 1 | 2 | 3, count: number): { afterMs: number; always: boolean } {
+  // The bridge turns the motor (or find-my-device) off 0.25 s per pulse after turning it on.
+  const buzzMs = 250 * Math.max(1, count);
+  return option === 1 ? { afterMs: Math.max(2500, buzzMs + 1500), always: false } : { afterMs: buzzMs + 500, always: true };
+}
+
 /** Streaming detector: feed it every reading, in order. Calls onTwist, with what it saw, when a twist shows. */
 export function createTwistDetector(profile: TwistProfile, onTwist: (why: string) => void): (s: Sample) => void {
   return profile.kind === "spin" ? spinDetector(profile, onTwist) : tiltDetector(profile, onTwist);

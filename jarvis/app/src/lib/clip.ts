@@ -4,7 +4,7 @@ import * as ute from "../../modules/ute-ble";
 import { devlog } from "./devlog";
 import { addRecording, hasClipSession } from "./recordings";
 import { storage } from "./storage";
-import { gyroLive, spinOf, spreadBatch, twistKind, type Sample } from "./twist";
+import { gyroLive, motionAfterBuzz, spinOf, spreadBatch, twistKind, type Sample } from "./twist";
 
 // The ES100 clip, shared by the Record tab and the ES100 debug screen: one
 // connection, remembered and re-established on its own, plus recording and
@@ -643,6 +643,10 @@ function onMotionBatch(source: ute.MotionSource, samples: ute.MotionSample[]) {
     lastLiveAt = now;
     liveCount += live.length;
     rearms = 0;
+    if (buzzedAt) {
+      say(`twist: motion back ${now - buzzedAt} ms after the buzz`);
+      buzzedAt = 0;
+    }
   }
   const last = samples[samples.length - 1] ?? null;
   set({ motion: { ...state.motion, last, count: state.motion.count + samples.length, source } });
@@ -799,6 +803,7 @@ async function stopMotion() {
   const source = activeSource;
   activeSource = null;
   pausedForBusy = null;
+  buzzedAt = 0;
   set({ motion: { ...state.motion, on: false } });
   if (source && state.phase === "connected") {
     await ute.setMotionSource(source, false).catch(() => {});
@@ -875,6 +880,7 @@ function resetMotion() {
   lastBatchAt = null;
   lastLiveAt = 0;
   armedAt = 0;
+  buzzedAt = 0;
   rearms = 0;
   failures = 0;
   blocked = false;
@@ -994,9 +1000,35 @@ export function setBuzzOption(option: BuzzOption) {
   storage.set(BUZZ_OPTION, String(option)).catch(() => {});
 }
 
+let afterBuzz: ReturnType<typeof setTimeout> | null = null;
+/** When the last buzz started, until a live reading comes: how long it left twist blind goes in the log. */
+let buzzedAt = 0;
+
+/** A buzz can leave the gyroscope test off, so it's turned on once more afterwards (see motionAfterBuzz). */
+function keepMotionThroughBuzz(option: BuzzOption, count: number) {
+  const source = activeSource;
+  if (!source || twistKind(source) !== "spin" || !motionWanted()) return;
+  const started = Date.now();
+  buzzedAt = started;
+  // Restart the watchdog's silence clock so it doesn't turn the source on too, and this isn't a re-arm.
+  armedAt = started;
+  const { afterMs, always } = motionAfterBuzz(option, count);
+  // A second buzz meanwhile replaces the first one's turn-on: never more than one per buzz.
+  if (afterBuzz) clearTimeout(afterBuzz);
+  afterBuzz = setTimeout(() => {
+    afterBuzz = null;
+    if (activeSource !== source || !motionWanted() || motionStarting || clipBusy()) return;
+    if (!always && lastLiveAt > started) return;
+    armedAt = Date.now();
+    say(`twist: turning ${source} on again after buzz option ${option}`);
+    ute.setMotionSource(source, true, intervalFor(source)).catch((err) => say(`motion: ${source} failed — ${message(err)}`));
+  }, afterMs);
+}
+
 /** Vibrates the clip. Never throws: a missing buzz shouldn't break listening. */
 export async function buzz(count = 1, option: BuzzOption = buzzOption) {
   if (state.phase !== "connected") return false;
+  keepMotionThroughBuzz(option, count);
   try {
     await ute.buzz(count, option);
     say(`buzz option ${option} fired (×${count})`);

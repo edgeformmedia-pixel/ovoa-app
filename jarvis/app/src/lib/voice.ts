@@ -850,7 +850,10 @@ export function useConversation(
     return Promise.resolve(true);
   }, [start]);
 
-  return { phase, level, error, setError, words, start, end, interrupt, summon };
+  /** The phase right now (the state can be a render behind). */
+  const currentPhase = useCallback(() => phaseRef.current, []);
+
+  return { phase, currentPhase, level, error, setError, words, start, end, interrupt, summon };
 }
 
 /** After a twist, how long speech counts as addressed without the name. */

@@ -189,7 +189,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     background: alwaysListen,
     name: user?.settings.assistantName || "OVOA",
   });
-  const { start, end, summon } = conversation;
+  const { start, end, summon, currentPhase } = conversation;
 
   // --- Twist to listen (ES100) -------------------------------------------------
   // A twist, or the clip's button when the clip has no motion data, starts an
@@ -199,13 +199,20 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const summonedOpen = useRef(false);
 
   const onSummon = useCallback(
-    (source: string) => {
+    (source: string, kind: "twist" | "button") => {
+      const phase = currentPhase();
+      // A twist is easy to make by accident (a gesture while it talks), so it never cuts off a reply
+      // or stacks on a question being answered. The clip's button is pressed on purpose: it still does.
+      if (kind === "twist" && (phase === "thinking" || phase === "speaking")) {
+        devlog("voice", `twist: ignored (phase ${phase})`, source);
+        return;
+      }
       devlog("voice", `twist: summoned by ${source}`);
       clip.buzz(1);
-      if (conversation.phase === "off") summonedOpen.current = true;
+      if (phase === "off") summonedOpen.current = true;
       summon();
     },
-    [summon, conversation.phase],
+    [summon, currentPhase],
   );
   const onSummonRef = useRef(onSummon);
   onSummonRef.current = onSummon;
@@ -235,7 +242,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       }
       let detect = detectors.get(kind);
       if (!detect) {
-        detect = createTwistDetector(profile, (why) => onSummonRef.current(`twist (${why})`));
+        detect = createTwistDetector(profile, (why) => onSummonRef.current(`twist (${why})`, "twist"));
         detectors.set(kind, detect);
       }
       return detect;
@@ -251,7 +258,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     const offButton = clip.onClipButton((source) => {
       const kind = twistKind(clip.getClipState().motion.source);
       if (clip.motionLive() && kind && profiles[kind]) return false;
-      onSummonRef.current(`clip button (${source})`);
+      onSummonRef.current(`clip button (${source})`, "button");
       return true;
     });
     return () => {

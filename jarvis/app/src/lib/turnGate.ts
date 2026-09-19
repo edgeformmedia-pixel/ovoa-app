@@ -109,6 +109,26 @@ export function saidOverReply(heard: string, reply: string) {
   return fresh.length >= MIN_NEW_WORDS && fresh.length / said.length >= MIN_NEW_SHARE ? heard : "";
 }
 
+/** A heard sentence this long, made almost only of the reply's words, is the reply's echo. */
+const ECHO_SENTENCE_WORDS = 3;
+const ECHO_SHARE = 0.8;
+
+/**
+ * Leaves out the sentences that are the reply's echo. Transcription can join the user's words and
+ * the echo into one request: "Like I'm thirty. Besides money too. What can I help you with? OVOA."
+ * (device_logs 2465, after the reply "I'm listening! What can I help you with?").
+ */
+export function withoutEcho(heard: string, reply: string) {
+  if (!reply) return heard;
+  const replyWords = new Set(wordsOf(reply));
+  const kept = sentencesOf(heard).filter((sentence) => {
+    const words = wordsOf(sentence);
+    if (words.length < ECHO_SENTENCE_WORDS) return true;
+    return words.filter((w) => replyWords.has(w)).length / words.length < ECHO_SHARE;
+  });
+  return kept.join(" ");
+}
+
 export type Turn = {
   text: string;
   /** The name was said, so there's no need to ask the server whether it was meant for the assistant. */
@@ -186,7 +206,7 @@ export class TurnGate {
 
     if (this.phase === "speaking") {
       if (this.pending) {
-        this.add(text, now);
+        this.add(withoutEcho(text, this.reply), now);
         return null;
       }
       if (!this.talkOver) return null;
@@ -211,12 +231,17 @@ export class TurnGate {
       return { kind: "interrupt", stopOnly: false };
     }
 
+    if (now < this.echoUntil) {
+      // The echo arrives late, and may come joined to what the user said.
+      const rest = withoutEcho(text, this.reply);
+      if (!rest || (!this.pending && !saysName(rest, this.name) && !saidOverReply(rest, this.reply))) {
+        return { kind: "ignored", text, why: "the reply's own echo" };
+      }
+      text = rest;
+    }
     if (this.pending) {
       this.add(text, now);
       return this.check(sentenceEnd);
-    }
-    if (now < this.echoUntil && !saysName(text, this.name) && !saidOverReply(text, this.reply)) {
-      return { kind: "ignored", text, why: "the reply's own echo" };
     }
     if (!this.room) {
       this.start(text, false, now);
@@ -267,7 +292,8 @@ export class TurnGate {
   }
 
   private add(text: string, now: number) {
-    if (!this.pending) return;
+    // Nothing left once the echo is taken out: it doesn't keep the request open either.
+    if (!this.pending || !text) return;
     this.pending.text = `${this.pending.text} ${text}`.trim();
     this.pending.lastAt = now;
   }
