@@ -46,6 +46,20 @@ export default function ES100() {
           setConnecting(false);
           if (connectTimer.current) clearTimeout(connectTimer.current);
         }
+        // CoreBluetooth 14/15: iOS kept pairing keys the clip has since deleted. Only the
+        // user can clear them (the SDK says: forget the device in iOS Bluetooth settings).
+        if (/\(CB 1[45]\)/.test(change.error ?? "")) {
+          if (connectTimer.current) clearTimeout(connectTimer.current);
+          sayRef.current("iPhone's saved pairing with the clip is out of date; it must be forgotten in Settings");
+          Alert.alert(
+            "Forget the ES100 in Bluetooth settings",
+            "Your iPhone still has an old pairing for the clip, which the clip has deleted, so iOS refuses to connect.\n\n" +
+              "1. Open Settings → Bluetooth.\n" +
+              "2. Tap the ⓘ next to ES100 → Forget This Device.\n" +
+              "3. Come back, Scan, and tap ES100.\n" +
+              "4. Accept the iPhone's pairing pop-up, then press the clip's button when it vibrates.",
+          );
+        }
         if (!change.connected) return setDevice(null);
         ute
           .connectedDevice()

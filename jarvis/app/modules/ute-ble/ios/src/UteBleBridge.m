@@ -57,7 +57,7 @@ static NSString *UteString(NSString *_Nullable value) {
 }
 
 - (void)startScan {
-  [self.discovered removeAllObjects];
+  // Keep earlier results: a retry may reconnect to a device found by a previous scan.
   [[self mgr] startScanDevices];
 }
 
@@ -125,7 +125,9 @@ static NSString *UteString(NSString *_Nullable value) {
 - (void)uteDevicesStatus:(UTEDevicesStatus)status error:(NSError *)error userInfo:(NSDictionary *)info {
   if (status != UTEDevicesStatusConnecting) self.connecting = NO;
   void (^handler)(NSInteger, BOOL, NSString *_Nullable) = self.onConnectionChange;
-  if (handler) handler(status, status == UTEDevicesStatusConnected, error.localizedDescription);
+  // The CoreBluetooth code matters: 14/15 mean the iPhone's saved pairing for the clip is stale.
+  NSString *message = error ? [NSString stringWithFormat:@"%@ (CB %ld)", error.localizedDescription, (long)error.code] : nil;
+  if (handler) handler(status, status == UTEDevicesStatusConnected, message);
   if (status == UTEDevicesStatusConnected) [self handshake];
 }
 
