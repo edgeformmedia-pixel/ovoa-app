@@ -308,6 +308,20 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer);
   }, [shouldListen, conversation.phase, conversation.words, end]);
 
+  // One question per twist: once a summoned turn has been answered (or failed), close listening.
+  // Left open, talk nearby kept it open and every sentence went to the assistant (device_logs
+  // 3229-3244), until the model quota ran out.
+  const lastPhase = useRef(conversation.phase);
+  useEffect(() => {
+    const was = lastPhase.current;
+    lastPhase.current = conversation.phase;
+    if (!summonedOpen.current || shouldListen || conversation.phase !== "listening") return;
+    if (was !== "thinking" && was !== "speaking") return;
+    devlog("voice", "twist: answered; closing the microphone");
+    summonedOpen.current = false;
+    end();
+  }, [conversation.phase, shouldListen, end]);
+
   useEffect(() => {
     if (!shouldListen) return;
     start().then((ok) => {
