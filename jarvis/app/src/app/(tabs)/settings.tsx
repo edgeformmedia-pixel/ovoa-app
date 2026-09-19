@@ -317,7 +317,7 @@ const LISTEN_MODES = [
   {
     mode: "twist",
     label: "Shake",
-    hint: "With the ES100 on, shake your wrist back and forth for 2-3 seconds; it buzzes and listens for one question. The microphone stays off until then. Until the shake is calibrated, or while the clip sends no motion, its button does the same.",
+    hint: "With the ES100 on, shake your wrist hard, back and forth, for about 4 seconds; it buzzes and listens for one question. The microphone stays off until then. Until the shake is calibrated, or while the clip sends no motion, its button does the same.",
   },
   { mode: "both", label: "Both", hint: "Always listen for the name, and a shake also gets its attention." },
 ] as const;

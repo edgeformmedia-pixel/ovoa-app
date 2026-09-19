@@ -8,8 +8,8 @@ import type { MotionSource } from "../../modules/ute-ble";
 // calibrated on the user's own twist:
 // - spin (gyroscope, "gyro3"): how fast the wrist turns, |x| + |y| + |z|. The axes saturate on
 //   quick moves, so any brisk arm movement reads about as high as a twist; what sets a shake apart
-//   is how long it lasts. The user rocks the wrist back and forth for 2-3 s: three quick readings
-//   out of four in a row fire. A gesture or arm swing gives one.
+//   is how long it lasts. The user rocks the wrist back and forth for about 4 s: four quick readings
+//   out of five in a row fire. A gesture or arm swing is over sooner.
 // - tilt (accelerometer, "gsensor…"): how far the wrist has turned from where it rested, read off
 //   the gravity vector, around the axis calibration saw the twist turn it (the forearm). A turned
 //   wrist stays visible between slow readings. Used only if the accelerometer can be read often.
@@ -19,7 +19,7 @@ export type Sample = { t: number; v: number[] };
 export type TwistKind = "spin" | "tilt";
 
 /**
- * Gyroscope: three of four readings in a row at `active` or more (never under SHAKE_FLOOR) fire.
+ * Gyroscope: four of five readings in a row at `active` or more (never under SHAKE_FLOOR) fire.
  * `quiet` is what a still wrist reads.
  */
 export type SpinProfile = { kind: "spin"; quiet: number; active: number };
@@ -109,11 +109,14 @@ export function readProfiles(value: unknown): TwistProfiles {
  * A shake spans several readings: SHAKE_HITS of the last SHAKE_OF readings are quick, all within
  * SHAKE_MS. Everyday movement gives a single spike, rarely three in a row.
  */
-const SHAKE_HITS = 3;
-const SHAKE_OF = 4;
-const SHAKE_MS = 4000;
-/** "Quick" is never below this, whatever calibration saw: arm swings and gestures reach ~100. */
-const SHAKE_FLOOR = 130;
+const SHAKE_HITS = 4;
+const SHAKE_OF = 5;
+const SHAKE_MS = 5500;
+/**
+ * "Quick" is never below this, whatever calibration saw. At 3 of 4 readings of 130+ every ordinary
+ * wrist movement fired (build 33: normal movement reads 270-350), so a shake is now longer and harder.
+ */
+const SHAKE_FLOOR = 220;
 /** After firing, readings are ignored this long: the user is still finishing the shake. */
 const SPIN_REFRACTORY_MS = 4000;
 /** A still wrist read under about 50 (probe, 2026-09-19); "still" is set from the user's rest, within these bounds. */

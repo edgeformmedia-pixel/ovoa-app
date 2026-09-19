@@ -460,7 +460,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Before resting: time to put the phone down (or in the other hand) and let the arm settle. */
 const SETTLE_S = 3;
 const REST_MS = 5000;
-const TWIST_MS = 4000;
+const TWIST_MS = 5000;
 /** Readings this soon after the cue are left out of a twist: the user hasn't started yet. */
 const REACTION_MS = 700;
 const TWISTS = 3;
@@ -533,7 +533,7 @@ function TwistCalibration({ connected, problem }: { connected: boolean; problem:
         setStep(`Hold still… (${i}/${TWISTS})`);
         await wait(2000);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        setStep(`Shake your wrist back and forth now! (${i}/${TWISTS})`);
+        setStep(`Shake your wrist hard, back and forth, now! (${i}/${TWISTS})`);
         await wait(REACTION_MS);
         bucket = [];
         await wait(TWIST_MS - REACTION_MS);
