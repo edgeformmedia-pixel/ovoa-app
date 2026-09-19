@@ -189,8 +189,18 @@ export type SensorSupport = { accelerometer: boolean; gyroscope: boolean; button
 
 export type GyroReading = { range: number; x: number; y: number; z: number };
 
-/** One motion-stream sample: [x, y, speed, xThrow, yThrow, speedThrow]. Units unknown (vendor gives none). */
-export type MotionSample = [number, number, number, number, number, number];
+/**
+ * Where motion comes from. "game": the motion-sensing game stream; "wear6"/"wear3": the
+ * wearables' factory accelerometer; "gsensor": the watch factory accelerometer test;
+ * "gyro": the gyroscope, polled.
+ */
+export type MotionSource = "game" | "wear6" | "wear3" | "gsensor" | "gyro";
+
+/**
+ * One motion sample. game: [x, y, speed, xThrow, yThrow, speedThrow]; wear6: [x, y, z, angle];
+ * wear3/gyro: [x, y, z]; gsensor: [x, y, z, speed]. Units unknown (the vendor gives none).
+ */
+export type MotionSample = number[];
 
 export type UteBleEvents = {
   onDeviceFound: (device: UteDevice) => void;
@@ -204,7 +214,7 @@ export type UteBleEvents = {
   /** iOS only: battery changes and the voice button. */
   onInput: (event: InputEvent) => void;
   /** iOS only: batches from the motion stream, while it is on. */
-  onMotion: (event: { samples: MotionSample[] }) => void;
+  onMotion: (event: { source: MotionSource; samples: MotionSample[] }) => void;
   /** iOS only: vendor SDK log lines while a connect is in flight. */
   onLog: (event: { message: string }) => void;
 };

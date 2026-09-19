@@ -26,6 +26,8 @@ static const NSTimeInterval UteSyncStallSeconds = 15;
 /// Set only by a real "connected" status from the SDK. `connectStatus` can't be trusted on its own:
 /// it starts at 0, which is UTEDevicesStatusConnected, so a fresh launch looked connected.
 @property (nonatomic, assign) BOOL linked;
+/// Polls the gyroscope while the "gyro" motion source is on (it answers one reading per request).
+@property (nonatomic, strong, nullable) NSTimer *gyroTimer;
 
 // The transfer in flight. The SDK hands data over in small pieces and sometimes stops
 // short of the end; the demo appends the pieces itself and asks again for the rest.
@@ -432,15 +434,12 @@ static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInter
   if (on) {
     __weak UteBleBridge *weakSelf = self;
     [game onNotifyGameOperateBlock:^(NSInteger errorCode, NSArray<UTEModelGameOperate *> *arrayModels) {
-      void (^handler)(NSArray<NSArray<NSNumber *> *> *) = weakSelf.onMotion;
-      if (!handler || UteNormalize(errorCode) != 0 || !arrayModels.count) return;
+      if (UteNormalize(errorCode) != 0 || !arrayModels.count) return;
       NSMutableArray<NSArray<NSNumber *> *> *samples = [NSMutableArray arrayWithCapacity:arrayModels.count];
       for (UTEModelGameOperate *m in arrayModels) {
         [samples addObject:@[ @(m.x), @(m.y), @(m.Speed), @(m.X_Throw), @(m.Y_Throw), @(m.Speed_Throw) ]];
       }
-      dispatch_async(dispatch_get_main_queue(), ^{
-        handler(samples);
-      });
+      [weakSelf reportMotion:@"game" samples:samples];
     }];
   }
   // 1 start, 0 stop. Firmware without the game stream may never answer, so time out (408).
@@ -449,6 +448,96 @@ static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInter
   }, 4);
   [game sendGameStatus:on ? 1 : 0 Block:^(NSInteger errorCode) {
     reply(UteNormalize(errorCode), nil);
+  }];
+}
+
+- (void)reportMotion:(NSString *)source samples:(NSArray<NSArray<NSNumber *> *> *)samples {
+  void (^handler)(NSString *, NSArray<NSArray<NSNumber *> *> *) = self.onMotion;
+  if (!handler || !samples.count) return;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    handler(source, samples);
+  });
+}
+
+/// The ES100 ignored the game stream (sendGameStatus never answered, 2026-09-19), so
+/// these are the other ways the SDK exposes motion. Which of them the clip supports is
+/// unknown; the app tries them in turn and keeps the first that delivers samples.
+- (void)setMotionSource:(NSString *)source on:(BOOL)on completion:(void (^)(NSInteger errorCode))completion {
+  if ([source isEqualToString:@"game"]) {
+    [self setMotionStream:on completion:completion];
+    return;
+  }
+  UteBleResultCallback reply = UteOnce(^(NSInteger errorCode, NSDictionary<NSString *, id> *_Nullable result) {
+    completion(errorCode);
+  }, 4);
+  __weak UteBleBridge *weakSelf = self;
+  UTEDeviceMgr *dev = [UTEDeviceMgr sharedInstance];
+
+  // Wearables (glasses/earbuds) factory accelerometer: 6-axis (angle, x, y, z) or 3-axis.
+  if ([source isEqualToString:@"wear6"] || [source isEqualToString:@"wear3"]) {
+    UTEMgrWear *wear = dev.wear;
+    BOOL six = [source isEqualToString:@"wear6"];
+    if (on && six) {
+      [wear onNotifyFactoryGsensor6:^(NSInteger angle, NSInteger x, NSInteger y, NSInteger z) {
+        [weakSelf reportMotion:@"wear6" samples:@[ @[ @(x), @(y), @(z), @(angle) ] ]];
+      }];
+    } else if (on) {
+      [wear onNotifyFactoryGsensor3:^(NSInteger x, NSInteger y, NSInteger z) {
+        [weakSelf reportMotion:@"wear3" samples:@[ @[ @(x), @(y), @(z) ] ]];
+      }];
+    }
+    void (^done)(BOOL, UTEDeviceError) = ^(BOOL success, UTEDeviceError errorCode) {
+      NSInteger code = UteNormalize(errorCode);
+      reply(success ? 0 : (code != 0 ? code : -2), nil);
+    };
+    if (six) {
+      [wear factoryGsensor6:on block:done];
+    } else {
+      [wear factoryGsensor3:on block:done];
+    }
+    return;
+  }
+
+  // Watch factory accelerometer test: range, x, y, z, speed. The command itself has no reply.
+  if ([source isEqualToString:@"gsensor"]) {
+    if (on) {
+      [dev factoryGsensorTestBlock:^(NSInteger range, NSInteger x, NSInteger y, NSInteger z, NSInteger speed) {
+        [weakSelf reportMotion:@"gsensor" samples:@[ @[ @(x), @(y), @(z), @(speed) ] ]];
+      }];
+    }
+    [dev factoryOpenTestGsensor:on];
+    reply(0, nil);
+    return;
+  }
+
+  // Gyroscope: one reading per request, so ask 20 times a second.
+  if ([source isEqualToString:@"gyro"]) {
+    [self.gyroTimer invalidate];
+    self.gyroTimer = nil;
+    if (on) {
+      self.gyroTimer = [NSTimer scheduledTimerWithTimeInterval:0.05
+                                                       repeats:YES
+                                                         block:^(NSTimer *_Nonnull timer) {
+        [[UTEDeviceMgr sharedInstance] factoryReadGyroData:^(NSInteger range, NSInteger x, NSInteger y, NSInteger z) {
+          [weakSelf reportMotion:@"gyro" samples:@[ @[ @(x), @(y), @(z) ] ]];
+        }];
+      }];
+    }
+    reply(0, nil);
+    return;
+  }
+
+  reply(-600, nil);
+}
+
+- (void)probeWearFunctions:(UteBleResultCallback)completion {
+  UteBleResultCallback reply = UteOnce(completion, 4);
+  [[UTEDeviceMgr sharedInstance].wear factoryReadFunction:^(NSArray<UTEWearFunctionModel *> *array, UTEDeviceError errorCode) {
+    NSMutableArray<NSDictionary *> *functions = [NSMutableArray array];
+    for (UTEWearFunctionModel *m in array) {
+      [functions addObject:@{@"type" : @(m.type), @"value" : @(m.value)}];
+    }
+    reply(UteNormalize(errorCode), @{@"functions" : functions});
   }];
 }
 

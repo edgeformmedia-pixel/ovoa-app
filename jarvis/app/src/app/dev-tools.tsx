@@ -334,11 +334,8 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
         <Row label="gyroscope (firmware)" value={yesNo(state.sensors?.gyroscope)} />
         <Row label="motion-stream flag (hasGame)" value={yesNo(state.capabilities?.hasGame)} />
         <Row label="gyro x / y / z" value={state.gyro ? `${state.gyro.x} / ${state.gyro.y} / ${state.gyro.z}` : "—"} mono />
-        <Row
-          label="stream x / y / speed"
-          value={state.motion.last ? `${state.motion.last[0]} / ${state.motion.last[1]} / ${state.motion.last[2]}` : "—"}
-          mono
-        />
+        <Row label="motion source" value={state.motion.source ?? (state.motionProblem ? "none found" : "—")} />
+        <Row label="last sample" value={state.motion.last ? state.motion.last.join(" / ") : "—"} mono />
         <Row label="stream samples" value={String(state.motion.count)} mono />
         <View style={styles.row}>
           <Pressable
@@ -445,12 +442,22 @@ function TwistCalibration({ connected, problem }: { connected: boolean; problem:
 
   const run = async () => {
     let bucket: Sample[] = [];
+    if (!clip.getClipState().motion.on) clip.retryMotion();
     const off = clip.subscribeMotion((samples) => bucket.push(...samples));
     twistProfilePref.calibrating = true;
     setResult(null);
     try {
-      setStep("Getting the motion stream going…");
-      await wait(2000);
+      // Up to five sources are tried, a few seconds each, until one sends data.
+      setStep("Finding the clip's motion sensor…");
+      for (let waited = 0; !clip.getClipState().motion.on && waited < 25_000; waited += 500) {
+        if (clip.getClipState().motionProblem) break;
+        await wait(500);
+      }
+      if (!clip.getClipState().motion.on) {
+        throw new Error(clip.getClipState().motionProblem ?? "The clip sent no motion data.");
+      }
+      setStep(`Using ${clip.getClipState().motion.source}. Hold still…`);
+      await wait(1000);
       setStep("Hold your wrist still…");
       bucket = [];
       await wait(3000);

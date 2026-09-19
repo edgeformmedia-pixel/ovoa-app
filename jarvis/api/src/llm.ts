@@ -89,9 +89,18 @@ const cooldownUntil = new Map<Engine, number>();
 
 function coolDown(engine: Engine, err: unknown) {
   if (engine === "workers") return; // the last resort is always tried
-  const status = Number(/ (\d{3}):/.exec(String(err))?.[1] ?? 0);
-  // 429: rate limited, back soon. 401/402/403/404: key, credit or model problems that won't fix themselves.
-  const ms = status === 429 ? 60_000 : [401, 402, 403, 404].includes(status) ? 10 * 60_000 : 15_000;
+  const text = String(err);
+  const status = Number(/ (\d{3}):/.exec(text)?.[1] ?? 0);
+  // 429: rate limited, back soon, unless the (daily) quota is used up. 401/402/403/404: key,
+  // credit or model problems that won't fix themselves.
+  const ms =
+    status === 429
+      ? /quota/i.test(text)
+        ? 30 * 60_000
+        : 60_000
+      : [401, 402, 403, 404].includes(status)
+        ? 10 * 60_000
+        : 15_000;
   cooldownUntil.set(engine, Date.now() + ms);
 }
 
@@ -144,7 +153,23 @@ export async function chatWithTools(
       for (const slot of state.slots) {
         last.parts[slot.part].functionResponse.response = geminiResponse(result(slot.id));
       }
-      return geminiToolLoop(env.GEMINI_API_KEY!, opts, state);
+      let streamed = false;
+      const onText: OnText | undefined = opts.onText
+        ? (delta) => {
+            streamed = true;
+            return opts.onText!(delta);
+          }
+        : undefined;
+      try {
+        if ((cooldownUntil.get("gemini") ?? 0) > Date.now()) throw new Error("Gemini is cooling down");
+        return await geminiToolLoop(env.GEMINI_API_KEY!, { ...opts, onText }, state);
+      } catch (err) {
+        // Out of quota halfway through: finish the turn on Workers AI with what's been looked up.
+        if (streamed) throw err;
+        logFallback("gemini", "workers", err);
+        const messages = geminiToOpenAi(opts.system, state.contents);
+        return openAiToolLoop(env, "workers", opts, { engine: "workers", round: state.round, messages, slots: [] });
+      }
     }
     for (const slot of state.slots) state.messages[slot.index].content = toolResultText(result(slot.id));
     return openAiToolLoop(env, state.engine, opts, state);
@@ -302,6 +327,37 @@ async function geminiToolLoop(
     }
   }
   throw new Error("Too many tool rounds");
+}
+
+/** A Gemini conversation (with its tool calls and results) as OpenAI-style messages. */
+function geminiToOpenAi(system: string, contents: any[]): any[] {
+  const messages: any[] = [{ role: "system", content: system }];
+  let callCount = 0;
+  const pending: string[] = []; // ids of calls waiting for their results, in order
+  for (const content of contents) {
+    const parts: any[] = content.parts ?? [];
+    const text = parts
+      .filter((p) => p.text && !p.thought)
+      .map((p) => p.text)
+      .join("");
+    const calls = parts.filter((p) => p.functionCall);
+    const results = parts.filter((p) => p.functionResponse);
+    if (content.role === "model") {
+      const toolCalls = calls.map((p) => {
+        const id = `call_${callCount++}`;
+        pending.push(id);
+        return { id, type: "function", function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args ?? {}) } };
+      });
+      messages.push({ role: "assistant", content: text, ...(toolCalls.length && { tool_calls: toolCalls }) });
+    } else if (results.length) {
+      for (const p of results) {
+        messages.push({ role: "tool", tool_call_id: pending.shift() ?? `call_${callCount++}`, content: toolResultText(p.functionResponse.response) });
+      }
+    } else {
+      messages.push({ role: "user", content: text });
+    }
+  }
+  return messages;
 }
 
 // ---------- OpenAI-style engines (DeepSeek, Workers AI) ----------

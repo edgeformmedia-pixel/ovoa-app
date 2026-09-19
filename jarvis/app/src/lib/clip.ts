@@ -34,7 +34,7 @@ export type ClipState = {
   formats: ute.EncodingFormat[] | null;
   sensors: ute.SensorSupport | null;
   gyro: ute.GyroReading | null;
-  motion: { on: boolean; last: ute.MotionSample | null; count: number };
+  motion: { on: boolean; last: ute.MotionSample | null; count: number; source?: ute.MotionSource };
   /** Why twist-to-listen can't get motion data from this clip (it falls back to the button), or null. */
   motionProblem: string | null;
   /** Things the clip reported on its own, newest first. */
@@ -172,13 +172,13 @@ function ensureStarted() {
 
   ute.addListener("onRecordStart", (event) => {
     say(`recording started (${event.startedByDevice ? "clip button" : "app"}) #${event.sessionId}`);
-    if (event.startedByDevice) {
-      noteInput("Clip button", "started recording");
-      buttonListeners.forEach((l) => l("record"));
-    }
     set({
       recording: { sessionId: event.sessionId, startedAt: Date.now(), paused: false, byDevice: event.startedByDevice },
     });
+    if (event.startedByDevice) {
+      noteInput("Clip button", "started recording");
+      if (pressUsed("record")) discardButtonRecording(event.sessionId);
+    }
   });
 
   ute.addListener("onRecordStop", (event) => {
@@ -192,7 +192,7 @@ function ensureStarted() {
     }
   });
 
-  ute.addListener("onMotion", ({ samples }) => onMotionBatch(samples));
+  ute.addListener("onMotion", ({ source, samples }) => onMotionBatch(source ?? "game", samples));
 
   ute.addListener("onSyncProgress", (p) => set({ download: { sessionId: p.sessionId, received: p.received, total: p.total } }));
 
@@ -211,7 +211,7 @@ function ensureStarted() {
       const names = ["", "entered voice mode", "voice recording started", "voice recording stopped", "left voice mode", "asks to open the app", "recognition failed", "recognition ok"];
       noteInput("Voice button", names[input.value] ?? `state ${input.value}`);
       // 1 entered voice mode / 2 voice recording started: the user pressed the button to talk.
-      if (input.value === 1 || input.value === 2) buttonListeners.forEach((l) => l("voiceButton"));
+      if (input.value === 1 || input.value === 2) pressUsed("voiceButton");
     } else {
       noteInput("Voice audio", `${input.value} bytes (${input.detail ?? ""})`);
     }
@@ -264,6 +264,7 @@ async function onConnected() {
   const device = await ute.connectedDevice().catch(() => null);
   // A new connection: read what this clip supports again, and give motion another try.
   set({ phase: "connected", device, problem: null, capabilities: null, sensors: null, motionProblem: null });
+  resetMotion();
   say(`connected to ${device?.name || "clip"}`);
   if (device?.id) {
     await storage.set(SAVED_DEVICE, device.id).catch(() => {});
@@ -379,7 +380,7 @@ export async function disconnect() {
   userDisconnected = true;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   clearConnectTimer();
-  if (state.motion.on) await ute.setMotionStream(false).catch(() => {});
+  if (state.motion.on) await stopMotion();
   await ute.disconnect().catch(() => {});
   set({ phase: "idle", device: null, recording: null, motion: { ...state.motion, on: false } });
 }
@@ -393,12 +394,22 @@ export async function forget() {
 
 // --- Reading the clip ------------------------------------------------------
 
+const READ_TIMEOUT_MS = 6000;
+
 async function attempt<T>(label: string, fn: () => Promise<T>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await fn();
+    return await Promise.race([
+      fn(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`no answer in ${READ_TIMEOUT_MS / 1000} s`)), READ_TIMEOUT_MS);
+      }),
+    ]);
   } catch (err) {
     say(`${label} failed — ${message(err)}`);
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -439,8 +450,17 @@ export async function refreshInfo() {
     set({ sensors });
     if (sensors) say(`sensors: accelerometer ${sensors.accelerometer}, gyroscope ${sensors.gyroscope}, button ${sensors.button}, motor ${sensors.motor}`);
     // Phase 0 of twist-to-listen: what motion data this firmware claims to have.
-    const flags = ["hasGame", "hasNoScreen", "hasButtonWakeUpVoice", "hasVoiceAssistant", "hasChatGPT", "hasWearingHands", "hasAIRecording", "hasAIRecordRealTime"];
-    devlog("ble", "twist probe", JSON.stringify({ sensors, ...Object.fromEntries(flags.map((f) => [f, state.capabilities?.[f] ?? null])) }));
+    const wear = await attempt("wearable functions", ute.probeWearFunctions);
+    const flags = ["hasGame", "hasGlasses", "hasEarphone", "hasNoScreen", "hasButtonWakeUpVoice", "hasVoiceAssistant", "hasChatGPT", "hasWearingHands", "hasAIRecording", "hasAIRecordRealTime"];
+    devlog(
+      "ble",
+      "twist probe",
+      JSON.stringify({
+        sensors,
+        wearFunctions: wear?.functions ?? null,
+        ...Object.fromEntries(flags.map((f) => [f, state.capabilities?.[f] ?? null])),
+      }),
+    );
   }
 }
 
@@ -461,38 +481,37 @@ export async function readGyro() {
   return gyro;
 }
 
-export async function setMotionStream(on: boolean) {
-  await ute.setMotionStream(on);
-  set({ motion: { ...state.motion, on } });
-  say(`motion stream ${on ? "on" : "off"}`);
-}
-
 // --- Motion for twist-to-listen -------------------------------------------
+//
+// The SDK has several motion sources and the ES100 supports some unknown subset
+// (it ignored the game stream). They're tried in this order; the first that
+// actually delivers samples is kept for as long as the clip stays connected.
+
+const MOTION_SOURCES: ute.MotionSource[] = ["game", "wear6", "wear3", "gsensor", "gyro"];
+/** How long a source gets to deliver its first samples before the next one is tried. */
+const FIRST_SAMPLES_MS = 3000;
+const MOTION_SILENCE_MS = 5000;
 
 type MotionListener = (samples: Sample[]) => void;
 const motionListeners = new Set<MotionListener>();
 let lastBatchAt: number | null = null;
 let lastRawLog = 0;
 let motionStarting = false;
-let motionEverArrived = false;
-let silentRestarts = 0;
+/** Index into MOTION_SOURCES of the source in use (or being tried). */
+let sourceIndex = 0;
+let activeSource: ute.MotionSource | null = null;
 let watchdog: ReturnType<typeof setInterval> | null = null;
 
-const MOTION_SILENCE_MS = 5000;
-const MAX_SILENT_RESTARTS = 3;
-
-function onMotionBatch(samples: ute.MotionSample[]) {
+function onMotionBatch(source: ute.MotionSource, samples: ute.MotionSample[]) {
   const now = Date.now();
   const timed = spreadBatch(lastBatchAt, now, samples);
   lastBatchAt = now;
-  motionEverArrived = true;
-  silentRestarts = 0;
   const last = samples[samples.length - 1] ?? null;
-  set({ motion: { on: true, last, count: state.motion.count + samples.length } });
+  set({ motion: { on: true, last, count: state.motion.count + samples.length, source } });
   // Raw data for tuning the detector from device_logs, about once a second.
   if (now - lastRawLog > 1000) {
     lastRawLog = now;
-    devlog("ble", "motion raw", `${samples.length} samples: ${JSON.stringify(samples.slice(0, 4))}`);
+    devlog("ble", "motion raw", `${source}: ${samples.length} samples: ${JSON.stringify(samples.slice(0, 4))}`);
   }
   motionListeners.forEach((l) => l(timed));
 }
@@ -503,34 +522,79 @@ function motionUnavailable(why: string) {
   devlog("ble", "twist: no motion data, using clip button", why);
 }
 
-/** Starts the stream if someone wants motion and the clip is connected. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Waits for samples newer than `since`. */
+async function samplesSince(since: number, ms: number) {
+  for (let waited = 0; waited < ms; waited += 100) {
+    if (lastBatchAt !== null && lastBatchAt > since) return true;
+    await sleep(100);
+  }
+  return lastBatchAt !== null && lastBatchAt > since;
+}
+
+/** Starts motion if someone wants it: the source that worked, or the next one to try. */
 async function ensureMotion(reason: string) {
   if (!motionListeners.size || state.phase !== "connected" || motionStarting || state.motionProblem) return;
-  if (state.capabilities?.hasGame === false) return motionUnavailable("the clip reports no motion stream (hasGame false)");
   motionStarting = true;
   try {
-    await ute.setMotionStream(true);
-    set({ motion: { ...state.motion, on: true } });
-    say(`motion stream on (${reason})`);
-  } catch (err) {
-    say(`motion stream failed — ${message(err)}`);
-    if (/MotionUnsupported|doesn't support/.test(message(err))) motionUnavailable(message(err));
+    while (sourceIndex < MOTION_SOURCES.length && motionListeners.size && state.phase === "connected") {
+      const source = MOTION_SOURCES[sourceIndex];
+      const since = Date.now();
+      try {
+        await ute.setMotionSource(source, true);
+      } catch (err) {
+        say(`motion: ${source} failed — ${message(err)}`);
+        sourceIndex++;
+        continue;
+      }
+      if (await samplesSince(since, FIRST_SAMPLES_MS)) {
+        activeSource = source;
+        set({ motion: { ...state.motion, on: true, source } });
+        say(`twist: motion from ${source} (${reason})`);
+        // Factory sensor tests may switch the clip into its test mode, which blocks recording.
+        const status = await ute.getStatus().catch(() => null);
+        if (status?.state === ute.RecordState.FactoryTest) {
+          devlog("ble", `twist: ${source} put the clip in factory-test mode (recording is blocked)`);
+        }
+        return;
+      }
+      say(`motion: ${source} sent nothing in ${FIRST_SAMPLES_MS / 1000} s`);
+      await ute.setMotionSource(source, false).catch(() => {});
+      sourceIndex++;
+    }
+    if (sourceIndex >= MOTION_SOURCES.length) {
+      motionUnavailable(`none of the clip's motion sources sent data (tried ${MOTION_SOURCES.join(", ")})`);
+    }
   } finally {
     motionStarting = false;
   }
 }
 
-/** Restarts a stream that went quiet; gives up (button fallback) if it never produced anything. */
-function checkMotion() {
-  if (!motionListeners.size || state.phase !== "connected" || state.motionProblem || motionStarting) return;
-  if (lastBatchAt !== null && Date.now() - lastBatchAt < MOTION_SILENCE_MS) return;
-  if (silentRestarts >= MAX_SILENT_RESTARTS) {
-    if (!motionEverArrived) motionUnavailable(`no samples after ${MAX_SILENT_RESTARTS} stream restarts`);
-    return;
+async function stopMotion() {
+  const source = activeSource ?? MOTION_SOURCES[sourceIndex];
+  activeSource = null;
+  if (source && state.phase === "connected") {
+    await ute.setMotionSource(source, false).catch(() => {});
+    say(`motion: ${source} off`);
   }
-  silentRestarts++;
-  lastBatchAt = Date.now(); // give the restart its own 5 s
-  ensureMotion("no samples for 5 s");
+  set({ motion: { ...state.motion, on: false } });
+}
+
+/** A source that went quiet (the SDK has no "stream ended" event) is started again. */
+function checkMotion() {
+  if (!motionListeners.size || state.phase !== "connected" || state.motionProblem || motionStarting || !activeSource) return;
+  if (lastBatchAt !== null && Date.now() - lastBatchAt < MOTION_SILENCE_MS) return;
+  lastBatchAt = Date.now(); // give the restart its own time
+  activeSource = null;
+  ensureMotion(`no samples for ${MOTION_SILENCE_MS / 1000} s`);
+}
+
+/** A new connection: try every source again (a different clip may support different ones). */
+function resetMotion() {
+  sourceIndex = 0;
+  activeSource = null;
+  lastBatchAt = null;
 }
 
 /** Timestamped motion samples while subscribed. The clip streams while anyone is subscribed. */
@@ -538,7 +602,6 @@ export function subscribeMotion(listener: MotionListener) {
   ensureStarted();
   motionListeners.add(listener);
   if (motionListeners.size === 1) {
-    silentRestarts = 0;
     lastBatchAt = null;
     watchdog = setInterval(checkMotion, 1000);
     ensureMotion("twist on");
@@ -548,23 +611,55 @@ export function subscribeMotion(listener: MotionListener) {
     if (motionListeners.size) return;
     if (watchdog) clearInterval(watchdog);
     watchdog = null;
-    if (state.phase === "connected" && state.motion.on) {
-      ute.setMotionStream(false).catch(() => {});
-      say("motion stream off (twist off)");
-    }
-    set({ motion: { ...state.motion, on: false } });
+    stopMotion();
   };
 }
 
+/** Forget that no source worked, so the next subscriber tries them all again. */
+export function retryMotion() {
+  if (motionStarting) return;
+  set({ motionProblem: null });
+  resetMotion();
+}
+
+let manualMotion: (() => void) | null = null;
+
+/** The Inputs screen's Start/Stop motion button: finds a working source like twist does. */
+export async function setMotionStream(on: boolean) {
+  if (on && !manualMotion) {
+    retryMotion();
+    manualMotion = subscribeMotion(() => {});
+  } else if (!on && manualMotion) {
+    manualMotion();
+    manualMotion = null;
+  }
+}
+
 /** The clip's button was pressed to talk (voice button, or a recording started on the clip). */
-type ButtonListener = (source: "voiceButton" | "record") => void;
+type ButtonListener = (source: "voiceButton" | "record") => boolean | void;
 const buttonListeners = new Set<ButtonListener>();
 
+/** A listener that returns true has used the press: a recording it started is thrown away. */
 export function onClipButton(listener: ButtonListener) {
   buttonListeners.add(listener);
   return () => {
     buttonListeners.delete(listener);
   };
+}
+
+const pressUsed = (source: "voiceButton" | "record") => [...buttonListeners].some((l) => l(source) === true);
+
+/** The press only meant "listen to me": stop the recording it started and delete it from the clip. */
+async function discardButtonRecording(sessionId: number) {
+  appStopping = true;
+  try {
+    await ute.stopRecord().catch(() => {});
+    set({ recording: null });
+    await ute.deleteFile(sessionId, storedTypes.get(sessionId) ?? ute.RecordFileType.Opus).catch(() => {});
+    say(`discarded the recording the button started (#${sessionId}); it was used to call the assistant`);
+  } finally {
+    setTimeout(() => (appStopping = false), 3000);
+  }
 }
 
 // --- Buzz ------------------------------------------------------------------
@@ -595,6 +690,11 @@ export async function buzz(count = 1, option: BuzzOption = buzzOption) {
     say(`buzz option ${option} fired (×${count})`);
     return true;
   } catch (err) {
+    // It often vibrates without answering: a timeout isn't a failure.
+    if (/didn't answer in time/.test(message(err))) {
+      say(`buzz option ${option} sent (×${count}), no reply from the clip`);
+      return true;
+    }
     say(`buzz option ${option} failed — ${message(err)}`);
     return false;
   }

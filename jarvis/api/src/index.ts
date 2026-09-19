@@ -22,6 +22,12 @@ import { voice } from "./voice";
 import { logs } from "./logs";
 
 const HISTORY_TURNS = 30;
+/**
+ * Spoken turns send less history, each message shortened: reading the prompt is most
+ * of the wait before the first word (3-8 s with 30 full messages, seen 2026-09-19).
+ */
+const VOICE_HISTORY_TURNS = 12;
+const VOICE_HISTORY_CHARS = 600;
 const MAX_MEMORIES = 100;
 const PAUSED_TURN_TTL_MS = 10 * 60 * 1000;
 const SIRI_KEY_TTL_MS = 5 * 365 * 24 * 60 * 60 * 1000;
@@ -315,7 +321,7 @@ async function runTurn(
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
     db
       .prepare("SELECT role, content FROM messages WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
-      .bind(userId, HISTORY_TURNS)
+      .bind(userId, voice ? VOICE_HISTORY_TURNS : HISTORY_TURNS)
       .all<{ role: "user" | "assistant"; content: string }>(),
     listMemories(db, userId),
     fitnessSummary(db, userId),
@@ -324,9 +330,10 @@ async function runTurn(
   const phone = phoneAssistant(env, userId, caps, autoApprove);
   const shortcuts = shortcutAssistant(env, userId, autoApprove);
 
-  const turns: Turn[] = history.results
-    .reverse()
-    .map((m) => ({ role: m.role === "assistant" ? "model" : "user", text: m.content }));
+  const turns: Turn[] = history.results.reverse().map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    text: voice && m.content.length > VOICE_HISTORY_CHARS ? `${m.content.slice(0, VOICE_HISTORY_CHARS)}…` : m.content,
+  }));
   turns.push({ role: "user", text });
 
   const system = [

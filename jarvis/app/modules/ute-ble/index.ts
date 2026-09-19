@@ -10,6 +10,7 @@ import type {
   DeviceStatus,
   EncodingFormat,
   GyroReading,
+  MotionSource,
   SensorSupport,
   RecordFile,
   RecordFileType,
@@ -45,6 +46,8 @@ type UteBleNativeModule = {
   readGyro(): Promise<GyroReading>;
   setMotionStream(on: boolean): Promise<void>;
   buzz(count: number, option: number): Promise<{ option: number }>;
+  setMotionSource(source: MotionSource, on: boolean): Promise<void>;
+  probeWearFunctions(): Promise<{ functions: { type: number; value: number }[] }>;
   startRecord(): Promise<{ sessionId: number; result: number }>;
   pauseRecord(sessionId: number): Promise<{ sessionId: number; result: number }>;
   resumeRecord(sessionId: number): Promise<{ sessionId: number; result: number }>;
@@ -141,6 +144,10 @@ export const setMotionStream = (on: boolean) => native().setMotionStream(on);
  * never replies), 3: the factory motor test. Which one the ES100 honours is unknown. iOS only.
  */
 export const buzz = (count = 1, option = 1) => native().buzz(count, option);
+/** Turns one of the SDK's motion sources on or off; samples arrive as onMotion events. iOS only. */
+export const setMotionSource = (source: MotionSource, on: boolean) => native().setMotionSource(source, on);
+/** Factory functions a wearable reports (type 7 = 3-axis accelerometer, 9 = 6-axis). Times out on other devices. iOS only. */
+export const probeWearFunctions = () => native().probeWearFunctions();
 
 /** Resolves even when the clip declines; check `result` (StartRecordResult). */
 export const startRecord = () => native().startRecord();

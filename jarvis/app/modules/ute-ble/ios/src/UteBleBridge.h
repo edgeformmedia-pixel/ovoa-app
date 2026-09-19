@@ -32,8 +32,9 @@ NS_SWIFT_NAME(UteBleBridge)
 @property (nonatomic, copy, nullable) void (^onPairing)(BOOL paired, NSString *message);
 /// Anything else the clip reports on its own: battery, AI/voice button, voice data.
 @property (nonatomic, copy, nullable) void (^onInput)(NSDictionary<NSString *, id> *input);
-/// Batches of motion samples from the clip's motion stream: each is [x, y, speed, xThrow, yThrow, speedThrow].
-@property (nonatomic, copy, nullable) void (^onMotion)(NSArray<NSArray<NSNumber *> *> *samples);
+/// Batches of motion samples and the source they came from ("game": [x, y, speed, xThrow, yThrow, speedThrow];
+/// "wear6": [x, y, z, angle]; "wear3"/"gyro": [x, y, z]; "gsensor": [x, y, z, speed]).
+@property (nonatomic, copy, nullable) void (^onMotion)(NSString *source, NSArray<NSArray<NSNumber *> *> *samples);
 /// Vendor SDK log lines, forwarded only while a connect is in flight.
 @property (nonatomic, copy, nullable) void (^onLog)(NSString *line);
 
@@ -64,6 +65,11 @@ NS_SWIFT_NAME(UteBleBridge)
 /// Vibrates the clip. option 1: find-device on/off, 2: factoryVibration, 3: factory motor test.
 - (void)buzz:(NSInteger)count option:(NSInteger)option completion:(UteBleResultCallback)completion
     NS_SWIFT_NAME(buzz(count:option:completion:));
+/// Turns one motion source on or off: "game", "wear6", "wear3", "gsensor" or "gyro". 408: the clip didn't answer.
+- (void)setMotionSource:(NSString *)source on:(BOOL)on completion:(void (^)(NSInteger errorCode))completion
+    NS_SWIFT_NAME(setMotionSource(_:on:completion:));
+/// Which factory functions a wearable reports (type = UTEWearFunction, e.g. 7 Gsensor3, 9 Gsensor6).
+- (void)probeWearFunctions:(UteBleResultCallback)completion NS_SWIFT_NAME(probeWearFunctions(completion:));
 - (void)beginRecording:(UteBleResultCallback)completion NS_SWIFT_NAME(startRecord(completion:));
 - (void)pauseRecordingSession:(NSInteger)sessionId completion:(UteBleResultCallback)completion
     NS_SWIFT_NAME(pauseRecord(sessionId:completion:));

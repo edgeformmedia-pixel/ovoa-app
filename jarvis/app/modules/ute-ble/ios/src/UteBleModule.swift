@@ -54,8 +54,8 @@ public class UteBleModule: Module {
       self.bridge.onInput = { [weak self] input in
         self?.sendEvent("onInput", input)
       }
-      self.bridge.onMotion = { [weak self] samples in
-        self?.sendEvent("onMotion", ["samples": samples])
+      self.bridge.onMotion = { [weak self] source, samples in
+        self?.sendEvent("onMotion", ["source": source, "samples": samples])
       }
       self.bridge.onClip = { [weak self] data in
         self?.sendEvent("onClipData", ["bytes": data.count, "base64": data.base64EncodedString()])
@@ -180,6 +180,28 @@ public class UteBleModule: Module {
           return
         }
         promise.resolve(nil)
+      }
+    }
+    .runOnQueue(.main)
+
+    AsyncFunction("setMotionSource") { (source: String, on: Bool, promise: Promise) in
+      self.bridge.setMotionSource(source, on: on) { errorCode in
+        if errorCode == 408 {
+          promise.reject(UteException("MotionUnsupported: the clip didn't answer (\(source))."))
+          return
+        }
+        guard errorCode == 0 else {
+          promise.reject(UteException("Motion source \(source) failed: \(Self.describe(errorCode))."))
+          return
+        }
+        promise.resolve(nil)
+      }
+    }
+    .runOnQueue(.main)
+
+    AsyncFunction("probeWearFunctions") { (promise: Promise) in
+      self.bridge.probeWearFunctions { errorCode, result in
+        Self.settle(promise, errorCode, result, "factoryReadFunction")
       }
     }
     .runOnQueue(.main)

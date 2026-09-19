@@ -223,6 +223,8 @@ function playFile(file: File, onStop: (stop: () => void) => void) {
 
 /** How many clips are voiced ahead of the one playing. */
 const FETCH_AHEAD = 3;
+/** A first sentence longer than this is split at a comma so the voice starts sooner. */
+const FIRST_PIECE_MAX = 70;
 
 /**
  * Reads text aloud. `open` starts a reply that arrives a sentence at a time
@@ -278,6 +280,16 @@ export function createSpeaker(token: string) {
       if (mine !== generation) return;
       const text = pending ? `${pending} ${sentence}` : sentence;
       pending = "";
+      // A long first sentence takes seconds to voice (110 characters: 2.5 s): start with
+      // the part before its first comma or dash, and voice the rest meanwhile.
+      if (pieces.length === 0 && text.length > FIRST_PIECE_MAX) {
+        const cut = text.slice(20, FIRST_PIECE_MAX).search(/[,;:—–]\s/);
+        if (cut >= 0) {
+          addPiece(text.slice(0, 20 + cut + 1));
+          addPiece(text.slice(20 + cut + 1).trim());
+          return;
+        }
+      }
       // The first piece is spoken as soon as it arrives; after that, very short sentences
       // ("Sure.") ride along with the next one so the voice doesn't stop and start.
       if (pieces.length > 0 && text.length < 40) {

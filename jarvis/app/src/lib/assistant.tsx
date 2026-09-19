@@ -226,9 +226,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       if (!detector || twistProfilePref.calibrating) return;
       samples.forEach((s) => detector?.(s));
     });
-    // No motion data (or not calibrated): the clip's button summons instead.
+    // No motion data (or not calibrated): the clip's button summons instead, and the
+    // recording that press started on the clip is thrown away.
     const offButton = clip.onClipButton((source) => {
-      if (clip.getClipState().motionProblem || !hasProfile) onSummonRef.current(`clip button (${source})`);
+      if (!clip.getClipState().motionProblem && hasProfile) return false;
+      onSummonRef.current(`clip button (${source})`);
+      return true;
     });
     return () => {
       offProfile();
