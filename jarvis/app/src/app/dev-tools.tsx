@@ -180,6 +180,14 @@ export default function DevTools() {
           <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
         </Pressable>
 
+        <Pressable style={styles.link} onPress={() => router.push("/motion-lab")}>
+          <View style={styles.linkLeft}>
+            <Ionicons name="pulse" size={18} color={colors.accent} />
+            <Text style={styles.itemText}>Motion lab — find the clip's motion sensor</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+        </Pressable>
+
         <ClipInputs state={clipState} />
 
         <Text style={styles.section}>Phone</Text>

@@ -52,6 +52,7 @@ function RootStack() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="dev-tools" options={{ headerShown: true, title: "Dev tools" }} />
         <Stack.Screen name="es100" options={{ headerShown: true, title: "ES100" }} />
+        <Stack.Screen name="motion-lab" options={{ headerShown: true, title: "Motion lab" }} />
       </Stack.Protected>
       <Stack.Protected guard={!!user && onboarding}>
         <Stack.Screen name="connect-google" />

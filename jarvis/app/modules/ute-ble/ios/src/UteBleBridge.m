@@ -13,6 +13,26 @@ static NSInteger UteNormalize(NSInteger code) {
   return (code == UTEDeviceErrorNil || code == UTEDeviceErrorNone) ? 0 : code;
 }
 
+/// Every BOOL property of an SDK model object, by name.
+static NSDictionary<NSString *, NSNumber *> *UteBoolProperties(NSObject *model) {
+  NSMutableDictionary<NSString *, NSNumber *> *flags = [NSMutableDictionary new];
+  unsigned int count = 0;
+  objc_property_t *properties = class_copyPropertyList([model class], &count);
+  for (unsigned int i = 0; i < count; i++) {
+    NSString *name = @(property_getName(properties[i]));
+    const char *attributes = property_getAttributes(properties[i]);
+    // BOOL is encoded "TB" on arm64 ("Tc" on older ABIs).
+    BOOL isBool = attributes && (strncmp(attributes, "TB", 2) == 0 || strncmp(attributes, "Tc", 2) == 0);
+    if (!isBool) continue;
+    @try {
+      flags[name] = @([[model valueForKey:name] boolValue]);
+    } @catch (NSException *exception) {
+    }
+  }
+  free(properties);
+  return flags;
+}
+
 /// How many times a short transfer is resumed from where it stopped, as the vendor demo does.
 static const NSInteger UteMaxSyncResumes = 5;
 /// A transfer that goes this long without data is over.
@@ -26,10 +46,8 @@ static const NSTimeInterval UteSyncStallSeconds = 15;
 /// Set only by a real "connected" status from the SDK. `connectStatus` can't be trusted on its own:
 /// it starts at 0, which is UTEDevicesStatusConnected, so a fresh launch looked connected.
 @property (nonatomic, assign) BOOL linked;
-/// Polls the gyroscope while the "gyro" motion source is on (it answers one reading per request).
-@property (nonatomic, strong, nullable) NSTimer *gyroTimer;
-/// Same for the g-sensor test: on the ES100 each open answers one reading (device log, 2026-09-19).
-@property (nonatomic, strong, nullable) NSTimer *gsensorTimer;
+/// Timers of the polled motion sources, by source name (some answer one reading per request).
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSTimer *> *pollTimers;
 
 // The transfer in flight. The SDK hands data over in small pieces and sometimes stops
 // short of the end; the demo appends the pieces itself and asks again for the rest.
@@ -57,6 +75,7 @@ static const NSTimeInterval UteSyncStallSeconds = 15;
 - (instancetype)init {
   if ((self = [super init])) {
     _discovered = [NSMutableDictionary new];
+    _pollTimers = [NSMutableDictionary new];
   }
   return self;
 }
@@ -167,20 +186,9 @@ static const NSTimeInterval UteSyncStallSeconds = 15;
   UTEModelDevice *model = [self mgr].connnectModel;
   if (!model) return @{};
   NSMutableDictionary<NSString *, NSNumber *> *flags = [NSMutableDictionary new];
-  unsigned int count = 0;
-  objc_property_t *properties = class_copyPropertyList([UTEModelDevice class], &count);
-  for (unsigned int i = 0; i < count; i++) {
-    NSString *name = @(property_getName(properties[i]));
-    const char *attributes = property_getAttributes(properties[i]);
-    // BOOL is encoded "TB" on arm64 ("Tc" on older ABIs).
-    BOOL isBool = attributes && (strncmp(attributes, "TB", 2) == 0 || strncmp(attributes, "Tc", 2) == 0);
-    if (!isBool || ![name hasPrefix:@"has"]) continue;
-    @try {
-      flags[name] = @([[model valueForKey:name] boolValue]);
-    } @catch (NSException *exception) {
-    }
-  }
-  free(properties);
+  [UteBoolProperties(model) enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSNumber *value, BOOL *stop) {
+    if ([name hasPrefix:@"has"]) flags[name] = value;
+  }];
   return flags;
 }
 
@@ -279,7 +287,7 @@ static const NSTimeInterval UteSyncStallSeconds = 15;
 
 - (void)uteSDKLog:(NSString *)str {
   void (^handler)(NSString *) = self.onLog;
-  if (self.connecting && str.length && handler) handler(str);
+  if ((self.connecting || self.sdkLogging) && str.length && handler) handler(str);
 }
 
 - (void)uteDeviceRecordingClip:(NSData *)data error:(NSError *)error {
@@ -420,6 +428,8 @@ static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInter
       @"gyroscope" : @(model.isSupportGyroscopeTest),
       @"button" : @(model.isSupportKeyTest),
       @"motor" : @(model.isSupportMotorSwitchTest),
+      // Every factory test the firmware claims, by name (e.g. isSupportG_sensorTest = the older g-sensor command).
+      @"all" : UteBoolProperties(model),
     });
   }];
 }
@@ -461,10 +471,15 @@ static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInter
   });
 }
 
-/// The ES100 ignored the game stream (sendGameStatus never answered, 2026-09-19), so
-/// these are the other ways the SDK exposes motion. Which of them the clip supports is
-/// unknown; the app tries them in turn and keeps the first that delivers samples.
-- (void)setMotionSource:(NSString *)source on:(BOOL)on completion:(void (^)(NSInteger errorCode))completion {
+/// Motion sources for twist-to-listen and the motion probe (Dev tools → Motion lab). The ES100
+/// ignored the game stream (sendGameStatus never answered, 2026-09-19) and answered the g-sensor
+/// test once per connection; which source really streams is what the probe finds out.
+/// Polled sources ask again every `intervalMs`.
+- (void)setMotionSource:(NSString *)source
+                     on:(BOOL)on
+             intervalMs:(NSInteger)intervalMs
+             completion:(void (^)(NSInteger errorCode))completion {
+  [self stopPolling:source];
   if ([source isEqualToString:@"game"]) {
     [self setMotionStream:on completion:completion];
     return;
@@ -474,6 +489,7 @@ static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInter
   }, 4);
   __weak UteBleBridge *weakSelf = self;
   UTEDeviceMgr *dev = [UTEDeviceMgr sharedInstance];
+  NSTimeInterval every = MAX(intervalMs, 20) / 1000.0;
 
   // Wearables (glasses/earbuds) factory accelerometer: 6-axis (angle, x, y, z) or 3-axis.
   if ([source isEqualToString:@"wear6"] || [source isEqualToString:@"wear3"]) {
@@ -500,21 +516,28 @@ static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInter
     return;
   }
 
-  // Watch factory accelerometer test: range, x, y, z, speed. The command itself has no reply,
-  // and the ES100 sends one reading per open, so re-open it 10 times a second.
-  if ([source isEqualToString:@"gsensor"]) {
-    [self.gsensorTimer invalidate];
-    self.gsensorTimer = nil;
+  // Watch factory accelerometer test: x, y, z, speed, range. The open command has no reply.
+  // "gsensorOnce" opens it once, "gsensor" opens it again every interval, and "gsensorToggle"
+  // closes and reopens it (an open may be ignored while the test is already running).
+  if ([@[ @"gsensor", @"gsensorOnce", @"gsensorToggle" ] containsObject:source]) {
     if (on) {
       [dev factoryGsensorTestBlock:^(NSInteger range, NSInteger x, NSInteger y, NSInteger z, NSInteger speed) {
-        [weakSelf reportMotion:@"gsensor" samples:@[ @[ @(x), @(y), @(z), @(speed) ] ]];
+        [weakSelf reportMotion:source samples:@[ @[ @(x), @(y), @(z), @(speed), @(range) ] ]];
       }];
       [dev factoryOpenTestGsensor:YES];
-      self.gsensorTimer = [NSTimer scheduledTimerWithTimeInterval:0.1
-                                                          repeats:YES
-                                                            block:^(NSTimer *_Nonnull timer) {
-        [[UTEDeviceMgr sharedInstance] factoryOpenTestGsensor:YES];
-      }];
+      if ([source isEqualToString:@"gsensor"]) {
+        [self poll:source every:every block:^{
+          [[UTEDeviceMgr sharedInstance] factoryOpenTestGsensor:YES];
+        }];
+      } else if ([source isEqualToString:@"gsensorToggle"]) {
+        [self poll:source every:every block:^{
+          UTEDeviceMgr *mgr = [UTEDeviceMgr sharedInstance];
+          [mgr factoryOpenTestGsensor:NO];
+          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [mgr factoryOpenTestGsensor:YES];
+          });
+        }];
+      }
     } else {
       [dev factoryOpenTestGsensor:NO];
     }
@@ -522,16 +545,35 @@ static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInter
     return;
   }
 
-  // Gyroscope: one reading per request, so ask 20 times a second.
+  // Gyroscope test, the newer command (cmd 1 on, 0 off). x, y, z are in thousandths; the vendor
+  // says shaking the device makes them non-zero. Sample: x, y, z, state, result.
+  // "gyro3" sends it once and listens; "gyro3poll" sends it again every interval.
+  if ([source isEqualToString:@"gyro3"] || [source isEqualToString:@"gyro3poll"]) {
+    if (!on) {
+      [dev factoryGyroscope3CMD:0 Block:nil];
+      reply(0, nil);
+      return;
+    }
+    void (^onReading)(NSInteger, NSInteger, NSInteger, NSInteger, NSInteger) =
+        ^(NSInteger state, NSInteger x, NSInteger y, NSInteger z, NSInteger result) {
+          [weakSelf reportMotion:source samples:@[ @[ @(x), @(y), @(z), @(state), @(result) ] ]];
+          reply(0, nil);
+        };
+    [dev factoryGyroscope3CMD:1 Block:onReading];
+    if ([source isEqualToString:@"gyro3poll"]) {
+      [self poll:source every:every block:^{
+        [[UTEDeviceMgr sharedInstance] factoryGyroscope3CMD:1 Block:onReading];
+      }];
+    }
+    return;
+  }
+
+  // Gyroscope, the older command: one reading per request, so ask every interval. Sample: x, y, z, range.
   if ([source isEqualToString:@"gyro"]) {
-    [self.gyroTimer invalidate];
-    self.gyroTimer = nil;
     if (on) {
-      self.gyroTimer = [NSTimer scheduledTimerWithTimeInterval:0.05
-                                                       repeats:YES
-                                                         block:^(NSTimer *_Nonnull timer) {
+      [self poll:source every:every block:^{
         [[UTEDeviceMgr sharedInstance] factoryReadGyroData:^(NSInteger range, NSInteger x, NSInteger y, NSInteger z) {
-          [weakSelf reportMotion:@"gyro" samples:@[ @[ @(x), @(y), @(z) ] ]];
+          [weakSelf reportMotion:@"gyro" samples:@[ @[ @(x), @(y), @(z), @(range) ] ]];
         }];
       }];
     }
@@ -539,7 +581,44 @@ static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInter
     return;
   }
 
+  // The live health frame the clip pushes on its own (about once a minute on watches).
+  // Sample: step, calorie, distance, dynamic heart rate. Listening can't be turned off, so off ignores it.
+  if ([source isEqualToString:@"frame"]) {
+    if (on) {
+      [dev onNotifyCurrentData:^(UTEModelMotionFrameItemContent *model) {
+        if (!model) return;
+        [weakSelf reportMotion:@"frame"
+                       samples:@[ @[ @(model.step), @(model.calorie), @(model.distance), @(model.dynamicHeartRate) ] ]];
+      }];
+    }
+    reply(0, nil);
+    return;
+  }
+
   reply(-600, nil);
+}
+
+- (void)poll:(NSString *)source every:(NSTimeInterval)seconds block:(void (^)(void))block {
+  [self stopPolling:source];
+  self.pollTimers[source] = [NSTimer scheduledTimerWithTimeInterval:seconds
+                                                            repeats:YES
+                                                              block:^(NSTimer *_Nonnull timer) {
+    block();
+  }];
+}
+
+- (void)stopPolling:(NSString *)source {
+  [self.pollTimers[source] invalidate];
+  [self.pollTimers removeObjectForKey:source];
+}
+
+- (void)readActivity:(UteBleResultCallback)completion {
+  UteBleResultCallback reply = UteOnce(completion, 5);
+  [[UTEDeviceMgr sharedInstance] getCurrentDayTotalWorkoutData:^(UTEModelTodayStep *model, NSInteger errorCode, NSDictionary *uteDict) {
+    NSInteger code = UteNormalize(errorCode);
+    // The dictionary is the SDK's own description of the totals; only its text crosses over.
+    reply(code, @{@"totals" : UteString([uteDict description]), @"calories" : @(model.totalCalorie)});
+  }];
 }
 
 - (void)probeWearFunctions:(UteBleResultCallback)completion {
@@ -847,6 +926,15 @@ static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInter
     }];
     [device.chatGPT onNotifyUploadVoiceDataBlock:^(BOOL isCompleted, NSData *opus) {
       [weakSelf reportInput:@{@"kind" : @"voiceData", @"value" : @(opus.length), @"detail" : isCompleted ? @"complete" : @"streaming"}];
+    }];
+
+    // Taken off / put back on (watches). value: state; detail: UTEOffWristModel and the clip's timestamp.
+    [device onNotifyOffWristBlock:^(NSInteger timestamp, UTEOffWristModel model, NSInteger state) {
+      [weakSelf reportInput:@{
+        @"kind" : @"offWrist",
+        @"value" : @(state),
+        @"detail" : [NSString stringWithFormat:@"model %ld at %ld", (long)model, (long)timestamp],
+      }];
     }];
   });
 }

@@ -109,8 +109,11 @@ export enum StartRecordResult {
 
 /** Something the clip reported on its own. */
 export type InputEvent = {
-  /** battery: percent; voiceButton: AI/voice button state 1-7; voiceData: bytes of opus the button captured. */
-  kind: "battery" | "voiceButton" | "voiceData";
+  /**
+   * battery: percent; voiceButton: AI/voice button state 1-7; voiceData: bytes of opus the button
+   * captured; offWrist: the wear state the clip reported (watches send it when taken off).
+   */
+  kind: "battery" | "voiceButton" | "voiceData" | "offWrist";
   value: number;
   detail?: string;
 };
@@ -184,21 +187,41 @@ export type ClipDataEvent = {
   base64: string;
 };
 
-/** Which sensor self-tests the firmware claims to support. */
-export type SensorSupport = { accelerometer: boolean; gyroscope: boolean; button: boolean; motor: boolean };
+/** Which sensor self-tests the firmware claims to support. `all`: every factory-test flag, by name. */
+export type SensorSupport = {
+  accelerometer: boolean;
+  gyroscope: boolean;
+  button: boolean;
+  motor: boolean;
+  all?: Record<string, boolean>;
+};
 
 export type GyroReading = { range: number; x: number; y: number; z: number };
 
 /**
  * Where motion comes from. "game": the motion-sensing game stream; "wear6"/"wear3": the
- * wearables' factory accelerometer; "gsensor": the watch factory accelerometer test;
- * "gyro": the gyroscope, polled.
+ * wearables' factory accelerometer; "gsensor": the watch factory accelerometer test, reopened
+ * every interval ("gsensorOnce": opened once, "gsensorToggle": closed and reopened); "gyro": the
+ * older gyroscope read, polled; "gyro3": the newer gyroscope test ("gyro3poll": resent every
+ * interval); "frame": the live health frame (steps).
  */
-export type MotionSource = "game" | "wear6" | "wear3" | "gsensor" | "gyro";
+export type MotionSource =
+  | "game"
+  | "wear6"
+  | "wear3"
+  | "gsensor"
+  | "gsensorOnce"
+  | "gsensorToggle"
+  | "gyro"
+  | "gyro3"
+  | "gyro3poll"
+  | "frame";
 
 /**
  * One motion sample. game: [x, y, speed, xThrow, yThrow, speedThrow]; wear6: [x, y, z, angle];
- * wear3/gyro: [x, y, z]; gsensor: [x, y, z, speed]. Units unknown (the vendor gives none).
+ * wear3: [x, y, z]; gsensor*: [x, y, z, speed, range]; gyro: [x, y, z, range];
+ * gyro3*: [x, y, z (thousandths), state, result]; frame: [step, calorie, distance, heart rate].
+ * Units otherwise unknown (the vendor gives none).
  */
 export type MotionSample = number[];
 
@@ -215,6 +238,6 @@ export type UteBleEvents = {
   onInput: (event: InputEvent) => void;
   /** iOS only: batches from the motion stream, while it is on. */
   onMotion: (event: { source: MotionSource; samples: MotionSample[] }) => void;
-  /** iOS only: vendor SDK log lines while a connect is in flight. */
+  /** iOS only: vendor SDK log lines while a connect is in flight, or all of them while setSdkLogging is on. */
   onLog: (event: { message: string }) => void;
 };

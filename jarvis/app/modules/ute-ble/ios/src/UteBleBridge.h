@@ -32,11 +32,13 @@ NS_SWIFT_NAME(UteBleBridge)
 @property (nonatomic, copy, nullable) void (^onPairing)(BOOL paired, NSString *message);
 /// Anything else the clip reports on its own: battery, AI/voice button, voice data.
 @property (nonatomic, copy, nullable) void (^onInput)(NSDictionary<NSString *, id> *input);
-/// Batches of motion samples and the source they came from ("game": [x, y, speed, xThrow, yThrow, speedThrow];
-/// "wear6": [x, y, z, angle]; "wear3"/"gyro": [x, y, z]; "gsensor": [x, y, z, speed]).
+/// Batches of motion samples and the source they came from; the shape of each source's
+/// samples is documented on MotionSample in UteBle.types.ts.
 @property (nonatomic, copy, nullable) void (^onMotion)(NSString *source, NSArray<NSArray<NSNumber *> *> *samples);
-/// Vendor SDK log lines, forwarded only while a connect is in flight.
+/// Vendor SDK log lines, forwarded while a connect is in flight or while `sdkLogging` is on.
 @property (nonatomic, copy, nullable) void (^onLog)(NSString *line);
+/// Forward every SDK log line, not only during a connect. They include the raw packets ("App receive …").
+@property (nonatomic, assign) BOOL sdkLogging;
 
 - (NSString *)setUp NS_SWIFT_NAME(setUp());
 - (void)startScan NS_SWIFT_NAME(startScan());
@@ -65,9 +67,15 @@ NS_SWIFT_NAME(UteBleBridge)
 /// Vibrates the clip. option 1: find-device on/off, 2: factoryVibration, 3: factory motor test.
 - (void)buzz:(NSInteger)count option:(NSInteger)option completion:(UteBleResultCallback)completion
     NS_SWIFT_NAME(buzz(count:option:completion:));
-/// Turns one motion source on or off: "game", "wear6", "wear3", "gsensor" or "gyro". 408: the clip didn't answer.
-- (void)setMotionSource:(NSString *)source on:(BOOL)on completion:(void (^)(NSInteger errorCode))completion
-    NS_SWIFT_NAME(setMotionSource(_:on:completion:));
+/// Turns one motion source on or off (see MotionSource in UteBle.types.ts). Polled sources ask every
+/// `intervalMs`. 408: the clip didn't answer; -600: unknown source.
+- (void)setMotionSource:(NSString *)source
+                     on:(BOOL)on
+             intervalMs:(NSInteger)intervalMs
+             completion:(void (^)(NSInteger errorCode))completion
+    NS_SWIFT_NAME(setMotionSource(_:on:intervalMs:completion:));
+/// Today's activity totals as the SDK reports them (steps change when the clip moves).
+- (void)readActivity:(UteBleResultCallback)completion NS_SWIFT_NAME(readActivity(completion:));
 /// Which factory functions a wearable reports (type = UTEWearFunction, e.g. 7 Gsensor3, 9 Gsensor6).
 - (void)probeWearFunctions:(UteBleResultCallback)completion NS_SWIFT_NAME(probeWearFunctions(completion:));
 - (void)beginRecording:(UteBleResultCallback)completion NS_SWIFT_NAME(startRecord(completion:));

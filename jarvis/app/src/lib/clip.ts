@@ -167,6 +167,8 @@ function ensureStarted() {
   ute.addListener("onLog", ({ message: line }) => {
     // The SDK asks the clip to confirm pairing: it vibrates and waits for its button.
     if (line.includes("SDK send pair")) set({ phase: "pairing" });
+    // The probe turns on every SDK line (raw packets, many a second) and summarizes them itself.
+    if (probe) return probe.onLog(line.trim());
     say(`sdk: ${line.trim()}`);
   });
 
@@ -192,7 +194,10 @@ function ensureStarted() {
     }
   });
 
-  ute.addListener("onMotion", ({ source, samples }) => onMotionBatch(source ?? "game", samples));
+  ute.addListener("onMotion", ({ source, samples }) => {
+    if (probe) return probe.onMotion(source ?? "game", samples);
+    onMotionBatch(source ?? "game", samples);
+  });
 
   ute.addListener("onSyncProgress", (p) => set({ download: { sessionId: p.sessionId, received: p.received, total: p.total } }));
 
@@ -212,10 +217,13 @@ function ensureStarted() {
       noteInput("Voice button", names[input.value] ?? `state ${input.value}`);
       // 1 entered voice mode / 2 voice recording started: the user pressed the button to talk.
       if (input.value === 1 || input.value === 2) pressUsed("voiceButton");
+    } else if (input.kind === "offWrist") {
+      noteInput("Wear state", `${input.value} (${input.detail ?? ""})`);
     } else {
       noteInput("Voice audio", `${input.value} bytes (${input.detail ?? ""})`);
     }
     say(`input ${input.kind} ${input.value}${input.detail ? ` ${input.detail}` : ""}`);
+    probe?.onInput(input);
   });
 
   ute
@@ -466,7 +474,7 @@ export async function refreshInfo() {
 
 /** Only the live values, for polling. */
 export async function pollLive() {
-  if (state.phase !== "connected") return;
+  if (state.phase !== "connected" || probe) return;
   const [status, rssi] = await Promise.all([ute.getStatus().catch(() => null), ute.getRssi().catch(() => null)]);
   if (status && state.status && status.keyState !== state.status.keyState) {
     noteInput("Clip button", `key state ${state.status.keyState} → ${status.keyState}`);
@@ -481,6 +489,39 @@ export async function readGyro() {
   return gyro;
 }
 
+// --- Motion probe (Dev tools → Motion lab) ----------------------------------
+
+/** Where the clip's traffic goes while the probe runs. */
+export type ProbeTap = {
+  onMotion: (source: ute.MotionSource, samples: ute.MotionSample[]) => void;
+  /** Every SDK log line; the raw packets are the "App receive …" ones. */
+  onLog: (line: string) => void;
+  onInput: (input: ute.InputEvent) => void;
+};
+let probe: ProbeTap | null = null;
+
+/** Hands the clip to the probe: twist motion and status polling pause, and every SDK line goes to `tap`. */
+export async function beginProbe(tap: ProbeTap) {
+  if (state.phase !== "connected") throw new Error("Connect the clip first.");
+  if (probe) throw new Error("The probe is already running.");
+  probe = tap;
+  // Let a twist source that is still being tried give up first (it checks `probe`).
+  for (let waited = 0; motionStarting && waited < 10_000; waited += 100) await sleep(100);
+  if (activeSource || state.motion.on) await stopMotion();
+  await ute.setSdkLogging(true);
+  say("motion probe started");
+}
+
+/** Gives the clip back: twist motion starts again (trying the probe's winner first, if one was saved). */
+export async function endProbe() {
+  if (!probe) return;
+  probe = null;
+  await ute.setSdkLogging(false).catch(() => {});
+  say("motion probe finished");
+  retryMotion();
+  ensureMotion("probe finished");
+}
+
 // --- Motion for twist-to-listen -------------------------------------------
 //
 // The SDK has several motion sources and the ES100 supports some unknown subset
@@ -488,6 +529,28 @@ export async function readGyro() {
 // actually delivers samples is kept for as long as the clip stays connected.
 
 const MOTION_SOURCES: ute.MotionSource[] = ["game", "wear6", "wear3", "gsensor", "gyro"];
+const POLL_MS = 100;
+
+/** The motion probe's winner (Dev tools → Motion lab): tried first, at the rate that won. */
+export type PreferredMotion = { source: ute.MotionSource; intervalMs: number };
+const PREFERRED_MOTION = "es100.motionSource";
+let preferred: PreferredMotion | null = null;
+storage
+  .get(PREFERRED_MOTION)
+  .then((saved) => (preferred = saved ? (JSON.parse(saved) as PreferredMotion) : null))
+  .catch(() => {});
+
+export async function setPreferredMotion(value: PreferredMotion | null) {
+  preferred = value;
+  if (value) await storage.set(PREFERRED_MOTION, JSON.stringify(value)).catch(() => {});
+  else await storage.remove(PREFERRED_MOTION).catch(() => {});
+}
+
+function motionSources() {
+  return preferred ? [preferred.source, ...MOTION_SOURCES.filter((s) => s !== preferred?.source)] : MOTION_SOURCES;
+}
+
+const intervalFor = (source: ute.MotionSource) => (preferred?.source === source ? preferred.intervalMs : POLL_MS);
 /** How long a source gets to deliver its first samples before the next one is tried. */
 const FIRST_SAMPLES_MS = 3000;
 const MOTION_SILENCE_MS = 5000;
@@ -497,7 +560,7 @@ const motionListeners = new Set<MotionListener>();
 let lastBatchAt: number | null = null;
 let lastRawLog = 0;
 let motionStarting = false;
-/** Index into MOTION_SOURCES of the source in use (or being tried). */
+/** Index into motionSources() of the source in use (or being tried). */
 let sourceIndex = 0;
 let activeSource: ute.MotionSource | null = null;
 let watchdog: ReturnType<typeof setInterval> | null = null;
@@ -539,13 +602,14 @@ async function streamStarted(ms: number) {
 
 /** Starts motion if someone wants it: the source that worked, or the next one to try. */
 async function ensureMotion(reason: string) {
-  if (!motionListeners.size || state.phase !== "connected" || motionStarting || state.motionProblem) return;
+  if (!motionListeners.size || state.phase !== "connected" || motionStarting || state.motionProblem || probe) return;
   motionStarting = true;
+  const sources = motionSources();
   try {
-    while (sourceIndex < MOTION_SOURCES.length && motionListeners.size && state.phase === "connected") {
-      const source = MOTION_SOURCES[sourceIndex];
+    while (sourceIndex < sources.length && motionListeners.size && state.phase === "connected" && !probe) {
+      const source = sources[sourceIndex];
       try {
-        await ute.setMotionSource(source, true);
+        await ute.setMotionSource(source, true, intervalFor(source));
       } catch (err) {
         say(`motion: ${source} failed — ${message(err)}`);
         sourceIndex++;
@@ -566,8 +630,8 @@ async function ensureMotion(reason: string) {
       await ute.setMotionSource(source, false).catch(() => {});
       sourceIndex++;
     }
-    if (sourceIndex >= MOTION_SOURCES.length) {
-      motionUnavailable(`none of the clip's motion sources sent data (tried ${MOTION_SOURCES.join(", ")})`);
+    if (sourceIndex >= sources.length) {
+      motionUnavailable(`none of the clip's motion sources sent data (tried ${sources.join(", ")})`);
     }
   } finally {
     motionStarting = false;
@@ -575,7 +639,7 @@ async function ensureMotion(reason: string) {
 }
 
 async function stopMotion() {
-  const source = activeSource ?? MOTION_SOURCES[sourceIndex];
+  const source = activeSource ?? motionSources()[sourceIndex];
   activeSource = null;
   if (source && state.phase === "connected") {
     await ute.setMotionSource(source, false).catch(() => {});
@@ -586,7 +650,7 @@ async function stopMotion() {
 
 /** A source that went quiet (the SDK has no "stream ended" event) is started again. */
 function checkMotion() {
-  if (!motionListeners.size || state.phase !== "connected" || state.motionProblem || motionStarting || !activeSource) return;
+  if (!motionListeners.size || state.phase !== "connected" || state.motionProblem || motionStarting || !activeSource || probe) return;
   if (lastBatchAt !== null && Date.now() - lastBatchAt < MOTION_SILENCE_MS) return;
   lastBatchAt = Date.now(); // give the restart its own time
   activeSource = null;

@@ -184,8 +184,8 @@ public class UteBleModule: Module {
     }
     .runOnQueue(.main)
 
-    AsyncFunction("setMotionSource") { (source: String, on: Bool, promise: Promise) in
-      self.bridge.setMotionSource(source, on: on) { errorCode in
+    AsyncFunction("setMotionSource") { (source: String, on: Bool, intervalMs: Int, promise: Promise) in
+      self.bridge.setMotionSource(source, on: on, intervalMs: intervalMs) { errorCode in
         if errorCode == 408 {
           promise.reject(UteException("MotionUnsupported: the clip didn't answer (\(source))."))
           return
@@ -196,6 +196,19 @@ public class UteBleModule: Module {
         }
         promise.resolve(nil)
       }
+    }
+    .runOnQueue(.main)
+
+    AsyncFunction("readActivity") { (promise: Promise) in
+      self.bridge.readActivity { errorCode, result in
+        Self.settle(promise, errorCode, result, "getCurrentDayTotalWorkoutData")
+      }
+    }
+    .runOnQueue(.main)
+
+    /// Forward every SDK log line (raw packets included) as onLog, not only during a connect.
+    AsyncFunction("setSdkLogging") { (on: Bool) in
+      self.bridge.sdkLogging = on
     }
     .runOnQueue(.main)
 

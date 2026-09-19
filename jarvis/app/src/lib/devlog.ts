@@ -4,11 +4,13 @@ import { useSyncExternalStore } from "react";
 // engine is doing, shown in the Assistant tab's Logs panel. remoteLog.ts also
 // uploads it to the server (D1 table device_logs) for remote debugging.
 
-export type LogKind = "req" | "res" | "err" | "voice" | "log" | "warn" | "ble";
+/** probe: the motion probe's results (Dev tools → Motion lab). */
+export type LogKind = "req" | "res" | "err" | "voice" | "log" | "warn" | "ble" | "probe";
 export type LogEntry = { id: number; time: number; kind: LogKind; text: string; detail?: string };
 
 const MAX_ENTRIES = 400;
-const MAX_DETAIL = 1500;
+// The server keeps up to 4000 characters; the motion probe's per-source results need most of it.
+const MAX_DETAIL = 3900;
 
 let entries: LogEntry[] = [];
 let nextId = 1;
