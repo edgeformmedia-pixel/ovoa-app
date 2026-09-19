@@ -23,6 +23,9 @@ static const NSTimeInterval UteSyncStallSeconds = 15;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, UTEModelDevice *> *discovered;
 @property (nonatomic, assign) BOOL recordListenersRegistered;
 @property (nonatomic, assign) BOOL connecting;
+/// Set only by a real "connected" status from the SDK. `connectStatus` can't be trusted on its own:
+/// it starts at 0, which is UTEDevicesStatusConnected, so a fresh launch looked connected.
+@property (nonatomic, assign) BOOL linked;
 
 // The transfer in flight. The SDK hands data over in small pieces and sometimes stops
 // short of the end; the demo appends the pieces itself and asks again for the rest.
@@ -137,7 +140,7 @@ static const NSTimeInterval UteSyncStallSeconds = 15;
 }
 
 - (BOOL)connected {
-  return [self mgr].connectStatus == UTEDevicesStatusConnected;
+  return self.linked && [self mgr].connnectModel != nil && [self mgr].connectStatus == UTEDevicesStatusConnected;
 }
 
 - (nullable NSDictionary<NSString *, id> *)connectedDeviceInfo {
@@ -197,6 +200,7 @@ static const NSTimeInterval UteSyncStallSeconds = 15;
 
 - (void)uteDevicesStatus:(UTEDevicesStatus)status error:(NSError *)error userInfo:(NSDictionary *)info {
   if (status != UTEDevicesStatusConnecting) self.connecting = NO;
+  self.linked = status == UTEDevicesStatusConnected;
   void (^handler)(NSInteger, BOOL, NSString *_Nullable) = self.onConnectionChange;
   // The CoreBluetooth code matters: 14/15 mean the iPhone's saved pairing for the clip is stale.
   NSString *message = error ? [NSString stringWithFormat:@"%@ (CB %ld)", error.localizedDescription, (long)error.code] : nil;

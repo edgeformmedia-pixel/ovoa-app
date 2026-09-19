@@ -1,3 +1,4 @@
+import { fetch as streamingFetch } from "expo/fetch";
 import { devlog } from "./devlog";
 
 export const API_URL =process.env.EXPO_PUBLIC_API_URL ?? "https://jarvis-api.edgeformmedia.workers.dev";
@@ -39,9 +40,13 @@ export type PhoneCaps = { lookups: boolean; capabilities: string[] };
 /** Something the assistant wants looked up on the phone before it can answer. */
 export type PhoneCall = { id: string; name: string; args: Record<string, any> };
 /** A chat turn either finishes, or pauses until the app sends lookup results to `resume`. */
-export type ChatResponse =
+export type ChatResponse = (
   | { messages: Message[]; pendingActions: PendingAction[]; paused?: undefined; ignored?: boolean }
-  | { paused: { turnId: string; calls: PhoneCall[] }; pendingActions: PendingAction[]; messages?: undefined; ignored?: undefined };
+  | { paused: { turnId: string; calls: PhoneCall[] }; pendingActions: PendingAction[]; messages?: undefined; ignored?: undefined }
+) & {
+  /** Which model answered and how long the server took, for the log. */
+  meta?: { engine: string; ms: number };
+};
 /** A connected Google account. `label` is the tag the user (or the assistant) gave it. */
 export type GoogleAccount = {
   id: string;
@@ -101,6 +106,110 @@ export async function request<T>(path: string, token: string | null, init: Reque
   return body as T;
 }
 
+type StreamLine =
+  | { type: "sentence"; text: string }
+  | ({ type: "done" } & ChatResponse)
+  | { type: "error"; error: string };
+
+/**
+ * A chat turn with the reply streamed: `onSentence` gets each sentence as soon as
+ * the server has it (so it can be spoken while the rest is written), then this
+ * resolves with the same response a plain request would.
+ */
+async function streamedTurn(
+  path: string,
+  token: string,
+  body: Record<string, unknown>,
+  onSentence: (sentence: string) => void,
+  signal?: AbortSignal,
+): Promise<ChatResponse> {
+  devlog("req", `POST ${path} (streamed)`, JSON.stringify(body));
+  const started = Date.now();
+  // No progress for this long means the connection is dead (the whole reply can take longer).
+  const timeout = new AbortController();
+  let timer = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
+  // The caller gave up (the user talked over the reply): stop reading.
+  let dropped = false;
+  const drop = () => {
+    dropped = true;
+    timeout.abort();
+  };
+  if (signal?.aborted) drop();
+  signal?.addEventListener("abort", drop);
+  const alive = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
+  };
+  try {
+    const res = await streamingFetch(`${API_URL}${path}`, {
+      method: "POST",
+      signal: timeout.signal,
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ...body, stream: true }),
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      devlog("err", `${res.status} POST ${path} · ${Date.now() - started} ms`, err);
+      throw new ApiError(err.error ?? `Request failed (${res.status})`, res.status);
+    }
+    // A server without streaming answers plain JSON.
+    if (!res.headers.get("content-type")?.includes("ndjson") || !res.body) {
+      const json = (await res.json()) as ChatResponse;
+      devlog("res", `${res.status} POST ${path} · ${Date.now() - started} ms (not streamed)`, json);
+      return json;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let sentences = 0;
+    let final: ChatResponse | null = null;
+    const handle = (line: string) => {
+      if (!line.trim()) return;
+      const msg = JSON.parse(line) as StreamLine;
+      if (msg.type === "sentence") {
+        if (!sentences++) devlog("res", `first sentence after ${Date.now() - started} ms`, msg.text);
+        onSentence(msg.text);
+      } else if (msg.type === "error") {
+        throw new ApiError(msg.error, 500);
+      } else {
+        const { type: _, ...rest } = msg;
+        final = rest as ChatResponse;
+      }
+    };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      alive();
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl);
+        buffer = buffer.slice(nl + 1);
+        handle(line);
+      }
+    }
+    handle(buffer);
+    if (!final) throw new Error("The reply was cut off");
+    const done = final as ChatResponse;
+    devlog("res", `200 POST ${path} · ${Date.now() - started} ms, ${sentences} sentences streamed`, done.meta ?? done);
+    return done;
+  } catch (err) {
+    if (dropped) {
+      devlog("voice", `stopped reading the reply after ${Date.now() - started} ms (talked over)`);
+      throw new Error("Cancelled");
+    }
+    if (timeout.signal.aborted) {
+      devlog("err", `POST ${path} stalled after ${Date.now() - started} ms`);
+      throw new Error(`No answer from the server after ${REQUEST_TIMEOUT_MS / 1000} s`);
+    }
+    if (!(err instanceof ApiError)) devlog("err", `POST ${path} failed after ${Date.now() - started} ms`, String(err));
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", drop);
+  }
+}
+
 export const api = {
   signup: (email: string, password: string, name: string) =>
     request<{ token: string; user: User }>("/auth/signup", null, {
@@ -133,6 +242,22 @@ export const api = {
     }),
   resume: (token: string, turnId: string, results: Record<string, unknown>) =>
     request<ChatResponse>("/chat/resume", token, { method: "POST", body: JSON.stringify({ turnId, results }) }),
+  /** `send` for a spoken turn, with the reply's sentences delivered as they're written. */
+  sendStreamed: (
+    token: string,
+    message: string,
+    phone: PhoneCaps,
+    ambient: boolean,
+    onSentence: (sentence: string) => void,
+    signal?: AbortSignal,
+  ) => streamedTurn("/chat", token, { message, timeZone: timeZone(), phone, voice: true, ambient }, onSentence, signal),
+  resumeStreamed: (
+    token: string,
+    turnId: string,
+    results: Record<string, unknown>,
+    onSentence: (sentence: string) => void,
+    signal?: AbortSignal,
+  ) => streamedTurn("/chat/resume", token, { turnId, results }, onSentence, signal),
   clearMessages: (token: string) => request("/chat/messages", token, { method: "DELETE" }),
 
   memories: (token: string) => request<{ memories: Memory[] }>("/memories", token),

@@ -136,9 +136,17 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     if (actions.some((a) => !a.auto) && !tabRef.current) router.navigate(ASSISTANT_PATH);
   };
 
-  /** Sends what the user said and returns the assistant's reply to read aloud. */
-  /** `addressed`: the phone heard its name, so the server needn't check. */
-  const ask = async (text: string, addressed: boolean): Promise<string | null> => {
+  /**
+   * Sends what the user said and returns the assistant's reply to read aloud.
+   * `addressed`: the phone heard its name, so the server needn't check.
+   * `onSentence`: stream the reply, one sentence at a time, as it's written.
+   */
+  const ask = async (
+    text: string,
+    addressed: boolean,
+    onSentence?: (sentence: string) => void,
+    signal?: AbortSignal,
+  ): Promise<string | null> => {
     if (busy.current) return null;
     busy.current = true;
     // Actions from every step of the turn; shown (or auto-run) once the reply is in.
@@ -146,7 +154,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     try {
       // Always-listening hears everything, so unless its name was said the server first
       // decides whether this was meant for the assistant.
-      let res: ChatResponse = await api.send(token, text, phoneCaps, true, ambientRef.current && !addressed);
+      const ambient = ambientRef.current && !addressed;
+      let res: ChatResponse = onSentence
+        ? await api.sendStreamed(token, text, phoneCaps, ambient, onSentence, signal)
+        : await api.send(token, text, phoneCaps, true, ambient);
       if (res.ignored) {
         devlog("voice", "not meant for the assistant; staying quiet", text);
         return null;
@@ -159,7 +170,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         const results: Record<string, unknown> = {};
         for (const call of calls) results[call.id] = await runPhoneLookup(call);
         setStatus(null);
-        res = await api.resume(token, turnId, results);
+        res = onSentence
+          ? await api.resumeStreamed(token, turnId, results, onSentence, signal)
+          : await api.resume(token, turnId, results);
       }
       parked.push(...res.pendingActions);
       return res.messages.find((m) => m.role === "assistant")?.content ?? null;

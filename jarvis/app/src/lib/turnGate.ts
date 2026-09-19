@@ -17,8 +17,12 @@ const QUIET_MS = 900;
 /** Longest request in a full room: other people's talk keeps it from ever going quiet. */
 const ROOM_MAX_MS = 9000;
 const OPEN_MAX_MS = 30_000;
-/** Right after a reply, words that match it are its echo. */
-const ECHO_MS = 2500;
+/**
+ * After a reply, words that match it are its echo. Transcription finishes the
+ * echo's last words a few seconds late (seen: "If you need anything later"
+ * arriving 4 s after the reply ended and being sent as a question).
+ */
+const ECHO_MS = 6000;
 /** Right after a reply, an answer without the name still counts (the server double-checks). */
 const FOLLOW_UP_MS = 8000;
 /** "What's the weather? ... OVOA." still counts if the name comes this soon after the question. */
@@ -27,6 +31,8 @@ const NAME_AFTER_MS = 2000;
 const STOP_WORDS = new Set(["stop", "wait", "cancel", "quiet", "enough", "pause", "hold", "shut"]);
 const FILLER = new Set(["ovoa", "ok", "okay", "please", "it", "that", "up", "on", "now", "hey", "no", "just", "right"]);
 const GREETING = new Set(["hey", "hi", "hello", "yo", "ok", "okay", "so", "um", "uh", "oh", "and"]);
+
+const sentencesOf = (text: string) => text.match(/[^.!?]+[.!?]*/g)?.map((s) => s.trim()).filter(Boolean) ?? [];
 
 export const wordsOf = (text: string) => text.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? [];
 
@@ -184,12 +190,23 @@ export class TurnGate {
         return null;
       }
       if (!this.talkOver) return null;
-      if (onlyStop(text) && saidOverReply(text, this.reply)) return { kind: "interrupt", stopOnly: true };
+      // "stop" on its own, or inside the echo ("...for you. Hey. Hold on. Stop. You'd like"),
+      // as long as the reply itself didn't just say it.
+      const said = [text, ...sentencesOf(text)];
+      if (said.some((s) => onlyStop(s) && saidOverReply(s, this.reply))) return { kind: "interrupt", stopOnly: true };
       const echoHasName = saysName(this.reply, this.name);
+      const heardName = saysName(text, this.name);
       const forUs = this.room
-        ? saysName(text, this.name) && (!echoHasName || !!saidOverReply(text, this.reply))
+        ? heardName && (!echoHasName || !!saidOverReply(text, this.reply))
         : !!saidOverReply(text, this.reply);
-      if (!forUs) return { kind: "ignored", text, why: "the reply's own echo" };
+      if (!forUs) {
+        const why = !this.room
+          ? "the reply's own echo"
+          : !heardName
+            ? "the reply's own echo (no name heard)"
+            : "the reply's own echo (the reply says the name too)";
+        return { kind: "ignored", text, why };
+      }
       this.start(this.room ? fromName(text, this.name) ?? text : text, this.room, now);
       return { kind: "interrupt", stopOnly: false };
     }

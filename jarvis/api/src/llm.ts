@@ -17,7 +17,7 @@ type Options = {
   json?: { schema: Record<string, unknown> };
   /**
    * Quick yes/no calls: tried on Workers AI first so they don't spend the
-   * Gemini/DeepSeek quota, and Gemini (if reached) skips most of its thinking.
+   * Gemini/DeepSeek quota, and every engine skips most of its thinking.
    */
   fast?: boolean;
 };
@@ -36,12 +36,28 @@ export type LoopState =
   | { engine: OpenAiEngine; round: number; messages: any[]; slots: { id: string; index: number }[] };
 
 export type ChatOutcome =
-  | { kind: "reply"; text: string }
-  | { kind: "paused"; state: LoopState; calls: DeferredCall[] };
+  | { kind: "reply"; text: string; engine: Engine }
+  | { kind: "paused"; state: LoopState; calls: DeferredCall[]; engine: Engine };
 
-type ToolLoopOptions = { model: string; system: string; turns: Turn[]; tools: ToolSpec[]; callTool: CallTool };
+/**
+ * Receives the reply as it's written. Returning false stops the model early
+ * (a spoken reply that has gone on long enough, or is repeating itself).
+ */
+export type OnText = (delta: string) => boolean | void;
 
-type Engine = "gemini" | OpenAiEngine;
+type ToolLoopOptions = {
+  model: string;
+  system: string;
+  turns: Turn[];
+  tools: ToolSpec[];
+  callTool: CallTool;
+  /** Spoken turn: think less, answer sooner. */
+  voice?: boolean;
+  /** Stream the reply: called with each piece of text as the model writes it. */
+  onText?: OnText;
+};
+
+export type Engine = "gemini" | OpenAiEngine;
 
 const ENGINE_NAMES: Record<Engine, string> = { gemini: "Gemini", deepseek: "DeepSeek", workers: "Workers AI" };
 
@@ -63,16 +79,35 @@ async function safeCall(callTool: CallTool, name: string, args: Record<string, u
   }
 }
 
+// ---------- Engine health ----------
+//
+// A failing engine (out of quota, out of credit, bad key) is skipped for a while
+// instead of being tried, and failing, before every single reply. Per isolate,
+// which is enough: a busy isolate serves many requests.
+
+const cooldownUntil = new Map<Engine, number>();
+
+function coolDown(engine: Engine, err: unknown) {
+  if (engine === "workers") return; // the last resort is always tried
+  const status = Number(/ (\d{3}):/.exec(String(err))?.[1] ?? 0);
+  // 429: rate limited, back soon. 401/402/403/404: key, credit or model problems that won't fix themselves.
+  const ms = status === 429 ? 60_000 : [401, 402, 403, 404].includes(status) ? 10 * 60_000 : 15_000;
+  cooldownUntil.set(engine, Date.now() + ms);
+}
+
 /**
- * Engines in the order they're tried: Gemini and DeepSeek when their keys are set,
- * then Cloudflare Workers AI, so chat keeps working if the others fail or run out.
+ * Engines in the order they're tried: Gemini and DeepSeek when their keys are set
+ * (and they haven't just failed), then Cloudflare Workers AI, so chat keeps working
+ * if the others fail or run out.
  */
 function engines(env: LlmEnv): Engine[] {
+  const now = Date.now();
   const keyed: (Engine | false)[] = [!!env.GEMINI_API_KEY && "gemini", !!env.DEEPSEEK_API_KEY && "deepseek"];
-  return [...keyed.filter((e): e is Engine => !!e), "workers"];
+  return [...keyed.filter((e): e is Engine => !!e && (cooldownUntil.get(e) ?? 0) < now), "workers"];
 }
 
 function logFallback(from: Engine, to: Engine, err: unknown) {
+  coolDown(from, err);
   console.error(`${ENGINE_NAMES[from]} failed, using ${ENGINE_NAMES[to]} fallback`, err);
 }
 
@@ -93,7 +128,8 @@ export async function generateText(env: LlmEnv, opts: Options): Promise<string> 
 }
 
 /**
- * Chat that may call tools. Moves to the next engine only if one fails before any tool ran.
+ * Chat that may call tools. Moves to the next engine only if one fails before
+ * any tool ran and before any text was streamed.
  * Pass `resume` to continue a paused turn with the results of its deferred calls.
  */
 export async function chatWithTools(
@@ -114,24 +150,63 @@ export async function chatWithTools(
     return openAiToolLoop(env, state.engine, opts, state);
   }
 
-  if (!opts.tools.length) return { kind: "reply", text: await generateText(env, opts) };
-  let toolsRan = false;
+  let committed = false;
   const tracked: CallTool = (name, args) => {
-    toolsRan = true;
+    committed = true;
     return opts.callTool(name, args);
   };
+  const onText: OnText | undefined = opts.onText
+    ? (delta) => {
+        committed = true;
+        return opts.onText!(delta);
+      }
+    : undefined;
   const order = engines(env);
   for (const [i, engine] of order.entries()) {
     try {
+      const run = { ...opts, callTool: tracked, onText };
       return engine === "gemini"
-        ? await geminiToolLoop(env.GEMINI_API_KEY!, { ...opts, callTool: tracked })
-        : await openAiToolLoop(env, engine, { ...opts, callTool: tracked });
+        ? await geminiToolLoop(env.GEMINI_API_KEY!, run)
+        : await openAiToolLoop(env, engine, run);
     } catch (err) {
-      if (toolsRan || i === order.length - 1) throw err;
+      if (committed || i === order.length - 1) throw err;
       logFallback(engine, order[i + 1], err);
     }
   }
   throw new Error("No engines");
+}
+
+// ---------- Streaming ----------
+
+/** The `data:` payloads of a server-sent-events stream. */
+async function* sseData(body: ReadableStream<Uint8Array>) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const payload = (line: string) => {
+    const l = line.trim();
+    if (!l.startsWith("data:")) return null;
+    const data = l.slice(5).trim();
+    return data && data !== "[DONE]" ? data : null;
+  };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const data = payload(buffer.slice(0, nl));
+        buffer = buffer.slice(nl + 1);
+        if (data) yield data;
+      }
+    }
+    const data = payload(buffer);
+    if (data) yield data;
+  } finally {
+    // Stopping early (a long-enough spoken reply) also stops the model upstream.
+    reader.cancel().catch(() => {});
+  }
 }
 
 // ---------- Gemini ----------
@@ -142,28 +217,55 @@ function geminiResponse(result: unknown) {
   return { result: text.length > MAX_TOOL_RESULT_CHARS ? text : (result ?? null) };
 }
 
+/** One model turn. Streamed when `onText` is set; either way returns the full turn. */
+async function geminiRound(apiKey: string, model: string, body: unknown, onText?: OnText): Promise<{ role: string; parts: any[] }> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:${onText ? "streamGenerateContent?alt=sse" : "generateContent"}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Gemini ${model} ${res.status}: ${(await res.text()).slice(0, 500)}`);
+  if (!onText) {
+    const data = (await res.json()) as any;
+    return data.candidates?.[0]?.content ?? { role: "model", parts: [] };
+  }
+  // Keep every part as it arrived: function calls carry thought signatures Gemini wants back.
+  const parts: any[] = [];
+  for await (const data of sseData(res.body!)) {
+    const chunk = JSON.parse(data);
+    let stop = false;
+    for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
+      parts.push(part);
+      if (part.text && !part.thought && onText(part.text) === false) stop = true;
+    }
+    if (stop) break;
+  }
+  return { role: "model", parts };
+}
+
 async function geminiToolLoop(
   apiKey: string,
-  { model, system, turns, tools, callTool }: ToolLoopOptions,
+  { model, system, turns, tools, callTool, voice, onText }: ToolLoopOptions,
   paused?: Extract<LoopState, { engine: "gemini" }>,
 ): Promise<ChatOutcome> {
   const contents: any[] = paused?.contents ?? turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] }));
 
   for (let round = paused?.round ?? 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify({
+    const content = await geminiRound(
+      apiKey,
+      model,
+      {
         systemInstruction: { parts: [{ text: system }] },
         contents,
         // No tools on the last round, so the model has to answer.
-        ...(round < MAX_TOOL_ROUNDS && { tools: [{ functionDeclarations: tools }] }),
-      }),
-    });
-    if (!res.ok) throw new Error(`Gemini ${model} ${res.status}: ${(await res.text()).slice(0, 500)}`);
-    const data = (await res.json()) as any;
-    const content = data.candidates?.[0]?.content;
-    const parts: any[] = content?.parts ?? [];
+        ...(round < MAX_TOOL_ROUNDS && tools.length && { tools: [{ functionDeclarations: tools }] }),
+        // Spoken replies are short: a little thinking is plenty, and much faster.
+        ...(voice && { generationConfig: { thinkingConfig: { thinkingLevel: "low" } } }),
+      },
+      onText,
+    );
+    const parts: any[] = content.parts ?? [];
     const calls = parts.filter((p) => p.functionCall);
 
     if (!calls.length) {
@@ -172,7 +274,7 @@ async function geminiToolLoop(
         .map((p) => p.text)
         .join("");
       if (!text) throw new Error(`Gemini ${model} returned no text`);
-      return { kind: "reply", text };
+      return { kind: "reply", text, engine: "gemini" };
     }
 
     // Send the model's turn back verbatim: it carries thought signatures Gemini requires.
@@ -196,7 +298,7 @@ async function geminiToolLoop(
     }
     contents.push({ role: "user", parts: responses });
     if (deferred.length) {
-      return { kind: "paused", state: { engine: "gemini", round: round + 1, contents, slots }, calls: deferred };
+      return { kind: "paused", state: { engine: "gemini", round: round + 1, contents, slots }, calls: deferred, engine: "gemini" };
     }
   }
   throw new Error("Too many tool rounds");
@@ -211,21 +313,29 @@ type OpenAiOut = {
   choices?: { message?: { content?: string | null; reasoning_content?: string; tool_calls?: any[] } }[];
 };
 
-type OpenAiRun = (body: { messages: any[]; tools?: any[]; max_tokens: number }) => Promise<OpenAiOut>;
+type OpenAiBody = { messages: any[]; tools?: any[]; max_tokens: number; reasoning_effort?: "low" | "medium" | "high" };
 
-function openAiRunner(env: LlmEnv, engine: OpenAiEngine): OpenAiRun {
+/** One assistant message, however it arrived. */
+type OpenAiMessage = { content: string; reasoning_content?: string; tool_calls: any[] };
+
+/** Workers AI's gpt-oss takes `reasoning_effort`; DeepSeek gets only standard fields. */
+function openAiBody(engine: OpenAiEngine, body: OpenAiBody): OpenAiBody {
+  if (engine === "workers") return body;
+  const { reasoning_effort: _, ...rest } = body;
+  return rest;
+}
+
+async function openAiCall(env: LlmEnv, engine: OpenAiEngine, body: OpenAiBody, stream: boolean): Promise<any> {
   if (engine === "workers") {
-    return (body) => env.AI.run(env.FALLBACK_MODEL as keyof AiModels, body as never) as Promise<OpenAiOut>;
+    return env.AI.run(env.FALLBACK_MODEL as keyof AiModels, { ...openAiBody(engine, body), ...(stream && { stream: true }) } as never);
   }
-  return async (body) => {
-    const res = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${env.DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: env.DEEPSEEK_MODEL, ...body }),
-    });
-    if (!res.ok) throw new Error(`DeepSeek ${env.DEEPSEEK_MODEL} ${res.status}: ${(await res.text()).slice(0, 500)}`);
-    return res.json();
-  };
+  const res = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${env.DEEPSEEK_API_KEY}` },
+    body: JSON.stringify({ model: env.DEEPSEEK_MODEL, ...openAiBody(engine, body), ...(stream && { stream: true }) }),
+  });
+  if (!res.ok) throw new Error(`DeepSeek ${env.DEEPSEEK_MODEL} ${res.status}: ${(await res.text()).slice(0, 500)}`);
+  return stream ? res.body : res.json();
 }
 
 function openAiText(out: OpenAiOut) {
@@ -238,20 +348,52 @@ function openAiText(out: OpenAiOut) {
   return stripThinking(text);
 }
 
-async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, { system, turns, json }: Options): Promise<string> {
+/** One model turn. Streamed when `onText` is set; either way returns the whole message. */
+async function openAiRound(env: LlmEnv, engine: OpenAiEngine, body: OpenAiBody, onText?: OnText): Promise<OpenAiMessage> {
+  if (!onText) {
+    const out = (await openAiCall(env, engine, body, false)) as OpenAiOut;
+    const message = out.choices?.[0]?.message;
+    return { content: openAiText(out), reasoning_content: message?.reasoning_content, tool_calls: message?.tool_calls ?? [] };
+  }
+  const stream = (await openAiCall(env, engine, body, true)) as ReadableStream<Uint8Array>;
+  let content = "";
+  let reasoning = "";
+  const calls: any[] = [];
+  for await (const data of sseData(stream)) {
+    const chunk = JSON.parse(data);
+    const delta = chunk.choices?.[0]?.delta;
+    // Workers AI ends with {"response": "", usage}; older models stream only `response`.
+    const text: string = delta?.content ?? (typeof chunk.response === "string" ? chunk.response : "");
+    if (delta?.reasoning_content) reasoning += delta.reasoning_content;
+    for (const tc of delta?.tool_calls ?? []) {
+      const slot = (calls[tc.index ?? 0] ??= { id: "", type: "function", function: { name: "", arguments: "" } });
+      if (tc.id) slot.id = tc.id;
+      if (tc.function?.name) slot.function.name += tc.function.name;
+      if (tc.function?.arguments) slot.function.arguments += tc.function.arguments;
+    }
+    if (text) {
+      content += text;
+      if (onText(text) === false) break;
+    }
+  }
+  return { content: stripThinking(content), reasoning_content: reasoning || undefined, tool_calls: calls.filter(Boolean) };
+}
+
+async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, { system, turns, json, fast }: Options): Promise<string> {
   const systemText = json
     ? `${system}\n\nRespond with only a JSON object matching this JSON schema, no other text:\n${JSON.stringify(json.schema)}`
     : system;
 
-  const out = await openAiRunner(env, engine)({
+  const { content } = await openAiRound(env, engine, {
     messages: [
       { role: "system", content: systemText },
       ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
     ],
     max_tokens: 2048,
+    ...(fast && { reasoning_effort: "low" as const }),
   });
 
-  let text = openAiText(out);
+  let text = content;
   if (json) {
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error(`${ENGINE_NAMES[engine]} returned no JSON: ${text.slice(0, 200)}`);
@@ -264,10 +406,9 @@ async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, { system, turns
 async function openAiToolLoop(
   env: LlmEnv,
   engine: OpenAiEngine,
-  { system, turns, tools, callTool }: ToolLoopOptions,
+  { system, turns, tools, callTool, voice, onText }: ToolLoopOptions,
   paused?: Extract<LoopState, { engine: OpenAiEngine }>,
 ): Promise<ChatOutcome> {
-  const run = openAiRunner(env, engine);
   const messages: any[] = paused?.messages ?? [
     { role: "system", content: system },
     ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
@@ -275,26 +416,31 @@ async function openAiToolLoop(
   const toolDefs = tools.map((t) => ({ type: "function", function: t }));
 
   for (let round = paused?.round ?? 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const out = await run({
-      messages,
-      ...(round < MAX_TOOL_ROUNDS && { tools: toolDefs }),
-      max_tokens: 4096,
-    });
+    const message = await openAiRound(
+      env,
+      engine,
+      {
+        messages,
+        ...(round < MAX_TOOL_ROUNDS && toolDefs.length && { tools: toolDefs }),
+        max_tokens: 4096,
+        // Measured on gpt-oss-120b: about 4x faster to a spoken answer, and tool calls still work.
+        ...(voice && { reasoning_effort: "low" as const }),
+      },
+      onText,
+    );
 
-    const message = out.choices?.[0]?.message;
-    const calls = message?.tool_calls ?? [];
+    const calls = message.tool_calls;
     if (!calls.length) {
-      const text = openAiText(out);
-      if (!text) throw new Error(`${ENGINE_NAMES[engine]} returned no text`);
-      return { kind: "reply", text };
+      if (!message.content) throw new Error(`${ENGINE_NAMES[engine]} returned no text`);
+      return { kind: "reply", text: message.content, engine };
     }
 
     // Workers AI rejects null content on assistant turns; DeepSeek wants its reasoning sent back.
     messages.push({
       role: "assistant",
-      content: message?.content ?? "",
+      content: message.content ?? "",
       tool_calls: calls,
-      ...(message?.reasoning_content && { reasoning_content: message.reasoning_content }),
+      ...(message.reasoning_content && { reasoning_content: message.reasoning_content }),
     });
     const slots: { id: string; index: number }[] = [];
     const deferred: DeferredCall[] = [];
@@ -315,7 +461,7 @@ async function openAiToolLoop(
       messages.push({ role: "tool", tool_call_id: call.id, content });
     }
     if (deferred.length) {
-      return { kind: "paused", state: { engine, round: round + 1, messages, slots }, calls: deferred };
+      return { kind: "paused", state: { engine, round: round + 1, messages, slots }, calls: deferred, engine };
     }
   }
   throw new Error("Too many tool rounds");

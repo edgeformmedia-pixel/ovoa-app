@@ -225,8 +225,11 @@ function ensureStarted() {
       say(`SDK ${version} ready`);
       const saved = await storage.get(SAVED_DEVICE).catch(() => null);
       set({ savedDeviceId: saved });
-      // Already linked (e.g. after a JS reload): pick the session back up.
-      if (await ute.isConnected().catch(() => false)) return onConnected();
+      // Already linked (e.g. after a JS reload): pick the session back up. Both checks,
+      // because a fresh launch once reported "connected" before anything had connected.
+      if ((await ute.isConnected().catch(() => false)) && (await ute.connectedDevice().catch(() => null))) {
+        return onConnected();
+      }
       autoConnect();
     })
     .catch((err) => {
@@ -259,7 +262,8 @@ async function onConnected() {
   reconnectAttempt = 0;
   userDisconnected = false;
   const device = await ute.connectedDevice().catch(() => null);
-  set({ phase: "connected", device, problem: null });
+  // A new connection: read what this clip supports again, and give motion another try.
+  set({ phase: "connected", device, problem: null, capabilities: null, sensors: null, motionProblem: null });
   say(`connected to ${device?.name || "clip"}`);
   if (device?.id) {
     await storage.set(SAVED_DEVICE, device.id).catch(() => {});
@@ -407,6 +411,13 @@ export async function refreshInfo() {
     attempt("battery", ute.getBattery),
     attempt("signal", ute.getRssi),
   ]);
+  // Nothing answered: check the link is real before trusting "connected" any further.
+  if (!status && !storageInfo && !battery && !rssi && !(await ute.isConnected().catch(() => false))) {
+    say("the clip isn't actually connected; connecting again");
+    set({ phase: "idle", device: null });
+    autoConnect();
+    return;
+  }
   set({
     status: status ?? state.status,
     storageInfo: storageInfo ?? state.storageInfo,
@@ -422,13 +433,14 @@ export async function refreshInfo() {
       attempt("capabilities", ute.capabilities),
       attempt("formats", ute.getEncodingConfig),
     ]);
-    set({ capabilities, formats: config?.formats ?? null });
+    // An empty list means the clip's details weren't read yet; leave it to retry next time.
+    set({ capabilities: capabilities && Object.keys(capabilities).length ? capabilities : null, formats: config?.formats ?? null });
     const sensors = await attempt("sensor probe", ute.probeSensors);
     set({ sensors });
     if (sensors) say(`sensors: accelerometer ${sensors.accelerometer}, gyroscope ${sensors.gyroscope}, button ${sensors.button}, motor ${sensors.motor}`);
     // Phase 0 of twist-to-listen: what motion data this firmware claims to have.
     const flags = ["hasGame", "hasNoScreen", "hasButtonWakeUpVoice", "hasVoiceAssistant", "hasChatGPT", "hasWearingHands", "hasAIRecording", "hasAIRecordRealTime"];
-    devlog("ble", "twist probe", JSON.stringify({ sensors, ...Object.fromEntries(flags.map((f) => [f, capabilities?.[f] ?? null])) }));
+    devlog("ble", "twist probe", JSON.stringify({ sensors, ...Object.fromEntries(flags.map((f) => [f, state.capabilities?.[f] ?? null])) }));
   }
 }
 

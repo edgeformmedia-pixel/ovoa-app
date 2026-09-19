@@ -13,7 +13,8 @@ import { isMeantForAssistant } from "./ambient";
 import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
 import { googleAuthed, googlePublic } from "./google/oauth";
-import { chatWithTools, generateText, type LoopState, type Turn } from "./llm";
+import { chatWithTools, generateText, type LoopState, type OnText, type Turn } from "./llm";
+import { dropRepeats, sentenceStream } from "./sentences";
 import { isPhoneTool, type PhoneCaps } from "./phone";
 import { isShortcutTool, shortcutAssistant, shortcutFiles } from "./shortcuts/assistant";
 import type { Env, Vars } from "./types";
@@ -274,11 +275,14 @@ const chatSchema = z.object({
   voice: z.boolean().optional(),
   // Overheard by always-listening: reply only if it was said to the assistant.
   ambient: z.boolean().optional(),
+  // Answer as newline-delimited JSON, the reply's sentences first as they're written (see streamTurn).
+  stream: z.boolean().optional(),
 });
 
 const resumeSchema = z.object({
   turnId: z.string().max(64),
   results: z.record(z.string().max(64), z.unknown()),
+  stream: z.boolean().optional(),
 });
 
 const ACTIONS_ONLY: PhoneCaps = { lookups: false, capabilities: [] };
@@ -290,13 +294,20 @@ type TurnInput = {
   caps: PhoneCaps;
   voice?: boolean;
   resume?: { state: LoopState; results: Record<string, unknown> };
+  /** Streaming: receives each sentence of the reply as soon as it's written. */
+  onSentence?: (sentence: string) => void;
 };
 
 /**
  * Runs (or resumes) one chat turn. Either finishes with a reply, or pauses
  * because the model wants the phone to look something up.
  */
-async function runTurn(env: Env, ctx: Pick<ExecutionContext, "waitUntil">, { userId, text, timeZone, caps, voice, resume }: TurnInput) {
+async function runTurn(
+  env: Env,
+  ctx: Pick<ExecutionContext, "waitUntil">,
+  { userId, text, timeZone, caps, voice, resume, onSentence }: TurnInput,
+) {
+  const started = Date.now();
   const db = env.DB;
   const settings = await getSettings(db, userId);
   const autoApprove = !!settings.auto_approve;
@@ -340,6 +351,9 @@ async function runTurn(env: Env, ctx: Pick<ExecutionContext, "waitUntil">, { use
     .filter(Boolean)
     .join("\n\n");
 
+  // Streamed replies go out a sentence at a time; a looping model is cut off (see sentences.ts).
+  const spoken = onSentence ? sentenceStream(onSentence, voice ? undefined : Infinity) : null;
+  const onText: OnText | undefined = spoken ? (delta) => spoken.push(delta) : undefined;
   const outcome = await chatWithTools(env, {
     model: env.CHAT_MODEL,
     system,
@@ -348,8 +362,13 @@ async function runTurn(env: Env, ctx: Pick<ExecutionContext, "waitUntil">, { use
     callTool: (name, args) =>
       (isPhoneTool(name) ? phone.callTool : isShortcutTool(name) ? shortcuts.callTool : google.callTool)(name, args),
     resume,
+    voice,
+    onText,
   });
+  spoken?.end();
   const pendingActions = [...phone.pending, ...shortcuts.pending, ...google.pending];
+  const meta = { engine: outcome.engine, ms: Date.now() - started };
+  console.log(`turn: ${meta.engine}, ${meta.ms} ms${voice ? ", voice" : ""}${spoken ? ", streamed" : ""}`);
 
   if (outcome.kind === "paused") {
     const turnId = crypto.randomUUID();
@@ -368,10 +387,11 @@ async function runTurn(env: Env, ctx: Pick<ExecutionContext, "waitUntil">, { use
         Date.now(),
       )
       .run();
-    return { kind: "paused" as const, turnId, calls: outcome.calls, pendingActions };
+    return { kind: "paused" as const, turnId, calls: outcome.calls, pendingActions, meta };
   }
 
-  const reply = outcome.text;
+  // What was streamed (minus repeats) is what the user heard, so that's what's kept.
+  const reply = spoken?.emitted() ? spoken.text() : dropRepeats(outcome.text);
   const now = Date.now();
   const userMsg = { id: crypto.randomUUID(), role: "user", content: text, created_at: now };
   const botMsg = { id: crypto.randomUUID(), role: "assistant", content: reply, created_at: now + 1 };
@@ -387,49 +407,91 @@ async function runTurn(env: Env, ctx: Pick<ExecutionContext, "waitUntil">, { use
     );
   }
 
-  return { kind: "reply" as const, reply, messages: [userMsg, botMsg], pendingActions };
+  return { kind: "reply" as const, reply, messages: [userMsg, botMsg], pendingActions, meta };
 }
 
 type TurnResult = Awaited<ReturnType<typeof runTurn>>;
 
 function turnResponse(result: TurnResult) {
   return result.kind === "paused"
-    ? { paused: { turnId: result.turnId, calls: result.calls }, pendingActions: result.pendingActions }
-    : { messages: result.messages, pendingActions: result.pendingActions };
+    ? { paused: { turnId: result.turnId, calls: result.calls }, pendingActions: result.pendingActions, meta: result.meta }
+    : { messages: result.messages, pendingActions: result.pendingActions, meta: result.meta };
 }
+
+type Ignored = { ignored: true };
+
+/**
+ * Runs a turn and answers with newline-delimited JSON as it goes:
+ *   {"type":"sentence","text":"..."}  each sentence of the reply, as soon as it's written
+ *   {"type":"done", ...the usual /chat response}
+ *   {"type":"error","error":"..."}
+ * so the phone can start speaking the first sentence while the rest is written.
+ */
+function streamTurn(ctx: Pick<ExecutionContext, "waitUntil">, run: (onSentence: (s: string) => void) => Promise<TurnResult | Ignored>) {
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+  const send = (line: unknown) => writer.write(encoder.encode(`${JSON.stringify(line)}\n`)).catch(() => {});
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const result = await run((text) => void send({ type: "sentence", text }));
+        await send("ignored" in result ? { type: "done", ...IGNORED } : { type: "done", ...turnResponse(result) });
+      } catch (err) {
+        console.error("streamed turn failed", err);
+        await send({ type: "error", error: err instanceof Error ? err.message : "The assistant failed" });
+      } finally {
+        await writer.close().catch(() => {});
+      }
+    })(),
+  );
+  return new Response(readable, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" } });
+}
+
+const IGNORED = { messages: [], pendingActions: [], ignored: true };
 
 authed.post("/chat", async (c) => {
   const parsed = chatSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Message is required" }, 400);
-  const db = c.env.DB;
-  const userId = c.var.userId;
-  if (parsed.data.ambient) {
+  const { data } = parsed;
+  if (data.stream) return streamTurn(c.executionCtx, (onSentence) => chatTurn(c.env, c.executionCtx, c.var.userId, data, onSentence));
+  const result = await chatTurn(c.env, c.executionCtx, c.var.userId, data);
+  return c.json("ignored" in result ? IGNORED : turnResponse(result));
+});
+
+async function chatTurn(
+  env: Env,
+  ctx: Pick<ExecutionContext, "waitUntil">,
+  userId: string,
+  data: z.infer<typeof chatSchema>,
+  onSentence?: (sentence: string) => void,
+): Promise<TurnResult | Ignored> {
+  const db = env.DB;
+  if (data.ambient) {
     const { assistant_name } = await getSettings(db, userId);
-    if (!(await isMeantForAssistant(c.env, userId, parsed.data.message, assistant_name))) {
+    if (!(await isMeantForAssistant(env, userId, data.message, assistant_name))) {
       // Not for us: nothing is saved and nothing is said.
-      return c.json({ messages: [], pendingActions: [], ignored: true });
+      return { ignored: true };
     }
   }
-  const timeZone = validTimeZone(parsed.data.timeZone);
+  const timeZone = validTimeZone(data.timeZone);
   await db.batch([
     // Drop turns the app never resumed; they can hold looked-up phone data.
     db
       .prepare("DELETE FROM paused_turns WHERE user_id = ? AND created_at < ?")
       .bind(userId, Date.now() - PAUSED_TURN_TTL_MS),
-    ...(parsed.data.timeZone
-      ? [db.prepare("UPDATE settings SET time_zone = ? WHERE user_id = ?").bind(timeZone, userId)]
-      : []),
+    ...(data.timeZone ? [db.prepare("UPDATE settings SET time_zone = ? WHERE user_id = ?").bind(timeZone, userId)] : []),
   ]);
 
-  const result = await runTurn(c.env, c.executionCtx, {
+  return runTurn(env, ctx, {
     userId,
-    text: parsed.data.message,
+    text: data.message,
     timeZone,
-    caps: parsed.data.phone ?? ACTIONS_ONLY,
-    voice: parsed.data.voice,
+    caps: data.phone ?? ACTIONS_ONLY,
+    voice: data.voice,
+    onSentence,
   });
-  return c.json(turnResponse(result));
-});
+}
 
 /** Continues a paused turn with what the app looked up on the phone. */
 authed.post("/chat/resume", async (c) => {
@@ -455,15 +517,18 @@ authed.post("/chat/resume", async (c) => {
   }
 
   const caps = JSON.parse(row.caps);
-  const result = await runTurn(c.env, c.executionCtx, {
-    userId,
-    text: row.message,
-    timeZone: row.time_zone,
-    caps: phoneCapsSchema.parse(caps),
-    voice: !!caps.voice,
-    resume: { state: JSON.parse(row.state), results },
-  });
-  return c.json(turnResponse(result));
+  const run = (onSentence?: (s: string) => void) =>
+    runTurn(c.env, c.executionCtx, {
+      userId,
+      text: row.message,
+      timeZone: row.time_zone,
+      caps: phoneCapsSchema.parse(caps),
+      voice: !!caps.voice,
+      resume: { state: JSON.parse(row.state), results },
+      onSentence,
+    });
+  if (parsed.data.stream) return streamTurn(c.executionCtx, run);
+  return c.json(turnResponse(await run()));
 });
 
 // ---------- Siri ----------
@@ -532,6 +597,8 @@ async function updateMemories(
   const raw = await generateText(env, {
     model: env.MEMORY_MODEL,
     json: { schema: memoryUpdateSchema },
+    // Runs after every reply: Workers AI first, so it doesn't use up the free Gemini quota chat needs.
+    fast: true,
     system: [
       "You maintain a personal assistant's long-term memory about its user.",
       "Given the existing memories and the latest exchange, decide what to change.",

@@ -27,8 +27,18 @@ const MAX_PENDING_BUFFERS = 100; // ~10 s of audio kept while (re)connecting
 
 /** Stops and starts the stream, so a mic engine iOS quietly halted comes back. */
 async function restart(stream: AudioStream) {
-  stream.stop();
+  stopStream(stream);
   await stream.start();
+}
+
+/**
+ * Stops the mic stream. Never throws: after sign-out the native object is
+ * already released, and stopping it then threw an unhandled rejection.
+ */
+export function stopStream(stream: AudioStream | null | undefined) {
+  try {
+    stream?.stop();
+  } catch {}
 }
 
 /** The native PCM stream, or null if this build doesn't have it. */

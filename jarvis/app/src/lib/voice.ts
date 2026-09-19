@@ -12,7 +12,7 @@ import { File, Paths } from "expo-file-system";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_URL, ApiError } from "./api";
 import { devlog } from "./devlog";
-import { openEar, useLiveStream } from "./liveListen";
+import { openEar, stopStream, useLiveStream } from "./liveListen";
 import { storage } from "./storage";
 import { onlyStop, saidOverReply, TurnGate, type GateResult, type Turn } from "./turnGate";
 import type { TwistProfile } from "./twist";
@@ -60,6 +60,17 @@ const END_SILENCE_MS = 900; // this much quiet after talking ends the turn
  * because iOS won't let a backgrounded app turn it back on.
  */
 let backgroundAudio = false;
+
+let appliedMode = "";
+
+/** Applies an audio mode, skipping it when nothing would change (every change can stall the mic). */
+async function applyAudioMode(allowsRecording: boolean) {
+  const mode = audioMode(allowsRecording);
+  const key = JSON.stringify(mode);
+  if (key === appliedMode) return;
+  await setAudioModeAsync(mode);
+  appliedMode = key;
+}
 
 function audioMode(allowsRecording: boolean) {
   return {
@@ -142,7 +153,7 @@ function speechChunks(text: string) {
   const chunks: string[] = [];
   let current = "";
   for (const s of sentences) {
-    const limit = chunks.length === 0 ? 120 : 500;
+    const limit = chunks.length === 0 ? 120 : 260;
     if (current && current.length + s.length + 1 > limit) {
       chunks.push(current);
       current = "";
@@ -171,7 +182,9 @@ async function fetchClip(token: string, text: string, voice: VoiceId) {
 /** Plays one file to the end, or until `stop` is called. */
 function playFile(file: File, onStop: (stop: () => void) => void) {
   return new Promise<void>((resolve) => {
-    const player = createAudioPlayer(file.uri);
+    // keepAudioSessionActive: otherwise expo-audio turns the session off when the clip ends,
+    // which stopped the live mic stream after every reply ("no audio from the mic").
+    const player = createAudioPlayer(file.uri, { keepAudioSessionActive: true });
     let done = false;
     let started = false;
     // If the clip never starts (bad file, audio session trouble), don't hang on "Speaking".
@@ -208,41 +221,119 @@ function playFile(file: File, onStop: (stop: () => void) => void) {
   });
 }
 
-/** Reads text aloud. `speak` resolves when it's done or `stop` is called. */
+/** How many clips are voiced ahead of the one playing. */
+const FETCH_AHEAD = 3;
+
+/**
+ * Reads text aloud. `open` starts a reply that arrives a sentence at a time
+ * (each piece is voiced as soon as it's known, a few ahead of the one playing);
+ * `speak` reads a whole text. Both finish when done or when `stop` is called.
+ */
 export function createSpeaker(token: string) {
   let stopCurrent: (() => void) | null = null;
+  let wakeCurrent: (() => void) | null = null;
   let generation = 0;
 
   const stop = () => {
     generation++;
     stopCurrent?.();
     stopCurrent = null;
+    wakeCurrent?.();
   };
 
   /** `keepMic`: keep the microphone usable so the user can talk over the reply. */
-  const speak = async (text: string, { keepMic = false } = {}) => {
+  const open = ({ keepMic = false } = {}) => {
     stop();
     const mine = generation;
-    const voice = await voicePref.get();
-    await setAudioModeAsync(audioMode(keepMic));
-    const chunks = speechChunks(text);
-    // Fetch the next piece while the current one plays.
-    let next = chunks.length ? fetchClip(token, chunks[0], voice) : null;
-    for (let i = 0; i < chunks.length && next; i++) {
-      const file = await next;
-      next = i + 1 < chunks.length ? fetchClip(token, chunks[i + 1], voice) : null;
-      if (mine !== generation) {
-        file.delete();
-        break;
+    const pieces: string[] = [];
+    const clips: Promise<File | null>[] = [];
+    let ended = false;
+    let pending = ""; // short sentences wait to be joined with the next one
+    const voice = voicePref.get();
+    const ready = applyAudioMode(keepMic).catch((err) => devlog("err", "audio mode failed", String(err)));
+    const wake = () => wakeCurrent?.();
+
+    const fetchUpTo = (index: number) => {
+      for (let i = clips.length; i < pieces.length && i <= index; i++) {
+        clips.push(
+          voice
+            .then((v) => fetchClip(token, pieces[i], v))
+            .catch((err) => {
+              devlog("err", "couldn't voice part of the reply", err instanceof Error ? err.message : String(err));
+              return null;
+            }),
+        );
       }
-      await playFile(file, (s) => (stopCurrent = s));
-      if (mine !== generation) break;
-    }
-    // Clean up a clip fetched ahead that won't be played.
-    next?.then((f) => f.delete()).catch(() => {});
+    };
+    const addPiece = (text: string) => {
+      if (!/[\p{L}\p{N}]/u.test(text)) return; // nothing to pronounce (e.g. a lone "...")
+      pieces.push(text);
+      // The first piece goes out at once; later ones queue a few ahead of playback.
+      if (pieces.length === 1) fetchUpTo(0);
+      wake();
+    };
+
+    /** Adds the next sentence of the reply. */
+    const say = (sentence: string) => {
+      if (mine !== generation) return;
+      const text = pending ? `${pending} ${sentence}` : sentence;
+      pending = "";
+      // The first piece is spoken as soon as it arrives; after that, very short sentences
+      // ("Sure.") ride along with the next one so the voice doesn't stop and start.
+      if (pieces.length > 0 && text.length < 40) {
+        pending = text;
+        return;
+      }
+      addPiece(text);
+    };
+
+    const end = () => {
+      if (pending) addPiece(pending);
+      pending = "";
+      ended = true;
+      wake();
+    };
+
+    let played = 0;
+    const done = (async () => {
+      await ready;
+      for (let i = 0; mine === generation; i++) {
+        played = i;
+        while (i >= pieces.length && !ended && mine === generation) {
+          await new Promise<void>((r) => (wakeCurrent = r));
+        }
+        if (i >= pieces.length || mine !== generation) break;
+        fetchUpTo(i + FETCH_AHEAD);
+        const file = await clips[i];
+        if (mine !== generation) {
+          file?.delete();
+          break;
+        }
+        played = i + 1; // playFile deletes it
+        if (file) await playFile(file, (s) => (stopCurrent = s));
+        fetchUpTo(i + 1 + FETCH_AHEAD);
+      }
+      // Clean up clips voiced ahead that won't be played.
+      clips.slice(played).forEach((c) =>
+        c.then((f) => {
+          try {
+            f?.delete();
+          } catch {}
+        }),
+      );
+    })();
+
+    return { say, end, done };
   };
 
-  return { speak, stop };
+  const speak = async (text: string, { keepMic = false } = {}) => {
+    const reply = open({ keepMic });
+    speechChunks(text).forEach(reply.say);
+    reply.end();
+    await reply.done;
+  };
+
+  return { open, speak, stop };
 }
 
 type Speaker = ReturnType<typeof createSpeaker>;
@@ -265,7 +356,7 @@ async function recordUtterance(
   onLevel: (level: number) => void,
   noSpeechMs = NO_SPEECH_MS,
 ) {
-  await setAudioModeAsync(audioMode(true));
+  await applyAudioMode(true);
   await recorder.prepareToRecordAsync(RECORDING);
   recorder.record();
 
@@ -405,6 +496,7 @@ async function speakInterruptible(
 export type VoicePhase = "off" | "listening" | "thinking" | "speaking";
 
 const RETRY_MS = 3000;
+const INTERRUPTED = Symbol("interrupted");
 const LIVE_RETRY_MS = 60_000;
 
 /**
@@ -416,7 +508,12 @@ const LIVE_RETRY_MS = 60_000;
  */
 export function useConversation(
   token: string,
-  onUserSaid: (text: string, addressed: boolean) => Promise<string | null>,
+  onUserSaid: (
+    text: string,
+    addressed: boolean,
+    onSentence?: (sentence: string) => void,
+    signal?: AbortSignal,
+  ) => Promise<string | null>,
   { interruptible = false, background = false, name = "OVOA" } = {},
 ) {
   const recorder = useAudioRecorder(RECORDING);
@@ -480,19 +577,74 @@ export function useConversation(
     await previous;
     backgroundAudio = background;
     if (background) {
-      await setAudioModeAsync(audioMode(true)).catch((err) => devlog("err", "background audio mode failed", String(err)));
+      await applyAudioMode(true).catch((err) => devlog("err", "background audio mode failed", String(err)));
       devlog("voice", "background listening on");
     }
 
-    /** Sends what they said; returns the reply to read out, if any. */
-    const answer = async (text: string, addressed: boolean) => {
+    /**
+     * Sends what they said and reads the reply aloud while it's still being
+     * written: the first sentence plays as soon as the server has it. `onSpeaking`
+     * gets the reply so far each time a sentence is added. Resolves once the reply
+     * has been spoken (or cut off); false if there was nothing to say.
+     */
+    const answerAloud = async (
+      text: string,
+      addressed: boolean,
+      { keepMic, onSpeaking }: { keepMic: boolean; onSpeaking?: (soFar: string) => void },
+    ) => {
       setPhase("thinking");
       setError(null);
       setWords(text);
+      const asked = Date.now();
       devlog("voice", addressed ? "heard its name; asking the assistant" : "asking the assistant", text);
-      const reply = await handler.current(text, addressed);
-      if (!cancelled()) devlog("voice", reply ? "assistant replied" : "no reply to read out", reply ?? undefined);
-      return reply;
+      const reply = speaker.current.open({ keepMic });
+      let soFar = "";
+      const onSentence = (sentence: string) => {
+        if (cancelled()) return;
+        if (!soFar) {
+          devlog("voice", `speaking ${Date.now() - asked} ms after the question`);
+          setPhase("speaking");
+          setWords("");
+        }
+        soFar = soFar ? `${soFar} ${sentence}` : sentence;
+        onSpeaking?.(soFar);
+        reply.say(sentence);
+      };
+      // Before end() the speech only finishes if it's stopped: the user talked over it.
+      // Then stop waiting for the rest of the reply and drop the request.
+      const abort = new AbortController();
+      const interrupted = reply.done.then((): typeof INTERRUPTED => INTERRUPTED);
+      let full: string | null;
+      try {
+        const asking = handler.current(text, addressed, onSentence, abort.signal);
+        asking.catch(() => {}); // dropped after an interruption: its failure is expected
+        const result = await Promise.race([asking, interrupted]);
+        if (result === INTERRUPTED) {
+          abort.abort();
+          return true;
+        }
+        full = result;
+      } catch (err) {
+        reply.end();
+        speaker.current.stop();
+        throw err;
+      }
+      if (cancelled()) {
+        speaker.current.stop();
+        return false;
+      }
+      devlog("voice", full ? "assistant replied" : "no reply to read out", full ?? undefined);
+      // Nothing was streamed (an older server): read the whole reply now.
+      if (full && !soFar) {
+        setPhase("speaking");
+        setWords("");
+        onSpeaking?.(full);
+        speechChunks(full).forEach(reply.say);
+      }
+      reply.end();
+      if (!full && !soFar) return false;
+      await reply.done.catch((err) => devlog("err", "couldn't read the reply out", err instanceof Error ? err.message : String(err)));
+      return true;
     };
 
     /**
@@ -555,23 +707,18 @@ export function useConversation(
           });
           if (!turn || cancelled()) break;
           gate.think();
-          let reply: string | null;
+          let spoke: boolean;
           try {
-            reply = await answer(turn.text, turn.addressed);
+            // The microphone keeps streaming while the reply plays; the gate hears
+            // the reply so far, to tell its echo from the user talking over it.
+            spoke = await answerAloud(turn.text, turn.addressed, { keepMic: true, onSpeaking: (soFar) => gate.speak(soFar) });
           } catch (err) {
             if (cancelled()) break;
             devlog("err", "couldn't get a reply", err instanceof Error ? err.message : String(err));
             setError(err instanceof Error ? err.message : "Couldn't reach the assistant");
             continue;
           }
-          if (cancelled() || !reply) continue;
-          setPhase("speaking");
-          setWords("");
-          gate.speak(reply);
-          // The microphone keeps streaming while the reply plays.
-          await speaker.current
-            .speak(reply, { keepMic: true })
-            .catch((err) => devlog("err", "couldn't read the reply out", err instanceof Error ? err.message : String(err)));
+          if (cancelled() || !spoke) continue;
           gate.spoke(Date.now());
         }
       } finally {
@@ -615,15 +762,20 @@ export function useConversation(
         if (cancelled()) return;
       }
       if (!text) return; // nobody spoke, or just noise
-      const reply = await answer(text, Date.now() < summonedUntil.current);
+      const addressed = Date.now() < summonedUntil.current;
+      if (!bargeIn.current) {
+        await answerAloud(text, addressed, { keepMic: false });
+        return;
+      }
+      // Talking over the reply without live transcription needs the whole reply first.
+      setPhase("thinking");
+      setWords(text);
+      devlog("voice", "asking the assistant", text);
+      const reply = await handler.current(text, addressed);
       if (cancelled() || !reply) return;
       setPhase("speaking");
       setWords("");
-      if (bargeIn.current) {
-        carried = await speakInterruptible(token, recorder, speaker.current, reply, cancelled, setLevel);
-      } else {
-        await speaker.current.speak(reply);
-      }
+      carried = await speakInterruptible(token, recorder, speaker.current, reply, cancelled, setLevel);
     };
 
     while (!cancelled()) {
@@ -645,7 +797,7 @@ export function useConversation(
               liveFailures.current < 2 ? "live transcription failed; trying again" : "live transcription keeps failing; switching to recording",
               err instanceof Error ? err.message : String(err),
             );
-            if (!background) stream.stop();
+            if (!background) stopStream(stream);
             await sleep(1000);
           }
           continue;
@@ -660,10 +812,10 @@ export function useConversation(
         await sleep(RETRY_MS);
       }
     }
-    stream?.stop();
+    stopStream(stream);
     if (background) {
       backgroundAudio = false;
-      await setAudioModeAsync(audioMode(false)).catch(() => {});
+      await applyAudioMode(false).catch(() => {});
     }
     finished();
     return true;
