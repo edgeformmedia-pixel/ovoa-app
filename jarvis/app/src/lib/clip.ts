@@ -1063,14 +1063,14 @@ export async function buzz(count = 1, option: BuzzOption = buzzOption) {
 // --- Listening light --------------------------------------------------------
 
 /**
- * Green on the clip while OVOA listens, off when it stops. Untested on the ES100: the wearables' color
- * command (green) first; if the clip doesn't take it, the watch's three-color LED test (no color
- * choice); if neither works, the light is left alone for this session. Only the latest wish is sent,
+ * The clip's light on while OVOA listens, off when it stops, via the watch's three-color LED test (no
+ * color choice; untested on the ES100). If the clip refuses it, the light is left alone for this session. Only the latest wish is sent,
  * never more than one command every LIGHT_GAP_MS: command floods freeze the clip.
  */
 const LIGHT_GAP_MS = 1500;
-const LIGHT_GREEN = 2;
-let lightColors: number | null = LIGHT_GREEN; // null: neither command works
+// The green command (colors 2) never answered and never lit on the phone (build 33, device_logs
+// 5019-5086): the ES100 ignores the wearables' LED command. So only the LED test is tried.
+let lightColors: number | null = 0; // 0: the LED test; null: it doesn't work either
 let lightWanted = false;
 let lightShown: boolean | null = null;
 let lightBusy = false;
