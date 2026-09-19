@@ -317,7 +317,7 @@ const LISTEN_MODES = [
   {
     mode: "twist",
     label: "Twist",
-    hint: "Twist your wrist back and forth for a second or two with the ES100 on; it buzzes and listens. The microphone stays off until then. Until the twist is calibrated, or while the clip sends no motion, its button does the same.",
+    hint: "With the ES100 on, hold your wrist still for a moment, then twist it back and forth for about 2 seconds; it buzzes and listens. The microphone stays off until then. Until the twist is calibrated, or while the clip sends no motion, its button does the same.",
   },
   { mode: "both", label: "Both", hint: "Always listen for the name, and a twist also gets its attention." },
 ] as const;

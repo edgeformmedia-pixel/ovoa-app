@@ -1,5 +1,5 @@
 import type { MotionSource } from "../../modules/ute-ble";
-import { gyroLive, spinOf, twistKind } from "./twist";
+import { gyroLive, restLevel, spinOf, twistKind, twistLevel } from "./twist";
 
 // Judging a motion probe step (lib/motionProbe.ts). Pure, so it can be checked against logged runs.
 
@@ -35,10 +35,12 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
  * Per value: how far twisting moves it, over how much it wanders at rest (the values are signed:
  * the bridge decodes them). Besides the raw values, a gyroscope source gets "spin" (|x|+|y|+|z| of
  * the readings with data) and an accelerometer source "tilt" (degrees from where gravity pointed at
- * rest): what the twist detectors watch. Best first.
+ * rest): what the twist detectors watch. Spin is judged like the detector judges it: the level half
+ * the twisting readings reach, over the resting level (a single bump while still doesn't count).
+ * Best first.
  */
 export function scoreChannels(source: MotionSource | null, still: number[][], twist: number[][]): ChannelScore[] {
-  const channels: { channel: string; still: number[]; twist: number[] }[] = [];
+  const channels: { channel: string; still: number[]; twist: number[]; score?: number }[] = [];
   const width = Math.max(0, ...still.map((v) => v.length), ...twist.map((v) => v.length));
   for (let c = 0; c < width; c++) {
     channels.push({
@@ -49,7 +51,10 @@ export function scoreChannels(source: MotionSource | null, still: number[][], tw
   }
   const kind = twistKind(source);
   if (kind === "spin") {
-    channels.push({ channel: "spin", still: still.filter(gyroLive).map(spinOf), twist: twist.filter(gyroLive).map(spinOf) });
+    const s = still.filter(gyroLive).map(spinOf);
+    const t = twist.filter(gyroLive).map(spinOf);
+    const score = s.length && t.length ? twistLevel(t) / Math.max(restLevel(s), 25) : undefined;
+    channels.push({ channel: "spin", still: s, twist: t, score });
   } else if (kind === "tilt") {
     const dirs = (vs: number[][]) => vs.map(unit).filter((d): d is Vec => d !== null);
     const rest = dirs(still.length ? still : twist.slice(0, 1));
@@ -63,9 +68,10 @@ export function scoreChannels(source: MotionSource | null, still: number[][], tw
     }
   }
 
-  const scores = channels.flatMap(({ channel, still: s, twist: t }) => {
+  const scores = channels.flatMap(({ channel, still: s, twist: t, score }) => {
     const twistSpan = span(t);
     if (!twistSpan) return [];
+    if (score !== undefined) return [{ channel, score: round1(score), still: span(s), twist: twistSpan }];
     const noise = s.length >= 2 ? Math.max(...s) - Math.min(...s) : 0;
     const mean = s.length ? s.reduce((a, b) => a + b, 0) / s.length : null;
     const swing = Math.max(twistSpan[1] - twistSpan[0], mean === null ? 0 : Math.max(...t.map((v) => Math.abs(v - mean))));
@@ -92,10 +98,13 @@ export function verdictFor(o: { unsupported: boolean; total: number; hz: number;
   return "WIN";
 }
 
-/** Commands a second a source costs the clip: the gyroscope test none after its "on", the g-sensor one or two per interval. */
+/**
+ * Commands a second a source costs the clip: the gyroscope test none after its "on"; reading it on
+ * request one per interval; the g-sensor one or two per interval.
+ */
 export function commandsPerSecond(source: MotionSource | null, intervalMs: number) {
   if (!source || source === "gyro3" || source === "gsensorOnce" || intervalMs <= 0) return 0;
-  const perInterval = source === "gsensorToggle" || source === "gsensorGap" ? 2 : 1;
+  const perInterval = source === "gsensorToggle" || source === "gsensorGap" || source === "gsensorPing" ? 2 : 1;
   return round1((perInterval * 1000) / intervalMs);
 }
 
@@ -109,16 +118,20 @@ export type Candidate = {
 };
 
 /**
- * What twist should use: a WIN that didn't break the clip, from a source twist can use. The
- * accelerometer goes first once it reads about once a second (a turned wrist stays visible between
- * readings); then the fewest commands (the clip froze under many), then the clearest signal.
+ * What twist should use: a WIN that didn't break the clip, from a source twist can use at that rate
+ * (`usable` also caps the commands a second). The accelerometer goes first once it reads about once
+ * a second (a turned wrist stays visible between readings); then, for the gyroscope, the more
+ * readings a second, in steps of about 1, 2 and 3+ (it only sees a twist while it happens); then
+ * the fewest commands (the clip froze under many); then the clearest signal.
  */
-export function pickWinner<T extends Candidate>(results: T[], usable: (source: MotionSource) => boolean): T | null {
-  const wins = results.filter((r) => r.verdict === "WIN" && !r.breaks && r.source && usable(r.source));
+export function pickWinner<T extends Candidate>(results: T[], usable: (source: MotionSource, intervalMs: number) => boolean): T | null {
+  const wins = results.filter((r) => r.verdict === "WIN" && !r.breaks && r.source && usable(r.source, r.intervalMs));
   const rank = (r: T) => (twistKind(r.source) === "tilt" && r.hz >= 0.9 ? 1 : 0);
+  const rate = (r: T) => (twistKind(r.source) !== "spin" ? 0 : r.hz >= 2.5 ? 2 : r.hz >= 1.6 ? 1 : 0);
   wins.sort(
     (a, b) =>
       rank(b) - rank(a) ||
+      rate(b) - rate(a) ||
       commandsPerSecond(a.source, a.intervalMs) - commandsPerSecond(b.source, b.intervalMs) ||
       b.score - a.score,
   );

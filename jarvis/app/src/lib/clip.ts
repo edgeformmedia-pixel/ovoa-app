@@ -4,7 +4,7 @@ import * as ute from "../../modules/ute-ble";
 import { devlog } from "./devlog";
 import { addRecording, hasClipSession } from "./recordings";
 import { storage } from "./storage";
-import { gyroLive, spinOf, spreadBatch, type Sample } from "./twist";
+import { gyroLive, spinOf, spreadBatch, twistKind, type Sample } from "./twist";
 
 // The ES100 clip, shared by the Record tab and the ES100 debug screen: one
 // connection, remembered and re-established on its own, plus recording and
@@ -527,12 +527,12 @@ export async function endProbe() {
 
 // --- Motion for twist-to-listen -------------------------------------------
 //
-// What the ES100 does (motion probe, 2026-09-19): its gyroscope test ("gyro3") sends about one
-// reading a second after a single "on" and keeps sending until the clip disconnects ("off" only
-// stops the SDK handing the readings over); none of the SDK's other sources stream. So twist uses
-// gyro3, or the probe's winner when it found something better, and sends the clip as few commands
-// as it can: the clip stopped answering for a minute when motion commands came several times a
-// second. Nothing is sent while the clip records or transfers a file.
+// What the ES100 does (motion probes, 2026-09-19): its gyroscope test ("gyro3") sends about one
+// reading a second after a single "on", until "off"; none of the SDK's other sources stream. So
+// twist uses gyro3, or the probe's winner when it found something better (reading the gyroscope on
+// request, or the accelerometer, if the clip answers those often), and sends the clip as few
+// commands as it can: it stopped answering for 8-60 s when motion commands came several times a
+// second. Nothing is sent while the clip records or transfers a file, and a polled source pauses.
 
 type SourceSpec = {
   /** Live readings that must arrive within `firstMs` of turning it on for it to count as streaming. */
@@ -540,19 +540,21 @@ type SourceSpec = {
   firstMs: number;
   /** No live reading for this long: turn it on again. */
   silenceMs: number;
-  /** How often a polled source asks the clip, unless the probe found a rate that works. */
+  /** How often a polled source asks the clip, unless the probe found a rate that works; 0 = it streams by itself. */
   intervalMs: number;
 };
 
 const GYRO3: SourceSpec = { firstReadings: 2, firstMs: 6000, silenceMs: 8000, intervalMs: 0 };
+const GYRO3_READ: SourceSpec = { firstReadings: 3, firstMs: 6000, silenceMs: 8000, intervalMs: 1000 };
 const GSENSOR: SourceSpec = { firstReadings: 3, firstMs: 6000, silenceMs: 8000, intervalMs: 1000 };
-/** The sources twist can use. The rest never sent anything on the ES100 (the probe still tries them). */
+/** The sources twist can use, if the probe picks them. The rest never sent anything on the ES100 (the probe still tries some). */
 const TWIST_SOURCES: Partial<Record<ute.MotionSource, SourceSpec>> = {
   gyro3: GYRO3,
-  gsensorToggle: GSENSOR,
-  gsensorGap: GSENSOR,
-  gsensor: GSENSOR,
+  gyro3read: GYRO3_READ,
+  gsensorPing: GSENSOR,
 };
+/** Twist won't run a polled source costing the clip more commands a second than this, however well it did in the probe. */
+export const MAX_TWIST_COMMANDS_PER_SECOND = 2;
 const DEFAULT_SOURCE: ute.MotionSource = "gyro3";
 
 export const canTwistWith = (source: ute.MotionSource | null | undefined) => !!source && !!TWIST_SOURCES[source];
@@ -617,11 +619,15 @@ let blocked = false;
 let healthAt = 0;
 let healthMisses = 0;
 let healthChecking = false;
+/** A polled source turned off while the clip was busy, to turn back on once it's free. */
+let pausedForBusy: ute.MotionSource | null = null;
 let rawLogged = 0;
 let summary = { since: 0, readings: 0, live: 0, strays: 0, spins: [] as number[] };
 
 /** A reading with data in it (the gyroscope test sends state 0 and zeros while it's off). */
-const isLive = (source: ute.MotionSource, v: ute.MotionSample) => (source === "gyro3" ? gyroLive(v) : true);
+const isLive = (source: ute.MotionSource, v: ute.MotionSample) => (twistKind(source) === "spin" ? gyroLive(v) : true);
+/** It sends the clip commands all the time (the gyroscope test streams by itself after its "on"). */
+const isPolled = (source: ute.MotionSource) => intervalFor(source) > 0;
 
 function onMotionBatch(source: ute.MotionSource, samples: ute.MotionSample[]) {
   // A source that was turned off can still answer late (the g-sensor did): that isn't this stream.
@@ -656,7 +662,7 @@ function noteMotion(source: ute.MotionSource, samples: ute.MotionSample[], live:
   }
   summary.readings += samples.length;
   summary.live += live.length;
-  if (source === "gyro3") summary.spins.push(...live.map(spinOf));
+  if (twistKind(source) === "spin") summary.spins.push(...live.map(spinOf));
 }
 
 function summarizeMotion(now: number) {
@@ -792,6 +798,7 @@ async function checkClipHealth(source: ute.MotionSource) {
 async function stopMotion() {
   const source = activeSource;
   activeSource = null;
+  pausedForBusy = null;
   set({ motion: { ...state.motion, on: false } });
   if (source && state.phase === "connected") {
     await ute.setMotionSource(source, false).catch(() => {});
@@ -807,7 +814,26 @@ function checkMotion() {
   if (!motionWanted() || motionStarting || motionSettling || blocked) return;
   const now = Date.now();
   summarizeMotion(now);
-  if (clipBusy()) return;
+  if (clipBusy()) {
+    // A polled source keeps sending commands: it pauses while the clip records or transfers.
+    if (activeSource && isPolled(activeSource) && !pausedForBusy) {
+      pausedForBusy = activeSource;
+      ute.setMotionSource(activeSource, false).catch(() => {});
+      say(`motion: ${activeSource} paused while the clip is busy`);
+    }
+    return;
+  }
+  if (pausedForBusy) {
+    const paused = pausedForBusy;
+    pausedForBusy = null;
+    if (activeSource === paused) {
+      armedAt = now;
+      rearms = 0;
+      say(`motion: ${paused} back on`);
+      ute.setMotionSource(paused, true, intervalFor(paused)).catch((err) => say(`motion: ${paused} failed — ${message(err)}`));
+    }
+    return;
+  }
   if (!activeSource) {
     // Not started yet (the clip was busy), or nothing streamed last time.
     if (now - armedAt >= retryDelay(failures)) ensureMotion(failures ? "trying again" : "clip free");
@@ -844,6 +870,7 @@ function resetMotion() {
   motionSettling = true;
   sourceIndex = 0;
   activeSource = null;
+  pausedForBusy = null;
   trying = null;
   lastBatchAt = null;
   lastLiveAt = 0;

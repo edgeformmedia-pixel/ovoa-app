@@ -26,10 +26,11 @@ export default function MotionLab() {
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
       <ScrollView contentContainerStyle={styles.body}>
         <Text style={styles.dim}>
-          Tries each way the clip might report motion, one at a time: the accelerometer (g-sensor) variants first, then
-          the gyroscope. For each one: hold still, then twist back and forth when the phone buzzes, until it says stop.
-          Between them it waits for the clip to answer again. Takes about {probeMinutes} minutes, longer if the clip
-          stalls. Keep the app open; results upload to the logs as they finish.
+          Tries the ways the clip might report motion faster, one at a time: the gyroscope's stream, the gyroscope read
+          on request (1, 2 and 3 times a second) and one more accelerometer variant. For each one: rest your forearm and
+          hold still, then twist back and forth when the phone buzzes, until it says stop. Between them it waits for the
+          clip to answer again. Takes about {probeMinutes} minutes, longer if the clip stalls. Keep the app open; results
+          upload to the logs as they finish.
         </Text>
 
         {probe.running ? (

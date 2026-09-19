@@ -482,10 +482,11 @@ static NSInteger UteSignedByte(NSInteger value) {
 }
 
 /// Motion sources for twist-to-listen and the motion probe (Dev tools → Motion lab). On the ES100
-/// (probe, 2026-09-19) the gyroscope test ("gyro3") streams about one reading a second after a
-/// single "on", the g-sensor test answered one reading per open, and nothing else answered. Motion
-/// commands sent several times a second (gyro3 resent 5×/s, the g-sensor reopened 10×/s) left the
-/// clip unresponsive for about a minute. Polled sources ask again every `intervalMs`.
+/// (probes, 2026-09-19) the gyroscope test ("gyro3") streams about one reading a second after a
+/// single "on" and stops on "off"; the g-sensor test answered once per session (the SDK sent only
+/// the first of repeated opens); nothing else answered. Motion commands sent several times a second
+/// (gyro3 resent 5×/s, the g-sensor reopened 3-10×/s) left the clip unresponsive for 8-60 s.
+/// Polled sources ask again every `intervalMs`.
 - (void)setMotionSource:(NSString *)source
                      on:(BOOL)on
              intervalMs:(NSInteger)intervalMs
@@ -527,12 +528,14 @@ static NSInteger UteSignedByte(NSInteger value) {
     return;
   }
 
-  // Watch factory accelerometer test. The open command has no reply; the ES100 answered one reading
-  // per open (x, y, z signed, about 128 per g on range 4 = ±4 g). "gsensorOnce" opens it once,
-  // "gsensor" opens it again every interval, "gsensorToggle" closes it and reopens it 50 ms later
-  // every interval, and "gsensorGap" waits 200 ms between the close and the open.
+  // Watch factory accelerometer test. The open command ("300014") has no reply; the ES100 answered
+  // one reading (x, y, z signed, about 128 per g on range 4 = ±4 g) about 0.6 s after the first
+  // open, and the SDK didn't send the opens that followed. "gsensorOnce" opens it once, "gsensor"
+  // opens it again every interval, "gsensorToggle" closes it and reopens it 50 ms later every
+  // interval, "gsensorGap" waits 200 ms between the close and the open, and "gsensorPing" asks for
+  // the record status before each open, in case a different command in between lets it through.
   // Sample: x, y, z, magnitude, range.
-  if ([@[ @"gsensor", @"gsensorOnce", @"gsensorToggle", @"gsensorGap" ] containsObject:source]) {
+  if ([@[ @"gsensor", @"gsensorOnce", @"gsensorToggle", @"gsensorGap", @"gsensorPing" ] containsObject:source]) {
     self.gsensorGeneration += 1;
     NSInteger generation = self.gsensorGeneration;
     if (!on) {
@@ -550,6 +553,14 @@ static NSInteger UteSignedByte(NSInteger value) {
       [self poll:source every:every block:^{
         [[UTEDeviceMgr sharedInstance] factoryOpenTestGsensor:YES];
       }];
+    } else if ([source isEqualToString:@"gsensorPing"]) {
+      [self poll:source every:MAX(every, 0.5) block:^{
+        [[weakSelf recordMgr] getRecordStatusBlock:^(NSInteger errorCode, UTEModelRecordStatus *model) {}];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+          if (weakSelf.gsensorGeneration != generation) return;
+          [[UTEDeviceMgr sharedInstance] factoryOpenTestGsensor:YES];
+        });
+      }];
     } else if (![source isEqualToString:@"gsensorOnce"]) {
       NSTimeInterval gap = [source isEqualToString:@"gsensorGap"] ? 0.2 : 0.05;
       [self poll:source every:MAX(every, gap + 0.1) block:^{
@@ -566,20 +577,30 @@ static NSInteger UteSignedByte(NSInteger value) {
     return;
   }
 
-  // Gyroscope test, the newer command (cmd 1 on, 0 off). After one "on" the ES100 sends a reading
-  // about once a second by itself; resending it didn't make that faster, and 5×/s froze the clip.
-  // "Off" only makes the SDK stop handing the readings over: the clip kept sending them.
+  // Gyroscope test, the newer command ("30000b01" on, "30000b00" off). After one "on" the ES100
+  // sends a reading about once a second by itself until "off"; resending "on" didn't make that
+  // faster, and 5×/s froze the clip. The older read command ("30000b") got an answer per request, a
+  // gyroscope-test packet the SDK hands to this same block, so "gyro3read" also sends a read every
+  // interval: readings on request, on top of the stream.
   // Sample: x, y, z (signed angular rate), state (1 on, 0 off: all zeros), result (1 = an axis moved).
-  if ([source isEqualToString:@"gyro3"]) {
+  if ([source isEqualToString:@"gyro3"] || [source isEqualToString:@"gyro3read"]) {
     if (!on) {
       [dev factoryGyroscope3CMD:0 Block:nil];
       reply(0, nil);
       return;
     }
     [dev factoryGyroscope3CMD:1 Block:^(NSInteger state, NSInteger x, NSInteger y, NSInteger z, NSInteger result) {
-      [weakSelf reportMotion:@"gyro3"
+      [weakSelf reportMotion:source
                      samples:@[ @[ @(UteSignedByte(x)), @(UteSignedByte(y)), @(UteSignedByte(z)), @(state), @(result) ] ]];
     }];
+    if ([source isEqualToString:@"gyro3read"]) {
+      [self poll:source every:MAX(every, 0.25) block:^{
+        // Should the SDK hand an answer to the read's own block (older firmware's format), it goes up as "gyro".
+        [[UTEDeviceMgr sharedInstance] factoryReadGyroData:^(NSInteger range, NSInteger x, NSInteger y, NSInteger z) {
+          [weakSelf reportMotion:@"gyro" samples:@[ @[ @(x), @(y), @(z), @(range) ] ]];
+        }];
+      }];
+    }
     // Nothing to wait for: readings arriving is the answer (the first came after about 1.3 s).
     reply(0, nil);
     return;

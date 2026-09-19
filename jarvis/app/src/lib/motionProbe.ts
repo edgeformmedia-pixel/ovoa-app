@@ -18,15 +18,18 @@ import {
   type Verdict,
 } from "./probeScore";
 
-// The motion probe (Dev tools → Motion lab), second round. The first run (2026-09-19) found the
-// gyroscope test ("gyro3") streaming about one reading a second and the g-sensor test answering
-// once per open, but most g-sensor variants ran while earlier steps had left the clip unresponsive.
-// So this round tries the g-sensor first, while the clip is fresh (gentlest first), drops the two
-// variants that froze the clip (gyro3 resent 5×/s, the g-sensor reopened 10×/s), and between steps
-// waits for the clip to answer again, logging how long that took. The question it settles: does
-// closing and reopening the g-sensor test once to three times a second give a fresh reading each
-// time? The accelerometer sees how the wrist is turned, so even that slowly it would beat the
-// gyroscope for twist.
+// The motion probe (Dev tools → Motion lab), third round. What the first two found (2026-09-19):
+// the gyroscope test ("gyro3") streams about one reading a second after one "on" and stops on
+// "off"; the g-sensor test answers once per session, because the SDK sends only the first of
+// repeated opens; reopening it 3×/s still silenced the clip for 8 s; nothing else answers. And the
+// older gyro read command got an answer per request, a gyroscope-test packet the SDK hands to
+// gyro3's callback. So this round asks two questions:
+// - Does reading the gyroscope on request, on top of its stream, give 2-4 readings a second
+//   ("gyro3read" at 1, 2 and 3 reads a second, the last one only for the record: too many
+//   commands for twist)? More readings catch more of a twist.
+// - Does a different command before each g-sensor open ("gsensorPing": a record-status request)
+//   get each open sent? The accelerometer sees how the wrist is turned.
+// Between steps it waits for the clip to answer again, logging how long that took.
 //
 // Each step: settle, hold still 4 s, twist back and forth 5 s, stop. A row per source (kind
 // "probe" in device_logs), then a summary. The raw packets the SDK logs are counted per phase, and
@@ -40,23 +43,19 @@ import {
 
 type Step = { id: string; source: ute.MotionSource | null; intervalMs: number; what: string };
 
+// The riskiest step (the most commands a second) goes last.
 const STEPS: Step[] = [
   { id: "baseline", source: null, intervalMs: 0, what: "Nothing on: does the clip send anything by itself?" },
-  { id: "gsensor1000", source: "gsensorToggle", intervalMs: 1000, what: "G-sensor test, closed and reopened every second" },
-  { id: "gsensorGap", source: "gsensorGap", intervalMs: 1000, what: "G-sensor test, closed, 200 ms, reopened, every second" },
-  { id: "gsensor500", source: "gsensorToggle", intervalMs: 500, what: "G-sensor test, closed and reopened 2×/s" },
-  { id: "gsensor333", source: "gsensorToggle", intervalMs: 333, what: "G-sensor test, closed and reopened 3×/s" },
-  { id: "gsensor2", source: "gsensor", intervalMs: 500, what: "G-sensor test, reopened 2×/s without closing" },
-  { id: "gsensorOnce", source: "gsensorOnce", intervalMs: 0, what: "G-sensor test, opened once" },
   { id: "gyro3", source: "gyro3", intervalMs: 0, what: "Gyroscope test, sent once (twist's default)" },
-  { id: "gyro", source: "gyro", intervalMs: 1000, what: "Gyroscope read (older command), 1×/s" },
-  { id: "frame", source: "frame", intervalMs: 0, what: "Live health frame (steps)" },
-  { id: "game", source: "game", intervalMs: 0, what: "Motion game stream (failed before)" },
-  { id: "wear6", source: "wear6", intervalMs: 0, what: "Wearable 6-axis test (failed before)" },
-  { id: "wear3", source: "wear3", intervalMs: 0, what: "Wearable 3-axis test (failed before)" },
+  { id: "gyro3read1000", source: "gyro3read", intervalMs: 1000, what: "Gyroscope test, plus a read every second" },
+  { id: "gyro3read500", source: "gyro3read", intervalMs: 500, what: "Gyroscope test, plus a read 2×/s" },
+  { id: "gsensorPing", source: "gsensorPing", intervalMs: 1000, what: "G-sensor test, a status request then an open, every second" },
+  { id: "gsensorOnce", source: "gsensorOnce", intervalMs: 0, what: "G-sensor test, opened once (for comparison)" },
+  { id: "gyro3read333", source: "gyro3read", intervalMs: 333, what: "Gyroscope test, plus a read 3×/s (for the record: too many commands for twist)" },
 ];
 
-const SETTLE_MS = 700;
+/** Time to get the forearm onto a table or leg before "still" starts (readings meanwhile aren't judged). */
+const SETTLE_MS = 2000;
 const STILL_MS = 4000;
 const TWIST_MS = 5000;
 const AFTER_MS = 1500;
@@ -252,7 +251,7 @@ export async function runProbe() {
     const clipState = clip.getClipState();
     devlog(
       "probe",
-      `probe v2 start: ${STEPS.length} sources`,
+      `probe v3 start: ${STEPS.length} sources`,
       JSON.stringify({
         device: clipState.device && { name: clipState.device.name, model: clipState.device.model, firmware: clipState.device.firmware },
         factoryTests: sensors.ok ? Object.keys(sensors.value.all ?? {}).filter((k) => sensors.value.all?.[k]) : sensors.error,
@@ -270,15 +269,15 @@ export async function runProbe() {
     }
 
     const after = await within(ute.readActivity(), CALL_MS);
-    const winner = pickWinner(results, clip.canTwistWith);
+    const winner = pickWinner(
+      results,
+      (source, intervalMs) => clip.canTwistWith(source) && commandsPerSecond(source, intervalMs) <= clip.MAX_TWIST_COMMANDS_PER_SECOND,
+    );
     set({ winner });
     // A full run decides what twist tries first; nothing usable means its default (gyro3).
     if (!stopRequested) {
       await clip.setPreferredMotion(winner?.source ? { source: winner.source, intervalMs: winner.intervalMs } : null);
     }
-    // Did "off" stop the gyroscope test? Its packets in the steps after it answer that.
-    const gyroIndex = results.findIndex((r) => r.id === "gyro3");
-    const afterGyro = gyroIndex >= 0 ? results.slice(gyroIndex + 1) : [];
     devlog(
       "probe",
       stopRequested
@@ -301,13 +300,8 @@ export async function runProbe() {
           firstMs: r.firstMs,
           recoveredMs: r.recoveredMs,
           raw: r.raw.still + r.raw.twist,
+          gyroPackets: r.gyroPackets,
         })),
-        gyroPacketsAfterOff: afterGyro.length
-          ? {
-              on: afterGyro.reduce((n, r) => n + r.gyroPackets.on, 0),
-              off: afterGyro.reduce((n, r) => n + r.gyroPackets.off, 0),
-            }
-          : null,
         activityAfter: after.ok ? after.value : after.error,
       }),
     );
@@ -334,14 +328,14 @@ async function runStep(step: Step, index: number) {
   show(index, step, "Checking the clip answers…");
   const pre = await waitForClip();
 
-  show(index, step, "Getting ready…");
+  show(index, step, "Rest your forearm on a table or your leg…");
   collecting = true;
   stepStartedAt = Date.now();
   const start = step.source ? await within(ute.setMotionSource(step.source, true, step.intervalMs), CALL_MS) : null;
   await wait(SETTLE_MS);
 
   phase = "still";
-  show(index, step, "Hold your wrist completely still");
+  show(index, step, "Keep it there, completely still");
   await wait(STILL_MS);
 
   phase = "twist";

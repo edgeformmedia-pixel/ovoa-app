@@ -199,15 +199,17 @@ export type SensorSupport = {
 export type GyroReading = { range: number; x: number; y: number; z: number };
 
 /**
- * Where motion comes from.
- * - "gyro3": the gyroscope test. One "on" and the ES100 sends a reading about once a second until it
- *   disconnects ("off" only stops the SDK handing them over). Twist to listen's default.
- * - "gsensorToggle": the watch accelerometer test, closed and reopened 50 ms later every interval;
- *   "gsensorGap": the same with 200 ms between close and open; "gsensor": reopened every interval
- *   without closing; "gsensorOnce": opened once. The ES100 answered one reading per open.
+ * Where motion comes from (motion probes, 2026-09-19).
+ * - "gyro3": the gyroscope test. One "on" and the ES100 sends a reading about once a second until
+ *   "off". Twist to listen's default. "gyro3read": the same, plus the older read command every
+ *   interval, which the clip answered once per request.
+ * - "gsensorOnce": the watch accelerometer test, opened once. The ES100 answered one reading per
+ *   session: the SDK didn't send repeated opens ("gsensor": reopened every interval,
+ *   "gsensorToggle": closed and reopened 50 ms later, "gsensorGap": 200 ms later).
+ *   "gsensorPing": a record-status request before each open, to see if that lets each open through.
  * - "game": the motion-sensing game stream; "wear6"/"wear3": the wearables' accelerometer test;
- *   "gyro": the older gyroscope read, polled; "frame": the live health frame (steps). None of these
- *   sent anything on the ES100 (motion probe, 2026-09-19).
+ *   "gyro": the older gyroscope read alone (its answers never reach its own callback); "frame": the
+ *   live health frame (steps). None of these sent any readings on the ES100.
  */
 export type MotionSource =
   | "game"
@@ -217,16 +219,18 @@ export type MotionSource =
   | "gsensorOnce"
   | "gsensorToggle"
   | "gsensorGap"
+  | "gsensorPing"
   | "gyro"
   | "gyro3"
+  | "gyro3read"
   | "frame";
 
 /**
  * One motion sample, by source:
- * - gyro3: [x, y, z, state, result]. x, y, z: angular rate, signed (-128…127; the bridge decodes the
- *   0-255 the SDK hands over). Units unknown: |x|+|y|+|z| stayed under about 50 on a still wrist
- *   (110 on a restless one) and reached 150-265 while twisting. state: 1 on, 0 off (then all zeros);
- *   result: 1 when an axis is non-zero.
+ * - gyro3, gyro3read: [x, y, z, state, result]. x, y, z: angular rate, signed (-128…127; the bridge
+ *   decodes the 0-255 the SDK hands over), and quick moves saturate near ±125. Units unknown:
+ *   |x|+|y|+|z| stayed under about 50 on a still wrist and reached 150-300 while twisting (or
+ *   moving the arm). state: 1 on, 0 off (then all zeros); result: 1 when an axis is non-zero.
  * - gsensor*: [x, y, z, magnitude, range]. Acceleration, signed, about 128 per g on range 4 (±4 g);
  *   magnitude = √(x² + y² + z²), about 124 at rest (the SDK's own "speed" repeats z, so it's recomputed).
  * - game: [x, y, speed, xThrow, yThrow, speedThrow]; wear6: [x, y, z, angle]; wear3: [x, y, z];

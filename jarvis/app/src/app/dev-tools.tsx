@@ -457,8 +457,12 @@ function BuzzOptions({ connected }: { connected: boolean }) {
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // The ES100's gyroscope sends about one reading a second, so each phase is long enough for a few.
-const REST_MS = 6000;
+/** Before resting: time to put the phone down (or in the other hand) and let the arm settle. */
+const SETTLE_S = 3;
+const REST_MS = 5000;
 const TWIST_MS = 3500;
+/** Readings this soon after the cue are left out of a twist: the user hasn't started yet. */
+const REACTION_MS = 700;
 const TWISTS = 3;
 const TEST_MS = 30_000;
 
@@ -472,13 +476,14 @@ const describeReading = (source: string, v: number[]) =>
     ? `spin ${spinOf(v)}${gyroLive(v) ? "" : " (test off)"} · ${v.slice(0, 3).join(" / ")}`
     : `${v.slice(0, 3).join(" / ")} · |${v[3] ?? "?"}|`;
 
-/** Readings for the log: the gyroscope's as their spin, the accelerometer's as x/y/z. */
+/** Readings for the log: x/y/z, and for the gyroscope the spin too (as a fourth value). */
 const logReadings = (kind: TwistKind | null, samples: Sample[]) =>
-  samples.map((s) => (kind === "spin" ? spinOf(s.v) : s.v.slice(0, 3)));
+  samples.map((s) => (kind === "spin" ? [...s.v.slice(0, 3), spinOf(s.v)] : s.v.slice(0, 3)));
 
 /**
- * Calibrate: hold still 6 s, then twist back and forth three times; learns what a twist looks like
- * on the clip's motion sensor. Test: runs the saved detector on live readings for 30 s.
+ * Calibrate: settle, hold still 5 s, then three times: hold still, twist back and forth when the
+ * phone buzzes; learns what still and a twist look like on the clip's motion sensor. Test: runs the
+ * saved detector on live readings for 30 s and uploads them, for tuning.
  */
 function TwistCalibration({ connected, problem }: { connected: boolean; problem: string | null }) {
   const [step, setStep] = useState<string | null>(null);
@@ -516,27 +521,32 @@ function TwistCalibration({ connected, problem }: { connected: boolean; problem:
       const found = await findMotion();
       kind = found.kind;
       const source = found.source;
-      setStep(`Using ${source}. Hold your wrist still…`);
+      for (let s = SETTLE_S; s > 0; s--) {
+        setStep(`Put the phone down or in your other hand, and rest your forearm on a table or your leg… ${s}`);
+        await wait(1000);
+      }
+      setStep("Hold your wrist completely still…");
       bucket = [];
       await wait(REST_MS);
       rest.push(...bucket);
       for (let i = 1; i <= TWISTS; i++) {
-        setStep(`Get ready… (${i}/${TWISTS})`);
-        await wait(1500);
+        setStep(`Hold still… (${i}/${TWISTS})`);
+        await wait(2000);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         setStep(`Twist back and forth now! (${i}/${TWISTS})`);
+        await wait(REACTION_MS);
         bucket = [];
-        await wait(TWIST_MS);
+        await wait(TWIST_MS - REACTION_MS);
         twists.push(bucket);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       }
-      const profile = calibrate(kind, rest, twists);
+      const { profile, note } = calibrate(kind, rest, twists);
       await twistProfilePref.set(profile);
-      setResult(`saved — ${describeProfile(profile)}`);
+      setResult(`saved — ${describeProfile(profile)}${note ? `\n${note}` : ""}`);
       devlog(
         "ble",
         "twist calibrated",
-        JSON.stringify({ source, profile, rest: logReadings(kind, rest), twists: twists.map((t) => logReadings(kind, t)) }),
+        JSON.stringify({ source, profile, note, rest: logReadings(kind, rest), twists: twists.map((t) => logReadings(kind, t)) }),
       );
     } catch (err) {
       const why = err instanceof Error ? err.message : String(err);
@@ -562,11 +572,17 @@ function TwistCalibration({ connected, problem }: { connected: boolean; problem:
       return setResult("Calibrate first.");
     }
     const detectors = new Map<TwistKind, (s: Sample) => void>();
+    const began = Date.now();
+    // Everything the test saw, uploaded at the end for tuning: [ms since start, x, y, z(, spin)].
+    const readings: number[][] = [];
+    const detected: { ms: number; why: string }[] = [];
+    let seen: string | null = null;
     setHits([]);
     setReading("waiting for motion…");
     // The assistant's own detector stays out of it while testing.
     twistProfilePref.calibrating = true;
     const off = clip.subscribeMotion((samples, source) => {
+      seen = source;
       const kind = twistKind(source);
       const profile = kind && profiles[kind];
       if (!kind || !profile) return setReading(`${source}: not calibrated for this sensor`);
@@ -575,17 +591,17 @@ function TwistCalibration({ connected, problem }: { connected: boolean; problem:
         detect = createTwistDetector(profile, (why) => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
           setHits((h) => [`${new Date().toLocaleTimeString()}  ${why}`, ...h].slice(0, 6));
-          devlog("ble", "twist test: detected", why);
+          detected.push({ ms: Date.now() - began, why });
         });
         detectors.set(kind, detect);
       }
       for (const s of samples) {
         setReading(describeReading(source, s.v));
+        readings.push([Math.round((s.t - began) / 100) * 100, ...logReadings(kind, [s])[0]]);
         detect(s);
       }
     });
     if (!clip.getClipState().motion.on) clip.retryMotion();
-    const began = Date.now();
     const timer = setInterval(() => {
       const left = Math.ceil((TEST_MS - (Date.now() - began)) / 1000);
       if (left > 0) setTestLeft(left);
@@ -597,6 +613,11 @@ function TwistCalibration({ connected, problem }: { connected: boolean; problem:
       twistProfilePref.calibrating = false;
       stopTest.current = null;
       setTestLeft(0);
+      devlog(
+        "ble",
+        `twist test: ${detected.length} detected in ${Math.round((Date.now() - began) / 1000)} s`,
+        JSON.stringify({ source: seen, profiles, detected, readings }),
+      );
     };
     stopTest.current = finish;
   };
@@ -606,7 +627,8 @@ function TwistCalibration({ connected, problem }: { connected: boolean; problem:
     <>
       {problem && <Text style={styles.hint}>No motion data from this clip right now ({problem}); its button summons the assistant instead.</Text>}
       <Text style={styles.hint}>
-        Hold your wrist still for 6 s, then each time the phone buzzes, twist your wrist back and forth for about 2 s.
+        The twist: hold your wrist still for a moment, then twist it back and forth for about 2 s. Calibration asks for
+        that three times, after 5 s of resting your forearm on a table or your leg. The test uploads what it saw.
       </Text>
       <View style={styles.row}>
         <Pressable style={styles.button} disabled={!idle} onPress={run}>

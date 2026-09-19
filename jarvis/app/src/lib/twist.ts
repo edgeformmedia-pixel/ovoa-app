@@ -3,32 +3,39 @@ import type { MotionSource } from "../../modules/ute-ble";
 // "Twist to listen": spots a twist of the wrist in the ES100's motion readings. Pure TypeScript,
 // no device code, so it can be tested on its own. See docs/es100-twist-to-listen.md.
 //
-// The ES100 reports motion slowly (motion probe, 2026-09-19): its gyroscope test about once a
-// second, its accelerometer one reading per request. So there's a detector per kind of sensor,
-// each calibrated on the user's own twist:
-// - spin (gyroscope, "gyro3"): how fast the wrist turns, |x| + |y| + |z|. A reading only catches a
-//   twist while it's happening, so the user twists back and forth for a second or two; one big
-//   reading, or two fairly big ones close together, fires.
+// The ES100 reports motion slowly (motion probes, 2026-09-19): its gyroscope test about once a
+// second, its accelerometer once per session. So there's a detector per kind of sensor, each
+// calibrated on the user's own twist:
+// - spin (gyroscope, "gyro3"): how fast the wrist turns, |x| + |y| + |z|. The axes saturate on
+//   quick moves, so any brisk arm movement reads about as high as a twist; what sets a twist apart
+//   is its shape. The user holds the wrist still for a moment, then twists back and forth for a
+//   couple of seconds: two or more quick readings in a row, starting from a still one, fire. Walking
+//   or gesturing never goes still first.
 // - tilt (accelerometer, "gsensor…"): how far the wrist has turned from where it rested, read off
 //   the gravity vector, around the axis calibration saw the twist turn it (the forearm). A turned
-//   wrist stays visible between slow readings.
+//   wrist stays visible between slow readings. Used only if the accelerometer can be read often.
 
 export type Sample = { t: number; v: number[] };
 
 export type TwistKind = "spin" | "tilt";
 
-/** Gyroscope: one reading of `high` or more fires, or two of `low` or more within PAIR_MS. */
-export type SpinProfile = { kind: "spin"; high: number; low: number };
+/**
+ * Gyroscope: readings of `active` or more, at least two within BURST_MS and most of the readings
+ * since the first of them, fire when readings of `quiet` or less came in a row shortly before.
+ */
+export type SpinProfile = { kind: "spin"; quiet: number; active: number };
 /** Accelerometer: turning `degrees` or more from rest, around `axis` (a unit vector in the clip's frame), fires. */
 export type TiltProfile = { kind: "tilt"; axis: [number, number, number]; degrees: number };
 export type TwistProfile = SpinProfile | TiltProfile;
 /** What calibration learned, per kind of sensor. */
 export type TwistProfiles = { spin?: SpinProfile; tilt?: TiltProfile };
+/** A calibration's result, and what the user could do better next time, if anything. */
+export type Calibration = { profile: TwistProfile; note: string | null };
 
 /** Which detector a source's readings feed; null for sources twist can't use. */
 export function twistKind(source: MotionSource | null | undefined): TwistKind | null {
-  if (source === "gyro3") return "spin";
-  if (source === "gsensor" || source === "gsensorToggle" || source === "gsensorGap" || source === "gsensorOnce") return "tilt";
+  if (source === "gyro3" || source === "gyro3read") return "spin";
+  if (source?.startsWith("gsensor")) return "tilt";
   return null;
 }
 
@@ -49,8 +56,12 @@ export function spreadBatch(prevT: number | null, t: number, values: number[][])
   return values.map((v, i) => ({ t: from + ((t - from) * (i + 1)) / n, v }));
 }
 
-export function calibrate(kind: TwistKind, rest: Sample[], twists: Sample[][]): TwistProfile {
-  return kind === "spin" ? calibrateSpin(rest, twists) : calibrateTilt(rest, twists);
+/**
+ * `rest`: readings while the wrist was held still; `twists`: one list per window of twisting back
+ * and forth (leaving out the user's reaction time after the cue).
+ */
+export function calibrate(kind: TwistKind, rest: Sample[], twists: Sample[][]): Calibration {
+  return kind === "spin" ? calibrateSpin(rest, twists) : { profile: calibrateTilt(rest, twists), note: null };
 }
 
 /** Streaming detector: feed it every reading, in order. Calls onTwist, with what it saw, when a twist shows. */
@@ -60,7 +71,7 @@ export function createTwistDetector(profile: TwistProfile, onTwist: (why: string
 
 export function describeProfile(p: TwistProfile) {
   return p.kind === "spin"
-    ? `gyroscope: fires on a reading of ${p.high}+, or two of ${p.low}+ within ${PAIR_MS / 1000} s`
+    ? `gyroscope: still is ${p.quiet} or less; a twist is readings of ${p.active}+ (two within ${BURST_MS / 1000} s) right after being still`
     : `accelerometer: fires on turning ${p.degrees}°+ around the forearm`;
 }
 
@@ -70,7 +81,7 @@ const finite = (n: unknown): n is number => typeof n === "number" && Number.isFi
 export function readProfiles(value: unknown): TwistProfiles {
   const { spin, tilt } = (value ?? {}) as { spin?: Partial<SpinProfile>; tilt?: Partial<TiltProfile> };
   const out: TwistProfiles = {};
-  if (spin?.kind === "spin" && finite(spin.high) && finite(spin.low)) out.spin = { kind: "spin", high: spin.high, low: spin.low };
+  if (spin?.kind === "spin" && finite(spin.quiet) && finite(spin.active)) out.spin = { kind: "spin", quiet: spin.quiet, active: spin.active };
   const axis = tilt?.axis;
   if (tilt?.kind === "tilt" && finite(tilt.degrees) && Array.isArray(axis) && axis.length === 3 && axis.every(finite)) {
     out.tilt = { kind: "tilt", axis: [axis[0], axis[1], axis[2]], degrees: tilt.degrees };
@@ -80,50 +91,100 @@ export function readProfiles(value: unknown): TwistProfiles {
 
 // --- Gyroscope ----------------------------------------------------------------
 
-/** Two readings of `low` or more this close together also fire: at a reading a second, a 2 s twist gives two. */
-const PAIR_MS = 3000;
+/** A twist's quick readings: at least two within this long (at a reading a second, a 2 s twist gives two or three). */
+const BURST_MS = 2500;
+/** Of the readings since the first quick one, at least this share are quick (sources that read faster give more). */
+const BURST_SHARE = 0.6;
+/** Before the burst the wrist was still: quiet readings in a row spanning at least this long (two in a row at a reading a second)… */
+const STILL_SPAN_MS = 600;
+/** …ending at most this long before the burst's first quick reading. */
+const STILL_BEFORE_MS = 4000;
 /** After firing, readings are ignored this long: the user is still finishing the twist. */
 const SPIN_REFRACTORY_MS = 4000;
-const MIN_HIGH = 80;
-const MIN_LOW = 60;
+/** A still wrist read under about 50 (probe, 2026-09-19); "still" is set from the user's rest, within these bounds. */
+const QUIET_MIN = 50;
+const QUIET_MAX = 100;
+/** A twist window counts when its level clears "still" by this much. */
+const STAND_OUT = 30;
+/** "Active" stays at least this far above "still". */
+const ACTIVE_GAP = 20;
+
+const liveSpins = (samples: Sample[]) => samples.filter((s) => gyroLive(s.v)).map((s) => spinOf(s.v));
+
+/** The resting level, leaving out the biggest readings (one in five, at least one): a single bump doesn't count. */
+export function restLevel(spins: number[]) {
+  const sorted = [...spins].sort((a, b) => a - b);
+  return sorted[sorted.length - 1 - Math.max(1, Math.floor(sorted.length / 5))] ?? sorted[0] ?? 0;
+}
+
+/** A twist window's level: what at least half its readings (and at least two) reach. */
+export function twistLevel(spins: number[]) {
+  const sorted = [...spins].sort((a, b) => b - a);
+  return sorted[Math.max(2, Math.ceil(sorted.length / 2)) - 1] ?? 0;
+}
 
 /**
- * Calibration from ~6 s of rest and three ~3 s windows of twisting back and forth. At a reading a
- * second a window can miss the twist altogether, so two of the three have to stand out from rest.
- * The thresholds sit between the busiest resting reading and the weakest twist that stood out.
+ * Calibration from ~5 s of rest and three windows of twisting back and forth. At a reading a second
+ * a window can miss most of a twist, so two of the three have to stand out. "Still" comes from the
+ * rest (capped: a restless rest still calibrates, with a note); "active" sits under the weakest
+ * twist that stood out.
  */
-export function calibrateSpin(rest: Sample[], twists: Sample[][]): SpinProfile {
-  const restSpins = rest.filter((s) => gyroLive(s.v)).map((s) => spinOf(s.v));
+export function calibrateSpin(rest: Sample[], twists: Sample[][]): Calibration {
+  const restSpins = liveSpins(rest);
   if (restSpins.length < 3) {
     throw new Error(`Only ${restSpins.length} readings arrived while resting (the clip sends about one a second). Try again.`);
   }
-  const restMax = Math.max(...restSpins);
-  const standOut = restMax * 1.3 + 15;
-  const peaks = twists.map((tw) => Math.max(0, ...tw.filter((s) => gyroLive(s.v)).map((s) => spinOf(s.v))));
-  const good = peaks.filter((p) => p >= standOut);
+  const resting = restLevel(restSpins);
+  const quiet = Math.round(Math.min(QUIET_MAX, Math.max(QUIET_MIN, resting + 20)));
+  const levels = twists.map((tw) => twistLevel(liveSpins(tw)));
+  const good = levels.filter((level) => level >= quiet + STAND_OUT);
   if (good.length < 2) {
     throw new Error(
-      `The twists didn't stand out from resting (rest up to ${restMax}, twists ${peaks.join(", ")}). Hold still while resting, and twist quicker.`,
+      `The twists didn't stand out from resting (still up to ${quiet}; twists reached ${levels.join(", ")}). Twist quicker, back and forth, for the whole 2 seconds.`,
     );
   }
-  const weakest = Math.min(...good);
-  const high = Math.round(Math.max(restMax + 0.7 * (weakest - restMax), standOut, MIN_HIGH));
-  const low = Math.round(Math.min(high - 10, Math.max(restMax + 0.4 * (weakest - restMax), restMax + 10, MIN_LOW)));
-  return { kind: "spin", high, low };
+  const active = Math.round(Math.max(0.75 * Math.min(...good), quiet + ACTIVE_GAP));
+  const note =
+    resting + 20 > QUIET_MAX
+      ? `Your wrist moved while resting (readings up to ${Math.max(...restSpins)}), so "still" was capped at ${QUIET_MAX}. For a better fit, rest your forearm on a table and calibrate again.`
+      : null;
+  return { profile: { kind: "spin", quiet, active }, note };
+}
+
+type SpinReading = { t: number; spin: number };
+
+/** Quiet readings in a row, spanning STILL_SPAN_MS, that end within STILL_BEFORE_MS before `start`. */
+function stillBefore(recent: SpinReading[], start: number, quiet: number) {
+  let runStart: number | null = null;
+  for (const r of recent) {
+    if (r.t >= start) break;
+    if (r.spin > quiet) {
+      runStart = null;
+      continue;
+    }
+    runStart ??= r.t;
+    if (r.t - runStart >= STILL_SPAN_MS && start - r.t <= STILL_BEFORE_MS) return true;
+  }
+  return false;
 }
 
 function spinDetector(profile: SpinProfile, onTwist: (why: string) => void) {
+  let recent: SpinReading[] = [];
   let lastFire = -Infinity;
-  let recent: number[] = []; // when the last readings of `low` or more came
   return (s: Sample) => {
-    if (!gyroLive(s.v) || s.t - lastFire < SPIN_REFRACTORY_MS) return;
+    if (!gyroLive(s.v)) return;
     const spin = spinOf(s.v);
-    if (spin < profile.low) return;
-    recent = [...recent.filter((t) => s.t - t < PAIR_MS), s.t];
-    if (spin < profile.high && recent.length < 2) return;
+    recent = [...recent.filter((r) => s.t - r.t <= BURST_MS + STILL_BEFORE_MS + STILL_SPAN_MS), { t: s.t, spin }];
+    if (spin < profile.active || s.t - lastFire < SPIN_REFRACTORY_MS) return;
+    const quick = recent.filter((r) => s.t - r.t <= BURST_MS && r.spin >= profile.active);
+    const start = quick[0].t;
+    const since = recent.filter((r) => r.t >= start);
+    if (quick.length < 2 || quick.length < BURST_SHARE * since.length) return;
+    // A twist starts from a still wrist; walking or waving doesn't pause first.
+    if (!stillBefore(recent, start, profile.quiet)) return;
     lastFire = s.t;
     recent = [];
-    onTwist(spin >= profile.high ? `spin ${spin} ≥ ${profile.high}` : `two readings ≥ ${profile.low} within ${PAIR_MS / 1000} s`);
+    onTwist(`${quick.length} readings of ${profile.active}+ right after being still (${profile.quiet} or less)`);
   };
 }
 
