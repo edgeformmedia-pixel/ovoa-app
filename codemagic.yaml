@@ -13,6 +13,10 @@ workflows:
       # Holds CERTIFICATE_PRIVATE_KEY, which signs the distribution certificate the build creates.
       groups:
         - signing
+      vars:
+        # The precompiled Expo modules default to their debug build, which links
+        # Apple's Testing.framework and crashes on launch outside Xcode.
+        EXPO_USE_PRECOMPILED_MODULES: "0"
       node: 22
       xcode: latest
       cocoapods: default
@@ -39,6 +43,20 @@ workflows:
       - name: Build the app
         working_directory: jarvis/app
         script: xcode-project build-ipa --workspace ios/OVOA.xcworkspace --scheme OVOA
+      - name: Check no framework links test libraries
+        # Testing.framework / XCTest don't exist on devices; linking them crashes the app at launch.
+        script: |
+          APP=$(find "$CM_BUILD_DIR/jarvis/app/build/ios/xcarchive" -maxdepth 4 -type d -name "*.app" | head -1)
+          [ -n "$APP" ] || { echo "No .app found in the archive"; exit 1; }
+          bad=0
+          for bin in "$APP/$(basename "$APP" .app)" "$APP"/Frameworks/*.framework/*; do
+            [ -f "$bin" ] && file "$bin" | grep -q Mach-O || continue
+            if otool -L "$bin" | grep -E "Testing.framework|XCTest"; then
+              echo "^ linked by $bin"
+              bad=1
+            fi
+          done
+          exit $bad
     artifacts:
       - jarvis/app/build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log

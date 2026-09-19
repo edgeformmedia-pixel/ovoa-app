@@ -44,5 +44,12 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit"
   },
-  "private": true
+  "private": true,
+  "expo": {
+    "autolinking": {
+      "ios": {
+        "buildFromSource": [".*"]
+      }
+    }
+  }
 }
