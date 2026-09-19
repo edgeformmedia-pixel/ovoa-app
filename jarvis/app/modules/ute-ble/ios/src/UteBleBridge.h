@@ -23,6 +23,8 @@ NS_SWIFT_NAME(UteBleBridge)
 @property (nonatomic, copy, nullable) void (^onRecordStop)(NSDictionary<NSString *, id> *info);
 @property (nonatomic, copy, nullable) void (^onSyncProgress)(BOOL completed, NSInteger sessionId, NSInteger size, NSData *_Nullable data);
 @property (nonatomic, copy, nullable) void (^onSyncComplete)(NSInteger sessionId);
+/// The post-connect handshake: account check, then pairing confirmation.
+@property (nonatomic, copy, nullable) void (^onPairing)(BOOL paired, NSString *message);
 /// Vendor SDK log lines, forwarded only while a connect is in flight.
 @property (nonatomic, copy, nullable) void (^onLog)(NSString *line);
 

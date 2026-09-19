@@ -39,6 +39,11 @@ export default function ES100() {
       ute.addListener("onConnectionChange", (change) => {
         setConnected(change.connected);
         sayRef.current(`connection status ${change.status}${change.error ? ` — ${change.error}` : ""}`);
+        // 4 = still connecting; anything else ends the attempt.
+        if (change.status !== 4) {
+          setConnecting(false);
+          if (connectTimer.current) clearTimeout(connectTimer.current);
+        }
         if (!change.connected) return setDevice(null);
         ute
           .connectedDevice()
@@ -50,8 +55,8 @@ export default function ES100() {
           })
           .catch(() => {});
       }),
-      ute.addListener("onPairingChange", ({ paired }) => {
-        sayRef.current(paired ? "device accepted pairing" : "device refused pairing — disconnecting");
+      ute.addListener("onPairingChange", ({ paired, message }) => {
+        sayRef.current(message ?? (paired ? "device accepted pairing" : "device refused pairing — disconnecting"));
       }),
       ute.addListener("onBluetoothState", (state) => {
         sayRef.current(`bluetooth ${state.poweredOn ? "on" : `state ${state.state}`}`);
@@ -111,7 +116,13 @@ export default function ES100() {
       await ute.stopScan();
       setScanning(false);
       say(`connecting to ${device.name || device.id}…`);
+      setConnecting(true);
       await ute.connect(device.id);
+      if (connectTimer.current) clearTimeout(connectTimer.current);
+      connectTimer.current = setTimeout(() => {
+        setConnecting(false);
+        sayRef.current("no connection after 20 s, tap the device again to retry");
+      }, 20_000);
     });
 
   const pair = () =>
@@ -161,7 +172,7 @@ export default function ES100() {
       <ScrollView contentContainerStyle={styles.body}>
         <Text style={styles.title}>ES100</Text>
         <Text style={styles.dim}>
-          {sdkVersion ? `SDK ${sdkVersion}` : "starting…"} · {connected ? "connected" : "not connected"}
+          {sdkVersion ? `SDK ${sdkVersion}` : "starting…"} · {connected ? "connected" : connecting ? "connecting…" : "not connected"}
         </Text>
 
         {device && (

@@ -13,7 +13,7 @@ public class UteBleModule: Module {
     Events(
       "onDeviceFound",
       "onConnectionChange",
-      "onPairingChange", // Android's post-connect handshake; never sent on iOS.
+      "onPairingChange", // The post-connect handshake on both platforms.
       "onBluetoothState",
       "onRecordStart",
       "onRecordStop",
@@ -36,6 +36,9 @@ public class UteBleModule: Module {
       }
       self.bridge.onBluetoothState = { [weak self] state, poweredOn in
         self?.sendEvent("onBluetoothState", ["state": state, "poweredOn": poweredOn])
+      }
+      self.bridge.onPairing = { [weak self] paired, message in
+        self?.sendEvent("onPairingChange", ["paired": paired, "message": message])
       }
       self.bridge.onLog = { [weak self] line in
         self?.sendEvent("onLog", ["message": line])

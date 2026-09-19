@@ -47,8 +47,11 @@ static NSString *UteString(NSString *_Nullable value) {
   [mgr initUTEMgr];
   // The manager holds its delegate weakly; this singleton keeps itself alive.
   mgr.delegate = self;
-  // The clip only talks BLE; the default classic-Bluetooth pairing leaves connect hanging.
-  mgr.isClassicBluetoothConnect = NO;
+  __weak UteBleBridge *weakSelf = self;
+  // The clip asks the user to confirm pairing (it buzzes) and reports the answer here.
+  [[UTEDeviceMgr sharedInstance].accountTool onNotifyAppPair:^(BOOL pair) {
+    [weakSelf reportPairing:pair message:pair ? @"device confirmed pairing" : @"device cancelled pairing"];
+  }];
   [self registerRecordListeners];
   return UteString([mgr sdkVersion]);
 }
@@ -67,15 +70,12 @@ static NSString *UteString(NSString *_Nullable value) {
   if (!model) return NO;
   self.connecting = YES;
   UTEModelDevice *stale = [self mgr].connnectModel;
-  if (stale && ![self connected]) {
-    // Vendor advice for a stuck connect: disconnect, wait 0.3 s, connect again.
-    [[self mgr] disconnectDevices:stale];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      [[self mgr] connectDevice:model];
-    });
-  } else {
+  if (stale) [[self mgr] disconnectDevices:stale];
+  [[self mgr] stopScanDevices];
+  // The vendor demo waits 0.5 s between stopping the scan (or a disconnect) and connecting.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     [[self mgr] connectDevice:model];
-  }
+  });
   return YES;
 }
 
@@ -126,6 +126,53 @@ static NSString *UteString(NSString *_Nullable value) {
   if (status != UTEDevicesStatusConnecting) self.connecting = NO;
   void (^handler)(NSInteger, BOOL, NSString *_Nullable) = self.onConnectionChange;
   if (handler) handler(status, status == UTEDevicesStatusConnected, error.localizedDescription);
+  if (status == UTEDevicesStatusConnected) [self handshake];
+}
+
+/// What the vendor demo does on every connect: send our account id, and if the
+/// clip accepts it, confirm pairing and set its clock. Without this the clip
+/// keeps buzzing for confirmation and never finishes connecting.
+- (void)handshake {
+  __weak UteBleBridge *weakSelf = self;
+  UTEAccountTool *account = [UTEDeviceMgr sharedInstance].accountTool;
+  [account phoneSendWatchAccountWith:[self accountId] block:^(NSInteger result, NSInteger errorCode, NSDictionary *uteDict) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      // 0 same account, 1 bound to another account, 2 no account yet.
+      if (result == 1) {
+        [weakSelf reportPairing:NO message:@"clip is bound to another app - unbind it there (or factory reset) and retry"];
+        return;
+      }
+      [account notifyDevicePair:YES block:^(BOOL blePair, NSInteger pairError) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          [weakSelf reportPairing:blePair message:[NSString stringWithFormat:@"pair confirm %@ (error %ld)", blePair ? @"ok" : @"refused", (long)pairError]];
+        });
+      }];
+      [weakSelf syncClock];
+    });
+  }];
+}
+
+- (void)syncClock {
+  NSInteger seconds = [[NSTimeZone localTimeZone] secondsFromGMT];
+  [[UTEDeviceMgr sharedInstance] setTimeClock:(NSInteger)[[NSDate date] timeIntervalSince1970]
+                                     timeZone:seconds / 3600
+                                 minuteOffset:labs(seconds % 3600 / 60)
+                                        block:nil];
+}
+
+/// A stable 20-character id, like the demo's. The clip remembers it and only accepts this app afterwards.
+- (NSString *)accountId {
+  NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+  NSString *saved = [defaults stringForKey:@"ute-ble.accountId"];
+  if (saved.length) return saved;
+  NSString *fresh = [[[[NSUUID UUID] UUIDString] stringByReplacingOccurrencesOfString:@"-" withString:@""] substringToIndex:20];
+  [defaults setObject:fresh forKey:@"ute-ble.accountId"];
+  return fresh;
+}
+
+- (void)reportPairing:(BOOL)paired message:(NSString *)message {
+  void (^handler)(BOOL, NSString *) = self.onPairing;
+  if (handler) handler(paired, message);
 }
 
 - (void)uteBluetoothStatus:(UTEBluetoothStatus)status {

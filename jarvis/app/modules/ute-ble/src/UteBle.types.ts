@@ -73,9 +73,11 @@ export type DeviceStatus = {
   privacyMode: boolean | null;
 };
 
-/** Android only: the device's answer to the post-connect pairing handshake. */
+/** The device's answer to the post-connect pairing handshake. */
 export type PairingChange = {
   paired: boolean;
+  /** iOS: what happened, for the log. */
+  message?: string;
 };
 
 export type StorageInfo = {
