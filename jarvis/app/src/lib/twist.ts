@@ -7,10 +7,9 @@ import type { MotionSource } from "../../modules/ute-ble";
 // second, its accelerometer once per session. So there's a detector per kind of sensor, each
 // calibrated on the user's own twist:
 // - spin (gyroscope, "gyro3"): how fast the wrist turns, |x| + |y| + |z|. The axes saturate on
-//   quick moves, so any brisk arm movement reads about as high as a twist; what sets a twist apart
-//   is its shape. The user holds the wrist still for a moment, then twists back and forth for a
-//   couple of seconds: two or more quick readings in a row, starting from a still one, fire. Walking
-//   or gesturing never goes still first.
+//   quick moves, so any brisk arm movement reads about as high as a twist; what sets a shake apart
+//   is how long it lasts. The user rocks the wrist back and forth for 2-3 s: three quick readings
+//   out of four in a row fire. A gesture or arm swing gives one.
 // - tilt (accelerometer, "gsensor…"): how far the wrist has turned from where it rested, read off
 //   the gravity vector, around the axis calibration saw the twist turn it (the forearm). A turned
 //   wrist stays visible between slow readings. Used only if the accelerometer can be read often.
@@ -20,8 +19,8 @@ export type Sample = { t: number; v: number[] };
 export type TwistKind = "spin" | "tilt";
 
 /**
- * Gyroscope: readings of `active` or more, at least two within BURST_MS and most of the readings
- * since the first of them, fire when readings of `quiet` or less came in a row shortly before.
+ * Gyroscope: three of four readings in a row at `active` or more (never under SHAKE_FLOOR) fire.
+ * `quiet` is what a still wrist reads.
  */
 export type SpinProfile = { kind: "spin"; quiet: number; active: number };
 /** Accelerometer: turning `degrees` or more from rest, around `axis` (a unit vector in the clip's frame), fires. */
@@ -84,7 +83,7 @@ export function createTwistDetector(profile: TwistProfile, onTwist: (why: string
 
 export function describeProfile(p: TwistProfile) {
   return p.kind === "spin"
-    ? `gyroscope: still is ${p.quiet} or less; a twist is readings of ${p.active}+ (two within ${BURST_MS / 1000} s) right after being still`
+    ? `gyroscope: a shake is ${SHAKE_HITS} of ${SHAKE_OF} readings in a row at ${shakeLevel(p)}+ (still is ${p.quiet} or less)`
     : `accelerometer: fires on turning ${p.degrees}°+ around the forearm`;
 }
 
@@ -104,15 +103,18 @@ export function readProfiles(value: unknown): TwistProfiles {
 
 // --- Gyroscope ----------------------------------------------------------------
 
-/** A twist's quick readings: at least two within this long (at a reading a second, a 2 s twist gives two or three). */
-const BURST_MS = 2500;
-/** Of the readings since the first quick one, at least this share are quick (sources that read faster give more). */
-const BURST_SHARE = 0.6;
-/** Before the burst the wrist was still: quiet readings in a row spanning at least this long (two in a row at a reading a second)… */
-const STILL_SPAN_MS = 600;
-/** …ending at most this long before the burst's first quick reading. */
-const STILL_BEFORE_MS = 4000;
-/** After firing, readings are ignored this long: the user is still finishing the twist. */
+/**
+ * A shake: the wrist rocked back and forth for 2-3 s. At a reading a second a quick twist fell between
+ * readings too often, and "still, then twist" missed while the user was moving (build 32, 2026-09-19).
+ * A shake spans several readings: SHAKE_HITS of the last SHAKE_OF readings are quick, all within
+ * SHAKE_MS. Everyday movement gives a single spike, rarely three in a row.
+ */
+const SHAKE_HITS = 3;
+const SHAKE_OF = 4;
+const SHAKE_MS = 4000;
+/** "Quick" is never below this, whatever calibration saw: arm swings and gestures reach ~100. */
+const SHAKE_FLOOR = 130;
+/** After firing, readings are ignored this long: the user is still finishing the shake. */
 const SPIN_REFRACTORY_MS = 4000;
 /** A still wrist read under about 50 (probe, 2026-09-19); "still" is set from the user's rest, within these bounds. */
 const QUIET_MIN = 50;
@@ -164,40 +166,23 @@ export function calibrateSpin(rest: Sample[], twists: Sample[][]): Calibration {
   return { profile: { kind: "spin", quiet, active }, note };
 }
 
-type SpinReading = { t: number; spin: number };
-
-/** Quiet readings in a row, spanning STILL_SPAN_MS, that end within STILL_BEFORE_MS before `start`. */
-function stillBefore(recent: SpinReading[], start: number, quiet: number) {
-  let runStart: number | null = null;
-  for (const r of recent) {
-    if (r.t >= start) break;
-    if (r.spin > quiet) {
-      runStart = null;
-      continue;
-    }
-    runStart ??= r.t;
-    if (r.t - runStart >= STILL_SPAN_MS && start - r.t <= STILL_BEFORE_MS) return true;
-  }
-  return false;
-}
+/** How quick a reading has to be to count toward a shake. */
+export const shakeLevel = (profile: SpinProfile) => Math.max(profile.active, SHAKE_FLOOR);
 
 function spinDetector(profile: SpinProfile, onTwist: (why: string) => void) {
-  let recent: SpinReading[] = [];
+  const level = shakeLevel(profile);
+  let recent: { t: number; spin: number }[] = [];
   let lastFire = -Infinity;
   return (s: Sample) => {
     if (!gyroLive(s.v)) return;
     const spin = spinOf(s.v);
-    recent = [...recent.filter((r) => s.t - r.t <= BURST_MS + STILL_BEFORE_MS + STILL_SPAN_MS), { t: s.t, spin }];
-    if (spin < profile.active || s.t - lastFire < SPIN_REFRACTORY_MS) return;
-    const quick = recent.filter((r) => s.t - r.t <= BURST_MS && r.spin >= profile.active);
-    const start = quick[0].t;
-    const since = recent.filter((r) => r.t >= start);
-    if (quick.length < 2 || quick.length < BURST_SHARE * since.length) return;
-    // A twist starts from a still wrist; walking or waving doesn't pause first.
-    if (!stillBefore(recent, start, profile.quiet)) return;
+    recent = [...recent.filter((r) => s.t - r.t <= SHAKE_MS), { t: s.t, spin }].slice(-SHAKE_OF);
+    if (spin < level || s.t - lastFire < SPIN_REFRACTORY_MS) return;
+    const hits = recent.filter((r) => r.spin >= level).length;
+    if (hits < SHAKE_HITS) return;
     lastFire = s.t;
     recent = [];
-    onTwist(`${quick.length} readings of ${profile.active}+ right after being still (${profile.quiet} or less)`);
+    onTwist(`shake: ${hits} of the last ${SHAKE_OF} readings ${level}+`);
   };
 }
 

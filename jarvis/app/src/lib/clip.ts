@@ -286,6 +286,9 @@ async function onConnected() {
   // A new connection: read what this clip supports again, and give motion another try.
   set({ phase: "connected", device, problem: null, capabilities: null, sensors: null, motionProblem: null });
   resetMotion();
+  // The light's state is unknown after a reconnect; put it back once the connect-time commands are done.
+  lightShown = null;
+  setTimeout(() => void syncLight(), 10_000);
   say(`connected to ${device?.name || "clip"}`);
   if (device?.id) {
     await storage.set(SAVED_DEVICE, device.id).catch(() => {});
@@ -1055,6 +1058,63 @@ export async function buzz(count = 1, option: BuzzOption = buzzOption) {
     say(`buzz option ${option} failed — ${message(err)}`);
     return false;
   }
+}
+
+// --- Listening light --------------------------------------------------------
+
+/**
+ * Green on the clip while OVOA listens, off when it stops. Untested on the ES100: the wearables' color
+ * command (green) first; if the clip doesn't take it, the watch's three-color LED test (no color
+ * choice); if neither works, the light is left alone for this session. Only the latest wish is sent,
+ * never more than one command every LIGHT_GAP_MS: command floods freeze the clip.
+ */
+const LIGHT_GAP_MS = 1500;
+const LIGHT_GREEN = 2;
+let lightColors: number | null = LIGHT_GREEN; // null: neither command works
+let lightWanted = false;
+let lightShown: boolean | null = null;
+let lightBusy = false;
+let lightLastAt = 0;
+
+export function setListeningLight(on: boolean) {
+  lightWanted = on;
+  void syncLight();
+}
+
+async function syncLight() {
+  if (lightBusy || lightColors === null) return;
+  if (state.phase !== "connected") {
+    lightShown = null; // unknown after a reconnect
+    return;
+  }
+  if (lightShown === lightWanted) return;
+  const wait = lightLastAt + LIGHT_GAP_MS - Date.now();
+  if (wait > 0) {
+    setTimeout(() => void syncLight(), wait);
+    return;
+  }
+  lightBusy = true;
+  const on = lightWanted;
+  const colors = lightColors;
+  lightLastAt = Date.now();
+  try {
+    await ute.setLight(on, colors);
+    lightShown = on;
+    say(`light: ${on ? (colors ? "green" : "LED test") + " on" : "off"}`);
+  } catch (err) {
+    // No answer: the command may still have worked, like the buzz. Only a refusal switches over.
+    if (/didn't answer in time/.test(message(err))) {
+      lightShown = on;
+      say(`light: ${on ? "on" : "off"} sent (${colors ? "green" : "LED test"}), no reply from the clip`);
+    } else {
+      lightColors = colors ? 0 : null;
+      lightShown = null;
+      say(`light: ${colors ? "green" : "LED test"} failed — ${message(err)}${colors ? "; trying the LED test" : "; giving up"}`);
+    }
+  } finally {
+    lightBusy = false;
+  }
+  if (lightShown !== lightWanted) void syncLight();
 }
 
 // --- Recording -------------------------------------------------------------

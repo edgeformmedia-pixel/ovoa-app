@@ -67,6 +67,11 @@ NS_SWIFT_NAME(UteBleBridge)
 /// Vibrates the clip. option 1: find-device on/off, 2: factoryVibration, 3: factory motor test.
 - (void)buzz:(NSInteger)count option:(NSInteger)option completion:(UteBleResultCallback)completion
     NS_SWIFT_NAME(buzz(count:option:completion:));
+/// Turns the clip's light on or off (the wearables' factory LED command). colors: UTELEDType bits,
+/// 1 red, 2 green, 4 blue. colors 0: the watch's three-color LED test instead (on/off only).
+/// Whether the ES100 honours either is unknown.
+- (void)setLight:(BOOL)on colors:(NSInteger)colors completion:(UteBleResultCallback)completion
+    NS_SWIFT_NAME(setLight(on:colors:completion:));
 /// Turns one motion source on or off (see MotionSource in UteBle.types.ts). Polled sources ask every
 /// `intervalMs`. 408: the clip didn't answer; -600: unknown source.
 - (void)setMotionSource:(NSString *)source

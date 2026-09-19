@@ -219,6 +219,13 @@ public class UteBleModule: Module {
     }
     .runOnQueue(.main)
 
+    AsyncFunction("setLight") { (on: Bool, colors: Int, promise: Promise) in
+      self.bridge.setLight(on: on, colors: colors) { errorCode, result in
+        Self.settle(promise, errorCode, result, "light")
+      }
+    }
+    .runOnQueue(.main)
+
     AsyncFunction("buzz") { (count: Int, option: Int, promise: Promise) in
       self.bridge.buzz(count: count, option: option) { errorCode, result in
         Self.settle(promise, errorCode, result, "buzz option \(option)")

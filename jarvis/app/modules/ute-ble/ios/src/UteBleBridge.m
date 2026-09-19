@@ -670,6 +670,24 @@ static NSInteger UteSignedByte(NSInteger value) {
   }];
 }
 
+- (void)setLight:(BOOL)on colors:(NSInteger)colors completion:(UteBleResultCallback)completion {
+  UteBleResultCallback reply = UteOnce(completion, 3);
+  NSDictionary *info = @{@"on" : @(on), @"colors" : @(colors)};
+  if (colors == 0) {
+    // The watch's "three-color indicator test", which the ES100 claims (isSupportLEDTest): no color choice.
+    [[UTEDeviceMgr sharedInstance] factoryLEDTestCMD:on ? 1 : 0 Block:^(NSInteger open, NSInteger state) {
+      reply(0, @{@"on" : @(on), @"colors" : @0, @"open" : @(open), @"state" : @(state)});
+    }];
+    return;
+  }
+  [[UTEDeviceMgr sharedInstance].wear factoryLED:on
+                                            type:(UTELEDType)colors
+                                           block:^(BOOL success, UTEDeviceError errorCode) {
+    NSInteger code = UteNormalize(errorCode);
+    reply(success ? 0 : (code != 0 ? code : -2), info);
+  }];
+}
+
 - (void)buzz:(NSInteger)count option:(NSInteger)option completion:(UteBleResultCallback)completion {
   UTEDeviceMgr *dev = [UTEDeviceMgr sharedInstance];
   NSInteger pulses = MAX(1, count);

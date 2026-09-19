@@ -391,7 +391,7 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
         <BuzzOptions connected={connected} />
       </Card>
 
-      <Card title="Twist to listen — calibrate" available={state.phase === "unavailable" ? false : true}>
+      <Card title="Shake to listen — calibrate" available={state.phase === "unavailable" ? false : true}>
         <TwistCalibration connected={connected} problem={state.motionProblem} />
       </Card>
 
@@ -449,7 +449,7 @@ function BuzzOptions({ connected }: { connected: boolean }) {
           </Pressable>
         ))}
       </View>
-      <Text style={styles.hint}>{result ?? "Tap one; the last one tapped is used when a twist summons the assistant."}</Text>
+      <Text style={styles.hint}>{result ?? "Tap one; the last one tapped is used when a shake summons the assistant."}</Text>
     </>
   );
 }
@@ -460,7 +460,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Before resting: time to put the phone down (or in the other hand) and let the arm settle. */
 const SETTLE_S = 3;
 const REST_MS = 5000;
-const TWIST_MS = 3500;
+const TWIST_MS = 4000;
 /** Readings this soon after the cue are left out of a twist: the user hasn't started yet. */
 const REACTION_MS = 700;
 const TWISTS = 3;
@@ -533,7 +533,7 @@ function TwistCalibration({ connected, problem }: { connected: boolean; problem:
         setStep(`Hold still… (${i}/${TWISTS})`);
         await wait(2000);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        setStep(`Twist back and forth now! (${i}/${TWISTS})`);
+        setStep(`Shake your wrist back and forth now! (${i}/${TWISTS})`);
         await wait(REACTION_MS);
         bucket = [];
         await wait(TWIST_MS - REACTION_MS);
@@ -632,10 +632,10 @@ function TwistCalibration({ connected, problem }: { connected: boolean; problem:
       </Text>
       <View style={styles.row}>
         <Pressable style={styles.button} disabled={!idle} onPress={run}>
-          <Text style={styles.buttonText}>{step ?? "Calibrate twist"}</Text>
+          <Text style={styles.buttonText}>{step ?? "Calibrate shake"}</Text>
         </Pressable>
         <Pressable style={styles.button} disabled={!idle && !testLeft} onPress={() => (testLeft ? stopTest.current?.() : test())}>
-          <Text style={styles.buttonText}>{testLeft ? `Stop test (${testLeft} s)` : "Test twist (30 s)"}</Text>
+          <Text style={styles.buttonText}>{testLeft ? `Stop test (${testLeft} s)` : "Test shake (30 s)"}</Text>
         </Pressable>
       </View>
       {!!testLeft && <Row label="reading" value={reading ?? "—"} mono />}

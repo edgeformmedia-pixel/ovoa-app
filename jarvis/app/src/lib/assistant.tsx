@@ -302,6 +302,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   // Retried when the app comes to the front (a Live Activity can only start from there).
   const islandStatus = conversation.phase !== "off" ? conversation.phase : standby ? "off" : null;
   useEffect(() => showIsland(islandStatus), [islandStatus, inForeground]);
+  // And green on the clip while listening.
+  const clipListening = conversation.phase === "listening";
+  useEffect(() => clip.setListeningLight(clipListening), [clipListening]);
 
   // A summoned turn with nothing else keeping the microphone open: close it after a quiet spell.
   useEffect(() => {

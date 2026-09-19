@@ -162,7 +162,7 @@ export default function Settings() {
         </View>
         <Text style={styles.meta}>{LISTEN_MODES.find((m) => m.mode === listenMode)?.hint}</Text>
         {listenMode !== "wake" && (
-          <Button label="Calibrate the twist" onPress={() => router.push("/dev-tools")} />
+          <Button label="Calibrate the shake" onPress={() => router.push("/dev-tools")} />
         )}
       </Section>
 
@@ -316,10 +316,10 @@ const LISTEN_MODES = [
   { mode: "wake", label: "Wake word", hint: "Say the assistant's name. Turn on Always listen (Danger zone) to use it from any screen." },
   {
     mode: "twist",
-    label: "Twist",
-    hint: "With the ES100 on, hold your wrist still for a moment, then twist it back and forth for about 2 seconds; it buzzes and listens. The microphone stays off until then. Until the twist is calibrated, or while the clip sends no motion, its button does the same.",
+    label: "Shake",
+    hint: "With the ES100 on, shake your wrist back and forth for 2-3 seconds; it buzzes and listens for one question. The microphone stays off until then. Until the shake is calibrated, or while the clip sends no motion, its button does the same.",
   },
-  { mode: "both", label: "Both", hint: "Always listen for the name, and a twist also gets its attention." },
+  { mode: "both", label: "Both", hint: "Always listen for the name, and a shake also gets its attention." },
 ] as const;
 
 function Button({

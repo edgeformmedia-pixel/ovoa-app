@@ -46,6 +46,7 @@ type UteBleNativeModule = {
   readGyro(): Promise<GyroReading>;
   setMotionStream(on: boolean): Promise<void>;
   buzz(count: number, option: number): Promise<{ option: number }>;
+  setLight(on: boolean, colors: number): Promise<{ on: boolean; colors: number }>;
   setMotionSource(source: MotionSource, on: boolean, intervalMs: number): Promise<void>;
   readActivity(): Promise<{ totals: string; calories: number }>;
   setSdkLogging(on: boolean): Promise<void>;
@@ -146,6 +147,8 @@ export const setMotionStream = (on: boolean) => native().setMotionStream(on);
  * never replies), 3: the factory motor test. Which one the ES100 honours is unknown. iOS only.
  */
 export const buzz = (count = 1, option = 1) => native().buzz(count, option);
+/** Turns the clip's light on or off. colors: 1 red, 2 green, 4 blue (add them to mix); 0 = the three-color LED test (no color choice). Untested on the ES100. iOS only. */
+export const setLight = (on: boolean, colors = 2) => native().setLight(on, colors);
 /**
  * Turns one of the SDK's motion sources on or off; samples arrive as onMotion events. Polled
  * sources ask the clip again every `intervalMs`. iOS only.
