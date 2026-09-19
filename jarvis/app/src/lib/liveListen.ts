@@ -12,6 +12,18 @@ const SAMPLE_RATE = 16000;
 const DEEPGRAM_LISTEN = "wss://api.deepgram.com/v1/listen";
 const ENDPOINTING_MS = 600; // this much silence after words ends the sentence
 const UTTERANCE_END_MS = 1200; // backup: no new words for this long ends it too
+// iOS silently stops the mic engine when the audio session changes (e.g. after
+// a reply plays) while expo-audio still reports it as streaming, so start() is
+// a no-op and Deepgram closes the socket for lack of audio (code 1001). If no
+// audio arrives for this long, restart the stream.
+const NO_AUDIO_RESTART_MS = 1500;
+const KEEPALIVE_MS = 4000;
+
+/** Stops and starts the stream, so a mic engine iOS quietly halted comes back. */
+async function restart(stream: AudioStream) {
+  stream.stop();
+  await stream.start();
+}
 
 /** The native PCM stream, or null if this build of Expo Go doesn't have it. */
 export function useLiveStream(): AudioStream | null {
@@ -62,16 +74,21 @@ export async function listenLive(stream: AudioStream, apiToken: string, opts: Li
   const pending: ArrayBuffer[] = [];
   let ws: WebSocket | null = null;
   let chunks = 0;
+  let lastAudioAt = Date.now();
+  let restarts = 0;
 
   const sub = stream.addListener("audioStreamBuffer", (buffer) => {
     opts.onLevel(levelOf(buffer.data));
     chunks++;
+    lastAudioAt = Date.now();
     if (ws?.readyState === WebSocket.OPEN) ws.send(buffer.data);
     else if (pending.length < 100) pending.push(buffer.data);
   });
 
   try {
-    await stream.start();
+    // Always a fresh engine: one left "running" from the last turn may be dead.
+    await restart(stream);
+    lastAudioAt = Date.now();
     const { token, keyterms = [] } = await tokenRequest;
     const params = new URLSearchParams({
       model: "nova-3",
@@ -147,8 +164,28 @@ export async function listenLive(stream: AudioStream, apiToken: string, opts: Li
         else reject(new Error(`Live transcription closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`));
       };
 
+      let restarting = false;
+      let lastKeepAlive = Date.now();
       const timer = setInterval(() => {
         const elapsed = Date.now() - started;
+        const silentFor = Date.now() - lastAudioAt;
+        // The mic went quiet (not silence, no buffers at all): bring it back.
+        if (!restarting && silentFor > NO_AUDIO_RESTART_MS && restarts < 3) {
+          restarting = true;
+          restarts++;
+          devlog("voice", `no audio from the mic for ${silentFor} ms; restarting it`, `restart ${restarts}`);
+          restart(stream)
+            .catch((err) => devlog("err", "mic restart failed", String(err)))
+            .finally(() => {
+              lastAudioAt = Date.now();
+              restarting = false;
+            });
+        }
+        // While there's no audio, tell Deepgram we're still here so it doesn't hang up.
+        if (silentFor > KEEPALIVE_MS / 2 && Date.now() - lastKeepAlive > KEEPALIVE_MS && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "KeepAlive" }));
+          lastKeepAlive = Date.now();
+        }
         if (opts.cancelled()) finish("", "cancelled");
         else if (!heard() && elapsed >= opts.noSpeechMs) {
           devlog("voice", `no speech in ${Math.round(elapsed / 1000)}s, listening again`, `${chunks} audio chunks sent`);

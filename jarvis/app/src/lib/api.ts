@@ -65,15 +65,22 @@ export class ApiError extends Error {
   }
 }
 
+const REQUEST_TIMEOUT_MS = 60_000;
+
 export async function request<T>(path: string, token: string | null, init: RequestInit = {}): Promise<T> {
   const method = init.method ?? "GET";
   // Auth bodies hold passwords and tokens; keep them out of the log.
   const secret = path.startsWith("/auth/") || path.startsWith("/me/password");
   devlog("req", `${method} ${path}`, secret ? undefined : (init.body as string | undefined));
   const started = Date.now();
+  // Never wait forever: a request frozen while iOS suspended the app would
+  // otherwise hang the voice loop until the connection drops (seen: 15 min).
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
   let res: Response;
   try {
     res = await fetch(`${API_URL}${path}`, {
+      signal: timeout.signal,
       ...init,
       headers: {
         "content-type": "application/json",
@@ -82,9 +89,12 @@ export async function request<T>(path: string, token: string | null, init: Reque
       },
     });
   } catch (err) {
+    clearTimeout(timer);
     devlog("err", `${method} ${path} failed after ${Date.now() - started} ms`, String(err));
+    if (timeout.signal.aborted) throw new Error(`No answer from the server after ${REQUEST_TIMEOUT_MS / 1000} s`);
     throw err;
   }
+  clearTimeout(timer);
   const body = await res.json().catch(() => ({}));
   devlog(res.ok ? "res" : "err", `${res.status} ${method} ${path} · ${Date.now() - started} ms`, secret ? undefined : body);
   if (!res.ok) throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status);

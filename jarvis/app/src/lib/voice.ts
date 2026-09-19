@@ -427,6 +427,7 @@ async function speakInterruptible(
 export type VoicePhase = "off" | "listening" | "thinking" | "speaking";
 
 const RETRY_MS = 3000;
+const LIVE_RETRY_MS = 60_000;
 
 /**
  * Hands-free, continuous listening: hear something, send it, read the reply
@@ -459,6 +460,8 @@ export function useConversation(
   // Live transcription when this Expo Go has the PCM stream; recording + upload otherwise.
   const stream = useLiveStream();
   const liveFailures = useRef(0);
+  // After switching to recording, try live transcription again after a while.
+  const liveFailedAt = useRef(0);
   const [words, setWords] = useState("");
 
   useEffect(() => {
@@ -499,6 +502,10 @@ export function useConversation(
 
     /** One sentence from the user, or "" if nobody spoke. */
     const hear = async (noSpeechMs: number, before = "") => {
+      if (liveFailures.current >= 2 && Date.now() - liveFailedAt.current > LIVE_RETRY_MS) {
+        devlog("voice", "trying live transcription again");
+        liveFailures.current = 0;
+      }
       if (stream && liveFailures.current < 2) {
         try {
           const text = await listenLive(stream, token, {
@@ -513,12 +520,18 @@ export function useConversation(
           return text;
         } catch (err) {
           liveFailures.current++;
+          liveFailedAt.current = Date.now();
           devlog(
             "err",
             liveFailures.current < 2 ? "live transcription failed; using recording for this turn" : "live transcription keeps failing; switching to recording",
             err instanceof Error ? err.message : String(err),
           );
         }
+      }
+      // In the background, iOS suspends the app the moment no audio is running, which
+      // froze the reply request for 15 minutes once. Keep the stream going as a keep-alive.
+      if (background && stream && !stream.isStreaming) {
+        await stream.start().catch((err) => devlog("err", "background keep-alive mic failed", String(err)));
       }
       const uri = await recordUtterance(recorder, cancelled, setLevel, noSpeechMs);
       if (!uri || cancelled()) return "";
