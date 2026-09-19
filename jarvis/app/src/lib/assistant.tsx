@@ -6,7 +6,7 @@ import { useSession } from "./auth";
 import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type Approval } from "./phoneActions";
 import { devlog } from "./devlog";
 import * as clip from "./clip";
-import { createTwistDetector } from "./twist";
+import { createTwistDetector, twistKind, type Sample, type TwistKind, type TwistProfiles } from "./twist";
 import {
   alwaysListenPref,
   listeningPref,
@@ -212,24 +212,45 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!twistOn) return;
-    let detector: ReturnType<typeof createTwistDetector> | null = null;
-    let hasProfile = false;
+    // A profile per kind of motion sensor; the clip's readings go to the one for their source.
+    let profiles: TwistProfiles = {};
+    const detectors = new Map<TwistKind, (s: Sample) => void>();
+    const uncalibrated = new Set<TwistKind>();
     const load = () =>
       twistProfilePref.get().then((p) => {
-        hasProfile = !!p;
-        detector = p ? createTwistDetector(p, () => onSummonRef.current("twist")) : null;
-        devlog("voice", p ? "twist: listening for twists" : "twist: not calibrated yet", p ? JSON.stringify(p) : undefined);
+        profiles = p;
+        detectors.clear();
+        uncalibrated.clear();
+        const any = !!(p.spin || p.tilt);
+        devlog("voice", any ? "twist: listening for twists" : "twist: not calibrated yet", any ? JSON.stringify(p) : undefined);
       });
     load();
     const offProfile = twistProfilePref.onChange(load);
-    const offMotion = clip.subscribeMotion((samples) => {
-      if (!detector || twistProfilePref.calibrating) return;
-      samples.forEach((s) => detector?.(s));
+    const detectorFor = (kind: TwistKind) => {
+      const profile = profiles[kind];
+      if (!profile) {
+        if (!uncalibrated.has(kind)) devlog("voice", `twist: not calibrated for the clip's ${kind === "spin" ? "gyroscope" : "accelerometer"} yet; its button summons instead`);
+        uncalibrated.add(kind);
+        return null;
+      }
+      let detect = detectors.get(kind);
+      if (!detect) {
+        detect = createTwistDetector(profile, (why) => onSummonRef.current(`twist (${why})`));
+        detectors.set(kind, detect);
+      }
+      return detect;
+    };
+    const offMotion = clip.subscribeMotion((samples, source) => {
+      if (twistProfilePref.calibrating) return;
+      const kind = twistKind(source);
+      const detect = kind && detectorFor(kind);
+      if (detect) samples.forEach(detect);
     });
-    // No motion data (or not calibrated): the clip's button summons instead, and the
-    // recording that press started on the clip is thrown away.
+    // Motion not streaming right now, or no calibration for the sensor it comes from: the
+    // clip's button summons instead, and the recording that press started is thrown away.
     const offButton = clip.onClipButton((source) => {
-      if (!clip.getClipState().motionProblem && hasProfile) return false;
+      const kind = twistKind(clip.getClipState().motion.source);
+      if (clip.motionLive() && kind && profiles[kind]) return false;
       onSummonRef.current(`clip button (${source})`);
       return true;
     });

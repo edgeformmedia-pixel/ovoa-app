@@ -26,9 +26,10 @@ export default function MotionLab() {
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
       <ScrollView contentContainerStyle={styles.body}>
         <Text style={styles.dim}>
-          Tries each way the clip might report motion, one at a time. For each one: hold still, then twist when the
-          phone buzzes. Takes about {probeMinutes} minutes. Keep the app open; results upload to the logs as they
-          finish.
+          Tries each way the clip might report motion, one at a time: the accelerometer (g-sensor) variants first, then
+          the gyroscope. For each one: hold still, then twist back and forth when the phone buzzes, until it says stop.
+          Between them it waits for the clip to answer again. Takes about {probeMinutes} minutes, longer if the clip
+          stalls. Keep the app open; results upload to the logs as they finish.
         </Text>
 
         {probe.running ? (
@@ -61,8 +62,11 @@ export default function MotionLab() {
             <Text style={styles.cardTitle}>Result</Text>
             <Text style={styles.value}>
               {probe.winner
-                ? `${probe.winner.what}: ${probe.winner.hz} samples/s, twist moves value ${probe.winner.channel} (score ${probe.winner.score}). Twist to listen will try it first; calibrate again in Dev tools.`
-                : "No source sent motion that twisting moved. The results are in the logs."}
+                ? `${probe.winner.what}: ${probe.winner.hz} readings/s, twisting moves ${probe.winner.channel} (score ${probe.winner.score}). ` +
+                  (probe.winner.source === "gyro3"
+                    ? "Twist to listen already uses it."
+                    : "Twist to listen will try it first; calibrate the twist again in Dev tools.")
+                : "No source beat the default: twist to listen keeps using the gyroscope test (gyro3). The results are in the logs."}
             </Text>
           </View>
         )}
@@ -88,7 +92,12 @@ function ResultRow({ result: r }: { result: StepResult }) {
       </View>
       <Text style={styles.dim}>{r.what}</Text>
       <Text style={styles.mono}>
-        {r.counts.still + r.counts.twist} samples · {r.hz}/s · score {r.score} · raw {r.raw.still}→{r.raw.twist}
+        {r.counts.still + r.counts.twist} readings ({r.distinct} different) · {r.hz}/s · score {r.score}
+        {r.channel ? ` (${r.channel})` : ""}
+      </Text>
+      <Text style={styles.mono}>
+        first after {r.firstMs === null ? "—" : `${(r.firstMs / 1000).toFixed(1)} s`} · raw {r.raw.still}→{r.raw.twist}
+        {r.recoveredMs ? ` · clip back after ${Math.round(r.recoveredMs / 1000)} s` : r.recoveredMs === null ? " · clip didn't come back" : ""}
       </Text>
       {!!r.note && <Text style={styles.dim}>{r.note}</Text>}
     </View>

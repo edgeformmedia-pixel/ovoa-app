@@ -4,7 +4,7 @@ import * as ute from "../../modules/ute-ble";
 import { devlog } from "./devlog";
 import { addRecording, hasClipSession } from "./recordings";
 import { storage } from "./storage";
-import { spreadBatch, type Sample } from "./twist";
+import { gyroLive, spinOf, spreadBatch, type Sample } from "./twist";
 
 // The ES100 clip, shared by the Record tab and the ES100 debug screen: one
 // connection, remembered and re-established on its own, plus recording and
@@ -282,8 +282,12 @@ async function onConnected() {
   setTimeout(() => {
     refreshInfo()
       .catch(() => {})
-      // The iOS SDK has no "stream ended" event: restart the stream after every (re)connect.
-      .then(() => ensureMotion("connected"));
+      // The iOS SDK has no "stream ended" event: restart the stream after every (re)connect,
+      // once the clip has answered what it was asked on connect.
+      .then(() => {
+        motionSettling = false;
+        ensureMotion("connected");
+      });
   }, 1500);
 }
 
@@ -457,15 +461,15 @@ export async function refreshInfo() {
     const sensors = await attempt("sensor probe", ute.probeSensors);
     set({ sensors });
     if (sensors) say(`sensors: accelerometer ${sensors.accelerometer}, gyroscope ${sensors.gyroscope}, button ${sensors.button}, motor ${sensors.motor}`);
-    // Phase 0 of twist-to-listen: what motion data this firmware claims to have.
-    const wear = await attempt("wearable functions", ute.probeWearFunctions);
+    // Phase 0 of twist-to-listen: what motion data this firmware claims to have. (The wearables'
+    // function list isn't asked for any more: the ES100 never answered it, and every unanswered
+    // command delays the ones after it.)
     const flags = ["hasGame", "hasGlasses", "hasEarphone", "hasNoScreen", "hasButtonWakeUpVoice", "hasVoiceAssistant", "hasChatGPT", "hasWearingHands", "hasAIRecording", "hasAIRecordRealTime"];
     devlog(
       "ble",
       "twist probe",
       JSON.stringify({
         sensors,
-        wearFunctions: wear?.functions ?? null,
         ...Object.fromEntries(flags.map((f) => [f, state.capabilities?.[f] ?? null])),
       }),
     );
@@ -519,17 +523,40 @@ export async function endProbe() {
   await ute.setSdkLogging(false).catch(() => {});
   say("motion probe finished");
   retryMotion();
-  ensureMotion("probe finished");
 }
 
 // --- Motion for twist-to-listen -------------------------------------------
 //
-// The SDK has several motion sources and the ES100 supports some unknown subset
-// (it ignored the game stream). They're tried in this order; the first that
-// actually delivers samples is kept for as long as the clip stays connected.
+// What the ES100 does (motion probe, 2026-09-19): its gyroscope test ("gyro3") sends about one
+// reading a second after a single "on" and keeps sending until the clip disconnects ("off" only
+// stops the SDK handing the readings over); none of the SDK's other sources stream. So twist uses
+// gyro3, or the probe's winner when it found something better, and sends the clip as few commands
+// as it can: the clip stopped answering for a minute when motion commands came several times a
+// second. Nothing is sent while the clip records or transfers a file.
 
-const MOTION_SOURCES: ute.MotionSource[] = ["game", "wear6", "wear3", "gsensor", "gyro"];
-const POLL_MS = 100;
+type SourceSpec = {
+  /** Live readings that must arrive within `firstMs` of turning it on for it to count as streaming. */
+  firstReadings: number;
+  firstMs: number;
+  /** No live reading for this long: turn it on again. */
+  silenceMs: number;
+  /** How often a polled source asks the clip, unless the probe found a rate that works. */
+  intervalMs: number;
+};
+
+const GYRO3: SourceSpec = { firstReadings: 2, firstMs: 6000, silenceMs: 8000, intervalMs: 0 };
+const GSENSOR: SourceSpec = { firstReadings: 3, firstMs: 6000, silenceMs: 8000, intervalMs: 1000 };
+/** The sources twist can use. The rest never sent anything on the ES100 (the probe still tries them). */
+const TWIST_SOURCES: Partial<Record<ute.MotionSource, SourceSpec>> = {
+  gyro3: GYRO3,
+  gsensorToggle: GSENSOR,
+  gsensorGap: GSENSOR,
+  gsensor: GSENSOR,
+};
+const DEFAULT_SOURCE: ute.MotionSource = "gyro3";
+
+export const canTwistWith = (source: ute.MotionSource | null | undefined) => !!source && !!TWIST_SOURCES[source];
+const specFor = (source: ute.MotionSource) => TWIST_SOURCES[source] ?? GSENSOR;
 
 /** The motion probe's winner (Dev tools → Motion lab): tried first, at the rate that won. */
 export type PreferredMotion = { source: ute.MotionSource; intervalMs: number };
@@ -546,130 +573,303 @@ export async function setPreferredMotion(value: PreferredMotion | null) {
   else await storage.remove(PREFERRED_MOTION).catch(() => {});
 }
 
-function motionSources() {
-  return preferred ? [preferred.source, ...MOTION_SOURCES.filter((s) => s !== preferred?.source)] : MOTION_SOURCES;
+function motionSources(): ute.MotionSource[] {
+  const first = preferred && canTwistWith(preferred.source) ? preferred.source : null;
+  return first && first !== DEFAULT_SOURCE ? [first, DEFAULT_SOURCE] : [DEFAULT_SOURCE];
 }
 
-const intervalFor = (source: ute.MotionSource) => (preferred?.source === source ? preferred.intervalMs : POLL_MS);
-/** How long a source gets to deliver its first samples before the next one is tried. */
-const FIRST_SAMPLES_MS = 3000;
-const MOTION_SILENCE_MS = 5000;
+const intervalFor = (source: ute.MotionSource) =>
+  preferred?.source === source && preferred.intervalMs > 0 ? preferred.intervalMs : specFor(source).intervalMs;
 
-type MotionListener = (samples: Sample[]) => void;
+/** Re-arming a quiet source, and retrying when none worked, wait this long (by attempts so far). */
+const RETRY_DELAYS_MS = [0, 20_000, 60_000, 120_000, 300_000];
+const retryDelay = (attempts: number) => RETRY_DELAYS_MS[Math.min(attempts, RETRY_DELAYS_MS.length - 1)];
+/** "On" resent this many times without a live reading: the source has stopped. */
+const MAX_REARMS = 3;
+/** Raw batches logged after each "on", for tuning the detector from device_logs. */
+const RAW_BATCHES = 5;
+const SUMMARY_MS = 5 * 60_000;
+/** While a polled source is in use, how often the clip is checked for still answering. */
+const HEALTH_MS = 60_000;
+
+type MotionListener = (samples: Sample[], source: ute.MotionSource) => void;
 const motionListeners = new Set<MotionListener>();
-let lastBatchAt: number | null = null;
-let lastRawLog = 0;
 let motionStarting = false;
-/** Index into motionSources() of the source in use (or being tried). */
+/** Set on connect until the clip has answered what it's asked on connect; motion waits for it. */
+let motionSettling = false;
+/** Index into motionSources() of the next source to try. */
 let sourceIndex = 0;
+/** The source being tried, then the one in use. */
+let trying: ute.MotionSource | null = null;
 let activeSource: ute.MotionSource | null = null;
 let watchdog: ReturnType<typeof setInterval> | null = null;
+let lastBatchAt: number | null = null;
+let lastLiveAt = 0;
+let liveCount = 0;
+/** When "on" was last sent. */
+let armedAt = 0;
+/** "On" resent since the last live reading. */
+let rearms = 0;
+/** Times in a row that no source streamed. */
+let failures = 0;
+/** A source put the clip in factory-test mode (which blocks recording): no motion until it reconnects. */
+let blocked = false;
+let healthAt = 0;
+let healthMisses = 0;
+let healthChecking = false;
+let rawLogged = 0;
+let summary = { since: 0, readings: 0, live: 0, strays: 0, spins: [] as number[] };
+
+/** A reading with data in it (the gyroscope test sends state 0 and zeros while it's off). */
+const isLive = (source: ute.MotionSource, v: ute.MotionSample) => (source === "gyro3" ? gyroLive(v) : true);
 
 function onMotionBatch(source: ute.MotionSource, samples: ute.MotionSample[]) {
+  // A source that was turned off can still answer late (the g-sensor did): that isn't this stream.
+  if (source !== activeSource && source !== trying) {
+    summary.strays += samples.length;
+    return;
+  }
   const now = Date.now();
   const timed = spreadBatch(lastBatchAt, now, samples);
   lastBatchAt = now;
-  const last = samples[samples.length - 1] ?? null;
-  set({ motion: { on: true, last, count: state.motion.count + samples.length, source } });
-  // Raw data for tuning the detector from device_logs, about once a second.
-  if (now - lastRawLog > 1000) {
-    lastRawLog = now;
-    devlog("ble", "motion raw", `${source}: ${samples.length} samples: ${JSON.stringify(samples.slice(0, 4))}`);
+  const live = samples.filter((v) => isLive(source, v));
+  if (live.length) {
+    lastLiveAt = now;
+    liveCount += live.length;
+    rearms = 0;
   }
-  motionListeners.forEach((l) => l(timed));
+  const last = samples[samples.length - 1] ?? null;
+  set({ motion: { ...state.motion, last, count: state.motion.count + samples.length, source } });
+  noteMotion(source, samples, live);
+  if (live.length && source === activeSource && state.motionProblem && !blocked) {
+    set({ motionProblem: null });
+    say(`twist: motion from ${source} is back`);
+  }
+  motionListeners.forEach((l) => l(timed, source));
+}
+
+/** Raw readings right after each "on", then a summary every few minutes, for tuning from device_logs. */
+function noteMotion(source: ute.MotionSource, samples: ute.MotionSample[], live: ute.MotionSample[]) {
+  if (rawLogged < RAW_BATCHES) {
+    rawLogged++;
+    devlog("ble", "motion raw", `${source}: ${JSON.stringify(samples.slice(0, 4))}`);
+  }
+  summary.readings += samples.length;
+  summary.live += live.length;
+  if (source === "gyro3") summary.spins.push(...live.map(spinOf));
+}
+
+function summarizeMotion(now: number) {
+  if (now - summary.since < SUMMARY_MS) return;
+  if (summary.since) {
+    devlog(
+      "ble",
+      `twist: ${summary.live} live motion readings in ${Math.round((now - summary.since) / 60_000)} min (${activeSource ?? "no source"})`,
+      JSON.stringify({
+        source: activeSource,
+        readings: summary.readings,
+        live: summary.live,
+        strays: summary.strays,
+        // The biggest twist-like readings: what the detector's thresholds are up against.
+        topSpins: [...summary.spins].sort((a, b) => b - a).slice(0, 8),
+        rearms,
+        problem: state.motionProblem,
+      }),
+    );
+  }
+  summary = { since: now, readings: 0, live: 0, strays: 0, spins: [] };
 }
 
 function motionUnavailable(why: string) {
-  if (state.motionProblem) return;
+  if (state.motionProblem === why) return;
+  const first = !state.motionProblem;
   set({ motionProblem: why });
-  devlog("ble", "twist: no motion data, using clip button", why);
+  devlog("ble", first ? "twist: no motion data, using clip button" : "twist: still no motion data", why);
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** A source must send at least this many samples in FIRST_SAMPLES_MS: one reading isn't a stream. */
-const MIN_FIRST_SAMPLES = 5;
+const motionWanted = () => motionListeners.size > 0 && state.phase === "connected" && !probe;
+/** Recording, downloading, or a record command in flight: motion commands wait until it's done. */
+const clipBusy = () => !!state.busy || !!state.download || !!state.recording;
 
-/** Waits for a steady stream: MIN_FIRST_SAMPLES samples within `ms`. */
-async function streamStarted(ms: number) {
-  const start = state.motion.count;
-  for (let waited = 0; waited < ms; waited += 100) {
-    if (state.motion.count - start >= MIN_FIRST_SAMPLES) return true;
+/** Waits for `firstReadings` live readings within `firstMs`. */
+async function streamStarted(spec: SourceSpec) {
+  const start = liveCount;
+  for (let waited = 0; waited < spec.firstMs && motionWanted(); waited += 100) {
+    if (liveCount - start >= spec.firstReadings) return true;
     await sleep(100);
   }
-  return state.motion.count - start >= MIN_FIRST_SAMPLES;
+  return liveCount - start >= spec.firstReadings;
 }
 
-/** Starts motion if someone wants it: the source that worked, or the next one to try. */
+/** Starts motion if someone wants it: the first source that streams (the probe's winner, then gyro3). */
 async function ensureMotion(reason: string) {
-  if (!motionListeners.size || state.phase !== "connected" || motionStarting || state.motionProblem || probe) return;
+  if (!motionWanted() || motionStarting || motionSettling || activeSource || blocked || clipBusy()) return;
   motionStarting = true;
   const sources = motionSources();
   try {
-    while (sourceIndex < sources.length && motionListeners.size && state.phase === "connected" && !probe) {
+    while (sourceIndex < sources.length) {
       const source = sources[sourceIndex];
+      const spec = specFor(source);
+      trying = source;
+      armedAt = Date.now();
+      rawLogged = 0;
+      let started = false;
+      let error: string | null = null;
       try {
         await ute.setMotionSource(source, true, intervalFor(source));
+        started = await streamStarted(spec);
       } catch (err) {
-        say(`motion: ${source} failed — ${message(err)}`);
-        sourceIndex++;
-        continue;
+        error = message(err);
       }
-      if (await streamStarted(FIRST_SAMPLES_MS)) {
-        activeSource = source;
-        set({ motion: { ...state.motion, on: true, source } });
-        say(`twist: motion from ${source} (${reason})`);
-        // Factory sensor tests may switch the clip into its test mode, which blocks recording.
-        const status = await ute.getStatus().catch(() => null);
-        if (status?.state === ute.RecordState.FactoryTest) {
-          devlog("ble", `twist: ${source} put the clip in factory-test mode (recording is blocked)`);
-        }
+      trying = null;
+      if (started && motionWanted()) {
+        activate(source, reason);
         return;
       }
-      say(`motion: ${source} sent fewer than ${MIN_FIRST_SAMPLES} samples in ${FIRST_SAMPLES_MS / 1000} s`);
+      // Given up on it, or nobody wants motion any more: turn it off either way.
       await ute.setMotionSource(source, false).catch(() => {});
+      if (!motionWanted()) return;
+      say(error ? `motion: ${source} failed — ${error}` : `motion: ${source} sent fewer than ${spec.firstReadings} readings in ${spec.firstMs / 1000} s`);
       sourceIndex++;
     }
-    if (sourceIndex >= sources.length) {
-      motionUnavailable(`none of the clip's motion sources sent data (tried ${sources.join(", ")})`);
-    }
+    failures++;
+    sourceIndex = 0;
+    motionUnavailable(`no motion from the clip (tried ${sources.join(", ")}); trying again in ${retryDelay(failures) / 1000} s`);
   } finally {
+    trying = null;
     motionStarting = false;
   }
 }
 
-async function stopMotion() {
-  const source = activeSource ?? motionSources()[sourceIndex];
+function activate(source: ute.MotionSource, reason: string) {
+  activeSource = source;
+  rearms = 0;
+  failures = 0;
+  healthMisses = 0;
+  lastLiveAt = healthAt = Date.now();
+  set({ motion: { ...state.motion, on: true, source }, motionProblem: null });
+  say(`twist: motion from ${source} (${reason})`);
+  checkRecordState(source).catch(() => {});
+}
+
+/** gyro3 and the g-sensor are factory tests: make sure one didn't put the clip in its test mode, which blocks recording. */
+async function checkRecordState(source: ute.MotionSource) {
+  const status = await attempt("status after motion on", ute.getStatus);
+  if (status) set({ status });
+  if (status?.state !== ute.RecordState.FactoryTest || activeSource !== source) return;
+  blocked = true;
+  devlog("err", `twist: ${source} put the clip in factory-test mode, which blocks recording; motion is off until it reconnects`);
+  await stopMotion();
+  motionUnavailable(`${source} put the clip in factory-test mode (recording blocked); disconnect and reconnect the clip`);
+}
+
+/**
+ * A polled source (the g-sensor) sends the clip commands all the time, and too many left it unable
+ * to answer anything, recording included. So the clip is asked for its status now and then; two
+ * misses in a row drop the source for the gyroscope test, and the probe's pick is forgotten.
+ */
+async function checkClipHealth(source: ute.MotionSource) {
+  healthAt = Date.now();
+  const status = await attempt("status (motion health check)", ute.getStatus);
+  if (activeSource !== source) return;
+  if (status) {
+    healthMisses = 0;
+    set({ status });
+    return;
+  }
+  if (++healthMisses < 2) return;
+  devlog("err", `twist: the clip stopped answering while ${source} polled it; using ${DEFAULT_SOURCE} instead`);
   activeSource = null;
+  set({ motion: { ...state.motion, on: false } });
+  await ute.setMotionSource(source, false).catch(() => {});
+  await setPreferredMotion(null);
+  sourceIndex = 0;
+  failures = 0;
+}
+
+async function stopMotion() {
+  const source = activeSource;
+  activeSource = null;
+  set({ motion: { ...state.motion, on: false } });
   if (source && state.phase === "connected") {
     await ute.setMotionSource(source, false).catch(() => {});
     say(`motion: ${source} off`);
   }
-  set({ motion: { ...state.motion, on: false } });
 }
 
-/** A source that went quiet (the SDK has no "stream ended" event) is started again. */
+/**
+ * Once a second while someone wants motion. The SDK has no "stream ended" event, so a source that
+ * goes quiet is turned on again, and when none streamed they're tried again; both spaced out.
+ */
 function checkMotion() {
-  if (!motionListeners.size || state.phase !== "connected" || state.motionProblem || motionStarting || !activeSource || probe) return;
-  if (lastBatchAt !== null && Date.now() - lastBatchAt < MOTION_SILENCE_MS) return;
-  lastBatchAt = Date.now(); // give the restart its own time
-  activeSource = null;
-  ensureMotion(`no samples for ${MOTION_SILENCE_MS / 1000} s`);
+  if (!motionWanted() || motionStarting || motionSettling || blocked) return;
+  const now = Date.now();
+  summarizeMotion(now);
+  if (clipBusy()) return;
+  if (!activeSource) {
+    // Not started yet (the clip was busy), or nothing streamed last time.
+    if (now - armedAt >= retryDelay(failures)) ensureMotion(failures ? "trying again" : "clip free");
+    return;
+  }
+  const source = activeSource;
+  if (intervalFor(source) > 0 && now - healthAt >= HEALTH_MS && !healthChecking) {
+    healthChecking = true;
+    checkClipHealth(source)
+      .catch(() => {})
+      .finally(() => (healthChecking = false));
+  }
+  const quiet = now - Math.max(lastLiveAt, armedAt);
+  if (quiet < specFor(source).silenceMs || now - armedAt < retryDelay(rearms)) return;
+  armedAt = now;
+  if (rearms >= MAX_REARMS) {
+    say(`twist: ${source} stopped sending motion`);
+    activeSource = null;
+    set({ motion: { ...state.motion, on: false } });
+    ute.setMotionSource(source, false).catch(() => {});
+    failures++;
+    sourceIndex = 0;
+    motionUnavailable(`the clip stopped sending motion (${source}); trying again in ${retryDelay(failures) / 1000} s`);
+    return;
+  }
+  rearms++;
+  rawLogged = 0;
+  say(`twist: no motion from ${source} for ${Math.round(quiet / 1000)} s; turning it on again`);
+  ute.setMotionSource(source, true, intervalFor(source)).catch((err) => say(`motion: ${source} failed — ${message(err)}`));
 }
 
-/** A new connection: try every source again (a different clip may support different ones). */
+/** A new connection: every source gets another chance, once the clip has settled. */
 function resetMotion() {
+  motionSettling = true;
   sourceIndex = 0;
   activeSource = null;
+  trying = null;
   lastBatchAt = null;
+  lastLiveAt = 0;
+  armedAt = 0;
+  rearms = 0;
+  failures = 0;
+  blocked = false;
 }
 
-/** Timestamped motion samples while subscribed. The clip streams while anyone is subscribed. */
+/** Motion is streaming right now, so a twist would be seen. When it isn't, the clip's button stands in. */
+export function motionLive() {
+  return (
+    !!activeSource &&
+    state.phase === "connected" &&
+    !state.motionProblem &&
+    Date.now() - lastLiveAt < specFor(activeSource).silenceMs
+  );
+}
+
+/** Timestamped motion readings, and their source, while subscribed. The clip streams while anyone is. */
 export function subscribeMotion(listener: MotionListener) {
   ensureStarted();
   motionListeners.add(listener);
   if (motionListeners.size === 1) {
     lastBatchAt = null;
+    summary = { since: Date.now(), readings: 0, live: 0, strays: 0, spins: [] };
     watchdog = setInterval(checkMotion, 1000);
     ensureMotion("twist on");
   }
@@ -682,11 +882,29 @@ export function subscribeMotion(listener: MotionListener) {
   };
 }
 
-/** Forget that no source worked, so the next subscriber tries them all again. */
+/** Forget that no source worked (or put the clip in test mode) and look again now. */
 export function retryMotion() {
   if (motionStarting) return;
   set({ motionProblem: null });
-  resetMotion();
+  sourceIndex = 0;
+  failures = 0;
+  armedAt = 0;
+  blocked = false;
+  ensureMotion("retry");
+}
+
+/**
+ * For a subscriber that needs motion now (calibration): retries if it had given up, and waits up to
+ * `ms` for a source to stream. Null when the attempt failed or the clip stayed busy.
+ */
+export async function waitForMotion(ms: number) {
+  if (!activeSource) retryMotion();
+  for (let waited = 0; waited < ms && !activeSource; waited += 250) {
+    // An attempt that ended without motion (an attempt still running may yet succeed).
+    if (!motionStarting && state.motionProblem) return null;
+    await sleep(250);
+  }
+  return activeSource;
 }
 
 let manualMotion: (() => void) | null = null;
@@ -796,6 +1014,8 @@ export function startRecording() {
     if (started.result === ute.StartRecordResult.AlreadyRecording) {
       say("the clip was already recording");
     } else if (started.result !== ute.StartRecordResult.Started) {
+      // Twist's motion source is a factory test: note it, in case that's what the clip objected to.
+      if (activeSource) devlog("err", `recording refused (result ${started.result}) while twist motion (${activeSource}) was on`);
       throw new Error(startProblems[started.result] ?? `The clip couldn't start recording (result ${started.result}).`);
     }
     say(`recording #${started.sessionId}`);

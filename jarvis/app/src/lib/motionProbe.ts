@@ -4,32 +4,52 @@ import { useSyncExternalStore } from "react";
 import * as ute from "../../modules/ute-ble";
 import * as clip from "./clip";
 import { devlog } from "./devlog";
+import {
+  commandsPerSecond,
+  PHASES,
+  pickWinner,
+  primaryChannel,
+  RAW_PACKET,
+  scoreChannels,
+  tallyPackets,
+  verdictFor,
+  type ChannelScore,
+  type Phase,
+  type Verdict,
+} from "./probeScore";
 
-// The motion probe (Dev tools → Motion lab). The ES100 answers few of the SDK's motion
-// commands and nobody knows which, so this tries every one of them, one at a time, while
-// the user holds still and then twists, and uploads a row per source (kind "probe" in
-// device_logs) plus a summary. The raw packets the SDK logs are counted per phase too, so
-// a clip that sends motion the SDK doesn't parse still shows up (more packets while twisting).
+// The motion probe (Dev tools → Motion lab), second round. The first run (2026-09-19) found the
+// gyroscope test ("gyro3") streaming about one reading a second and the g-sensor test answering
+// once per open, but most g-sensor variants ran while earlier steps had left the clip unresponsive.
+// So this round tries the g-sensor first, while the clip is fresh (gentlest first), drops the two
+// variants that froze the clip (gyro3 resent 5×/s, the g-sensor reopened 10×/s), and between steps
+// waits for the clip to answer again, logging how long that took. The question it settles: does
+// closing and reopening the g-sensor test once to three times a second give a fresh reading each
+// time? The accelerometer sees how the wrist is turned, so even that slowly it would beat the
+// gyroscope for twist.
 //
-// Verdicts: WIN streams and twisting clearly moves a value; FLAT streams but twisting doesn't
-// move it; SLOW under 2 samples a second; ONE-SHOT one or two readings; SILENT nothing;
-// SKIPPED the SDK doesn't know the command. BREAKS: the clip stopped answering, or went into
-// factory-test mode (which blocks recording), after the source ran. The best WIN that doesn't
+// Each step: settle, hold still 4 s, twist back and forth 5 s, stop. A row per source (kind
+// "probe" in device_logs), then a summary. The raw packets the SDK logs are counted per phase, and
+// the bytes each command put on the wire are kept.
+//
+// Verdicts (probeScore.ts): WIN streams (0.6+ readings a second) and twisting clearly moves a value;
+// FLAT streams but twisting doesn't move it; SLOW fewer readings; ONE-SHOT one or two; SILENT
+// nothing; SKIPPED the SDK doesn't know the command. BREAKS: the clip stopped answering, or went
+// into factory-test mode (which blocks recording), after the source ran. The best WIN that doesn't
 // break the clip becomes twist-to-listen's first choice.
 
 type Step = { id: string; source: ute.MotionSource | null; intervalMs: number; what: string };
 
-// Most promising first. The g-sensor and gyro tests may answer only once per connection, so
-// their variants run in the order most likely to get fresh readings. Known failures run last.
 const STEPS: Step[] = [
   { id: "baseline", source: null, intervalMs: 0, what: "Nothing on: does the clip send anything by itself?" },
-  { id: "gyro3", source: "gyro3", intervalMs: 0, what: "Gyroscope test (newer command), sent once" },
-  { id: "gyro3poll", source: "gyro3poll", intervalMs: 200, what: "Gyroscope test (newer command), resent 5×/s" },
-  { id: "gsensorToggle", source: "gsensorToggle", intervalMs: 300, what: "G-sensor test, closed and reopened 3×/s" },
-  { id: "gsensor2", source: "gsensor", intervalMs: 500, what: "G-sensor test, reopened 2×/s" },
-  { id: "gsensor10", source: "gsensor", intervalMs: 100, what: "G-sensor test, reopened 10×/s" },
+  { id: "gsensor1000", source: "gsensorToggle", intervalMs: 1000, what: "G-sensor test, closed and reopened every second" },
+  { id: "gsensorGap", source: "gsensorGap", intervalMs: 1000, what: "G-sensor test, closed, 200 ms, reopened, every second" },
+  { id: "gsensor500", source: "gsensorToggle", intervalMs: 500, what: "G-sensor test, closed and reopened 2×/s" },
+  { id: "gsensor333", source: "gsensorToggle", intervalMs: 333, what: "G-sensor test, closed and reopened 3×/s" },
+  { id: "gsensor2", source: "gsensor", intervalMs: 500, what: "G-sensor test, reopened 2×/s without closing" },
   { id: "gsensorOnce", source: "gsensorOnce", intervalMs: 0, what: "G-sensor test, opened once" },
-  { id: "gyro", source: "gyro", intervalMs: 100, what: "Gyroscope read (older command), 10×/s" },
+  { id: "gyro3", source: "gyro3", intervalMs: 0, what: "Gyroscope test, sent once (twist's default)" },
+  { id: "gyro", source: "gyro", intervalMs: 1000, what: "Gyroscope read (older command), 1×/s" },
   { id: "frame", source: "frame", intervalMs: 0, what: "Live health frame (steps)" },
   { id: "game", source: "game", intervalMs: 0, what: "Motion game stream (failed before)" },
   { id: "wear6", source: "wear6", intervalMs: 0, what: "Wearable 6-axis test (failed before)" },
@@ -37,17 +57,16 @@ const STEPS: Step[] = [
 ];
 
 const SETTLE_MS = 700;
-const STILL_MS = 3000;
-const TWIST_MS = 4000;
+const STILL_MS = 4000;
+const TWIST_MS = 5000;
 const AFTER_MS = 1500;
 const CALL_MS = 5000;
+/** How long to wait for the clip to answer again, before a step and after one that silenced it. */
+const RECOVER_MS = 20_000;
 const MAX_LINES_PER_STEP = 3000;
 const KEEP_AWAKE_TAG = "motion-probe";
 
-type Phase = "start" | "still" | "twist" | "after";
-const PHASES: Phase[] = ["start", "still", "twist", "after"];
-
-export type Verdict = "WIN" | "FLAT" | "SLOW" | "ONE-SHOT" | "SILENT" | "SKIPPED";
+export type { Verdict };
 
 export type StepResult = {
   id: string;
@@ -56,15 +75,23 @@ export type StepResult = {
   intervalMs: number;
   verdict: Verdict;
   breaks: boolean;
-  /** Samples a second while still + twisting. */
+  /** Readings a second while still + twisting. */
   hz: number;
   /** Best value's twist swing over its resting noise. */
   score: number;
-  /** Which value of the sample moved most, or null. */
-  channel: number | null;
+  /** Which value moved most: its index in the sample, or "spin" / "tilt". */
+  channel: string | null;
   counts: Record<Phase, number>;
   /** Raw packets from the clip, per phase. */
   raw: Record<Phase, number>;
+  /** From turning it on to the first reading, in ms. */
+  firstMs: number | null;
+  /** How many of the readings differ (1 of several: the same reading over and over). */
+  distinct: number;
+  /** Gyroscope test packets seen in the raw log, on (with data) and off (zeros). */
+  gyroPackets: { on: number; off: number };
+  /** How long the clip took to answer again after the step (0: at once), or null: not within RECOVER_MS. */
+  recoveredMs: number | null;
   note: string;
 };
 
@@ -114,19 +141,18 @@ export function useProbe() {
   );
 }
 
-/** Minutes a full run takes, for the screen. */
-export const probeMinutes = Math.ceil(
-  (STEPS.length * (SETTLE_MS + STILL_MS + TWIST_MS + AFTER_MS + 2500)) / 60_000,
-);
+/** Minutes a full run takes when the clip keeps answering, for the screen. */
+export const probeMinutes = Math.ceil((STEPS.length * (SETTLE_MS + STILL_MS + TWIST_MS + AFTER_MS + 4000)) / 60_000);
 
 // --- What the current step collects ------------------------------------------
 
-type Collected = { phase: Phase; values: number[] };
+type Collected = { phase: Phase; ms: number; values: number[] };
 
 let phase: Phase = "start";
 /** The source the step turned on; null for the baseline, which takes anything. */
 let current: ute.MotionSource | null = null;
 let collecting = false;
+let stepStartedAt = 0;
 let samples: Collected[] = [];
 let strays: Record<string, number> = {};
 let lines: { phase: Phase; line: string }[] = [];
@@ -140,7 +166,8 @@ const tap: clip.ProbeTap = {
       strays[source] = (strays[source] ?? 0) + batch.length;
       return;
     }
-    for (const values of batch) samples.push({ phase, values });
+    const ms = Date.now() - stepStartedAt;
+    for (const values of batch) samples.push({ phase, ms, values });
     set({ samples: samples.length });
   },
   onLog(line) {
@@ -152,9 +179,6 @@ const tap: clip.ProbeTap = {
     if (collecting) inputs.push(`${phase}: ${input.kind} ${input.value}${input.detail ? ` ${input.detail}` : ""}`);
   },
 };
-
-/** A packet from the clip as the SDK logs it: "CMD:App receive lenght=6,01e7ac020101,34F2". */
-const RAW_PACKET = /receive\s+len\w*=(\d+),([0-9a-f]+)/i;
 
 // --- Running it ---------------------------------------------------------------
 
@@ -191,9 +215,22 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<Outcome<T>> {
   }
 }
 
-async function clipStatus() {
+type ClipCheck = { alive: boolean; state: number | null };
+
+async function clipStatus(): Promise<ClipCheck> {
   const status = await within(ute.getStatus(), 3000);
   return status.ok ? { alive: true, state: status.value.state as number } : { alive: false, state: null };
+}
+
+/** Asks the clip for its status until it answers, for up to RECOVER_MS; how long that took. */
+async function waitForClip(): Promise<ClipCheck & { waitedMs: number }> {
+  const began = Date.now();
+  for (;;) {
+    const status = await clipStatus();
+    const waitedMs = Date.now() - began;
+    if (status.alive || waitedMs >= RECOVER_MS || stopRequested) return { ...status, waitedMs };
+    await wait(2000);
+  }
 }
 
 const outcome = (o: Outcome<unknown> | null) => (o ? (o.ok ? { ok: true, ms: o.ms } : { ok: false, ms: o.ms, error: o.error }) : null);
@@ -215,7 +252,7 @@ export async function runProbe() {
     const clipState = clip.getClipState();
     devlog(
       "probe",
-      `probe start: ${STEPS.length} sources`,
+      `probe v2 start: ${STEPS.length} sources`,
       JSON.stringify({
         device: clipState.device && { name: clipState.device.name, model: clipState.device.model, firmware: clipState.device.firmware },
         factoryTests: sensors.ok ? Object.keys(sensors.value.all ?? {}).filter((k) => sensors.value.all?.[k]) : sensors.error,
@@ -233,20 +270,25 @@ export async function runProbe() {
     }
 
     const after = await within(ute.readActivity(), CALL_MS);
-    const winner = pickWinner(results);
+    const winner = pickWinner(results, clip.canTwistWith);
     set({ winner });
-    if (winner?.source) {
-      await clip.setPreferredMotion({ source: winner.source, intervalMs: winner.intervalMs || 100 });
+    // A full run decides what twist tries first; nothing usable means its default (gyro3).
+    if (!stopRequested) {
+      await clip.setPreferredMotion(winner?.source ? { source: winner.source, intervalMs: winner.intervalMs } : null);
     }
+    // Did "off" stop the gyroscope test? Its packets in the steps after it answer that.
+    const gyroIndex = results.findIndex((r) => r.id === "gyro3");
+    const afterGyro = gyroIndex >= 0 ? results.slice(gyroIndex + 1) : [];
     devlog(
       "probe",
       stopRequested
         ? `probe stopped after ${results.length} of ${STEPS.length}`
         : winner
-          ? `probe summary: winner ${winner.id} (${winner.hz} Hz, score ${winner.score}, value ${winner.channel})`
-          : "probe summary: no source streams motion",
+          ? `probe summary: winner ${winner.id} (${winner.hz}/s, score ${winner.score}, ${winner.channel})`
+          : "probe summary: no source won; twist stays on gyro3",
       fit({
         seconds: Math.round((Date.now() - began) / 1000),
+        winner: winner?.id ?? null,
         results: results.map((r) => ({
           id: r.id,
           verdict: r.verdict,
@@ -255,9 +297,17 @@ export async function runProbe() {
           score: r.score,
           channel: r.channel,
           samples: r.counts.still + r.counts.twist,
-          rawStill: r.raw.still,
-          rawTwist: r.raw.twist,
+          distinct: r.distinct,
+          firstMs: r.firstMs,
+          recoveredMs: r.recoveredMs,
+          raw: r.raw.still + r.raw.twist,
         })),
+        gyroPacketsAfterOff: afterGyro.length
+          ? {
+              on: afterGyro.reduce((n, r) => n + r.gyroPackets.on, 0),
+              off: afterGyro.reduce((n, r) => n + r.gyroPackets.off, 0),
+            }
+          : null,
         activityAfter: after.ok ? after.value : after.error,
       }),
     );
@@ -280,12 +330,14 @@ async function runStep(step: Step, index: number) {
   phase = "start";
   current = step.source;
   set({ samples: 0, raw: 0 });
-  show(index, step, "Getting ready…");
-  const pre = await clipStatus();
+  // Every step starts with a clip that answers, so one step's trouble isn't blamed on the next.
+  show(index, step, "Checking the clip answers…");
+  const pre = await waitForClip();
 
+  show(index, step, "Getting ready…");
   collecting = true;
-  const startedAt = Date.now();
-  const start = step.source ? await within(ute.setMotionSource(step.source, true, step.intervalMs || 100), CALL_MS) : null;
+  stepStartedAt = Date.now();
+  const start = step.source ? await within(ute.setMotionSource(step.source, true, step.intervalMs), CALL_MS) : null;
   await wait(SETTLE_MS);
 
   phase = "still";
@@ -300,99 +352,67 @@ async function runStep(step: Step, index: number) {
   phase = "after";
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
   show(index, step, "Stop. Hold still…");
-  const stop = step.source ? await within(ute.setMotionSource(step.source, false, step.intervalMs || 100), CALL_MS) : null;
+  const stop = step.source ? await within(ute.setMotionSource(step.source, false, step.intervalMs), CALL_MS) : null;
   await wait(AFTER_MS);
   collecting = false;
   current = null;
-  const post = await clipStatus();
+  const seconds = (Date.now() - stepStartedAt) / 1000;
 
-  return analyze(step, { pre, post, start, stop, seconds: (Date.now() - startedAt) / 1000 });
+  const post = await clipStatus();
+  let recoveredMs: number | null = 0;
+  if (!post.alive) {
+    show(index, step, "The clip stopped answering; waiting for it…");
+    const ended = Date.now();
+    const back = await waitForClip();
+    recoveredMs = back.alive ? Date.now() - ended : null;
+  }
+  return analyze(step, { pre, post, start, stop, recoveredMs, seconds });
 }
 
 // --- Judging a step -----------------------------------------------------------
 
 type Run = {
-  pre: { alive: boolean; state: number | null };
-  post: { alive: boolean; state: number | null };
+  pre: ClipCheck & { waitedMs: number };
+  post: ClipCheck;
   start: Outcome<void> | null;
   stop: Outcome<void> | null;
+  recoveredMs: number | null;
   seconds: number;
 };
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
-function span(values: number[]) {
-  return values.length ? [Math.min(...values), Math.max(...values)] : null;
-}
-
 function analyze(step: Step, run: Run) {
-  const count = (p: Phase) => samples.filter((s) => s.phase === p).length;
-  const counts = Object.fromEntries(PHASES.map((p) => [p, count(p)])) as Record<Phase, number>;
-  const still = samples.filter((s) => s.phase === "still").map((s) => s.values);
-  const twist = samples.filter((s) => s.phase === "twist").map((s) => s.values);
-  const width = Math.max(0, ...samples.map((s) => s.values.length));
-
-  // Per value: how far twisting moves it, over how much it wanders at rest.
-  let best = { channel: null as number | null, score: 0 };
-  const ranges = [];
-  for (let c = 0; c < width; c++) {
-    const s = still.map((v) => v[c]).filter(Number.isFinite);
-    const t = twist.map((v) => v[c]).filter(Number.isFinite);
-    const stillSpan = span(s);
-    const twistSpan = span(t);
-    ranges.push({ still: stillSpan, twist: twistSpan });
-    if (!twistSpan) continue;
-    const noise = stillSpan && s.length >= 2 ? stillSpan[1] - stillSpan[0] : 0;
-    const mean = s.length ? s.reduce((a, b) => a + b, 0) / s.length : null;
-    const swing = Math.max(twistSpan[1] - twistSpan[0], mean === null ? 0 : Math.max(...t.map((v) => Math.abs(v - mean))));
-    const score = swing / Math.max(noise, 1);
-    if (score > best.score) best = { channel: c, score };
-  }
-
-  // Raw packets from the clip, per phase and by command (first 3 bytes).
-  const raw = Object.fromEntries(PHASES.map((p) => [p, 0])) as Record<Phase, number>;
-  const rawKeys: Record<string, Record<string, number>> = {};
-  const examples = new Map<string, string>();
-  let sent = 0;
-  for (const { phase: p, line } of lines) {
-    const packet = RAW_PACKET.exec(line);
-    if (packet) {
-      raw[p]++;
-      const key = packet[2].slice(0, 6).toLowerCase();
-      rawKeys[p] = rawKeys[p] ?? {};
-      rawKeys[p][key] = (rawKeys[p][key] ?? 0) + 1;
-      if (!examples.has(key) && examples.size < 8) examples.set(key, `${p}: ${packet[2].slice(0, 80)}`);
-    } else if (/send/i.test(line)) {
-      sent++;
-    }
-  }
+  const inPhase = (p: Phase) => samples.filter((s) => s.phase === p);
+  const counts = Object.fromEntries(PHASES.map((p) => [p, inPhase(p).length])) as Record<Phase, number>;
+  const still = inPhase("still").map((s) => s.values);
+  const twist = inPhase("twist").map((s) => s.values);
+  const channels: ChannelScore[] = scoreChannels(step.source, still, twist);
+  const best = primaryChannel(channels);
+  const packets = tallyPackets(lines);
 
   const moving = counts.still + counts.twist;
   const total = counts.start + moving;
   const hz = round1(moving / ((STILL_MS + TWIST_MS) / 1000));
-  const score = round1(best.score);
-  const unsupported = run.start && !run.start.ok && /doesn't support/.test(run.start.error);
-  const verdict: Verdict = unsupported
-    ? "SKIPPED"
-    : total === 0
-      ? "SILENT"
-      : total <= 2
-        ? "ONE-SHOT"
-        : hz < 2
-          ? "SLOW"
-          : score < 3
-            ? "FLAT"
-            : "WIN";
+  const score = best?.score ?? 0;
+  const unsupported = !!run.start && !run.start.ok && /doesn't support/.test(run.start.error);
+  const verdict = verdictFor({ unsupported, total, hz, score });
   const breaks =
     (run.pre.alive && !run.post.alive) ||
     (run.post.state === ute.RecordState.FactoryTest && run.pre.state !== ute.RecordState.FactoryTest);
+  const firstMs = samples.length ? Math.min(...samples.map((s) => s.ms)) : null;
+  const distinct = new Set(samples.map((s) => s.values.join(","))).size;
 
   const notes: string[] = [];
   if (run.start && !run.start.ok) notes.push(`start: ${run.start.error}`);
-  if (!run.pre.alive) notes.push("the clip wasn't answering before this ran");
+  if (!run.pre.alive) notes.push(`the clip wasn't answering before this ran (waited ${Math.round(run.pre.waitedMs / 1000)} s)`);
+  else if (run.pre.waitedMs > 4000) notes.push(`the clip took ${Math.round(run.pre.waitedMs / 1000)} s to answer before this ran`);
   if (breaks) notes.push(run.post.alive ? "left the clip in factory-test mode" : "the clip stopped answering");
-  if (raw.twist > raw.still * 1.5 + 2) notes.push(`more raw packets while twisting (${raw.still} → ${raw.twist})`);
-  if (counts.after > 2) notes.push(`${counts.after} samples after stop`);
+  if (run.recoveredMs) notes.push(`answered again after ${Math.round(run.recoveredMs / 1000)} s`);
+  else if (run.recoveredMs === null) notes.push(`still not answering after ${RECOVER_MS / 1000} s`);
+  if (samples.length >= 3 && distinct === 1) notes.push("every reading identical (a stale value?)");
+  if (packets.raw.twist > packets.raw.still * 1.5 + 2) notes.push(`more raw packets while twisting (${packets.raw.still} → ${packets.raw.twist})`);
+  if (counts.after > 2) notes.push(`${counts.after} readings after stop`);
   if (Object.keys(strays).length) notes.push(`other sources: ${JSON.stringify(strays)}`);
   if (stopRequested) notes.push("stopped early");
 
@@ -405,54 +425,60 @@ function analyze(step: Step, run: Run) {
     breaks,
     hz,
     score,
-    channel: best.channel,
+    channel: best?.channel ?? null,
     counts,
-    raw,
+    raw: packets.raw,
+    firstMs,
+    distinct,
+    gyroPackets: { on: packets.gyroOn, off: packets.gyroOff },
+    recoveredMs: run.recoveredMs,
     note: notes.join("; "),
   };
   const detail = {
     id: step.id,
     source: step.source,
     intervalMs: step.intervalMs,
+    commandsPerSecond: commandsPerSecond(step.source, step.intervalMs),
     verdict,
     breaks,
     hz,
     score,
-    channel: best.channel,
+    channel: result.channel,
     counts,
+    firstMs,
+    distinct,
     start: outcome(run.start),
     stop: outcome(run.stop),
     pre: run.pre,
     post: run.post,
+    recoveredMs: run.recoveredMs,
     seconds: round1(run.seconds),
-    ranges,
-    still: still.slice(0, 4),
+    gyroPackets: result.gyroPackets,
+    gsensorPackets: packets.gsensor,
+    sent: packets.sent,
+    sentKeys: packets.sentKeys,
+    raw: packets.raw,
+    note: result.note,
+    channels: channels.slice(0, 4),
+    still: still.slice(0, 5),
     twist: twist.slice(0, 8),
+    sentExamples: packets.sentExamples,
+    rawKeys: packets.rawKeys,
+    rawExamples: packets.rawExamples,
     strays,
     inputs: inputs.slice(0, 6),
-    raw,
-    rawKeys,
-    sent,
-    rawExamples: [...examples.values()],
-    note: result.note,
   };
   return { result, detail };
 }
 
 function summaryLine(r: StepResult) {
-  return `${r.verdict}${r.breaks ? " +BREAKS CLIP" : ""} · ${r.hz} Hz · score ${r.score}${r.note ? ` · ${r.note}` : ""}`;
-}
-
-function pickWinner(results: StepResult[]) {
-  const wins = results.filter((r) => r.verdict === "WIN" && !r.breaks && r.source);
-  wins.sort((a, b) => b.score - a.score || b.hz - a.hz);
-  return wins[0] ?? null;
+  return `${r.verdict}${r.breaks ? " +BREAKS CLIP" : ""} · ${r.hz}/s · score ${r.score}${r.channel ? ` (${r.channel})` : ""}${r.note ? ` · ${r.note}` : ""}`;
 }
 
 /** Keeps a row's detail under the server's 4000 characters, dropping the bulkiest parts first. */
 function fit(detail: Record<string, unknown>) {
   let text = JSON.stringify(detail);
-  for (const key of ["rawExamples", "twist", "still", "ranges", "rawKeys", "inputs"]) {
+  for (const key of ["inputs", "strays", "rawExamples", "rawKeys", "twist", "still", "channels", "sentExamples"]) {
     if (text.length <= 3800) break;
     const { [key]: _dropped, ...rest } = detail;
     detail = rest;

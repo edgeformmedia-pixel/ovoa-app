@@ -15,7 +15,7 @@ import { devlog } from "./devlog";
 import { openEar, stopStream, useLiveStream } from "./liveListen";
 import { storage } from "./storage";
 import { onlyStop, saidOverReply, TurnGate, type GateResult, type Turn } from "./turnGate";
-import type { TwistProfile } from "./twist";
+import { readProfiles, type TwistProfile, type TwistProfiles } from "./twist";
 
 // Talking with the assistant: record until the user stops speaking, transcribe
 // on the server (Deepgram), then read the reply aloud a sentence or two at a time.
@@ -884,11 +884,17 @@ export const listenModePref = {
   set: (mode: ListenMode) => storage.set(LISTEN_MODE_KEY, mode),
 };
 
-const TWIST_PROFILE_KEY = "ovoa.twistProfile";
+// One profile per kind of motion sensor (gyroscope, accelerometer). The key changed with the
+// format: a profile saved under the old "ovoa.twistProfile" was for the game stream, which the
+// ES100 doesn't have.
+const TWIST_PROFILES_KEY = "ovoa.twistProfiles";
 
 const twistProfileListeners = new Set<() => void>();
 
-/** What calibration learned about this user's twist. `calibrating` pauses detection meanwhile. */
+/**
+ * What calibration learned about this user's twist, per kind of sensor. `calibrating` pauses
+ * detection while calibration (or the twist test in Dev tools) runs.
+ */
 export const twistProfilePref = {
   calibrating: false,
   onChange: (l: () => void) => {
@@ -897,16 +903,19 @@ export const twistProfilePref = {
       twistProfileListeners.delete(l);
     };
   },
-  get: async (): Promise<TwistProfile | null> => {
+  get: async (): Promise<TwistProfiles> => {
     try {
-      const raw = await storage.get(TWIST_PROFILE_KEY);
-      return raw ? (JSON.parse(raw) as TwistProfile) : null;
+      const raw = await storage.get(TWIST_PROFILES_KEY);
+      return raw ? readProfiles(JSON.parse(raw)) : {};
     } catch {
-      return null;
+      return {};
     }
   },
+  /** Saves a profile, keeping the one for the other kind of sensor. */
   set: async (profile: TwistProfile) => {
-    await storage.set(TWIST_PROFILE_KEY, JSON.stringify(profile));
+    const saved = await twistProfilePref.get();
+    const next: TwistProfiles = profile.kind === "spin" ? { ...saved, spin: profile } : { ...saved, tilt: profile };
+    await storage.set(TWIST_PROFILES_KEY, JSON.stringify(next));
     twistProfileListeners.forEach((l) => l());
   },
 };
