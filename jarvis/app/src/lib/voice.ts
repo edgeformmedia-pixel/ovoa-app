@@ -12,8 +12,9 @@ import { File, Paths } from "expo-file-system";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_URL, ApiError } from "./api";
 import { devlog } from "./devlog";
-import { listenLive, useLiveStream } from "./liveListen";
+import { openEar, useLiveStream } from "./liveListen";
 import { storage } from "./storage";
+import { onlyStop, saidOverReply, TurnGate, type GateResult, type Turn } from "./turnGate";
 
 // Talking with the assistant: record until the user stops speaking, transcribe
 // on the server (Deepgram), then read the reply aloud a sentence or two at a time.
@@ -65,6 +66,8 @@ function audioMode(allowsRecording: boolean) {
     playsInSilentMode: true,
     shouldPlayInBackground: backgroundAudio,
     allowsBackgroundRecording: backgroundAudio,
+    // Mixable, like the live mic stream, so switching between them doesn't halt it.
+    interruptionMode: "mixWithOthers" as const,
   };
 }
 
@@ -338,39 +341,13 @@ async function recordUtterance(
   return uri;
 }
 
-// ---------- Talking over the reply ----------
-// Expo Go can't turn on the iPhone's echo cancellation, so the microphone also
-// hears the reply. While it plays we record short pieces and transcribe them:
-// words that aren't in the reply mean the user is talking.
+// ---------- Talking over the reply (recording fallback) ----------
+// When live transcription isn't available, the microphone also hears the reply
+// with no way to tell them apart by sound. While it plays we record short pieces
+// and transcribe them: words that aren't in the reply mean the user is talking.
 
 const BARGE_IN_CHUNK_MS = 1800;
 const FOLLOW_UP_MS = 1500; // after an interruption, how long to wait for the rest of the sentence
-const STOP_WORDS = new Set(["stop", "wait", "cancel", "quiet", "enough", "pause", "hold", "shut"]);
-const FILLER = new Set(["ovoa", "ok", "okay", "please", "it", "that", "up", "on", "now", "hey", "no", "just", "right"]);
-
-const wordsOf = (text: string) => text.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? [];
-
-// How sure we need to be that it's the user and not the reply's echo (misheard
-// echo often has a word or two that isn't in the reply).
-const MIN_NEW_WORDS = 3;
-const MIN_NEW_SHARE = 0.7;
-
-/** What the user said over the reply, or "" if it was only the reply's own echo. */
-function saidOverReply(heard: string, reply: string) {
-  const said = wordsOf(heard);
-  if (!said.length) return "";
-  const replyWords = new Set(wordsOf(reply));
-  const fresh = said.filter((w) => !replyWords.has(w));
-  // "stop" / "okay stop" on its own, not a stop word inside a longer (probably echoed) phrase.
-  if (onlyStop(heard) && !said.some((w) => STOP_WORDS.has(w) && replyWords.has(w))) return heard;
-  return fresh.length >= MIN_NEW_WORDS && fresh.length / said.length >= MIN_NEW_SHARE ? heard : "";
-}
-
-/** "stop", "okay stop", "hold on": the user only wanted it to be quiet. */
-function onlyStop(text: string) {
-  const said = wordsOf(text);
-  return said.some((w) => STOP_WORDS.has(w)) && said.every((w) => STOP_WORDS.has(w) || FILLER.has(w));
-}
 
 /**
  * Plays the reply while listening in short pieces. Returns what the user said
@@ -433,12 +410,13 @@ const LIVE_RETRY_MS = 60_000;
  * Hands-free, continuous listening: hear something, send it, read the reply
  * aloud, listen again, until `end` is called. `onUserSaid` sends the words to
  * the assistant and returns the reply to read aloud (or null to skip speaking).
- * With `interruptible`, the user can talk over the reply to cut it off.
+ * With `interruptible`, the user can talk over the reply to cut it off. With
+ * `background` (Always listen) it only answers when called by `name`.
  */
 export function useConversation(
   token: string,
-  onUserSaid: (text: string) => Promise<string | null>,
-  { interruptible = false, background = false } = {},
+  onUserSaid: (text: string, addressed: boolean) => Promise<string | null>,
+  { interruptible = false, background = false, name = "OVOA" } = {},
 ) {
   const recorder = useAudioRecorder(RECORDING);
   const [phase, setPhaseState] = useState<VoicePhase>("off");
@@ -450,14 +428,16 @@ export function useConversation(
   const [level, setLevel] = useState(-160);
   const [error, setError] = useState<string | null>(null);
   const session = useRef(0);
-  // The previous listening loop, so a new one never shares the recorder with it.
+  // The previous listening loop, so a new one never shares the microphone with it.
   const running = useRef(Promise.resolve());
   const speaker = useRef(createSpeaker(token));
   const handler = useRef(onUserSaid);
   handler.current = onUserSaid;
   const bargeIn = useRef(interruptible);
   bargeIn.current = interruptible;
-  // Live transcription when this Expo Go has the PCM stream; recording + upload otherwise.
+  const nameRef = useRef(name);
+  nameRef.current = name;
+  // Live transcription when this build has the PCM stream; recording + upload otherwise.
   const stream = useLiveStream();
   const liveFailures = useRef(0);
   // After switching to recording, try live transcription again after a while.
@@ -500,34 +480,107 @@ export function useConversation(
       devlog("voice", "background listening on");
     }
 
-    /** One sentence from the user, or "" if nobody spoke. */
-    const hear = async (noSpeechMs: number, before = "") => {
-      if (liveFailures.current >= 2 && Date.now() - liveFailedAt.current > LIVE_RETRY_MS) {
-        devlog("voice", "trying live transcription again");
-        liveFailures.current = 0;
-      }
-      if (stream && liveFailures.current < 2) {
-        try {
-          const text = await listenLive(stream, token, {
-            cancelled,
-            onWords: (w) => setWords(`${before} ${w}`.trim()),
-            onLevel: setLevel,
-            noSpeechMs,
-            maxMs: MAX_UTTERANCE_MS * 2,
-            keepRunning: background,
+    /** Sends what they said; returns the reply to read out, if any. */
+    const answer = async (text: string, addressed: boolean) => {
+      setPhase("thinking");
+      setError(null);
+      setWords(text);
+      devlog("voice", addressed ? "heard its name; asking the assistant" : "asking the assistant", text);
+      const reply = await handler.current(text, addressed);
+      if (!cancelled()) devlog("voice", reply ? "assistant replied" : "no reply to read out", reply ?? undefined);
+      return reply;
+    };
+
+    /**
+     * Listens over one live connection that stays open through replies: the
+     * words go through the turn gate as they arrive, and a request is sent the
+     * moment it's complete. Returns when cancelled; throws if the connection is lost.
+     */
+    const runLive = async (s: NonNullable<typeof stream>) => {
+      const gate = new TurnGate(nameRef.current, background, bargeIn.current);
+      const state = { down: null as Error | null, waiting: null as ((turn: Turn | null) => void) | null };
+      const wake = (turn: Turn | null) => {
+        const w = state.waiting;
+        state.waiting = null;
+        w?.(turn);
+      };
+      const handle = (r: GateResult) => {
+        if (!r) return;
+        if (r.kind === "ignored") devlog("voice", `ignored: ${r.why}`, r.text);
+        else if (r.kind === "interrupt") {
+          devlog("voice", r.stopOnly ? "told to stop" : "that was you: interrupting");
+          speaker.current.stop();
+        } else wake(r.turn);
+      };
+      const showWords = () => {
+        if (phaseRef.current === "listening") setWords(gate.live());
+      };
+      const ear = await openEar(s, token, {
+        onLevel: setLevel,
+        onInterim: (text) => {
+          gate.onInterim(text, Date.now());
+          showWords();
+        },
+        onFinal: (text, sentenceEnd) => {
+          handle(gate.onFinal(text, sentenceEnd, Date.now()));
+          showWords();
+        },
+        onQuiet: () => handle(gate.onQuiet()),
+        onDown: (err) => {
+          state.down = err;
+          wake(null);
+        },
+      });
+      const timer = setInterval(() => {
+        if (cancelled()) wake(null);
+        else handle(gate.tick(Date.now()));
+      }, 150);
+      devlog(
+        "voice",
+        `listening live (${background ? `room mode: waiting for "${nameRef.current}"` : "every sentence"}${bargeIn.current ? ", talk-over on" : ""})`,
+      );
+      try {
+        while (!cancelled() && !state.down) {
+          setPhase("listening");
+          const turn = await new Promise<Turn | null>((resolve) => {
+            state.waiting = resolve;
+            gate.listen(Date.now());
+            setWords(gate.live());
           });
-          liveFailures.current = 0;
-          return text;
-        } catch (err) {
-          liveFailures.current++;
-          liveFailedAt.current = Date.now();
-          devlog(
-            "err",
-            liveFailures.current < 2 ? "live transcription failed; using recording for this turn" : "live transcription keeps failing; switching to recording",
-            err instanceof Error ? err.message : String(err),
-          );
+          if (!turn || cancelled()) break;
+          gate.think();
+          let reply: string | null;
+          try {
+            reply = await answer(turn.text, turn.addressed);
+          } catch (err) {
+            if (cancelled()) break;
+            devlog("err", "couldn't get a reply", err instanceof Error ? err.message : String(err));
+            setError(err instanceof Error ? err.message : "Couldn't reach the assistant");
+            continue;
+          }
+          if (cancelled() || !reply) continue;
+          setPhase("speaking");
+          setWords("");
+          gate.speak(reply);
+          // The microphone keeps streaming while the reply plays.
+          await speaker.current
+            .speak(reply, { keepMic: true })
+            .catch((err) => devlog("err", "couldn't read the reply out", err instanceof Error ? err.message : String(err)));
+          gate.spoke(Date.now());
         }
+      } finally {
+        clearInterval(timer);
+        state.waiting = null;
+        ear.close();
       }
+      if (state.down) throw state.down;
+    };
+
+    // Words the user said over the last reply; the rest of their sentence follows.
+    let carried: string | null = null;
+
+    /** One sentence the old way: record until a pause, then upload it. "" if nobody spoke. */
+    const hearRecorded = async (noSpeechMs: number) => {
       // In the background, iOS suspends the app the moment no audio is running, which
       // froze the reply request for 15 minutes once. Keep the stream going as a keep-alive.
       if (background && stream && !stream.isStreaming) {
@@ -539,45 +592,58 @@ export function useConversation(
       return transcribe(token, uri);
     };
 
-    // Words the user said over the last reply; the rest of their sentence follows.
-    let carried: string | null = null;
-    devlog(
-      "voice",
-      `started listening (${stream && liveFailures.current < 2 ? "live" : "recording"}${bargeIn.current ? ", talk-over on" : ""})`,
-    );
+    /** One turn without live transcription: hear, answer, speak. */
+    const recordingTurn = async () => {
+      setPhase("listening");
+      setWords(carried ?? "");
+      let text: string;
+      if (carried !== null) {
+        const rest = await hearRecorded(FOLLOW_UP_MS);
+        if (cancelled()) return;
+        text = `${carried} ${rest}`.trim();
+        carried = null;
+        if (onlyStop(text)) return; // they just wanted it to stop talking
+      } else {
+        text = await hearRecorded(NO_SPEECH_MS);
+        if (cancelled()) return;
+      }
+      if (!text) return; // nobody spoke, or just noise
+      const reply = await answer(text, false);
+      if (cancelled() || !reply) return;
+      setPhase("speaking");
+      setWords("");
+      if (bargeIn.current) {
+        carried = await speakInterruptible(token, recorder, speaker.current, reply, cancelled, setLevel);
+      } else {
+        await speaker.current.speak(reply);
+      }
+    };
 
     while (!cancelled()) {
       try {
-        setPhase("listening");
-        setWords(carried ?? "");
-        let text: string;
-        if (carried !== null) {
-          const rest = await hear(FOLLOW_UP_MS, carried);
-          if (cancelled()) break;
-          text = `${carried} ${rest}`.trim();
-          carried = null;
-          if (onlyStop(text)) continue; // they just wanted it to stop talking
-        } else {
-          text = await hear(NO_SPEECH_MS);
-          if (cancelled()) break;
+        if (liveFailures.current >= 2 && Date.now() - liveFailedAt.current > LIVE_RETRY_MS) {
+          devlog("voice", "trying live transcription again");
+          liveFailures.current = 0;
         }
-        if (!text) continue; // nobody spoke, or just noise
-        setPhase("thinking");
-        setError(null);
-        setWords(text);
-        devlog("voice", "asking the assistant", text);
-        const reply = await handler.current(text);
-        if (cancelled()) break;
-        devlog("voice", reply ? "assistant replied" : "no reply to read out", reply ?? undefined);
-        if (reply) {
-          setPhase("speaking");
-          setWords("");
-          if (bargeIn.current) {
-            carried = await speakInterruptible(token, recorder, speaker.current, reply, cancelled, setLevel);
-          } else {
-            await speaker.current.speak(reply);
+        if (stream && liveFailures.current < 2) {
+          try {
+            await runLive(stream);
+            liveFailures.current = 0;
+          } catch (err) {
+            if (cancelled()) break;
+            liveFailures.current++;
+            liveFailedAt.current = Date.now();
+            devlog(
+              "err",
+              liveFailures.current < 2 ? "live transcription failed; trying again" : "live transcription keeps failing; switching to recording",
+              err instanceof Error ? err.message : String(err),
+            );
+            if (!background) stream.stop();
+            await sleep(1000);
           }
+          continue;
         }
+        await recordingTurn();
       } catch (err) {
         // Usually a dropped connection: say so, wait a moment, and keep going.
         if (cancelled()) break;
@@ -587,8 +653,8 @@ export function useConversation(
         await sleep(RETRY_MS);
       }
     }
+    stream?.stop();
     if (background) {
-      stream?.stop();
       backgroundAudio = false;
       await setAudioModeAsync(audioMode(false)).catch(() => {});
     }

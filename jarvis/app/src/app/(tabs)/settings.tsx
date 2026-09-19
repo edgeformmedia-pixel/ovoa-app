@@ -82,7 +82,7 @@ export default function Settings() {
     if (!on) return setAlwaysListen(false);
     Alert.alert(
       "Always listen?",
-      `The microphone stays on, even with OVOA in the background or the phone locked. Everything it hears, including TV and other people, is checked by ${assistantName || "your assistant"}, which only answers when you're talking to it. You can talk over replies to interrupt.`,
+      `The microphone stays on, even with OVOA in the background or the phone locked. Everything it hears, including TV and other people, is transcribed live, but ${assistantName || "your assistant"} only answers when you say its name (or reply right after it speaks). Say its name over a reply, or "stop", to interrupt.`,
       [
         { text: "Cancel", style: "cancel" },
         { text: "Turn on", style: "destructive", onPress: () => setAlwaysListen(true) },

@@ -71,7 +71,13 @@ voice.post("/voice/token", async (c) => {
     return c.json({ error: "Couldn't start live listening" }, 502);
   }
   const { access_token, expires_in } = await res.json<{ access_token: string; expires_in: number }>();
-  return c.json({ token: access_token, expiresIn: expires_in, model: STT_MODEL, keyterms: KEYTERMS });
+  // The phone listens for the assistant's name, so make sure Deepgram knows the one this user picked.
+  const custom = await c.env.DB.prepare("SELECT assistant_name FROM settings WHERE user_id = ?")
+    .bind(c.var.userId)
+    .first<{ assistant_name: string }>()
+    .catch(() => null);
+  const keyterms = [...new Set([...KEYTERMS, ...(custom?.assistant_name ? [custom.assistant_name] : [])])];
+  return c.json({ token: access_token, expiresIn: expires_in, model: STT_MODEL, keyterms });
 });
 
 const speakSchema = z.object({

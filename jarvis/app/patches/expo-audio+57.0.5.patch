@@ -1,0 +1,30 @@
+diff --git a/node_modules/expo-audio/ios/AudioStream.swift b/node_modules/expo-audio/ios/AudioStream.swift
+index f938eff..cc10e6f 100644
+--- a/node_modules/expo-audio/ios/AudioStream.swift
++++ b/node_modules/expo-audio/ios/AudioStream.swift
+@@ -30,7 +30,14 @@ class AudioStream: SharedObject {
+     guard !isStreaming else { return }
+ 
+     let session = AVAudioSession.sharedInstance()
+-    try session.setCategory(.record, mode: .measurement)
++    // OVOA: play-and-record and mixable, so replies play while the mic streams (a plain
++    // .record session halted the engine on every reply) and the session can be activated
++    // again from the background (a non-mixable one fails there with '!int').
++#if compiler(>=6.2) // Xcode 26
++    try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothHFP])
++#else
++    try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth])
++#endif
+     try session.setPreferredSampleRate(requestedSampleRate)
+     try session.setActive(true)
+ 
+@@ -108,8 +115,7 @@ class AudioStream: SharedObject {
+     isStreaming = false
+     startTimestamp = nil
+     emitStatus()
+-
+-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
++    // OVOA: leave the session active; deactivating it here cut off a reply that was playing.
+   }
+ 
+   private func setupTapWithoutConversion(engine: AVAudioEngine, inputNode: AVAudioInputNode, format: AVAudioFormat) {

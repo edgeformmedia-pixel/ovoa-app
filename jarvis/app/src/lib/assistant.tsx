@@ -45,7 +45,7 @@ export function useAssistant() {
 }
 
 export function AssistantProvider({ children }: { children: ReactNode }) {
-  const { token } = useSession();
+  const { token, user } = useSession();
   const pathname = usePathname();
   const router = useRouter();
   const onAssistantTab = pathname === ASSISTANT_PATH;
@@ -122,14 +122,16 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   };
 
   /** Sends what the user said and returns the assistant's reply to read aloud. */
-  const ask = async (text: string): Promise<string | null> => {
+  /** `addressed`: the phone heard its name, so the server needn't check. */
+  const ask = async (text: string, addressed: boolean): Promise<string | null> => {
     if (busy.current) return null;
     busy.current = true;
     // Actions from every step of the turn; shown (or auto-run) once the reply is in.
     const parked: PendingAction[] = [];
     try {
-      // Always-listening hears everything, so the server first decides whether this was meant for the assistant.
-      let res: ChatResponse = await api.send(token, text, phoneCaps, true, ambientRef.current);
+      // Always-listening hears everything, so unless its name was said the server first
+      // decides whether this was meant for the assistant.
+      let res: ChatResponse = await api.send(token, text, phoneCaps, true, ambientRef.current && !addressed);
       if (res.ignored) {
         devlog("voice", "not meant for the assistant; staying quiet", text);
         return null;
@@ -154,7 +156,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   };
 
   ambientRef.current = alwaysListen;
-  const conversation = useConversation(token, ask, { interruptible: alwaysListen, background: alwaysListen });
+  const conversation = useConversation(token, ask, {
+    interruptible: alwaysListen,
+    background: alwaysListen,
+    name: user?.settings.assistantName || "OVOA",
+  });
   const { start, end } = conversation;
 
   // Pick up actions waiting from Siri or an earlier session.
