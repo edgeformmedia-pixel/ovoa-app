@@ -218,7 +218,7 @@ function Recorder({ state }: { state: clip.ClipState }) {
         accessibilityLabel={rec ? "Stop and save" : "Start recording"}
       >
         {busy && !rec ? (
-          <ActivityIndicator color="#fff" />
+          <ActivityIndicator color={colors.bg} />
         ) : (
           <View style={rec ? styles.stopGlyph : styles.recGlyph} />
         )}
@@ -403,7 +403,7 @@ const styles = StyleSheet.create({
   problem: {
     flexDirection: "row",
     gap: 8,
-    backgroundColor: "#FFF7E6",
+    backgroundColor: colors.surfaceHigh,
     borderRadius: 12,
     padding: 12,
     alignItems: "flex-start",
@@ -469,6 +469,6 @@ const styles = StyleSheet.create({
   },
   buttonQuiet: { backgroundColor: colors.accentDim },
   buttonOff: { backgroundColor: colors.surface },
-  buttonText: { color: "#fff", fontWeight: "600", fontSize: 14 },
+  buttonText: { color: colors.bg, fontWeight: "600", fontSize: 14 },
   buttonTextQuiet: { color: colors.accent },
 });

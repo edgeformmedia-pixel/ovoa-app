@@ -1,23 +1,26 @@
-// OVOA's look: bright, clean white with one electric-blue accent, matching the
-// soft white 3D logo. `bg` is the logo's own background, so the logo images blend in.
+// OVOA's look: near-black, with the white OVOA mark and an electric cyan accent.
+// `bg` is the logo images' own background, so they blend in.
 export const colors = {
-  bg: "#FEFEFE",
-  surface: "#F4F5F8",
-  surfaceHigh: "#ECEEF3",
-  border: "#E3E6EC",
-  text: "#0E1116",
-  textDim: "#868D99",
-  accent: "#2F6BFF",
-  accentDim: "#E7EEFF",
-  danger: "#E5484D",
-  success: "#12A150",
-  warning: "#B7791F",
+  bg: "#07090D",
+  surface: "#11151C",
+  surfaceHigh: "#1A202A",
+  border: "#232A36",
+  text: "#F2F5FA",
+  textDim: "#8A94A6",
+  accent: "#22E2FF",
+  accentDim: "#0E2A33",
+  danger: "#FF6B6B",
+  success: "#3DDC97",
+  warning: "#FFC46B",
 };
+
+/** The second accent, for gradients and the orb's ring. */
+export const accentTo = "#7E5AFF";
 
 /** Soft floating shadow for cards and the orb. */
 export const shadow = {
-  shadowColor: "#1B2A4A",
-  shadowOpacity: 0.08,
+  shadowColor: "#000000",
+  shadowOpacity: 0.45,
   shadowRadius: 18,
   shadowOffset: { width: 0, height: 8 },
   elevation: 3,

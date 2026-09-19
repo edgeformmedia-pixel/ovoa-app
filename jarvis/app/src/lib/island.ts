@@ -3,16 +3,16 @@ import { Platform } from "react-native";
 import { devlog } from "./devlog";
 
 // Whether OVOA is listening, in the Dynamic Island and on the Lock Screen: a Live Activity while
-// the twist standby or a conversation is on. The widget draws "sf:<symbol>#<colour>" as an SF
+// the click standby or a conversation is on. The widget draws "sf:<symbol>#<colour>" as an SF
 // Symbol (patches/expo-live-activity+0.4.2.patch) and puts the title next to it.
 
 export type IslandStatus = "off" | "listening" | "thinking" | "speaking";
 
 const LOOK: Record<IslandStatus, LiveActivity.LiveActivityState> = {
-  off: { title: "Off", subtitle: "Twist your wrist to talk", dynamicIslandImageName: "sf:mic.slash.fill#8E8E93" },
-  listening: { title: "Listening", subtitle: "Go ahead, I'm listening", dynamicIslandImageName: "sf:mic.fill#34C759" },
+  off: { title: "Off", subtitle: "Click the clip to talk", dynamicIslandImageName: "sf:mic.slash.fill#8E8E93" },
+  listening: { title: "Listening", subtitle: "Go ahead, I'm listening", dynamicIslandImageName: "sf:mic.fill#22E2FF" },
   thinking: { title: "Thinking", subtitle: "Working on it", dynamicIslandImageName: "sf:ellipsis#FFD60A" },
-  speaking: { title: "Speaking", subtitle: "Answering out loud", dynamicIslandImageName: "sf:speaker.wave.2.fill#0A84FF" },
+  speaking: { title: "Speaking", subtitle: "Answering out loud", dynamicIslandImageName: "sf:speaker.wave.2.fill#7E5AFF" },
 };
 
 const CONFIG: LiveActivity.LiveActivityConfig = {
