@@ -61,6 +61,9 @@ NS_SWIFT_NAME(UteBleBridge)
 /// Starts or stops the motion stream (the SDK's "motion-sensing game" feed).
 - (void)setMotionStream:(BOOL)on completion:(void (^)(NSInteger errorCode))completion
     NS_SWIFT_NAME(setMotionStream(on:completion:));
+/// Vibrates the clip. option 1: find-device on/off, 2: factoryVibration, 3: factory motor test.
+- (void)buzz:(NSInteger)count option:(NSInteger)option completion:(UteBleResultCallback)completion
+    NS_SWIFT_NAME(buzz(count:option:completion:));
 - (void)beginRecording:(UteBleResultCallback)completion NS_SWIFT_NAME(startRecord(completion:));
 - (void)pauseRecordingSession:(NSInteger)sessionId completion:(UteBleResultCallback)completion
     NS_SWIFT_NAME(pauseRecord(sessionId:completion:));

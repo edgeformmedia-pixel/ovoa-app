@@ -126,6 +126,7 @@ export class TurnGate {
   private reply = "";
   private echoUntil = 0;
   private followUpUntil = 0;
+  private summonedUntil = 0;
   private lastIgnored: { text: string; at: number } | null = null;
 
   constructor(
@@ -155,6 +156,11 @@ export class TurnGate {
   speak(reply: string) {
     this.phase = "speaking";
     this.reply = reply;
+  }
+
+  /** A twist (or the clip's button): in room mode, the next thing said counts as addressed, without the name. */
+  summon(until: number) {
+    this.summonedUntil = until;
   }
 
   /** The reply finished (or was cut off). */
@@ -197,6 +203,12 @@ export class TurnGate {
     }
     if (!this.room) {
       this.start(text, false, now);
+      return this.check(sentenceEnd);
+    }
+    if (now < this.summonedUntil) {
+      // Summoned by a twist or the clip's button: this is for the assistant, name or not.
+      this.summonedUntil = 0;
+      this.start(fromName(text, this.name) ?? text, true, now);
       return this.check(sentenceEnd);
     }
     let request = fromName(text, this.name);

@@ -15,6 +15,7 @@ import { devlog } from "./devlog";
 import { openEar, useLiveStream } from "./liveListen";
 import { storage } from "./storage";
 import { onlyStop, saidOverReply, TurnGate, type GateResult, type Turn } from "./turnGate";
+import type { TwistProfile } from "./twist";
 
 // Talking with the assistant: record until the user stops speaking, transcribe
 // on the server (Deepgram), then read the reply aloud a sentence or two at a time.
@@ -443,6 +444,9 @@ export function useConversation(
   // After switching to recording, try live transcription again after a while.
   const liveFailedAt = useRef(0);
   const [words, setWords] = useState("");
+  // A twist or the clip's button: what's said until then counts as addressed.
+  const summonedUntil = useRef(0);
+  const gateRef = useRef<TurnGate | null>(null);
 
   useEffect(() => {
     speaker.current = createSpeaker(token);
@@ -498,6 +502,8 @@ export function useConversation(
      */
     const runLive = async (s: NonNullable<typeof stream>) => {
       const gate = new TurnGate(nameRef.current, background, bargeIn.current);
+      gateRef.current = gate;
+      if (Date.now() < summonedUntil.current) gate.summon(summonedUntil.current);
       const state = { down: null as Error | null, waiting: null as ((turn: Turn | null) => void) | null };
       const wake = (turn: Turn | null) => {
         const w = state.waiting;
@@ -570,6 +576,7 @@ export function useConversation(
         }
       } finally {
         clearInterval(timer);
+        if (gateRef.current === gate) gateRef.current = null;
         state.waiting = null;
         ear.close();
       }
@@ -608,7 +615,7 @@ export function useConversation(
         if (cancelled()) return;
       }
       if (!text) return; // nobody spoke, or just noise
-      const reply = await answer(text, false);
+      const reply = await answer(text, Date.now() < summonedUntil.current);
       if (cancelled() || !reply) return;
       setPhase("speaking");
       setWords("");
@@ -665,8 +672,25 @@ export function useConversation(
   /** While speaking: cut the reply short and listen again. */
   const interrupt = useCallback(() => speaker.current.stop(), []);
 
-  return { phase, level, error, setError, words, start, end, interrupt };
+  /**
+   * A twist (or the clip's button) asked for attention: listen now, and treat the
+   * next ~8 s of speech as addressed even without the name. Cuts off a reply.
+   */
+  const summon = useCallback(() => {
+    const until = Date.now() + SUMMON_MS;
+    summonedUntil.current = until;
+    gateRef.current?.summon(until);
+    devlog("voice", "summoned", `phase ${phaseRef.current}`);
+    if (phaseRef.current === "speaking") speaker.current.stop();
+    if (phaseRef.current === "off") return start();
+    return Promise.resolve(true);
+  }, [start]);
+
+  return { phase, level, error, setError, words, start, end, interrupt, summon };
 }
+
+/** After a twist, how long speech counts as addressed without the name. */
+const SUMMON_MS = 8000;
 
 const ALWAYS_LISTEN_KEY = "ovoa.alwaysListen";
 
@@ -682,4 +706,43 @@ const LISTENING_KEY = "ovoa.alwaysListening";
 export const listeningPref = {
   get: async () => (await storage.get(LISTENING_KEY).catch(() => null)) === "1",
   set: (on: boolean) => storage.set(LISTENING_KEY, on ? "1" : "0"),
+};
+
+export type ListenMode = "wake" | "twist" | "both";
+const LISTEN_MODE_KEY = "ovoa.listenMode";
+
+/** How a turn starts: the name (wake), a wrist twist on the ES100 (twist), or either (both). */
+export const listenModePref = {
+  get: async (): Promise<ListenMode> => {
+    const v = await storage.get(LISTEN_MODE_KEY).catch(() => null);
+    return v === "twist" || v === "both" ? v : "wake";
+  },
+  set: (mode: ListenMode) => storage.set(LISTEN_MODE_KEY, mode),
+};
+
+const TWIST_PROFILE_KEY = "ovoa.twistProfile";
+
+const twistProfileListeners = new Set<() => void>();
+
+/** What calibration learned about this user's twist. `calibrating` pauses detection meanwhile. */
+export const twistProfilePref = {
+  calibrating: false,
+  onChange: (l: () => void) => {
+    twistProfileListeners.add(l);
+    return () => {
+      twistProfileListeners.delete(l);
+    };
+  },
+  get: async (): Promise<TwistProfile | null> => {
+    try {
+      const raw = await storage.get(TWIST_PROFILE_KEY);
+      return raw ? (JSON.parse(raw) as TwistProfile) : null;
+    } catch {
+      return null;
+    }
+  },
+  set: async (profile: TwistProfile) => {
+    await storage.set(TWIST_PROFILE_KEY, JSON.stringify(profile));
+    twistProfileListeners.forEach((l) => l());
+  },
 };

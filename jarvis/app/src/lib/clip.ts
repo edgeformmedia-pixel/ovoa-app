@@ -4,6 +4,7 @@ import * as ute from "../../modules/ute-ble";
 import { devlog } from "./devlog";
 import { addRecording, hasClipSession } from "./recordings";
 import { storage } from "./storage";
+import { spreadBatch, type Sample } from "./twist";
 
 // The ES100 clip, shared by the Record tab and the ES100 debug screen: one
 // connection, remembered and re-established on its own, plus recording and
@@ -34,6 +35,8 @@ export type ClipState = {
   sensors: ute.SensorSupport | null;
   gyro: ute.GyroReading | null;
   motion: { on: boolean; last: ute.MotionSample | null; count: number };
+  /** Why twist-to-listen can't get motion data from this clip (it falls back to the button), or null. */
+  motionProblem: string | null;
   /** Things the clip reported on its own, newest first. */
   inputs: ClipInput[];
   log: string[];
@@ -64,6 +67,7 @@ let state: ClipState = {
   sensors: null,
   gyro: null,
   motion: { on: false, last: null, count: 0 },
+  motionProblem: null,
   inputs: [],
   log: [],
 };
@@ -168,7 +172,10 @@ function ensureStarted() {
 
   ute.addListener("onRecordStart", (event) => {
     say(`recording started (${event.startedByDevice ? "clip button" : "app"}) #${event.sessionId}`);
-    if (event.startedByDevice) noteInput("Clip button", "started recording");
+    if (event.startedByDevice) {
+      noteInput("Clip button", "started recording");
+      buttonListeners.forEach((l) => l("record"));
+    }
     set({
       recording: { sessionId: event.sessionId, startedAt: Date.now(), paused: false, byDevice: event.startedByDevice },
     });
@@ -185,10 +192,7 @@ function ensureStarted() {
     }
   });
 
-  ute.addListener("onMotion", ({ samples }) => {
-    const last = samples[samples.length - 1] ?? null;
-    set({ motion: { on: true, last, count: state.motion.count + samples.length } });
-  });
+  ute.addListener("onMotion", ({ samples }) => onMotionBatch(samples));
 
   ute.addListener("onSyncProgress", (p) => set({ download: { sessionId: p.sessionId, received: p.received, total: p.total } }));
 
@@ -206,6 +210,8 @@ function ensureStarted() {
     } else if (input.kind === "voiceButton") {
       const names = ["", "entered voice mode", "voice recording started", "voice recording stopped", "left voice mode", "asks to open the app", "recognition failed", "recognition ok"];
       noteInput("Voice button", names[input.value] ?? `state ${input.value}`);
+      // 1 entered voice mode / 2 voice recording started: the user pressed the button to talk.
+      if (input.value === 1 || input.value === 2) buttonListeners.forEach((l) => l("voiceButton"));
     } else {
       noteInput("Voice audio", `${input.value} bytes (${input.detail ?? ""})`);
     }
@@ -260,7 +266,12 @@ async function onConnected() {
     set({ savedDeviceId: device.id });
   }
   // The clip needs a moment after pairing before it answers record commands.
-  setTimeout(() => refreshInfo().catch(() => {}), 1500);
+  setTimeout(() => {
+    refreshInfo()
+      .catch(() => {})
+      // The iOS SDK has no "stream ended" event: restart the stream after every (re)connect.
+      .then(() => ensureMotion("connected"));
+  }, 1500);
 }
 
 let waitingFor: ((device: ute.UteDevice) => void) | null = null;
@@ -364,8 +375,9 @@ export async function disconnect() {
   userDisconnected = true;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   clearConnectTimer();
+  if (state.motion.on) await ute.setMotionStream(false).catch(() => {});
   await ute.disconnect().catch(() => {});
-  set({ phase: "idle", device: null, recording: null });
+  set({ phase: "idle", device: null, recording: null, motion: { ...state.motion, on: false } });
 }
 
 /** Disconnects and stops remembering the clip. */
@@ -414,6 +426,9 @@ export async function refreshInfo() {
     const sensors = await attempt("sensor probe", ute.probeSensors);
     set({ sensors });
     if (sensors) say(`sensors: accelerometer ${sensors.accelerometer}, gyroscope ${sensors.gyroscope}, button ${sensors.button}, motor ${sensors.motor}`);
+    // Phase 0 of twist-to-listen: what motion data this firmware claims to have.
+    const flags = ["hasGame", "hasNoScreen", "hasButtonWakeUpVoice", "hasVoiceAssistant", "hasChatGPT", "hasWearingHands", "hasAIRecording", "hasAIRecordRealTime"];
+    devlog("ble", "twist probe", JSON.stringify({ sensors, ...Object.fromEntries(flags.map((f) => [f, capabilities?.[f] ?? null])) }));
   }
 }
 
@@ -438,6 +453,139 @@ export async function setMotionStream(on: boolean) {
   await ute.setMotionStream(on);
   set({ motion: { ...state.motion, on } });
   say(`motion stream ${on ? "on" : "off"}`);
+}
+
+// --- Motion for twist-to-listen -------------------------------------------
+
+type MotionListener = (samples: Sample[]) => void;
+const motionListeners = new Set<MotionListener>();
+let lastBatchAt: number | null = null;
+let lastRawLog = 0;
+let motionStarting = false;
+let motionEverArrived = false;
+let silentRestarts = 0;
+let watchdog: ReturnType<typeof setInterval> | null = null;
+
+const MOTION_SILENCE_MS = 5000;
+const MAX_SILENT_RESTARTS = 3;
+
+function onMotionBatch(samples: ute.MotionSample[]) {
+  const now = Date.now();
+  const timed = spreadBatch(lastBatchAt, now, samples);
+  lastBatchAt = now;
+  motionEverArrived = true;
+  silentRestarts = 0;
+  const last = samples[samples.length - 1] ?? null;
+  set({ motion: { on: true, last, count: state.motion.count + samples.length } });
+  // Raw data for tuning the detector from device_logs, about once a second.
+  if (now - lastRawLog > 1000) {
+    lastRawLog = now;
+    devlog("ble", "motion raw", `${samples.length} samples: ${JSON.stringify(samples.slice(0, 4))}`);
+  }
+  motionListeners.forEach((l) => l(timed));
+}
+
+function motionUnavailable(why: string) {
+  if (state.motionProblem) return;
+  set({ motionProblem: why });
+  devlog("ble", "twist: no motion data, using clip button", why);
+}
+
+/** Starts the stream if someone wants motion and the clip is connected. */
+async function ensureMotion(reason: string) {
+  if (!motionListeners.size || state.phase !== "connected" || motionStarting || state.motionProblem) return;
+  if (state.capabilities?.hasGame === false) return motionUnavailable("the clip reports no motion stream (hasGame false)");
+  motionStarting = true;
+  try {
+    await ute.setMotionStream(true);
+    set({ motion: { ...state.motion, on: true } });
+    say(`motion stream on (${reason})`);
+  } catch (err) {
+    say(`motion stream failed — ${message(err)}`);
+    if (/MotionUnsupported|doesn't support/.test(message(err))) motionUnavailable(message(err));
+  } finally {
+    motionStarting = false;
+  }
+}
+
+/** Restarts a stream that went quiet; gives up (button fallback) if it never produced anything. */
+function checkMotion() {
+  if (!motionListeners.size || state.phase !== "connected" || state.motionProblem || motionStarting) return;
+  if (lastBatchAt !== null && Date.now() - lastBatchAt < MOTION_SILENCE_MS) return;
+  if (silentRestarts >= MAX_SILENT_RESTARTS) {
+    if (!motionEverArrived) motionUnavailable(`no samples after ${MAX_SILENT_RESTARTS} stream restarts`);
+    return;
+  }
+  silentRestarts++;
+  lastBatchAt = Date.now(); // give the restart its own 5 s
+  ensureMotion("no samples for 5 s");
+}
+
+/** Timestamped motion samples while subscribed. The clip streams while anyone is subscribed. */
+export function subscribeMotion(listener: MotionListener) {
+  ensureStarted();
+  motionListeners.add(listener);
+  if (motionListeners.size === 1) {
+    silentRestarts = 0;
+    lastBatchAt = null;
+    watchdog = setInterval(checkMotion, 1000);
+    ensureMotion("twist on");
+  }
+  return () => {
+    motionListeners.delete(listener);
+    if (motionListeners.size) return;
+    if (watchdog) clearInterval(watchdog);
+    watchdog = null;
+    if (state.phase === "connected" && state.motion.on) {
+      ute.setMotionStream(false).catch(() => {});
+      say("motion stream off (twist off)");
+    }
+    set({ motion: { ...state.motion, on: false } });
+  };
+}
+
+/** The clip's button was pressed to talk (voice button, or a recording started on the clip). */
+type ButtonListener = (source: "voiceButton" | "record") => void;
+const buttonListeners = new Set<ButtonListener>();
+
+export function onClipButton(listener: ButtonListener) {
+  buttonListeners.add(listener);
+  return () => {
+    buttonListeners.delete(listener);
+  };
+}
+
+// --- Buzz ------------------------------------------------------------------
+
+const BUZZ_OPTION = "ovoa.buzzOption";
+/** 1: "find my device" on/off, 2: factoryVibration, 3: factory motor test. */
+export type BuzzOption = 1 | 2 | 3;
+let buzzOption: BuzzOption = 1;
+storage
+  .get(BUZZ_OPTION)
+  .then((v) => {
+    if (v === "1" || v === "2" || v === "3") buzzOption = Number(v) as BuzzOption;
+  })
+  .catch(() => {});
+
+export const getBuzzOption = () => buzzOption;
+
+export function setBuzzOption(option: BuzzOption) {
+  buzzOption = option;
+  storage.set(BUZZ_OPTION, String(option)).catch(() => {});
+}
+
+/** Vibrates the clip. Never throws: a missing buzz shouldn't break listening. */
+export async function buzz(count = 1, option: BuzzOption = buzzOption) {
+  if (state.phase !== "connected") return false;
+  try {
+    await ute.buzz(count, option);
+    say(`buzz option ${option} fired (×${count})`);
+    return true;
+  } catch (err) {
+    say(`buzz option ${option} failed — ${message(err)}`);
+    return false;
+  }
 }
 
 // --- Recording -------------------------------------------------------------

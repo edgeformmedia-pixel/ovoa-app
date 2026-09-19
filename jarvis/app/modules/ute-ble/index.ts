@@ -44,6 +44,7 @@ type UteBleNativeModule = {
   probeSensors(): Promise<SensorSupport>;
   readGyro(): Promise<GyroReading>;
   setMotionStream(on: boolean): Promise<void>;
+  buzz(count: number, option: number): Promise<{ option: number }>;
   startRecord(): Promise<{ sessionId: number; result: number }>;
   pauseRecord(sessionId: number): Promise<{ sessionId: number; result: number }>;
   resumeRecord(sessionId: number): Promise<{ sessionId: number; result: number }>;
@@ -135,6 +136,11 @@ export const probeSensors = () => native().probeSensors();
 export const readGyro = () => native().readGyro();
 /** Turns the clip's motion stream on or off; samples arrive as onMotion events. iOS only. */
 export const setMotionStream = (on: boolean) => native().setMotionStream(on);
+/**
+ * Vibrates the clip. option 1: "find my device" on then off, 2: factoryVibration (the clip
+ * never replies), 3: the factory motor test. Which one the ES100 honours is unknown. iOS only.
+ */
+export const buzz = (count = 1, option = 1) => native().buzz(count, option);
 
 /** Resolves even when the clip declines; check `result` (StartRecordResult). */
 export const startRecord = () => native().startRecord();

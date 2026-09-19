@@ -171,11 +171,22 @@ public class UteBleModule: Module {
 
     AsyncFunction("setMotionStream") { (on: Bool, promise: Promise) in
       self.bridge.setMotionStream(on: on) { errorCode in
+        if errorCode == 408 {
+          promise.reject(UteException("MotionUnsupported: the clip didn't answer sendGameStatus; this firmware likely has no motion stream."))
+          return
+        }
         guard errorCode == 0 else {
           promise.reject(UteException("sendGameStatus failed: \(Self.describe(errorCode))."))
           return
         }
         promise.resolve(nil)
+      }
+    }
+    .runOnQueue(.main)
+
+    AsyncFunction("buzz") { (count: Int, option: Int, promise: Promise) in
+      self.bridge.buzz(count: count, option: option) { errorCode, result in
+        Self.settle(promise, errorCode, result, "buzz option \(option)")
       }
     }
     .runOnQueue(.main)

@@ -29,7 +29,7 @@ export default function Settings() {
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
-  const { alwaysListen, setAlwaysListen } = useAssistant();
+  const { alwaysListen, setAlwaysListen, listenMode, setListenMode } = useAssistant();
 
   useEffect(() => {
     api.memories(token).then((r) => setMemories(r.memories)).catch(() => setMemories([]));
@@ -146,6 +146,24 @@ export default function Settings() {
 
       <Section title="Voice">
         <VoicePicker token={token} />
+      </Section>
+
+      <Section title="How to start talking">
+        <View style={styles.segment}>
+          {LISTEN_MODES.map((m) => (
+            <Pressable
+              key={m.mode}
+              onPress={() => setListenMode(m.mode)}
+              style={[styles.segmentItem, listenMode === m.mode && styles.segmentOn]}
+            >
+              <Text style={[styles.segmentText, listenMode === m.mode && styles.segmentTextOn]}>{m.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={styles.meta}>{LISTEN_MODES.find((m) => m.mode === listenMode)?.hint}</Text>
+        {listenMode !== "wake" && (
+          <Button label="Calibrate the twist" onPress={() => router.push("/dev-tools")} />
+        )}
       </Section>
 
       <Section title="Google accounts">
@@ -294,6 +312,16 @@ function Field({ label, ...props }: { label: string } & React.ComponentProps<typ
   );
 }
 
+const LISTEN_MODES = [
+  { mode: "wake", label: "Wake word", hint: "Say the assistant's name. Turn on Always listen (Danger zone) to use it from any screen." },
+  {
+    mode: "twist",
+    label: "Twist",
+    hint: "Flick your left wrist counter-clockwise with the ES100 on; it buzzes and listens. The microphone stays off until then. Without motion data from the clip, its button does the same.",
+  },
+  { mode: "both", label: "Both", hint: "Always listen for the name, and a twist also gets its attention." },
+] as const;
+
 function Button({
   label,
   onPress,
@@ -345,4 +373,9 @@ const styles = StyleSheet.create({
   forget: { color: colors.danger, fontSize: 13 },
   button: { backgroundColor: colors.surfaceHigh, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
   buttonText: { color: colors.accent, fontSize: 15, fontWeight: "600" },
+  segment: { flexDirection: "row", backgroundColor: colors.surfaceHigh, borderRadius: 10, padding: 3, gap: 3 },
+  segmentItem: { flex: 1, borderRadius: 8, paddingVertical: 8, alignItems: "center" },
+  segmentOn: { backgroundColor: colors.surface },
+  segmentText: { color: colors.textDim, fontSize: 14, fontWeight: "600" },
+  segmentTextOn: { color: colors.text },
 });

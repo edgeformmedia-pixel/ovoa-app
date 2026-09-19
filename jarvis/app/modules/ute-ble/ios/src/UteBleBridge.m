@@ -250,6 +250,8 @@ static const NSTimeInterval UteSyncStallSeconds = 15;
 }
 
 - (void)reportPairing:(BOOL)paired message:(NSString *)message {
+  // Tell the firmware it is worn on the left (0 = left, 1 = right). Harmless if it ignores this.
+  if (paired) [[UTEDeviceMgr sharedInstance] setWearingHands:0 Block:^(NSInteger errorCode) {}];
   void (^handler)(BOOL, NSString *) = self.onPairing;
   if (handler) handler(paired, message);
 }
@@ -437,12 +439,44 @@ static UteBleResultCallback UteOnce(UteBleResultCallback completion, NSTimeInter
       });
     }];
   }
-  // 1 start, 0 stop.
+  // 1 start, 0 stop. Firmware without the game stream may never answer, so time out (408).
+  UteBleResultCallback reply = UteOnce(^(NSInteger errorCode, NSDictionary<NSString *, id> *_Nullable result) {
+    completion(errorCode);
+  }, 4);
   [game sendGameStatus:on ? 1 : 0 Block:^(NSInteger errorCode) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-      completion(UteNormalize(errorCode));
-    });
+    reply(UteNormalize(errorCode), nil);
   }];
+}
+
+- (void)buzz:(NSInteger)count option:(NSInteger)option completion:(UteBleResultCallback)completion {
+  UTEDeviceMgr *dev = [UTEDeviceMgr sharedInstance];
+  NSInteger pulses = MAX(1, count);
+  int64_t offAfter = (int64_t)(0.25 * pulses * NSEC_PER_SEC);
+  NSDictionary *info = @{@"option" : @(option)};
+  if (option == 2) {
+    // Declared in the header but never used by the vendor demo; it has no callback.
+    [dev factoryVibration:pulses];
+    dispatch_async(dispatch_get_main_queue(), ^{ completion(0, info); });
+    return;
+  }
+  UteBleResultCallback reply = UteOnce(completion, 3);
+  if (option == 3) {
+    // Factory motor test: state 1 = ok.
+    [dev factoryMotorTestCMD:1 Block:^(NSInteger state) {
+      reply(state == 1 ? 0 : -2, info);  // 0 = failed; -2 reads as "the clip refused"
+    }];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, offAfter), dispatch_get_main_queue(), ^{
+      [dev factoryMotorTestCMD:0 Block:nil];
+    });
+    return;
+  }
+  // Option 1: "find my device" on, then off.
+  [dev setFindWearCmd:1 block:^(NSInteger errorCode, NSDictionary *uteDict) {
+    reply(UteNormalize(errorCode), info);
+  }];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, offAfter), dispatch_get_main_queue(), ^{
+    [dev setFindWearCmd:0 block:^(NSInteger errorCode, NSDictionary *uteDict) {}];
+  });
 }
 
 #pragma mark - Recording

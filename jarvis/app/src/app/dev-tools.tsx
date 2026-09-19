@@ -17,7 +17,10 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as clip from "../lib/clip";
+import { devlog } from "../lib/devlog";
 import { createFallDetector } from "../lib/fallDetector";
+import { calibrate, type Sample } from "../lib/twist";
+import { twistProfilePref } from "../lib/voice";
 import { colors } from "../lib/theme";
 
 // Live readouts for every sensor and permission the app touches. Reachable from
@@ -362,6 +365,14 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
         </Text>
       </Card>
 
+      <Card title="Clip — buzz" available={state.phase === "unavailable" ? false : true}>
+        <BuzzOptions connected={connected} />
+      </Card>
+
+      <Card title="Twist to listen — calibrate" available={state.phase === "unavailable" ? false : true}>
+        <TwistCalibration connected={connected} problem={state.motionProblem} />
+      </Card>
+
       <Card title="Clip — events" available={state.phase === "unavailable" ? false : true}>
         {state.inputs.length === 0 && (
           <Text style={styles.dim}>Press the clip's button, plug it in, or record with it; what it reports shows up here.</Text>
@@ -383,6 +394,99 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
           </>
         )}
       </Card>
+    </>
+  );
+}
+
+const BUZZ_OPTIONS: { option: clip.BuzzOption; label: string }[] = [
+  { option: 1, label: "1 · find device" },
+  { option: 2, label: "2 · vibration" },
+  { option: 3, label: "3 · motor test" },
+];
+
+/** Tries each way of making the clip vibrate; the one tapped last is what twist-to-listen uses. */
+function BuzzOptions({ connected }: { connected: boolean }) {
+  const [chosen, setChosen] = useState(clip.getBuzzOption());
+  const [result, setResult] = useState<string | null>(null);
+  return (
+    <>
+      <View style={styles.row}>
+        {BUZZ_OPTIONS.map(({ option, label }) => (
+          <Pressable
+            key={option}
+            style={[styles.button, chosen === option && { borderColor: colors.accent, borderWidth: 1 }]}
+            disabled={!connected}
+            onPress={async () => {
+              clip.setBuzzOption(option);
+              setChosen(option);
+              const ok = await clip.buzz(1, option);
+              setResult(`option ${option}: ${ok ? "sent — did it vibrate?" : "failed (see log)"}`);
+            }}
+          >
+            <Text style={styles.buttonText}>{label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={styles.hint}>{result ?? "Tap one; the last one tapped is used when a twist summons the assistant."}</Text>
+    </>
+  );
+}
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** 3 s of rest, then 3 twists: learns which motion value a counter-clockwise twist moves. */
+function TwistCalibration({ connected, problem }: { connected: boolean; problem: string | null }) {
+  const [step, setStep] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    twistProfilePref.get().then((p) => p && setResult(`saved: value ${p.axis}, direction ${p.sign}, threshold ${p.threshold.toFixed(1)}`));
+  }, []);
+
+  const run = async () => {
+    let bucket: Sample[] = [];
+    const off = clip.subscribeMotion((samples) => bucket.push(...samples));
+    twistProfilePref.calibrating = true;
+    setResult(null);
+    try {
+      setStep("Getting the motion stream going…");
+      await wait(2000);
+      setStep("Hold your wrist still…");
+      bucket = [];
+      await wait(3000);
+      const rest = bucket;
+      const twists: Sample[][] = [];
+      for (let i = 1; i <= 3; i++) {
+        setStep(`Get ready… (${i}/3)`);
+        await wait(1200);
+        setStep(`Twist counter-clockwise now! (${i}/3)`);
+        clip.buzz(1);
+        bucket = [];
+        await wait(1500);
+        twists.push(bucket);
+      }
+      const profile = calibrate(rest, twists);
+      await twistProfilePref.set(profile);
+      setResult(`saved: value ${profile.axis}, direction ${profile.sign}, threshold ${profile.threshold.toFixed(1)}`);
+      devlog("ble", "twist calibrated", JSON.stringify({ profile, rest: rest.length, twists: twists.map((t) => t.length) }));
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      setResult(`failed: ${why}`);
+      devlog("err", "twist calibration failed", why);
+    } finally {
+      twistProfilePref.calibrating = false;
+      off();
+      setStep(null);
+    }
+  };
+
+  return (
+    <>
+      {problem && <Text style={styles.hint}>No motion data from this clip ({problem}); its button summons the assistant instead.</Text>}
+      <Pressable style={styles.button} disabled={!connected || !!step} onPress={run}>
+        <Text style={styles.buttonText}>{step ?? "Calibrate twist"}</Text>
+      </Pressable>
+      {result && <Text style={styles.hint}>{result}</Text>}
     </>
   );
 }

@@ -5,7 +5,17 @@ import { api, type ChatResponse, type PendingAction, type PhoneResult } from "./
 import { useSession } from "./auth";
 import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type Approval } from "./phoneActions";
 import { devlog } from "./devlog";
-import { alwaysListenPref, listeningPref, useConversation, type VoicePhase } from "./voice";
+import * as clip from "./clip";
+import { createTwistDetector } from "./twist";
+import {
+  alwaysListenPref,
+  listeningPref,
+  listenModePref,
+  twistProfilePref,
+  useConversation,
+  type ListenMode,
+  type VoicePhase,
+} from "./voice";
 
 // The voice assistant lives above the tabs so "Always listen" works on every
 // screen. The Assistant tab is just its face.
@@ -26,6 +36,9 @@ type AssistantState = {
   /** Danger zone: listen everywhere and allow talking over replies. */
   alwaysListen: boolean;
   setAlwaysListen: (on: boolean) => void;
+  /** How a turn starts: the name, a wrist twist on the ES100, or either. */
+  listenMode: ListenMode;
+  setListenMode: (mode: ListenMode) => void;
   interrupt: () => void;
   /** Approval cards to show (auto-run ones are hidden while they run). */
   approvals: PendingAction[];
@@ -52,6 +65,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [alwaysListen, setAlwaysListenState] = useState(false);
+  const [listenMode, setListenModeState] = useState<ListenMode>("wake");
   const [held, setHeld] = useState(0);
   const [inForeground, setInForeground] = useState(true);
   const [status, setStatus] = useState<string | null>(null);
@@ -68,6 +82,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     listeningPref.get().then(setEnabled);
     alwaysListenPref.get().then(setAlwaysListenState);
+    listenModePref.get().then(setListenModeState);
   }, []);
 
   const dropApproval = (id: string) => setApprovals((a) => a.filter((x) => x.id !== id));
@@ -161,7 +176,53 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     background: alwaysListen,
     name: user?.settings.assistantName || "OVOA",
   });
-  const { start, end } = conversation;
+  const { start, end, summon } = conversation;
+
+  // --- Twist to listen (ES100) -------------------------------------------------
+  // A twist, or the clip's button when the clip has no motion data, starts an
+  // addressed turn. In "twist" mode the microphone is closed until then.
+  const twistOn = listenMode !== "wake";
+  /** Listening was opened by a summon (not by a switch): close it again once it goes idle. */
+  const summonedOpen = useRef(false);
+
+  const onSummon = useCallback(
+    (source: string) => {
+      devlog("voice", `twist: summoned by ${source}`);
+      clip.buzz(1);
+      if (conversation.phase === "off") summonedOpen.current = true;
+      summon();
+    },
+    [summon, conversation.phase],
+  );
+  const onSummonRef = useRef(onSummon);
+  onSummonRef.current = onSummon;
+
+  useEffect(() => {
+    if (!twistOn) return;
+    let detector: ReturnType<typeof createTwistDetector> | null = null;
+    let hasProfile = false;
+    const load = () =>
+      twistProfilePref.get().then((p) => {
+        hasProfile = !!p;
+        detector = p ? createTwistDetector(p, () => onSummonRef.current("twist")) : null;
+        devlog("voice", p ? "twist: listening for twists" : "twist: not calibrated yet", p ? JSON.stringify(p) : undefined);
+      });
+    load();
+    const offProfile = twistProfilePref.onChange(load);
+    const offMotion = clip.subscribeMotion((samples) => {
+      if (!detector || twistProfilePref.calibrating) return;
+      samples.forEach((s) => detector?.(s));
+    });
+    // No motion data (or not calibrated): the clip's button summons instead.
+    const offButton = clip.onClipButton((source) => {
+      if (clip.getClipState().motionProblem || !hasProfile) onSummonRef.current(`clip button (${source})`);
+    });
+    return () => {
+      offProfile();
+      offMotion();
+      offButton();
+    };
+  }, [twistOn]);
 
   // Pick up actions waiting from Siri or an earlier session.
   useEffect(() => {
@@ -188,6 +249,18 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   const shouldListen = held === 0 && (alwaysListen || (inForeground && !!enabled && onAssistantTab));
 
+  // A summoned turn with nothing else keeping the microphone open: close it after a quiet spell.
+  useEffect(() => {
+    if (shouldListen) summonedOpen.current = false;
+    if (!summonedOpen.current || shouldListen || conversation.phase !== "listening") return;
+    const timer = setTimeout(() => {
+      devlog("voice", "twist: quiet after summon; closing the microphone");
+      summonedOpen.current = false;
+      end();
+    }, SUMMON_IDLE_MS);
+    return () => clearTimeout(timer);
+  }, [shouldListen, conversation.phase, conversation.words, end]);
+
   useEffect(() => {
     if (!shouldListen) return;
     start().then((ok) => {
@@ -209,6 +282,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const setAlwaysListen = (on: boolean) => {
     setAlwaysListenState(on);
     alwaysListenPref.set(on);
+  };
+
+  const setListenMode = (mode: ListenMode) => {
+    setListenModeState(mode);
+    listenModePref.set(mode);
+    // "both" listens for the name as well; "twist" keeps the microphone closed until a twist.
+    if (mode === "both") setAlwaysListen(true);
+    if (mode === "twist") setAlwaysListen(false);
   };
 
   const hold = useCallback(async <T,>(fn: () => Promise<T>) => {
@@ -235,6 +316,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     toggleEnabled,
     alwaysListen,
     setAlwaysListen,
+    listenMode,
+    setListenMode,
     interrupt: conversation.interrupt,
     approvals: approvals.filter((a) => !autoRunning.includes(a.id)),
     autoRunning: autoRunning.length > 0,
@@ -245,6 +328,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;
 }
+
+/** After a summon, how long the microphone stays open with nothing said. */
+const SUMMON_IDLE_MS = 12_000;
 
 const LOOKUP_LABELS: Record<string, string> = {
   phone_contacts_search: "contacts",
