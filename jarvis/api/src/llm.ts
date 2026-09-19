@@ -86,9 +86,11 @@ async function safeCall(callTool: CallTool, name: string, args: Record<string, u
 // which is enough: a busy isolate serves many requests.
 
 const cooldownUntil = new Map<Engine, number>();
+const lastFailure = new Map<Engine, string>();
 
 function coolDown(engine: Engine, err: unknown) {
   const text = String(err);
+  lastFailure.set(engine, text.slice(0, 200));
   if (engine === "workers") {
     // The last resort is always tried, unless its free daily allocation is used up (4006):
     // then skip it until it resets at midnight UTC, so quick calls go to the others instead.
@@ -123,6 +125,10 @@ function engines(env: LlmEnv): Engine[] {
 
 /** The last engine's error, naming what the earlier ones failed with. */
 function finalError(err: unknown, failures: string[]) {
+  const now = Date.now();
+  for (const [engine, until] of cooldownUntil) {
+    if (until > now && engine !== "workers") failures.push(`${ENGINE_NAMES[engine]} skipped, it failed with ${lastFailure.get(engine)}`);
+  }
   if (!failures.length) return err;
   const brief = (e: unknown) => String(e instanceof Error ? e.message : e).slice(0, 200);
   return new Error(`${brief(err)} (earlier: ${failures.join("; ")})`);
