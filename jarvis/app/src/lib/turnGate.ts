@@ -14,6 +14,13 @@
 const NAME_WAIT_MS = 3000;
 /** No new words for this long ends a request. */
 const QUIET_MS = 900;
+/**
+ * After a click on the clip, the user is talking to the assistant on purpose: wait for them to be
+ * done (this much quiet) instead of ending at the first sentence break or short pause.
+ */
+const CLICKED_QUIET_MS = 1800;
+/** A clicked turn still ends after this long, in case the room never goes quiet. */
+const CLICKED_MAX_MS = 60_000;
 /** Longest request in a full room: other people's talk keeps it from ever going quiet. */
 const ROOM_MAX_MS = 9000;
 const OPEN_MAX_MS = 30_000;
@@ -153,6 +160,9 @@ export class TurnGate {
   private echoUntil = 0;
   private followUpUntil = 0;
   private summonedUntil = 0;
+  /** A click opened this turn: it ends on CLICKED_QUIET_MS of quiet, or on a second click. */
+  private clicked = false;
+  private sendNow = false;
   private lastIgnored: { text: string; at: number } | null = null;
 
   constructor(
@@ -187,6 +197,14 @@ export class TurnGate {
   /** A twist (or the clip's button): in room mode, the next thing said counts as addressed, without the name. */
   summon(until: number) {
     this.summonedUntil = until;
+    this.clicked = true;
+  }
+
+  /** A second click while listening: send what's been said now. False when nothing has been said. */
+  done() {
+    if (!this.pending && !this.interim) return false;
+    this.sendNow = true;
+    return true;
   }
 
   /** The reply finished (or was cut off). */
@@ -273,14 +291,22 @@ export class TurnGate {
 
   /** Nobody has said a new word for a moment. */
   onQuiet(): GateResult {
-    if (this.phase !== "listening" || !this.pending || this.waitingForRequest()) return null;
+    if (this.phase !== "listening" || !this.pending || this.waitingForRequest() || this.clicked) return null;
     return this.finish();
   }
 
   /** Called a few times a second: ends requests on time. */
   tick(now: number): GateResult {
+    if (this.sendNow && this.phase === "listening" && !this.pending && this.interim) {
+      this.start(this.interim, true, now);
+      this.interim = "";
+    }
     const p = this.pending;
     if (this.phase !== "listening" || !p) return null;
+    if (this.sendNow) return this.finish();
+    if (this.clicked) {
+      return now - Math.max(p.lastAt, this.interimAt) > CLICKED_QUIET_MS || now - p.at > CLICKED_MAX_MS ? this.finish() : null;
+    }
     if (this.waitingForRequest()) return now - p.at > NAME_WAIT_MS ? this.finish() : null;
     if (now - Math.max(p.lastAt, this.interimAt) > QUIET_MS) return this.finish();
     if (now - p.at > (this.room ? ROOM_MAX_MS : OPEN_MAX_MS)) return this.finish();
@@ -307,6 +333,7 @@ export class TurnGate {
   private check(sentenceEnd: boolean): GateResult {
     const p = this.pending;
     if (!p || this.phase !== "listening" || this.waitingForRequest()) return null;
+    if (this.clicked) return null; // tick ends it after CLICKED_QUIET_MS of quiet
     if (sentenceEnd) return this.finish();
     // In a room it never goes quiet: a finished sentence is enough.
     if (this.room && /[.?!]$/.test(p.text) && contentWords(p.text, this.name).length >= 2) return this.finish();
@@ -318,6 +345,8 @@ export class TurnGate {
     const p = this.pending;
     this.pending = null;
     this.lastIgnored = null;
+    this.clicked = false;
+    this.sendNow = false;
     return p ? { kind: "turn", turn: { text: p.text, addressed: p.addressed } } : null;
   }
 }

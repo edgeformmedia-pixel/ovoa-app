@@ -161,9 +161,6 @@ export default function Settings() {
           ))}
         </View>
         <Text style={styles.meta}>{LISTEN_MODES.find((m) => m.mode === listenMode)?.hint}</Text>
-        {listenMode !== "wake" && (
-          <Button label="Calibrate the shake" onPress={() => router.push("/dev-tools")} />
-        )}
       </Section>
 
       <Section title="Google accounts">
@@ -316,10 +313,10 @@ const LISTEN_MODES = [
   { mode: "wake", label: "Wake word", hint: "Say the assistant's name. Turn on Always listen (Danger zone) to use it from any screen." },
   {
     mode: "twist",
-    label: "Shake",
-    hint: "With the ES100 on, shake your wrist hard, back and forth, for about 4 seconds; it buzzes and listens for one question. The microphone stays off until then. Until the shake is calibrated, or while the clip sends no motion, its button does the same.",
+    label: "Clip click",
+    hint: "Click the ES100's button: it buzzes and listens until you stop talking, answers, then stops listening. Click again while it listens to send right away; click while it answers to cut it off. Works from other apps too.",
   },
-  { mode: "both", label: "Both", hint: "Always listen for the name, and a shake also gets its attention." },
+  { mode: "both", label: "Both", hint: "Always listen for the name, and a click on the clip also gets its attention." },
 ] as const;
 
 function Button({

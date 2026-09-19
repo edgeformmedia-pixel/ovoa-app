@@ -912,10 +912,13 @@ export function useConversation(
     return Promise.resolve(true);
   }, [start]);
 
+  /** A second click while listening: send what's been said now. False when nothing has been said yet. */
+  const finishNow = useCallback(() => gateRef.current?.done() ?? false, []);
+
   /** The phase right now (the state can be a render behind). */
   const currentPhase = useCallback(() => phaseRef.current, []);
 
-  return { phase, currentPhase, level, error, setError, words, start, end, interrupt, summon };
+  return { phase, currentPhase, level, error, setError, words, start, end, interrupt, summon, finishNow };
 }
 
 /** Twist standby: how often the mic is checked, and how long without audio means iOS stopped it. */

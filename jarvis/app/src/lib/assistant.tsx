@@ -7,12 +7,10 @@ import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type App
 import { devlog } from "./devlog";
 import * as clip from "./clip";
 import { showIsland } from "./island";
-import { createTwistDetector, twistKind, type Sample, type TwistKind, type TwistProfiles } from "./twist";
 import {
   alwaysListenPref,
   listeningPref,
   listenModePref,
-  twistProfilePref,
   useConversation,
   type ListenMode,
   type VoicePhase,
@@ -195,82 +193,48 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     standby,
     name: user?.settings.assistantName || "OVOA",
   });
-  const { start, end, summon, currentPhase } = conversation;
+  const { start, end, summon, currentPhase, finishNow } = conversation;
 
-  // --- Twist to listen (ES100) -------------------------------------------------
-  // A twist, or the clip's button when the clip has no motion data, starts an
-  // addressed turn. In "twist" mode nothing is heard until then (the mic only idles, see standby).
-  /** Listening was opened by a summon (not by a switch): close it again once it goes idle. */
+  // --- One click to talk (ES100) ------------------------------------------------
+  // A click on the clip's button opens listening until the user is done talking (see TurnGate's
+  // clicked turns), answers, then closes. A second click while listening sends what's been said
+  // right away (or closes, if nothing has); a click during a reply cuts it off and listens again.
+  // The twist/shake gesture was dropped: at ~1 gyro reading a second it either missed or fired on
+  // every wrist movement (builds 32-35), so the motion stream stays off.
+  /** Listening was opened by a click (not by a switch): close it again once it goes idle. */
   const summonedOpen = useRef(false);
 
-  const onSummon = useCallback(
-    (source: string, kind: "twist" | "button") => {
+  const onClick = useCallback(
+    (source: string) => {
       const phase = currentPhase();
-      // A twist is easy to make by accident (a gesture while it talks), so it never cuts off a reply
-      // or stacks on a question being answered. The clip's button is pressed on purpose: it still does.
-      if (kind === "twist" && (phase === "thinking" || phase === "speaking")) {
-        devlog("voice", `twist: ignored (phase ${phase})`, source);
+      if (phase === "listening" && summonedOpen.current) {
+        if (finishNow()) {
+          devlog("voice", "click: sending what was said");
+        } else {
+          devlog("voice", "click: nothing said; closing the microphone");
+          summonedOpen.current = false;
+          end();
+        }
+        clip.buzz(1);
         return;
       }
-      devlog("voice", `twist: summoned by ${source}`);
+      devlog("voice", `click: listening (${source}, phase ${phase})`);
       clip.buzz(1);
       if (phase === "off") summonedOpen.current = true;
       summon();
     },
-    [summon, currentPhase],
+    [summon, currentPhase, finishNow, end],
   );
-  const onSummonRef = useRef(onSummon);
-  onSummonRef.current = onSummon;
+  const onClickRef = useRef(onClick);
+  onClickRef.current = onClick;
 
   useEffect(() => {
     if (!twistOn) return;
-    // A profile per kind of motion sensor; the clip's readings go to the one for their source.
-    let profiles: TwistProfiles = {};
-    const detectors = new Map<TwistKind, (s: Sample) => void>();
-    const uncalibrated = new Set<TwistKind>();
-    const load = () =>
-      twistProfilePref.get().then((p) => {
-        profiles = p;
-        detectors.clear();
-        uncalibrated.clear();
-        const any = !!(p.spin || p.tilt);
-        devlog("voice", any ? "twist: listening for twists" : "twist: not calibrated yet", any ? JSON.stringify(p) : undefined);
-      });
-    load();
-    const offProfile = twistProfilePref.onChange(load);
-    const detectorFor = (kind: TwistKind) => {
-      const profile = profiles[kind];
-      if (!profile) {
-        if (!uncalibrated.has(kind)) devlog("voice", `twist: not calibrated for the clip's ${kind === "spin" ? "gyroscope" : "accelerometer"} yet; its button summons instead`);
-        uncalibrated.add(kind);
-        return null;
-      }
-      let detect = detectors.get(kind);
-      if (!detect) {
-        detect = createTwistDetector(profile, (why) => onSummonRef.current(`twist (${why})`, "twist"));
-        detectors.set(kind, detect);
-      }
-      return detect;
-    };
-    const offMotion = clip.subscribeMotion((samples, source) => {
-      if (twistProfilePref.calibrating) return;
-      const kind = twistKind(source);
-      const detect = kind && detectorFor(kind);
-      if (detect) samples.forEach(detect);
-    });
-    // Motion not streaming right now, or no calibration for the sensor it comes from: the
-    // clip's button summons instead, and the recording that press started is thrown away.
-    const offButton = clip.onClipButton((source) => {
-      const kind = twistKind(clip.getClipState().motion.source);
-      if (clip.motionLive() && kind && profiles[kind]) return false;
-      onSummonRef.current(`clip button (${source})`, "button");
+    // The press also starts a recording on the clip; that recording is thrown away.
+    return clip.onClipButton((source) => {
+      onClickRef.current(`clip button (${source})`);
       return true;
     });
-    return () => {
-      offProfile();
-      offMotion();
-      offButton();
-    };
   }, [twistOn]);
 
   // Pick up actions waiting from Siri or an earlier session.
@@ -311,14 +275,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     if (shouldListen) summonedOpen.current = false;
     if (!summonedOpen.current || shouldListen || conversation.phase !== "listening") return;
     const timer = setTimeout(() => {
-      devlog("voice", "twist: quiet after summon; closing the microphone");
+      devlog("voice", "click: nothing said; closing the microphone");
       summonedOpen.current = false;
       end();
     }, SUMMON_IDLE_MS);
     return () => clearTimeout(timer);
   }, [shouldListen, conversation.phase, conversation.words, end]);
 
-  // One question per twist: once a summoned turn has been answered (or failed), close listening.
+  // One question per click: once a summoned turn has been answered (or failed), close listening.
   // Left open, talk nearby kept it open and every sentence went to the assistant (device_logs
   // 3229-3244), until the model quota ran out.
   const lastPhase = useRef(conversation.phase);
@@ -327,7 +291,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     lastPhase.current = conversation.phase;
     if (!summonedOpen.current || shouldListen || conversation.phase !== "listening") return;
     if (was !== "thinking" && was !== "speaking") return;
-    devlog("voice", "twist: answered; closing the microphone");
+    devlog("voice", "click: answered; closing the microphone");
     summonedOpen.current = false;
     end();
   }, [conversation.phase, shouldListen, end]);
