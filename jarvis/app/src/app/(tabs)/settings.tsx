@@ -15,7 +15,8 @@ import {
 import { GoogleConnection } from "../../components/GoogleConnection";
 import { SiriSetup } from "../../components/SiriSetup";
 import { VoicePicker } from "../../components/VoicePicker";
-import { api, type Memory } from "../../lib/api";
+import { api, type Autonomy, type Memory } from "../../lib/api";
+import { useAgent } from "../../lib/agent";
 import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
 import { autoSendTextsPref, SEND_TEXT_SHORTCUT } from "../../lib/storage";
@@ -33,6 +34,11 @@ export default function Settings() {
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const { alwaysListen, setAlwaysListen, listenMode, setListenMode, micSource, setMicSource } = useAssistant();
+  const { pushProblem } = useAgent();
+  const [quiet, setQuiet] = useState({
+    start: minutesToClock(user?.settings.quietStart ?? 1320),
+    end: minutesToClock(user?.settings.quietEnd ?? 420),
+  });
 
   useEffect(() => {
     autoSendTextsPref.get().then(setAutoSendTexts);
@@ -142,6 +148,67 @@ export default function Settings() {
         onPress: () => run().catch((err) => Alert.alert("Something went wrong", err.message)),
       },
     ]);
+
+  /** One settings field at a time; the server answers with the whole user. */
+  const patch = async (change: Parameters<typeof api.updateMe>[1]) => {
+    try {
+      setUser((await api.updateMe(token, change)).user);
+    } catch (err) {
+      Alert.alert("Couldn't update", (err as Error).message);
+    }
+  };
+
+  const toggleAgent = (on: boolean) => {
+    if (!on) return patch({ agentEnabled: false });
+    Alert.alert(
+      "Let it work on its own?",
+      `${assistantName || "OVOA"} will check things while you're not here — your calendar, what you said you'd do, anything you ask it to watch — and notify you when something matters. It can't message anyone or delete anything without you. Everything it does is logged, and you can turn this off at any time.`,
+      [
+        { text: "Not now", style: "cancel" },
+        { text: "Turn on", onPress: () => patch({ agentEnabled: true }) },
+      ],
+    );
+  };
+
+  const setAutonomy = (agentAutonomy: Autonomy) => {
+    if (agentAutonomy !== "act") return patch({ agentAutonomy });
+    Alert.alert(
+      "Let it act?",
+      "It will create calendar events, tasks and drafts on its own when they follow from what you asked it to do. It still can't send anything to another person, or delete anything.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Turn on", onPress: () => patch({ agentAutonomy: "act" }) },
+      ],
+    );
+  };
+
+  /** "22:00" back to minutes. Anything unparseable leaves the setting alone. */
+  const saveQuiet = () => {
+    const start = clockToMinutes(quiet.start);
+    const end = clockToMinutes(quiet.end);
+    if (start === null || end === null) {
+      setQuiet({ start: minutesToClock(user.settings.quietStart), end: minutesToClock(user.settings.quietEnd) });
+      return;
+    }
+    setQuiet({ start: minutesToClock(start), end: minutesToClock(end) });
+    if (start !== user.settings.quietStart || end !== user.settings.quietEnd) {
+      patch({ quietStart: start, quietEnd: end });
+    }
+  };
+
+  const toggleContext = (on: boolean) => {
+    if (!on) return patch({ contextEnabled: false });
+    Alert.alert(
+      "Keep a record of your days?",
+      "Only what you record. Each recording is summarised, the summary is kept, and the words are dropped — they are never stored on the server. Nothing is captured in the background, ever.",
+      [
+        { text: "Not now", style: "cancel" },
+        { text: "Turn on", onPress: () => patch({ contextEnabled: true }) },
+      ],
+    );
+  };
+
+  const setRetention = (contextRetainDays: number) => patch({ contextRetainDays });
 
   const changePassword = async () => {
     if (newPw.length < 8) return Alert.alert("New password must be at least 8 characters");
@@ -295,6 +362,137 @@ export default function Settings() {
         )}
       </Section>
 
+      <Section title="Background work">
+        <View style={styles.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.label}>Let {assistantName || "OVOA"} work on its own</Text>
+            <Text style={styles.meta}>
+              It checks things between conversations — what's actually on today, what you said you'd do — and tells you
+              only when it's worth interrupting you. Everything it does is logged.
+            </Text>
+          </View>
+          <Switch
+            value={user.settings.agentEnabled}
+            onValueChange={toggleAgent}
+            trackColor={{ true: colors.accent, false: colors.border }}
+          />
+        </View>
+
+        {user.settings.agentEnabled && (
+          <>
+            {!!pushProblem && <Text style={[styles.meta, { color: colors.warning }]}>{pushProblem}</Text>}
+
+            <Text style={styles.label}>How far it can go</Text>
+            <View style={styles.segment}>
+              {AUTONOMY.map((a) => (
+                <Pressable
+                  key={a.value}
+                  onPress={() => setAutonomy(a.value)}
+                  style={[styles.segmentItem, user.settings.agentAutonomy === a.value && styles.segmentOn]}
+                >
+                  <Text
+                    style={[styles.segmentText, user.settings.agentAutonomy === a.value && styles.segmentTextOn]}
+                  >
+                    {a.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.meta}>{AUTONOMY.find((a) => a.value === user.settings.agentAutonomy)?.hint}</Text>
+            <Text style={styles.meta}>
+              At every level it can't send a message or email on its own, and can't delete anything. Those always wait
+              for you.
+            </Text>
+
+            <Text style={[styles.label, { marginTop: 8 }]}>Don't disturb me between</Text>
+            <View style={styles.row}>
+              <TextInput
+                style={[styles.input, { width: 80, textAlign: "center" }]}
+                value={quiet.start}
+                onChangeText={(v) => setQuiet((q) => ({ ...q, start: v }))}
+                onBlur={saveQuiet}
+                placeholder="22:00"
+                placeholderTextColor={colors.textDim}
+                keyboardType="numbers-and-punctuation"
+              />
+              <Text style={styles.meta}>and</Text>
+              <TextInput
+                style={[styles.input, { width: 80, textAlign: "center" }]}
+                value={quiet.end}
+                onChangeText={(v) => setQuiet((q) => ({ ...q, end: v }))}
+                onBlur={saveQuiet}
+                placeholder="07:00"
+                placeholderTextColor={colors.textDim}
+                keyboardType="numbers-and-punctuation"
+              />
+            </View>
+            <Text style={styles.meta}>
+              It still works during these hours; it just saves what it found until morning. Something about to be missed
+              tonight comes through anyway.
+            </Text>
+
+            <Button label="What it's set up to do" onPress={() => router.push("/agent")} />
+          </>
+        )}
+      </Section>
+
+      <Section title="Timeline">
+        <View style={styles.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.label}>Keep a record of my days</Text>
+            <Text style={styles.meta}>
+              What you record gets summarised into a day {assistantName || "OVOA"} can look things up in — "what did I
+              do Tuesday", "did I ever call Sarah back". Only ever what you chose to record: nothing is captured in the
+              background.
+            </Text>
+          </View>
+          <Switch
+            value={user.settings.contextEnabled}
+            onValueChange={toggleContext}
+            trackColor={{ true: colors.accent, false: colors.border }}
+          />
+        </View>
+        {user.settings.contextEnabled && (
+          <>
+            <Text style={styles.meta}>
+              The words themselves are never stored on the server. They're read once to write the summary and then
+              dropped; the recordings stay on this phone.
+            </Text>
+            <Text style={styles.label}>Forget summaries after</Text>
+            <View style={styles.segment}>
+              {RETENTION.map((r) => (
+                <Pressable
+                  key={r.days}
+                  onPress={() => setRetention(r.days)}
+                  style={[styles.segmentItem, user.settings.contextRetainDays === r.days && styles.segmentOn]}
+                >
+                  <Text
+                    style={[styles.segmentText, user.settings.contextRetainDays === r.days && styles.segmentTextOn]}
+                  >
+                    {r.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Button
+              label="Forget the last hour"
+              danger
+              onPress={() =>
+                confirm(
+                  "Forget the last hour?",
+                  "Everything recorded in the last hour is deleted, along with anything pulled out of it.",
+                  "Forget",
+                  async () => {
+                    const { forgot } = await api.forgetSince(token, Date.now() - 3_600_000);
+                    Alert.alert(forgot ? `Forgot ${forgot} ${forgot === 1 ? "moment" : "moments"}` : "Nothing to forget");
+                  },
+                )
+              }
+            />
+          </>
+        )}
+      </Section>
+
       <Section title="Danger zone">
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
@@ -366,6 +564,38 @@ function Field({ label, ...props }: { label: string } & React.ComponentProps<typ
       />
     </View>
   );
+}
+
+const AUTONOMY = [
+  {
+    value: "suggest" as const,
+    label: "Suggest",
+    hint: "It looks things up and tells you. Anything that would change something shows up as a card for you to approve.",
+  },
+  {
+    value: "act" as const,
+    label: "Act",
+    hint: "It can also add calendar events, tasks and drafts on its own when they follow from what you asked for.",
+  },
+];
+
+const RETENTION = [
+  { days: 14, label: "2 weeks" },
+  { days: 90, label: "3 months" },
+  { days: 365, label: "A year" },
+  { days: 0, label: "Keep" },
+];
+
+/** 450 to "07:30". */
+const minutesToClock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
+/** "07:30" back to 450, or null if it isn't a time. */
+function clockToMinutes(value: string) {
+  const m = /^(\d{1,2}):?(\d{2})$/.exec(value.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  return h > 23 || min > 59 ? null : h * 60 + min;
 }
 
 const MIC_SOURCES = [

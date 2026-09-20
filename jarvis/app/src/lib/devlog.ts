@@ -5,7 +5,7 @@ import { useSyncExternalStore } from "react";
 // uploads it to the server (D1 table device_logs) for remote debugging.
 
 /** probe: the motion probe's results (Dev tools → Motion lab). */
-export type LogKind = "req" | "res" | "err" | "voice" | "log" | "warn" | "ble" | "probe";
+export type LogKind = "req" | "res" | "err" | "voice" | "log" | "warn" | "ble" | "probe" | "push" | "agent";
 export type LogEntry = { id: number; time: number; kind: LogKind; text: string; detail?: string };
 
 const MAX_ENTRIES = 400;

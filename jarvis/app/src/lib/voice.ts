@@ -127,8 +127,17 @@ async function authedFetch(
   return res;
 }
 
-/** Turns a recording into text. Deletes the recording afterwards. */
-export async function transcribe(token: string, uri: string, contentType = "audio/mp4"): Promise<string> {
+/**
+ * Turns a recording into text. Deletes the recording afterwards, because a
+ * voice turn's audio has no life past the words — pass `keep` for audio the
+ * user saved and still owns.
+ */
+export async function transcribe(
+  token: string,
+  uri: string,
+  contentType = "audio/mp4",
+  { keep = false }: { keep?: boolean } = {},
+): Promise<string> {
   const file = new File(uri);
   try {
     const audio = new Uint8Array(await file.arrayBuffer());
@@ -142,9 +151,11 @@ export async function transcribe(token: string, uri: string, contentType = "audi
     devlog("voice", text ? `heard: "${text}"` : "heard nothing (noise)");
     return text;
   } finally {
-    try {
-      file.delete();
-    } catch {}
+    if (!keep) {
+      try {
+        file.delete();
+      } catch {}
+    }
   }
 }
 

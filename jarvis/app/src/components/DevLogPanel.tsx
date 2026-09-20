@@ -13,6 +13,8 @@ const KIND_COLORS: Record<LogKind, string> = {
   warn: colors.danger,
   ble: colors.accent,
   probe: colors.warning,
+  push: colors.accent,
+  agent: colors.warning,
 };
 
 /** Live log of app ↔ API traffic and the voice engine, for debugging. */

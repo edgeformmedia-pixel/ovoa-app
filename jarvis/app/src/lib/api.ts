@@ -10,7 +10,85 @@ export type Settings = {
   stepGoal: number;
   fallDetection: boolean;
   autoApprove: boolean;
+  /** The timeline of the day. Off until asked for. */
+  contextEnabled: boolean;
+  /** How long the phone keeps the words. 0 keeps them. */
+  contextRetainDays: number;
+  /** Whether OVOA does anything when nobody is talking to it. */
+  agentEnabled: boolean;
+  agentAutonomy: Autonomy;
+  /** Minutes past local midnight. */
+  quietStart: number;
+  quietEnd: number;
+  agentDailyRuns: number;
 };
+
+/** suggest: it looks and tells you. act: it may also make reversible changes. */
+export type Autonomy = "off" | "suggest" | "act";
+
+/** Something the agent decided was worth saying. */
+export type AgentNote = {
+  id: string;
+  kind: "brief" | "nudge" | "finding" | "done" | "question";
+  title: string;
+  body: string;
+  urgency: "low" | "normal" | "high";
+  /** A pending action this note is about, if it proposed something. */
+  action_id: string | null;
+  created_at: number;
+  read_at: number | null;
+  /** The job that produced it, if any. */
+  job: string | null;
+};
+
+export type AgentJob = {
+  id: string;
+  title: string;
+  instruction: string;
+  kind: "once" | "daily" | "weekly" | "interval";
+  at_minutes: number | null;
+  weekday: number | null;
+  every_minutes: number | null;
+  next_run_at: number;
+  last_run_at: number | null;
+  run_count: number;
+  fail_count: number;
+  status: "active" | "paused";
+  notify: "always" | "ifuseful" | "never";
+  source: "user" | "agent" | "system";
+  /** Read back from the schedule: "every day at 7:30 AM". */
+  when: string;
+};
+
+export type AgentGoal = { id: string; text: string; reason: string | null; created_at: number };
+
+/** One autonomous run, including the ones that decided to stay quiet. */
+export type AgentRun = {
+  id: string;
+  trigger: "job" | "commitment" | "manual" | "event";
+  started_at: number;
+  ms: number | null;
+  engine: string | null;
+  tools_used: string[];
+  outcome: "spoke" | "quiet" | "acted" | "error" | "skipped";
+  detail: string | null;
+  job: string | null;
+};
+
+/** One moment of the day, as the timeline keeps it. The words are not here. */
+export type ContextBlock = {
+  at: string;
+  source: "voice" | "chat" | "calendar" | "location" | "health";
+  title: string;
+  summary: string;
+};
+
+export type ContextDay =
+  | { date: string; nothing: string; title?: undefined; blocks?: undefined }
+  | { date: string; title?: string; summary?: string; blocks: ContextBlock[]; nothing?: undefined };
+
+export type Commitment = { said: string; text: string; theirWords: string | null; who: string | null; when: string | null };
+
 export type User = { id: string; email: string; name: string; created_at: number; settings: Settings };
 export type Message = { id: string; role: "user" | "assistant"; content: string; created_at: number };
 export type Memory = { id: string; content: string; created_at: number };
@@ -301,6 +379,76 @@ export const api = {
       body: JSON.stringify({ timeZone: timeZone(), phoneResult }),
     }),
   cancelAction: (token: string, id: string) => request(`/actions/${id}`, token, { method: "DELETE" }),
+
+
+  // ---------- The agent ----------
+
+  /** Lets the agent reach this phone. Safe to call again; the server replaces the row. */
+  registerPush: (token: string, pushToken: string, platform?: string) =>
+    request("/push/token", token, { method: "POST", body: JSON.stringify({ token: pushToken, platform }) }),
+  unregisterPush: (token: string, pushToken: string) =>
+    request(`/push/token?token=${encodeURIComponent(pushToken)}`, token, { method: "DELETE" }),
+
+  agentNotes: (token: string) => request<{ notes: AgentNote[]; unread: number }>("/agent/notes", token),
+  /** No ids means "the screen was opened": everything showing is read. */
+  markNotesRead: (token: string, ids?: string[]) =>
+    request("/agent/notes/read", token, { method: "POST", body: JSON.stringify({ ids }) }),
+  dismissNote: (token: string, id: string) => request(`/agent/notes/${id}`, token, { method: "DELETE" }),
+
+  agentJobs: (token: string) => request<{ jobs: AgentJob[] }>("/agent/jobs", token),
+  createJob: (
+    token: string,
+    job: {
+      title: string;
+      instruction: string;
+      kind: AgentJob["kind"];
+      atMinutes?: number | null;
+      weekday?: number | null;
+      everyMinutes?: number | null;
+      inMinutes?: number | null;
+      notify?: AgentJob["notify"];
+    },
+  ) => request<{ id: string }>("/agent/jobs", token, { method: "POST", body: JSON.stringify(job) }),
+  updateJob: (token: string, id: string, patch: { status?: "active" | "paused"; notify?: AgentJob["notify"] }) =>
+    request(`/agent/jobs/${id}`, token, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteJob: (token: string, id: string) => request(`/agent/jobs/${id}`, token, { method: "DELETE" }),
+  /** Runs it now, so a new job can be watched working instead of waited on. */
+  runJob: (token: string, id: string) =>
+    request<{ outcome: AgentRun["outcome"]; detail: string; note: AgentNote | null }>(`/agent/jobs/${id}/run`, token, {
+      method: "POST",
+    }),
+
+  agentGoals: (token: string) => request<{ goals: AgentGoal[] }>("/agent/goals", token),
+  addGoal: (token: string, text: string, reason?: string) =>
+    request<{ id: string }>("/agent/goals", token, { method: "POST", body: JSON.stringify({ text, reason }) }),
+  closeGoal: (token: string, id: string, status: "met" | "dropped") =>
+    request(`/agent/goals/${id}`, token, { method: "PATCH", body: JSON.stringify({ status }) }),
+
+  agentRuns: (token: string) => request<{ runs: AgentRun[]; usedToday: number }>("/agent/runs", token),
+
+  // ---------- The timeline ----------
+
+  /**
+   * Adds one moment to the timeline. The transcript is read on the server to
+   * write the summary and is then dropped: it is never stored there.
+   */
+  addContextBlock: (
+    token: string,
+    block: { startedAt: number; endedAt: number; source: ContextBlock["source"]; transcript?: string; note?: string },
+  ) =>
+    request<{ block: { id: string; title: string; summary: string } }>("/context/blocks", token, {
+      method: "POST",
+      body: JSON.stringify({ ...block, timeZone: timeZone() }),
+    }),
+  contextDay: (token: string, date: string) =>
+    request<ContextDay>(`/context/days/${date}?timeZone=${encodeURIComponent(timeZone())}`, token),
+  commitments: (token: string) =>
+    request<{ open?: number; commitments?: Commitment[]; note?: string }>("/context/commitments", token),
+  /** "Forget that." Takes the block and everything pulled out of it. */
+  forgetBlock: (token: string, id: string) => request(`/context/blocks/${id}`, token, { method: "DELETE" }),
+  /** "Forget the last hour." */
+  forgetSince: (token: string, since: number) =>
+    request<{ forgot: number }>(`/context/blocks?since=${since}`, token, { method: "DELETE" }),
 
   createSiriKey: (token: string) => request<{ key: string; url: string }>("/siri/key", token, { method: "POST" }),
   deleteSiriKey: (token: string) => request("/siri/key", token, { method: "DELETE" }),

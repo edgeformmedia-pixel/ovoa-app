@@ -64,6 +64,12 @@
         }
       ],
       "expo-live-activity",
+      [
+        "expo-notifications",
+        {
+          "color": "#22E2FF"
+        }
+      ],
       "expo-mail-composer",
       "expo-font",
       "expo-web-browser",

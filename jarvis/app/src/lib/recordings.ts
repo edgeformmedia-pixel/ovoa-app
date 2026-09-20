@@ -19,6 +19,13 @@ export type Recording = {
   rawUri?: string;
   bytes?: number;
   decodeError?: string;
+  /** The timeline block written from this one, once it has been filed. */
+  blockId?: string;
+  blockTitle?: string;
+  /** Why filing it didn't work. Set means "don't keep retrying on every launch". */
+  captureError?: string;
+  /** Being transcribed and filed right now. Not worth persisting. */
+  capturing?: boolean;
 };
 
 const dir = () => new Directory(Paths.document, "recordings");

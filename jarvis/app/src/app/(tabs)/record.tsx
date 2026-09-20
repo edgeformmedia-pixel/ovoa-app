@@ -3,6 +3,8 @@ import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useRouter } from "expo-router";
 import { useEffect, useState, type ComponentProps } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useSession } from "../../lib/auth";
+import { retryCapture } from "../../lib/capture";
 import * as clip from "../../lib/clip";
 import { deleteRecording, renameRecording, useRecordings, type Recording } from "../../lib/recordings";
 import { colors, shadow } from "../../lib/theme";
@@ -251,7 +253,45 @@ function Recorder({ state }: { state: clip.ClipState }) {
   );
 }
 
+/**
+ * Whether this recording made it into the timeline. Worth showing: filing takes
+ * a few seconds and happens on its own, so without this the user is left
+ * guessing whether it worked.
+ */
+function TimelineState({ recording, onRetry }: { recording: Recording; onRetry: () => void }) {
+  if (recording.capturing) {
+    return (
+      <View style={styles.timelineRow}>
+        <ActivityIndicator size="small" color={colors.textDim} />
+        <Text style={styles.dim}>Adding to your timeline…</Text>
+      </View>
+    );
+  }
+  if (recording.blockTitle) {
+    return (
+      <View style={styles.timelineRow}>
+        <Ionicons name="book-outline" size={12} color={colors.success} />
+        <Text style={styles.dim} numberOfLines={1}>
+          {recording.blockTitle}
+        </Text>
+      </View>
+    );
+  }
+  if (recording.captureError) {
+    return (
+      <Pressable style={styles.timelineRow} onPress={onRetry} hitSlop={6}>
+        <Ionicons name="refresh" size={12} color={colors.warning} />
+        <Text style={[styles.dim, { color: colors.warning, flex: 1 }]} numberOfLines={1}>
+          {recording.captureError} Tap to try again.
+        </Text>
+      </Pressable>
+    );
+  }
+  return null;
+}
+
 function RecordingList({ recordings }: { recordings: Recording[] }) {
+  const { token, user } = useSession();
   const player = useAudioPlayer(null);
   const status = useAudioPlayerStatus(player);
   const [current, setCurrent] = useState<string | null>(null);
@@ -344,6 +384,7 @@ function RecordingList({ recordings }: { recordings: Recording[] }) {
                 {clock(duration)}
                 {recording.decodeError ? " · not playable" : ""}
               </Text>
+              {user.settings.contextEnabled && <TimelineState recording={recording} onRetry={() => retryCapture(token, recording)} />}
               {active && (
                 <View style={styles.bar}>
                   <View style={[styles.barFill, { width: `${Math.min(100, (status.currentTime / Math.max(0.1, duration)) * 100)}%` }]} />
@@ -448,6 +489,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   itemMain: { flex: 1, gap: 2 },
+  timelineRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 2 },
   itemTitle: { color: colors.text, fontSize: 15, fontWeight: "500" },
   play: {
     width: 38,
