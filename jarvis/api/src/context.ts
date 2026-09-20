@@ -1,6 +1,9 @@
 import { generateText } from "./llm";
 import type { CallTool, ToolSpec } from "./llm";
+import { buckets, clock, dayRange } from "./time";
 import type { Env } from "./types";
+
+export { buckets, dayRange };
 
 // The context timeline: a record of the day the assistant can look things up in.
 //
@@ -27,71 +30,6 @@ export type NewBlock = {
 };
 
 const MAX_TRANSCRIPT_CHARS = 12_000;
-
-/** 2026-09-20T14, 2026-09-20 and 2026-W38, in the user's own day. */
-export function buckets(at: number, timeZone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(at));
-  const get = (t: string) => parts.find((p) => p.type === t)!.value;
-  const day = `${get("year")}-${get("month")}-${get("day")}`;
-  // ISO week: Thursday of this week decides the year, so a late-December Monday
-  // lands in week 1 of the next year rather than week 53 of this one.
-  const noon = new Date(`${day}T12:00:00Z`);
-  const thursday = new Date(noon);
-  thursday.setUTCDate(noon.getUTCDate() + 3 - ((noon.getUTCDay() + 6) % 7));
-  // Both at noon, so the gap is a whole number of days and the rounding is exact.
-  const jan1 = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 1, 12));
-  const week = Math.ceil(((thursday.getTime() - jan1.getTime()) / 86_400_000 + 1) / 7);
-  return {
-    hour: `${day}T${get("hour")}`,
-    day,
-    week: `${thursday.getUTCFullYear()}-W${String(week).padStart(2, "0")}`,
-  };
-}
-
-/** How far the zone is from UTC at one moment, in milliseconds. */
-function offsetAt(at: number, timeZone: string) {
-  const p = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(at));
-  const n = (t: string) => Number(p.find((x) => x.type === t)!.value);
-  return Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute"), n("second")) - at;
-}
-
-/**
- * When a local day starts, in epoch milliseconds. The offset is guessed from
- * noon and then read again at the guess, because on the day the clocks change
- * midnight sits on the other side of the change from noon.
- */
-function startOfDay(day: string, timeZone: string) {
-  const midnightUtc = Date.parse(`${day}T00:00:00Z`);
-  const guess = midnightUtc - offsetAt(midnightUtc + 43_200_000, timeZone);
-  return midnightUtc - offsetAt(guess, timeZone);
-}
-
-/**
- * The epoch range of a local day. It runs to the start of the next day rather
- * than a flat 24 hours, so the days the clocks change are 23 or 25 hours long,
- * as they actually were.
- */
-export function dayRange(day: string, timeZone: string): [number, number] {
-  const start = startOfDay(day, timeZone);
-  const next = new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
-  return [start, startOfDay(next, timeZone)];
-}
 
 const indexSchema = {
   type: "object",
@@ -225,8 +163,6 @@ export async function recordBlock(env: Env, userId: string, block: NewBlock, tim
 
 type Row = { id: string; started_at: number; source: string; title: string; summary: string; category: string | null };
 
-const clock = (at: number, timeZone: string) =>
-  new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(new Date(at));
 
 /** The blocks of one local day, oldest first. */
 async function dayBlocks(env: Env, userId: string, day: string, timeZone: string) {

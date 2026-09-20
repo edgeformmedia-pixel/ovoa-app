@@ -10,6 +10,20 @@ import {
   verifyPassword,
 } from "./auth";
 import { isMeantForAssistant } from "./ambient";
+import {
+  agentAssistant,
+  createJob,
+  describeSchedule,
+  isAgentTool,
+  maintenance,
+  MIN_INTERVAL_MINUTES,
+  drainNotes,
+  runDueJobs,
+  runJobNow,
+  seedSystemJobs,
+  tick,
+  type AgentSettings,
+} from "./agent";
 import { contextAssistant, isContextTool, recordBlock, type BlockSource } from "./context";
 import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
@@ -21,6 +35,8 @@ import { isShortcutTool, shortcutAssistant, shortcutFiles } from "./shortcuts/as
 import type { Env, Vars } from "./types";
 import { voice } from "./voice";
 import { logs } from "./logs";
+import { forgetPushToken, registerPushToken } from "./push";
+import { isWebTool, webAssistant } from "./web";
 
 const HISTORY_TURNS = 30;
 /**
@@ -43,6 +59,11 @@ type Settings = {
   time_zone: string | null;
   context_enabled: number;
   context_retain_days: number;
+  agent_enabled: number;
+  agent_autonomy: string;
+  quiet_start: number;
+  quiet_end: number;
+  agent_daily_runs: number;
 };
 
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -92,7 +113,9 @@ async function publicUser(db: D1Database, userId: string) {
 async function getSettings(db: D1Database, userId: string) {
   return (await db
     .prepare(
-      "SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone, context_enabled, context_retain_days FROM settings WHERE user_id = ?",
+      `SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone,
+              context_enabled, context_retain_days, agent_enabled, agent_autonomy, quiet_start, quiet_end, agent_daily_runs
+         FROM settings WHERE user_id = ?`,
     )
     .bind(userId)
     .first<Settings>())!;
@@ -108,6 +131,11 @@ function formatSettings(s: Settings) {
     autoApprove: !!s.auto_approve,
     contextEnabled: !!s.context_enabled,
     contextRetainDays: s.context_retain_days,
+    agentEnabled: !!s.agent_enabled,
+    agentAutonomy: s.agent_autonomy,
+    quietStart: s.quiet_start,
+    quietEnd: s.quiet_end,
+    agentDailyRuns: s.agent_daily_runs,
   };
 }
 
@@ -185,6 +213,12 @@ const updateMeSchema = z.object({
   autoApprove: z.boolean().optional(),
   contextEnabled: z.boolean().optional(),
   contextRetainDays: z.number().int().min(0).max(3650).optional(),
+  agentEnabled: z.boolean().optional(),
+  agentAutonomy: z.enum(["off", "suggest", "act"]).optional(),
+  // Minutes past local midnight.
+  quietStart: z.number().int().min(0).max(1439).optional(),
+  quietEnd: z.number().int().min(0).max(1439).optional(),
+  agentDailyRuns: z.number().int().min(0).max(500).optional(),
 });
 
 authed.patch("/me", async (c) => {
@@ -192,6 +226,7 @@ authed.patch("/me", async (c) => {
   if (!parsed.success) return c.json({ error: "Invalid settings" }, 400);
   const { name, assistantName, personality, memoryEnabled, stepGoal, fallDetection, autoApprove, contextEnabled, contextRetainDays } =
     parsed.data;
+  const { agentEnabled, agentAutonomy, quietStart, quietEnd, agentDailyRuns } = parsed.data;
   const db = c.env.DB;
   const id = c.var.userId;
 
@@ -209,6 +244,11 @@ authed.patch("/me", async (c) => {
            auto_approve   = COALESCE(?, auto_approve),
            context_enabled = COALESCE(?, context_enabled),
            context_retain_days = COALESCE(?, context_retain_days),
+           agent_enabled  = COALESCE(?, agent_enabled),
+           agent_autonomy = COALESCE(?, agent_autonomy),
+           quiet_start    = COALESCE(?, quiet_start),
+           quiet_end      = COALESCE(?, quiet_end),
+           agent_daily_runs = COALESCE(?, agent_daily_runs),
            updated_at     = ?
          WHERE user_id = ?`,
       )
@@ -221,11 +261,19 @@ authed.patch("/me", async (c) => {
         autoApprove === undefined ? null : Number(autoApprove),
         contextEnabled === undefined ? null : Number(contextEnabled),
         contextRetainDays ?? null,
+        agentEnabled === undefined ? null : Number(agentEnabled),
+        agentAutonomy ?? null,
+        quietStart ?? null,
+        quietEnd ?? null,
+        agentDailyRuns ?? null,
         Date.now(),
         id,
       ),
   );
   await db.batch(stmts);
+  // Turning background work on for the first time gives them the two jobs
+  // everyone starts with, rather than an agent that is on and does nothing.
+  if (agentEnabled) await seedSystemJobs(c.env, id);
   return c.json({ user: await publicUser(db, id) });
 });
 
@@ -348,6 +396,8 @@ async function runTurn(
   const phone = phoneAssistant(env, userId, caps, autoApprove);
   const shortcuts = shortcutAssistant(env, userId, autoApprove);
   const timeline = contextAssistant(env, userId, timeZone, !!settings.context_enabled);
+  const web = webAssistant(env, timeZone);
+  const agent = agentAssistant(env, userId, timeZone, settings as AgentSettings, voice);
 
   const turns: Turn[] = history.results.reverse().map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -371,6 +421,8 @@ async function runTurn(
     shortcuts.prompt,
     google.prompt,
     timeline.prompt,
+    web.prompt,
+    agent.prompt,
     settings.memory_enabled && memories.length
       ? `Things you remember about ${user!.name} from earlier conversations:\n${memories.map((m) => `- ${m.content}`).join("\n")}`
       : "",
@@ -393,7 +445,7 @@ async function runTurn(
         spoken.push(delta);
       }
     : undefined;
-  const tools = [...phone.tools, ...shortcuts.tools, ...google.tools, ...timeline.tools];
+  const tools = [...phone.tools, ...shortcuts.tools, ...google.tools, ...timeline.tools, ...web.tools, ...agent.tools];
   const outcome = await chatWithTools(env, {
     model: env.CHAT_MODEL,
     system,
@@ -406,7 +458,11 @@ async function runTurn(
           ? shortcuts.callTool
           : isContextTool(name)
             ? timeline.callTool
-            : google.callTool)(name, args),
+            : isWebTool(name)
+              ? web.callTool
+              : isAgentTool(name)
+                ? agent.callTool
+                : google.callTool)(name, args),
     resume,
     voice,
     onText,
@@ -798,6 +854,205 @@ authed.delete("/context/blocks", async (c) => {
   return c.json({ ok: true, forgot: meta.changes ?? 0 });
 });
 
+// ---------- The agent ----------
+//
+// Everything the user needs to see what OVOA does when they aren't looking, and
+// to stop it. The kill switch is agentEnabled on PATCH /me; these are the parts
+// that make it legible: the outbox, the standing work, and the log.
+
+const pushTokenSchema = z.object({
+  token: z.string().min(10).max(300),
+  platform: z.string().max(20).optional(),
+});
+
+authed.post("/push/token", async (c) => {
+  const parsed = pushTokenSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "A push token is required" }, 400);
+  await registerPushToken(c.env.DB, c.var.userId, parsed.data.token, parsed.data.platform);
+  return c.json({ ok: true });
+});
+
+authed.delete("/push/token", async (c) => {
+  const token = c.req.query("token");
+  if (!token) return c.json({ error: "token is required" }, 400);
+  await forgetPushToken(c.env.DB, c.var.userId, token);
+  return c.json({ ok: true });
+});
+
+/** The outbox: what the agent has said, newest first. */
+authed.get("/agent/notes", async (c) => {
+  const unreadOnly = c.req.query("unread") === "1";
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT n.id, n.kind, n.title, n.body, n.urgency, n.action_id, n.created_at, n.read_at, j.title AS job
+         FROM agent_notes n LEFT JOIN agent_jobs j ON j.id = n.job_id
+        WHERE n.user_id = ? AND n.dismissed_at IS NULL ${unreadOnly ? "AND n.read_at IS NULL" : ""}
+        ORDER BY n.created_at DESC LIMIT 50`,
+    )
+    .bind(c.var.userId)
+    .all();
+  const unread = await c.env.DB
+    .prepare("SELECT COUNT(*) AS n FROM agent_notes WHERE user_id = ? AND read_at IS NULL AND dismissed_at IS NULL")
+    .bind(c.var.userId)
+    .first<{ n: number }>();
+  return c.json({ notes: results, unread: unread?.n ?? 0 });
+});
+
+authed.post("/agent/notes/read", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { ids?: unknown } | null;
+  const ids = Array.isArray(body?.ids) ? body.ids.filter((i): i is string => typeof i === "string").slice(0, 100) : null;
+  const db = c.env.DB;
+  // No ids means "the user opened the screen": everything showing is now read.
+  await (ids?.length
+    ? db
+        .prepare(
+          `UPDATE agent_notes SET read_at = ? WHERE user_id = ? AND read_at IS NULL AND id IN (${ids.map(() => "?").join(",")})`,
+        )
+        .bind(Date.now(), c.var.userId, ...ids)
+    : db.prepare("UPDATE agent_notes SET read_at = ? WHERE user_id = ? AND read_at IS NULL").bind(Date.now(), c.var.userId)
+  ).run();
+  return c.json({ ok: true });
+});
+
+authed.delete("/agent/notes/:id", async (c) => {
+  await c.env.DB
+    .prepare("UPDATE agent_notes SET dismissed_at = ? WHERE id = ? AND user_id = ?")
+    .bind(Date.now(), c.req.param("id"), c.var.userId)
+    .run();
+  return c.json({ ok: true });
+});
+
+authed.get("/agent/jobs", async (c) => {
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT id, title, instruction, kind, at_minutes, weekday, every_minutes, next_run_at, last_run_at,
+              run_count, fail_count, status, notify, source
+         FROM agent_jobs WHERE user_id = ? AND status != 'done' ORDER BY next_run_at`,
+    )
+    .bind(c.var.userId)
+    .all<Parameters<typeof describeSchedule>[0] & { id: string; title: string }>();
+  return c.json({ jobs: results.map((j) => ({ ...j, when: describeSchedule(j) })) });
+});
+
+const jobSchema = z.object({
+  title: z.string().trim().min(1).max(80),
+  instruction: z.string().trim().min(1).max(2000),
+  kind: z.enum(["once", "daily", "weekly", "interval"]),
+  atMinutes: z.number().int().min(0).max(1439).nullish(),
+  weekday: z.number().int().min(0).max(6).nullish(),
+  everyMinutes: z.number().int().min(MIN_INTERVAL_MINUTES).max(10_080).nullish(),
+  inMinutes: z.number().int().min(1).max(525_600).nullish(),
+  notify: z.enum(["always", "ifuseful", "never"]).optional(),
+});
+
+authed.post("/agent/jobs", async (c) => {
+  const parsed = jobSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "Invalid job" }, 400);
+  const { inMinutes, ...job } = parsed.data;
+  const id = await createJob(c.env, c.var.userId, {
+    ...job,
+    ...(job.kind === "once" && { nextRunAt: Date.now() + (inMinutes ?? 60) * 60_000 }),
+  });
+  return c.json({ id }, 201);
+});
+
+authed.patch("/agent/jobs/:id", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { status?: unknown; notify?: unknown } | null;
+  const status = z.enum(["active", "paused"]).safeParse(body?.status);
+  const notify = z.enum(["always", "ifuseful", "never"]).safeParse(body?.notify);
+  if (!status.success && !notify.success) return c.json({ error: "Nothing to change" }, 400);
+  const { meta } = await c.env.DB
+    .prepare(
+      "UPDATE agent_jobs SET status = COALESCE(?, status), notify = COALESCE(?, notify), fail_count = 0 WHERE id = ? AND user_id = ?",
+    )
+    .bind(status.success ? status.data : null, notify.success ? notify.data : null, c.req.param("id"), c.var.userId)
+    .run();
+  return meta.changes ? c.json({ ok: true }) : c.json({ error: "No such job" }, 404);
+});
+
+authed.delete("/agent/jobs/:id", async (c) => {
+  await c.env.DB
+    .prepare("DELETE FROM agent_jobs WHERE id = ? AND user_id = ?")
+    .bind(c.req.param("id"), c.var.userId)
+    .run();
+  return c.json({ ok: true });
+});
+
+/** "Run it now", so a new job can be seen working instead of waited on. */
+authed.post("/agent/jobs/:id/run", async (c) => {
+  const result = await runJobNow(c.env, c.var.userId, c.req.param("id"));
+  return "error" in result ? c.json(result, 404) : c.json(result);
+});
+
+authed.get("/agent/goals", async (c) => {
+  const { results } = await c.env.DB
+    .prepare(
+      "SELECT id, text, reason, status, created_at FROM agent_goals WHERE user_id = ? AND status = 'active' ORDER BY created_at",
+    )
+    .bind(c.var.userId)
+    .all();
+  return c.json({ goals: results });
+});
+
+authed.post("/agent/goals", async (c) => {
+  const parsed = z
+    .object({ text: z.string().trim().min(1).max(300), reason: z.string().trim().max(300).optional() })
+    .safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "A goal needs text" }, 400);
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  await c.env.DB
+    .prepare("INSERT INTO agent_goals (id, user_id, text, reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(id, c.var.userId, parsed.data.text, parsed.data.reason ?? null, now, now)
+    .run();
+  return c.json({ id }, 201);
+});
+
+authed.patch("/agent/goals/:id", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { status?: unknown } | null;
+  const status = z.enum(["active", "met", "dropped"]).safeParse(body?.status);
+  if (!status.success) return c.json({ error: "Bad status" }, 400);
+  await c.env.DB
+    .prepare("UPDATE agent_goals SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+    .bind(status.data, Date.now(), c.req.param("id"), c.var.userId)
+    .run();
+  return c.json({ ok: true });
+});
+
+/**
+ * Runs a cron tick by hand, so the agent can be watched working instead of
+ * waited on for the next scheduled one. Needs the DEBUG_KEY secret.
+ */
+app.post("/debug/agent/tick", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const started = Date.now();
+  const which = c.req.query("what");
+  if (which === "maintenance") return c.json({ purgedBlocks: await maintenance(c.env), ms: Date.now() - started });
+  const jobs = await runDueJobs(c.env);
+  const pushed = await drainNotes(c.env);
+  return c.json({ jobsRun: jobs, notesPushed: pushed, ms: Date.now() - started });
+});
+
+/** The audit log. Every autonomous run, including the quiet ones. */
+authed.get("/agent/runs", async (c) => {
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT r.id, r.trigger, r.started_at, r.ms, r.engine, r.tools_used, r.outcome, r.detail, j.title AS job
+         FROM agent_runs r LEFT JOIN agent_jobs j ON j.id = r.job_id
+        WHERE r.user_id = ? ORDER BY r.started_at DESC LIMIT 60`,
+    )
+    .bind(c.var.userId)
+    .all<{ tools_used: string | null }>();
+  const budget = await c.env.DB
+    .prepare("SELECT runs FROM agent_budget WHERE user_id = ? AND day = ?")
+    .bind(c.var.userId, new Date().toISOString().slice(0, 10))
+    .first<{ runs: number }>();
+  return c.json({
+    runs: results.map((r) => ({ ...r, tools_used: r.tools_used ? JSON.parse(r.tools_used) : [] })),
+    usedToday: budget?.runs ?? 0,
+  });
+});
+
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);
@@ -805,4 +1060,14 @@ authed.route("/", voice);
 
 app.route("/", authed);
 
-export default app;
+/**
+ * Cron. Every few minutes the agent looks for work that has come due and pushes
+ * whatever it decided to say; once a night it tidies up and enforces the
+ * retention window the user set. The schedule is in wrangler.jsonc.
+ */
+export default {
+  fetch: app.fetch,
+  scheduled: (event: ScheduledController, env: Env, ctx: ExecutionContext) => {
+    ctx.waitUntil(tick(env, event.cron).catch((err) => console.error("agent tick failed", err)));
+  },
+} satisfies ExportedHandler<Env>;

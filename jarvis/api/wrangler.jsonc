@@ -4,6 +4,11 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "observability": { "enabled": true },
+  // The agent's heartbeat. Every two minutes is what makes "at 7:30" mean 7:30
+  // rather than somewhere in the next quarter hour; a tick with nothing due is
+  // one indexed read and costs nothing. 04:13 UTC is the nightly tidy-up —
+  // an odd minute on purpose, so it isn't queued behind everyone else's 04:00.
+  "triggers": { "crons": ["*/2 * * * *", "13 4 * * *"] },
   "vars": {
     // Flash for both: the Gemini key is on the free tier, which allows no Pro requests.
     "CHAT_MODEL": "gemini-3.8-flash",

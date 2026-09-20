@@ -8,7 +8,8 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "db:migrate:local": "wrangler d1 migrations apply jarvis-db --local",
-    "db:migrate": "wrangler d1 migrations apply jarvis-db --remote"
+    "db:migrate": "wrangler d1 migrations apply jarvis-db --remote",
+    "test": "node scripts/test.mjs"
   },
   "dependencies": {
     "hono": "^4.9.0",
