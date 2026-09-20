@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { Alert } from "react-native";
 import * as ute from "../../modules/ute-ble";
 import { devlog } from "./devlog";
-import { addRecording, hasClipSession } from "./recordings";
+import { addRecording, hasClipSession, type Recording } from "./recordings";
 import { storage } from "./storage";
 import { gyroLive, motionAfterBuzz, spinOf, spreadBatch, twistKind, type Sample } from "./twist";
 
@@ -192,7 +192,9 @@ function ensureStarted() {
     });
     if (event.startedByDevice) {
       noteInput("Clip button", "started recording");
-      if (pressUsed("record")) discardButtonRecording(event.sessionId);
+      // In band mode that recording IS the question, so it's kept and fetched when it stops.
+      if (pressUsed("record") && !bandMode) discardButtonRecording(event.sessionId);
+      else if (bandMode) say(`band microphone: keeping #${event.sessionId}`);
     }
   });
 
@@ -203,7 +205,19 @@ function ensureStarted() {
     noteInput("Clip button", "stopped recording");
     // Stopped on the clip itself: bring it over like one the app stopped.
     if (event.saved !== false && event.fileSize > 0) {
-      setTimeout(() => importSession(event.sessionId, event.fileSize).catch(() => {}), 1000);
+      setTimeout(() => {
+        const job = importSession(event.sessionId, event.fileSize);
+        if (!bandMode) {
+          job.catch(() => {});
+          return;
+        }
+        job.then(
+          (entry) => bandListeners.forEach((l) => l(entry, null)),
+          (err) => bandListeners.forEach((l) => l(null, err instanceof Error ? err : new Error(String(err)))),
+        );
+      }, 1000);
+    } else if (bandMode) {
+      bandListeners.forEach((l) => l(null, new Error("the clip didn't keep that recording (it may have been too short)")));
     }
   });
 
@@ -974,6 +988,28 @@ type ButtonListener = (source: "voiceButton" | "record") => boolean | void;
 const buttonListeners = new Set<ButtonListener>();
 
 /** A listener that returns true has used the press: a recording it started is thrown away. */
+/**
+ * Band mode: the clip's own microphone answers questions. A press of its button starts a recording
+ * on the clip and the next press stops it, so that recording is kept (not discarded as a summon)
+ * and handed to the listeners once it has been fetched.
+ */
+let bandMode = false;
+
+export function setBandMode(on: boolean) {
+  bandMode = on;
+}
+
+type BandListener = (entry: Recording | null, err: Error | null) => void;
+const bandListeners = new Set<BandListener>();
+
+/** Called with the clip's finished recording, ready to transcribe. */
+export function onBandRecording(listener: BandListener) {
+  bandListeners.add(listener);
+  return () => {
+    bandListeners.delete(listener);
+  };
+}
+
 export function onClipButton(listener: ButtonListener) {
   buttonListeners.add(listener);
   return () => {

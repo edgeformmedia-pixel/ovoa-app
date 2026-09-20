@@ -7,7 +7,7 @@ import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type App
 import { devlog } from "./devlog";
 import * as clip from "./clip";
 import { showIsland } from "./island";
-import { deleteRecording } from "./recordings";
+import { deleteRecording, type Recording } from "./recordings";
 import { micSourcePref, type MicSource } from "./storage";
 import {
   alwaysListenPref,
@@ -233,44 +233,66 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     micSourcePref.set(source).catch(() => {});
   }, []);
 
-  const bandFinish = useCallback(async () => {
-    if (bandTimer.current) clearTimeout(bandTimer.current);
-    bandTimer.current = null;
-    bandRecording.current = false;
-    setBandPhase("thinking");
-    try {
-      const entry = await clip.stopRecording();
-      if (!entry.wavUri) throw new Error(entry.decodeError ?? "the clip's recording couldn't be decoded");
-      // transcribe() deletes the audio it sends, and a question isn't worth keeping,
-      // so the clip's recording doesn't stay in the Recordings list either.
-      const text = await transcribe(token, entry.wavUri, "audio/wav");
-      deleteRecording(entry.id);
-      clip.deleteFromClip(entry.sessionId!).catch(() => {});
-      if (!text) {
-        devlog("voice", "band mic: nothing was said");
+  /** The clip's finished recording: transcribe it and answer. */
+  const bandAnswer = useCallback(
+    async (entry: Recording) => {
+      setBandPhase("thinking");
+      try {
+        if (!entry.wavUri) throw new Error(entry.decodeError ?? "the clip's recording couldn't be decoded");
+        // transcribe() deletes the audio it sends, and a question isn't worth keeping,
+        // so the clip's recording doesn't stay in the Recordings list either.
+        const text = await transcribe(token, entry.wavUri, "audio/wav");
+        deleteRecording(entry.id);
+        if (entry.sessionId) clip.deleteFromClip(entry.sessionId).catch(() => {});
+        if (!text) {
+          devlog("voice", "band mic: nothing was said");
+          return;
+        }
+        const speaker = (bandSpeaker.current ??= createSpeaker(token));
+        const reply = speaker.open({ keepMic: false });
+        let streamed = false;
+        const full = await ask(text, true, (sentence) => {
+          if (!streamed) setBandPhase("speaking");
+          streamed = true;
+          reply.say(sentence);
+        });
+        // An older server sends no sentences as it writes: read the whole reply.
+        if (full && !streamed) {
+          setBandPhase("speaking");
+          reply.say(full);
+        }
+        reply.end();
+        await reply.done.catch(() => {});
+      } catch (err) {
+        devlog("err", "band mic: the turn failed", err instanceof Error ? err.message : String(err));
+      } finally {
+        setBandPhase(null);
+      }
+    },
+    [token],
+  );
+
+  // Band mode on or off in the clip, and the finished recordings it hands over.
+  useEffect(() => {
+    const on = micSource === "band" && clipPaired;
+    clip.setBandMode(on);
+    if (!on) return;
+    const off = clip.onBandRecording((entry, err) => {
+      if (bandTimer.current) clearTimeout(bandTimer.current);
+      bandTimer.current = null;
+      bandRecording.current = false;
+      if (err || !entry) {
+        setBandPhase(null);
+        devlog("err", "band mic: no recording came over", err?.message ?? "nothing arrived");
         return;
       }
-      const speaker = (bandSpeaker.current ??= createSpeaker(token));
-      const reply = speaker.open({ keepMic: false });
-      let streamed = false;
-      const full = await ask(text, true, (sentence) => {
-        if (!streamed) setBandPhase("speaking");
-        streamed = true;
-        reply.say(sentence);
-      });
-      // An older server sends no sentences as it writes: read the whole reply.
-      if (full && !streamed) {
-        setBandPhase("speaking");
-        reply.say(full);
-      }
-      reply.end();
-      await reply.done.catch(() => {});
-    } catch (err) {
-      devlog("err", "band mic: the turn failed", err instanceof Error ? err.message : String(err));
-    } finally {
-      setBandPhase(null);
-    }
-  }, [token]);
+      void bandAnswer(entry);
+    });
+    return () => {
+      clip.setBandMode(false);
+      off();
+    };
+  }, [micSource, clipPaired, bandAnswer]);
 
   const bandClick = useCallback(() => {
     if (bandPhaseRef.current === "thinking" || bandPhaseRef.current === "speaking") {
@@ -279,26 +301,41 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       devlog("voice", "band mic: cut the reply short");
       return;
     }
+    // The press has already started (or stopped) the recording on the clip itself; the finished
+    // file arrives through onBandRecording. Nothing is asked of the clip here.
     if (bandRecording.current) {
-      devlog("voice", "band mic: stopping, and asking");
-      void bandFinish();
+      bandRecording.current = false;
+      setBandPhase("thinking");
+      devlog("voice", "band mic: stopped; waiting for the recording");
+      // Whether a second press stops the clip's recording or starts another one is untested, so if
+      // the clip is still recording a moment later, the app stops it.
+      if (bandTimer.current) clearTimeout(bandTimer.current);
+      bandTimer.current = setTimeout(() => {
+        if (!clip.getClipState().recording) return;
+        devlog("voice", "band mic: the clip kept recording; stopping it");
+        clip.stopRecording().catch((err) => {
+          setBandPhase(null);
+          devlog("err", "band mic: couldn't stop the clip", err instanceof Error ? err.message : String(err));
+        });
+      }, 2000);
       return;
     }
-    devlog("voice", "band mic: recording on the clip");
     bandRecording.current = true;
     setBandPhase("listening");
-    clip
-      .startRecording()
-      .then(() => clip.buzz(1))
-      .catch((err) => {
-        bandRecording.current = false;
-        setBandPhase(null);
-        devlog("err", "band mic: the clip wouldn't record", err instanceof Error ? err.message : String(err));
-      });
+    devlog("voice", "band mic: the clip is recording");
+    clip.buzz(1);
+    if (bandTimer.current) clearTimeout(bandTimer.current);
     bandTimer.current = setTimeout(() => {
-      if (bandRecording.current) void bandFinish();
+      if (!bandRecording.current) return;
+      devlog("voice", "band mic: stopping after a minute");
+      bandRecording.current = false;
+      setBandPhase("thinking");
+      clip.stopRecording().catch((err) => {
+        setBandPhase(null);
+        devlog("err", "band mic: couldn't stop the clip", err instanceof Error ? err.message : String(err));
+      });
     }, BAND_MAX_MS);
-  }, [bandFinish]);
+  }, []);
 
   const onClick = useCallback(
     (source: string) => {
