@@ -69,6 +69,10 @@ const RUN_TIMEOUT_MS = 55_000;
 const RECENT_NOTES = 6;
 /** Long-term facts about the user the turn is shown. */
 const MEMORIES_SHOWN = 60;
+/** Recent conversation the turn is shown, newest last. */
+const RECENT_MESSAGES = 12;
+/** Each of those, trimmed: the gist is what matters, not the whole answer. */
+const MESSAGE_CHARS = 400;
 
 /** Outbound communication and deletion. Never available to an autonomous turn. */
 const FORBIDDEN_ALONE = new Set(["gmail_send", "gmail_trash", "drive_trash", "calendar_delete_event"]);
@@ -281,7 +285,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
   const autonomy = (settings.agent_autonomy as Autonomy) ?? "suggest";
   const db = env.DB;
 
-  const [user, goals, recent, memories, google] = await Promise.all([
+  const [user, goals, recent, memories, said, google] = await Promise.all([
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
     db
       .prepare("SELECT text, reason FROM agent_goals WHERE user_id = ? AND status = 'active' ORDER BY created_at LIMIT 20")
@@ -301,6 +305,13 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
           .bind(userId, MEMORIES_SHOWN)
           .all<{ content: string }>()
       : { results: [] as { content: string }[] },
+    // The last few things said in conversation. Not the whole history — this
+    // is for knowing what is on their mind right now, so that a flight they
+    // asked about yesterday is recognisable as the one that just moved.
+    db
+      .prepare("SELECT role, content, created_at FROM messages WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+      .bind(userId, RECENT_MESSAGES)
+      .all<{ role: string; content: string; created_at: number }>(),
     // Autonomous turns never auto-approve: a change the user has not seen waits
     // for them, at every autonomy level. "act" widens what it may propose, not
     // what it may do behind their back.
@@ -418,6 +429,16 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
 
   const goalLines = goals.results.map((g) => `- ${g.text}${g.reason ? ` (because ${g.reason})` : ""}`);
   const known = memories.results.map((m) => `- ${m.content}`);
+  // Oldest first, so it reads as a conversation rather than backwards.
+  const conversation = said.results
+    .slice()
+    .reverse()
+    .map(
+      (m) =>
+        `${m.role === "assistant" ? settings.assistant_name : (user?.name ?? "They")}: ${
+          m.content.length > MESSAGE_CHARS ? `${m.content.slice(0, MESSAGE_CHARS)}…` : m.content
+        }`,
+    );
   const recentLines = recent.results.map(
     (n) => `- ${new Date(n.created_at).toLocaleString("en-US", { timeZone, dateStyle: "medium", timeStyle: "short" })}: ${n.title}`,
   );
@@ -441,6 +462,9 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     "You also cannot ask them a question and wait: there is nobody there. If you genuinely need an answer, say so with agent_say and kind 'question', and stop.",
     "",
     known.length ? `What you know about ${user?.name ?? "them"} from talking with them:\n${known.join("\n")}` : "",
+    conversation.length
+      ? `The last things said between you, for what's on their mind. This is over, nobody is waiting on a reply, and you should not answer any of it now:\n${conversation.join("\n")}`
+      : "",
     goalLines.length ? `What they are trying to do, standing:\n${goalLines.join("\n")}` : "",
     recentLines.length ? `What you have already told them recently — do not repeat these:\n${recentLines.join("\n")}` : "",
     "",
@@ -1141,14 +1165,27 @@ export function agentAssistant(
     }
 
     if (name === "agent_recent_activity") {
+      // The note's own words come back with the run that wrote it, so "what was
+      // that about the landlord?" can be answered out loud without the user
+      // having to go and find the notification again.
       const { results } = await db
         .prepare(
-          `SELECT r.started_at, r.trigger, r.outcome, r.detail, j.title
-             FROM agent_runs r LEFT JOIN agent_jobs j ON j.id = r.job_id
+          `SELECT r.started_at, r.trigger, r.outcome, r.detail, j.title, n.title AS said, n.body
+             FROM agent_runs r
+             LEFT JOIN agent_jobs j ON j.id = r.job_id
+             LEFT JOIN agent_notes n ON n.run_id = r.id
             WHERE r.user_id = ? ORDER BY r.started_at DESC LIMIT 15`,
         )
         .bind(userId)
-        .all<{ started_at: number; trigger: string; outcome: string; detail: string | null; title: string | null }>();
+        .all<{
+          started_at: number;
+          trigger: string;
+          outcome: string;
+          detail: string | null;
+          title: string | null;
+          said: string | null;
+          body: string | null;
+        }>();
       if (!results.length) return { runs: 0, note: "You haven't run on your own yet." };
       return {
         runs: results.length,
@@ -1156,7 +1193,7 @@ export function agentAssistant(
           at: new Date(r.started_at).toLocaleString("en-US", { timeZone, dateStyle: "medium", timeStyle: "short" }),
           job: r.title,
           did: r.outcome === "spoke" ? "told them" : r.outcome === "quiet" ? "nothing to say" : r.outcome,
-          detail: r.detail,
+          ...(r.said ? { told: r.said, inFull: r.body } : { detail: r.detail }),
         })),
       };
     }
