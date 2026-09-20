@@ -15,6 +15,7 @@ const KIND_COLORS: Record<LogKind, string> = {
   probe: colors.warning,
   push: colors.accent,
   agent: colors.warning,
+  perf: colors.success,
 };
 
 /** Live log of app ↔ API traffic and the voice engine, for debugging. */

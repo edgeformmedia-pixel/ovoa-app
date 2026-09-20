@@ -1,5 +1,6 @@
-Last task was notes, not code: docs/ideas.md now holds a leaving-the-house checklist —
-car keys on the bracelet, wallet, medication reminder — with the open questions for each
-(how to detect the keys/wallet are behind, whether meds buzz the band or speak on the phone).
-Nothing implemented; meds would ride the existing due/cron path (migration 0012).
-Still BLOCKED on the user: `npx wrangler login` and `eas init` in jarvis/app.
+Added Apple Health to the Activity tab (heart rate + 12 h graph, resting, sleep, energy,
+exercise, HRV, stand, today's workouts) via components/HealthCards.tsx + lib/health.ts.
+Added per-turn timing (lib/turnTimer.ts, Dev tools -> Turn timings, perf log kind), server
+per-tool and per-prompt-section logging, a buzz + spoken filler + spoken failures on band
+turns, and a more conversational voice prompt. API deployed. Measurements and the next
+optimizations are in docs/voice-latency.md. Still BLOCKED on: `eas init` in jarvis/app.

@@ -31,6 +31,7 @@ import {
   type TwistProfiles,
 } from "../lib/twist";
 import { twistProfilePref } from "../lib/voice";
+import { breakdown, clearTurns, latencyTo, summary, useTurns, type TurnRecord } from "../lib/turnTimer";
 import { colors } from "../lib/theme";
 
 // Live readouts for every sensor and permission the app touches. Reachable from
@@ -200,6 +201,8 @@ export default function DevTools() {
 
         <ClipInputs state={clipState} />
 
+        <TurnTimings />
+
         <Text style={styles.section}>Phone</Text>
 
         <View style={styles.toggleRow}>
@@ -305,6 +308,67 @@ export default function DevTools() {
 }
 
 const yesNo = (value: boolean | null | undefined) => (value === undefined || value === null ? "—" : value ? "yes" : "no");
+
+/**
+ * Where the last few spoken turns spent their seconds: the wait the user felt,
+ * then each leg of it. "answer" is from the moment they stopped talking to the
+ * first word out of the speaker — the only number that decides whether it feels fast.
+ */
+function TurnTimings() {
+  const turns = useTurns();
+  const recent = [...turns].reverse();
+  const answered = turns
+    .map((t) => latencyTo(t, "first word out loud"))
+    .filter((ms): ms is number => ms !== null);
+  const median = answered.length ? [...answered].sort((a, b) => a - b)[Math.floor(answered.length / 2)] : null;
+  return (
+    <>
+      <Text style={styles.section}>Turn timings</Text>
+      <Card title="Spoken turns" available={true}>
+        <Row
+          label="median answer"
+          value={median !== null ? `${(median / 1000).toFixed(1)} s` : "—"}
+          good={median !== null && median < 5000}
+        />
+        <Row label="turns recorded" value={String(turns.length)} />
+        {recent.length === 0 && <Text style={styles.hint}>Ask something through the clip and it shows up here.</Text>}
+        {recent.map((turn) => (
+          <Turn key={turn.id} turn={turn} />
+        ))}
+        {turns.length > 0 && (
+          <Pressable style={styles.button} onPress={clearTurns}>
+            <Text style={styles.buttonText}>Clear</Text>
+          </Pressable>
+        )}
+      </Card>
+    </>
+  );
+}
+
+function Turn({ turn }: { turn: TurnRecord }) {
+  const answer = latencyTo(turn, "first word out loud");
+  return (
+    <View style={styles.turn}>
+      <Text style={[styles.turnHead, turn.error ? { color: colors.danger } : null]}>
+        {new Date(turn.startedAt).toLocaleTimeString()} · {summary(turn)}
+        {answer !== null ? ` · answer ${(answer / 1000).toFixed(1)} s` : ""}
+      </Text>
+      <Text style={styles.hint} selectable>
+        {breakdown(turn) || "nothing recorded"}
+      </Text>
+      {!!turn.heard && (
+        <Text style={styles.hint} selectable numberOfLines={2}>
+          heard "{turn.heard}"
+        </Text>
+      )}
+      {!!turn.server && (
+        <Text style={styles.hint} selectable numberOfLines={3}>
+          server {turn.server}
+        </Text>
+      )}
+    </View>
+  );
+}
 
 /** Everything the ES100 reports: live values, its own events, and the features its firmware claims. */
 function ClipInputs({ state }: { state: clip.ClipState }) {
@@ -687,6 +751,8 @@ const styles = StyleSheet.create({
   body: { padding: 20, gap: 10, paddingBottom: 48 },
   title: { color: colors.text, fontSize: 26, fontWeight: "600" },
   section: { color: colors.text, fontSize: 17, fontWeight: "600", marginTop: 16 },
+  turn: { paddingVertical: 6, borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth, gap: 2 },
+  turnHead: { color: colors.text, fontSize: 13, fontWeight: "600" },
   dim: { color: colors.textDim, fontSize: 13 },
   hint: { color: colors.textDim, fontSize: 12, marginTop: 6, lineHeight: 17 },
   error: { color: colors.danger, fontSize: 12, marginTop: 6 },

@@ -2,6 +2,7 @@ import { useFocusEffect } from "expo-router";
 import { Pedometer } from "expo-sensors";
 import { useCallback, useEffect, useState } from "react";
 import { Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { HealthCards } from "../../components/HealthCards";
 import { api, type StepDay } from "../../lib/api";
 import { useSession } from "../../lib/auth";
 import { kcalForSteps, kmForSteps, lastSevenDays, stepPermission } from "../../lib/steps";
@@ -57,21 +58,26 @@ export default function Activity() {
     } catch {}
   };
 
+  // No step counter (or no permission) doesn't mean no Activity tab: heart rate,
+  // sleep and workouts come from Apple Health and stand on their own.
   if (status === "denied" || status === "unavailable") {
     return (
-      <View style={styles.center}>
-        <Text style={styles.title}>Step tracking is off</Text>
-        <Text style={styles.dim}>
-          {status === "denied"
-            ? "Allow Motion & Fitness access in the Settings app to count your steps."
-            : "This device doesn't have a step counter."}
-        </Text>
-        {status === "denied" && (
-          <Pressable style={styles.button} onPress={() => Linking.openSettings()}>
-            <Text style={styles.buttonText}>Open Settings</Text>
-          </Pressable>
-        )}
-      </View>
+      <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+        <View style={[styles.card, { alignItems: "center", gap: 10 }]}>
+          <Text style={styles.title}>Step tracking is off</Text>
+          <Text style={styles.dim}>
+            {status === "denied"
+              ? "Allow Motion & Fitness access in the Settings app to count your steps."
+              : "This device doesn't have a step counter."}
+          </Text>
+          {status === "denied" && (
+            <Pressable style={styles.button} onPress={() => Linking.openSettings()}>
+              <Text style={styles.buttonText}>Open Settings</Text>
+            </Pressable>
+          )}
+        </View>
+        <HealthCards />
+      </ScrollView>
     );
   }
 
@@ -129,6 +135,8 @@ export default function Activity() {
           ))}
         </View>
       </View>
+
+      <HealthCards />
 
       <Text style={styles.footnote}>Distance and calories are estimates based on average stride.</Text>
     </ScrollView>

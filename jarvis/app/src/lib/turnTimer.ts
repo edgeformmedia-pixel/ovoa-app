@@ -1,0 +1,153 @@
+import { useSyncExternalStore } from "react";
+import { devlog } from "./devlog";
+
+// Where a turn's time goes.
+//
+// A spoken turn passes through the clip (record, fetch over Bluetooth, decode),
+// the phone (upload), and the server (transcribe, think, voice the reply), and
+// until this file existed each of those logged its own line with no way to add
+// them up. Every stage is marked here instead, and the turn ends with one line:
+//
+//   perf  band turn 8.4 s after you stopped speaking
+//         fetch 2.7 s · transcribe 0.9 s · think 3.9 s · voice 0.5 s
+//
+// The same records feed Dev tools → Turn timings, so a slow turn can be taken
+// apart on the phone, and remoteLog.ts uploads the line for reading afterwards.
+
+/** A point in a turn. `since` is the time from the previous mark. */
+export type TurnMark = { name: string; at: number; since: number; detail?: string };
+
+export type TurnRecord = {
+  id: number;
+  /** "band": the clip's microphone. "phone": the phone's own. */
+  source: "band" | "phone";
+  startedAt: number;
+  marks: TurnMark[];
+  /** What the user said, once it's known. */
+  heard?: string;
+  /** What the server reported about the model (engine, ms, prompt size). */
+  server?: string;
+  error?: string;
+  endedAt?: number;
+};
+
+/** The mark a turn's latency is measured from: everything before it is the user talking. */
+const ZERO_MARK = "stopped talking";
+
+const MAX_TURNS = 12;
+
+let turns: TurnRecord[] = [];
+let current: TurnRecord | null = null;
+let nextId = 1;
+const listeners = new Set<() => void>();
+
+const changed = () => listeners.forEach((l) => l());
+
+/** Starts a turn, ending any turn still open (a click during a reply). */
+export function startTurn(source: TurnRecord["source"]): TurnRecord {
+  if (current) endTurn("replaced by a new turn");
+  current = { id: nextId++, source, startedAt: Date.now(), marks: [] };
+  turns = [...turns.slice(-(MAX_TURNS - 1)), current];
+  changed();
+  return current;
+}
+
+export const currentTurn = () => current;
+
+/** Notes that the turn reached a stage. Ignored when no turn is open. */
+export function mark(name: string, detail?: string) {
+  if (!current) return;
+  const at = Date.now();
+  const previous = current.marks.at(-1);
+  current.marks.push({ name, at, since: at - (previous?.at ?? current.startedAt), detail });
+  changed();
+}
+
+/** The user has stopped talking: the clock the user actually feels starts here. */
+export const markStopTalking = () => mark(ZERO_MARK);
+
+export function noteHeard(text: string) {
+  if (!current) return;
+  current.heard = text;
+  changed();
+}
+
+export function noteServer(meta: unknown) {
+  if (!current) return;
+  current.server = typeof meta === "string" ? meta : safe(meta);
+  changed();
+}
+
+export function failTurn(message: string) {
+  if (!current) return;
+  current.error = message;
+  endTurn();
+}
+
+/** Closes the turn and logs its breakdown. */
+export function endTurn(reason?: string) {
+  const turn = current;
+  if (!turn) return;
+  current = null;
+  turn.endedAt = Date.now();
+  if (reason && !turn.error) turn.error = reason;
+  devlog(
+    "perf",
+    summary(turn),
+    [breakdown(turn), turn.server && `server ${turn.server}`, turn.heard && `heard "${turn.heard}"`]
+      .filter(Boolean)
+      .join("\n    "),
+  );
+  changed();
+}
+
+/** "band turn 8.4 s after you stopped speaking" — the number the user feels. */
+export function summary(turn: TurnRecord) {
+  const zero = turn.marks.find((m) => m.name === ZERO_MARK)?.at;
+  const end = turn.endedAt ?? Date.now();
+  const waited = zero ? end - zero : end - turn.startedAt;
+  const what = turn.error ? `failed after ${seconds(waited)}` : `${seconds(waited)} after you stopped speaking`;
+  return `${turn.source} turn ${what}${turn.error ? ` — ${turn.error}` : ""}`;
+}
+
+/** Every stage and what it cost, longest first in the reader's mind: order is kept. */
+export function breakdown(turn: TurnRecord) {
+  return turn.marks.map((m) => `${m.name} ${seconds(m.since)}${m.detail ? ` (${m.detail})` : ""}`).join(" · ");
+}
+
+/** Time from the moment the user stopped talking to a given mark, if both happened. */
+export function latencyTo(turn: TurnRecord, markName: string) {
+  const zero = turn.marks.find((m) => m.name === ZERO_MARK)?.at;
+  const hit = turn.marks.find((m) => m.name === markName)?.at;
+  return zero && hit ? hit - zero : null;
+}
+
+export const recentTurns = () => turns;
+
+export function useTurns() {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => turns,
+  );
+}
+
+export function clearTurns() {
+  turns = [];
+  current = null;
+  changed();
+}
+
+function seconds(ms: number) {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`;
+}
+
+function safe(value: unknown) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}

@@ -4,6 +4,7 @@ import * as ute from "../../modules/ute-ble";
 import { devlog } from "./devlog";
 import { addRecording, hasClipSession, type Recording } from "./recordings";
 import { storage } from "./storage";
+import { mark as markTurn } from "./turnTimer";
 import { gyroLive, motionAfterBuzz, spinOf, spreadBatch, twistKind, type Sample } from "./twist";
 
 // The ES100 clip, shared by the Record tab and the ES100 debug screen: one
@@ -1276,6 +1277,13 @@ async function downloadOne(sessionId: number, size: number) {
     }
     const marks = transferMarks.get(sessionId);
     transferMarks.delete(sessionId);
+    // The open turn, if this is a band question, gets the Bluetooth leg on its bill.
+    markTurn(
+      "fetch from the clip",
+      marks
+        ? `${Math.round(result.bytes / 1024)} KB, ${Math.round((result.bytes / Math.max(1, marks.last - marks.first)) * 1000)} B/s, ${Date.now() - marks.last} ms decode`
+        : `${Math.round(result.bytes / 1024)} KB`,
+    );
     if (marks) {
       // Everything after the last byte arrived is decode + disk, not Bluetooth.
       say(

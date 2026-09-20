@@ -9,6 +9,7 @@ import * as clip from "./clip";
 import { showIsland } from "./island";
 import { deleteRecording, type Recording } from "./recordings";
 import { micSourcePref, type MicSource } from "./storage";
+import { endTurn, failTurn, mark as markTurn, markStopTalking, noteServer, startTurn } from "./turnTimer";
 import {
   alwaysListenPref,
   createSpeaker,
@@ -163,9 +164,21 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       // decides whether this was meant for the assistant.
       const ambient = ambientRef.current && !addressed;
       const caps = await phoneCaps();
-      let res: ChatResponse = onSentence
-        ? await api.sendStreamed(token, text, caps, ambient, onSentence, signal)
+      // One mark for the first sentence, however many round trips it takes to get there.
+      let firstSentence = false;
+      const timed = onSentence
+        ? (sentence: string) => {
+            if (!firstSentence) {
+              firstSentence = true;
+              markTurn("model answers");
+            }
+            onSentence(sentence);
+          }
+        : undefined;
+      let res: ChatResponse = timed
+        ? await api.sendStreamed(token, text, caps, ambient, timed, signal)
         : await api.send(token, text, caps, true, ambient);
+      if (res.meta) noteServer(res.meta);
       if (res.ignored) {
         devlog("voice", "not meant for the assistant; staying quiet", text);
         return null;
@@ -176,11 +189,15 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         parked.push(...res.pendingActions);
         setStatus(lookupStatus(calls.map((c) => c.name)));
         const results: Record<string, unknown> = {};
+        const lookupStarted = Date.now();
         for (const call of calls) results[call.id] = await runPhoneLookup(call);
+        markTurn("phone lookup", calls.map((c) => c.name).join(", "));
+        devlog("perf", `phone lookup took ${Date.now() - lookupStarted} ms`, calls.map((c) => c.name).join(", "));
         setStatus(null);
-        res = onSentence
-          ? await api.resumeStreamed(token, turnId, results, onSentence, signal)
+        res = timed
+          ? await api.resumeStreamed(token, turnId, results, timed, signal)
           : await api.resume(token, turnId, results);
+        if (res.meta) noteServer(res.meta);
       }
       parked.push(...res.pendingActions);
       return res.messages.find((m) => m.role === "assistant")?.content ?? null;
@@ -238,6 +255,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const bandAnswer = useCallback(
     async (entry: Recording) => {
       setBandPhase("thinking");
+      const speaker = (bandSpeaker.current ??= createSpeaker(token));
+      let spoke = false;
+      let filler: ReturnType<typeof setTimeout> | null = null;
       try {
         if (!entry.wavUri) throw new Error(entry.decodeError ?? "the clip's recording couldn't be decoded");
         // transcribe() deletes the audio it sends, and a question isn't worth keeping,
@@ -247,25 +267,51 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         if (entry.sessionId) clip.deleteFromClip(entry.sessionId).catch(() => {});
         if (!text) {
           devlog("voice", "band mic: nothing was said");
+          clip.buzz(2);
+          endTurn("nothing was said");
           return;
         }
-        const speaker = (bandSpeaker.current ??= createSpeaker(token));
         const reply = speaker.open({ keepMic: false });
         let streamed = false;
+        // Thinking takes a few seconds on a good turn and much longer on a bad one, with
+        // nothing to hear either way. A short word goes out first so the silence isn't total;
+        // it queues ahead of the answer, which plays straight after it.
+        filler = setTimeout(() => {
+          if (streamed) return;
+          setBandPhase("speaking");
+          reply.say(FILLERS[Math.floor(Math.random() * FILLERS.length)]);
+          devlog("voice", "band mic: saying a word while it thinks");
+        }, FILLER_AFTER_MS);
         const full = await ask(text, true, (sentence) => {
-          if (!streamed) setBandPhase("speaking");
+          if (!streamed) {
+            setBandPhase("speaking");
+            if (filler) clearTimeout(filler);
+            filler = null;
+          }
           streamed = true;
+          spoke = true;
           reply.say(sentence);
         });
+        if (filler) clearTimeout(filler);
+        filler = null;
         // An older server sends no sentences as it writes: read the whole reply.
         if (full && !streamed) {
           setBandPhase("speaking");
+          spoke = true;
           reply.say(full);
         }
         reply.end();
         await reply.done.catch(() => {});
+        endTurn();
       } catch (err) {
-        devlog("err", "band mic: the turn failed", err instanceof Error ? err.message : String(err));
+        if (filler) clearTimeout(filler);
+        const message = err instanceof Error ? err.message : String(err);
+        devlog("err", "band mic: the turn failed", message);
+        failTurn(message);
+        // Failing silently is the worst of it: from the wrist there's no screen to check,
+        // so the same speaker that would have read the answer says what went wrong.
+        clip.buzz(2);
+        if (!spoke) await speaker.speak(excuse(message)).catch(() => {});
       } finally {
         setBandPhase(null);
       }
@@ -285,6 +331,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       if (err || !entry) {
         setBandPhase(null);
         devlog("err", "band mic: no recording came over", err?.message ?? "nothing arrived");
+        failTurn(err?.message ?? "no recording came over");
+        clip.buzz(2);
         return;
       }
       void bandAnswer(entry);
@@ -300,6 +348,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       bandSpeaker.current?.stop();
       setBandPhase(null);
       devlog("voice", "band mic: cut the reply short");
+      endTurn("cut short by a click");
       return;
     }
     // The press has already started (or stopped) the recording on the clip itself; the finished
@@ -307,7 +356,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     if (bandRecording.current) {
       bandRecording.current = false;
       setBandPhase("thinking");
+      // From here on the user is waiting: this is the moment everything after it is measured from.
+      markStopTalking();
       devlog("voice", "band mic: stopped; waiting for the recording");
+      // One buzz: heard you, working on it. Without it the wrist gives nothing back for the
+      // seconds it takes to fetch and think. It rides the same Bluetooth link the recording is
+      // about to come over, so the fetch mark in the turn's timing is worth watching: if the
+      // transfer rate drops after this, move the buzz to after the download instead.
+      clip.buzz(1);
       // Whether a second press stops the clip's recording or starts another one is untested, so if
       // the clip is still recording a moment later, the app stops it.
       if (bandTimer.current) clearTimeout(bandTimer.current);
@@ -323,6 +379,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     }
     bandRecording.current = true;
     setBandPhase("listening");
+    startTurn("band");
+    markTurn("you talk into the clip");
     devlog("voice", "band mic: the clip is recording");
     clip.buzz(1);
     if (bandTimer.current) clearTimeout(bandTimer.current);
@@ -331,6 +389,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       devlog("voice", "band mic: stopping after a minute");
       bandRecording.current = false;
       setBandPhase("thinking");
+      markStopTalking();
       clip.stopRecording().catch((err) => {
         setBandPhase(null);
         devlog("err", "band mic: couldn't stop the clip", err instanceof Error ? err.message : String(err));
@@ -515,6 +574,24 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
 /** A band turn stops itself after this long, in case the second click never comes. */
 const BAND_MAX_MS = 60_000;
+
+/** Thinking for longer than this on a band turn earns a word, so the wrist isn't silent. */
+const FILLER_AFTER_MS = 2200;
+
+/** Said while it thinks. Short on purpose: it delays the answer by however long it takes to say. */
+const FILLERS = ["One sec.", "Let me check.", "Okay, one moment.", "On it."];
+
+/** A failure, said out loud, in the words a person would use. */
+function excuse(message: string) {
+  if (/network|connection|offline|fetch failed|timed out|no answer from the server/i.test(message)) {
+    return "Sorry, I lost the connection there. Try me again in a second.";
+  }
+  if (/quota|429|503|high demand|overloaded|unavailable/i.test(message)) {
+    return "Sorry, my brain is busy right now. Give it a moment and ask again.";
+  }
+  if (/decode|recording/i.test(message)) return "Sorry, that recording didn't come through. Try once more.";
+  return "Sorry, something went wrong on my end.";
+}
 
 /** After a summon, how long the microphone stays open with nothing said. */
 const SUMMON_IDLE_MS = 12_000;

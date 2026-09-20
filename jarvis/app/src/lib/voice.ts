@@ -17,6 +17,7 @@ import { openEar, stopStream, useLiveStream } from "./liveListen";
 import { storage } from "./storage";
 import { onlyStop, saidOverReply, TurnGate, type GateResult, type Turn } from "./turnGate";
 import { readProfiles, type TwistProfile, type TwistProfiles } from "./twist";
+import { endTurn, failTurn, mark as markTurn, markStopTalking, noteHeard, startTurn } from "./turnTimer";
 
 // Talking with the assistant: record until the user stops speaking, transcribe
 // on the server (Deepgram), then read the reply aloud a sentence or two at a time.
@@ -149,6 +150,8 @@ export async function transcribe(
     );
     const { text } = (await res.json()) as { text: string };
     devlog("voice", text ? `heard: "${text}"` : "heard nothing (noise)");
+    markTurn("transcribe", `${Math.round(audio.byteLength / 1024)} KB uploaded`);
+    if (text) noteHeard(text);
     return text;
   } finally {
     if (!keep) {
@@ -192,7 +195,7 @@ async function fetchClip(token: string, text: string, voice: VoiceId) {
 }
 
 /** Plays one file to the end, or until `stop` is called. */
-function playFile(file: File, onStop: (stop: () => void) => void) {
+function playFile(file: File, onStop: (stop: () => void) => void, onStart?: () => void) {
   return new Promise<void>((resolve) => {
     // keepAudioSessionActive: otherwise expo-audio turns the session off when the clip ends,
     // which stopped the live mic stream after every reply ("no audio from the mic").
@@ -221,6 +224,7 @@ function playFile(file: File, onStop: (stop: () => void) => void) {
       if (s.playing && !started) {
         started = true;
         devlog("voice", `playing reply audio (${s.duration.toFixed(1)}s)`);
+        onStart?.();
       }
       // Some players never send didJustFinish; reaching the end counts too.
       if (s.didJustFinish || (started && !s.playing && s.duration > 0 && s.currentTime >= s.duration - 0.1)) finish();
@@ -319,6 +323,8 @@ export function createSpeaker(token: string) {
     };
 
     let played = 0;
+    // The turn's timer wants the moment the user first hears something, not every clip.
+    let spoken = false;
     const done = (async () => {
       await ready;
       for (let i = 0; mine === generation; i++) {
@@ -334,7 +340,16 @@ export function createSpeaker(token: string) {
           break;
         }
         played = i + 1; // playFile deletes it
-        if (file) await playFile(file, (s) => (stopCurrent = s));
+        if (file)
+          await playFile(
+            file,
+            (s) => (stopCurrent = s),
+            () => {
+              if (spoken) return;
+              spoken = true;
+              markTurn("first word out loud");
+            },
+          );
         fetchUpTo(i + 1 + FETCH_AHEAD);
       }
       // Clean up clips voiced ahead that won't be played.
@@ -618,6 +633,24 @@ export function useConversation(
      * has been spoken (or cut off); false if there was nothing to say.
      */
     const answerAloud = async (
+      text: string,
+      addressed: boolean,
+      options: { keepMic: boolean; onSpeaking?: (soFar: string) => void },
+    ) => {
+      // Everything from here on is the user waiting, the same as a band turn (turnTimer.ts).
+      startTurn("phone");
+      markStopTalking();
+      try {
+        return await answerOneTurn(text, addressed, options);
+      } catch (err) {
+        failTurn(err instanceof Error ? err.message : String(err));
+        throw err;
+      } finally {
+        endTurn();
+      }
+    };
+
+    const answerOneTurn = async (
       text: string,
       addressed: boolean,
       { keepMic, onSpeaking }: { keepMic: boolean; onSpeaking?: (soFar: string) => void },

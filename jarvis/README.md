@@ -21,6 +21,13 @@ Live API: https://jarvis-api.edgeformmedia.workers.dev
   estimates, a goal streak, a 7-day chart, and a daily goal picker. Steps come
   from the iPhone's motion chip (`expo-sensors` Pedometer). iOS keeps 7 days of
   history, and the app syncs those days to the `step_days` table.
+  Below the steps it shows Apple Health: the latest heart rate with the last
+  12 hours as a graph, resting heart rate, today's range, sleep, active
+  energy, exercise minutes, HRV, stand hours, and today's workouts
+  (`app/src/components/HealthCards.tsx`, reading `app/src/lib/health.ts`).
+  Health needs a development build; in Expo Go the card says so, and the tab
+  still works with steps alone. Each card hides itself when Health has nothing
+  for it, so a phone with no watch isn't a wall of dashes.
 - **Assistant**: a voice-only assistant with memory (see [Voice](#voice)). The assistant also sees the last 7 days of
   steps and the daily goal, and can use the iPhone's Contacts, Calendar,
   Reminders, Messages, Mail, and Phone (see [iPhone apps](#iphone-apps)).
@@ -90,6 +97,11 @@ tab or reopen the app, until you tap the orb again.
    context.
 3. The reply is read aloud through `POST /voice/speak` (Deepgram Aura 2), a
    sentence or two at a time so it starts quickly. Then it listens again.
+
+How long a turn takes, and which leg of it is slow, is measured per turn in
+`app/src/lib/turnTimer.ts` and shown in **Dev tools → Turn timings**; the
+numbers and what to do about them are in
+[docs/voice-latency.md](../docs/voice-latency.md).
 
 Tap the orb while it's talking to cut it off. Approval cards (texts, emails,
 calls) still appear under the orb. Listening pauses when you leave the tab or

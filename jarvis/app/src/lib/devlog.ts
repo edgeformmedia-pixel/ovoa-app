@@ -4,8 +4,11 @@ import { useSyncExternalStore } from "react";
 // engine is doing, shown in the Assistant tab's Logs panel. remoteLog.ts also
 // uploads it to the server (D1 table device_logs) for remote debugging.
 
-/** probe: the motion probe's results (Dev tools → Motion lab). */
-export type LogKind = "req" | "res" | "err" | "voice" | "log" | "warn" | "ble" | "probe" | "push" | "agent";
+/**
+ * probe: the motion probe's results (Dev tools → Motion lab).
+ * perf: where one spoken turn's seconds went (turnTimer.ts).
+ */
+export type LogKind = "req" | "res" | "err" | "voice" | "log" | "warn" | "ble" | "probe" | "push" | "agent" | "perf";
 export type LogEntry = { id: number; time: number; kind: LogKind; text: string; detail?: string };
 
 const MAX_ENTRIES = 400;

@@ -136,8 +136,19 @@ export type ChatResponse = (
   | { messages: Message[]; pendingActions: PendingAction[]; paused?: undefined; ignored?: boolean }
   | { paused: { turnId: string; calls: PhoneCall[] }; pendingActions: PendingAction[]; messages?: undefined; ignored?: undefined }
 ) & {
-  /** Which model answered and how long the server took, for the log. */
-  meta?: { engine: string; ms: number };
+  /** Which model answered, how long each part of the server's work took, and how big the prompt was. */
+  meta?: {
+    engine: string;
+    ms: number;
+    /** Reading the user's settings, history and memories before the model runs. */
+    contextMs?: number;
+    firstTokenMs?: number | null;
+    firstSentenceMs?: number | null;
+    promptChars?: number;
+    toolCount?: number;
+    /** Tools the model ran server-side this turn, and what each cost. */
+    tools?: { name: string; ms: number }[];
+  };
 };
 /** A connected Google account. `label` is the tag the user (or the assistant) gave it. */
 export type GoogleAccount = {
