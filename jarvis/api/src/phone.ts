@@ -256,6 +256,15 @@ const lookupTools: PhoneTool[] = [
     required: [],
     capability: "health",
   }),
+  tool({
+    name: "phone_location",
+    description:
+      "Where the user is right now, from the phone's GPS: a place name where one can be worked out, and coordinates. Use it for 'where am I', for anything that depends on where they are — the weather, what's nearby, how long something will take — and before a web_search whose answer depends on the place.",
+    props: {},
+    fields: {},
+    required: [],
+    capability: "location",
+  }),
 ];
 
 const allTools = new Map([...actionTools, ...lookupTools].map((t) => [t.name, t]));
@@ -361,6 +370,9 @@ export function phonePrompt(caps: PhoneCaps) {
       : "Apple Health isn't available in this version of the app. If asked about heart rate, sleep, or workouts, say it needs the installed OVOA app (a development build), not Expo Go.",
     caps.lookups
       ? "Names the user says out loud are transcribed by sound, so they may be misspelled (\"Ty Eckard\" for \"Tigh Eckart\"). phone_contacts_search also returns contacts whose names sound alike, marked with a note; if one fits, treat it as the person they meant and use the contact's real spelling. If a search finds nobody, try again with just the first name or just the last name before saying you couldn't find them."
+      : "",
+    caps.capabilities.includes("location")
+      ? "phone_location gives their current position. Look it up rather than asking where they are, and before searching for anything local — the weather, what's open nearby, how far something is. Don't volunteer their coordinates; say the place."
       : "",
     "If you're not sure which person, event, or reminder the user means, ask.",
   ]

@@ -43,6 +43,7 @@ export type AgentSettings = {
   assistant_name: string;
   personality: string;
   time_zone: string | null;
+  memory_enabled: number;
   context_enabled: number;
   agent_enabled: number;
   agent_autonomy: string;
@@ -52,7 +53,7 @@ export type AgentSettings = {
 };
 
 const SETTINGS_COLUMNS =
-  "assistant_name, personality, time_zone, context_enabled, agent_enabled, agent_autonomy, quiet_start, quiet_end, agent_daily_runs";
+  "assistant_name, personality, time_zone, memory_enabled, context_enabled, agent_enabled, agent_autonomy, quiet_start, quiet_end, agent_daily_runs";
 
 /** A job cannot run more often than this, however it was asked for. */
 export const MIN_INTERVAL_MINUTES = 15;
@@ -66,6 +67,8 @@ const MAX_FAILS = 3;
 const RUN_TIMEOUT_MS = 55_000;
 /** Notes the turn is shown, so it doesn't say the same thing twice. */
 const RECENT_NOTES = 6;
+/** Long-term facts about the user the turn is shown. */
+const MEMORIES_SHOWN = 60;
 
 /** Outbound communication and deletion. Never available to an autonomous turn. */
 const FORBIDDEN_ALONE = new Set(["gmail_send", "gmail_trash", "drive_trash", "calendar_delete_event"]);
@@ -278,7 +281,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
   const autonomy = (settings.agent_autonomy as Autonomy) ?? "suggest";
   const db = env.DB;
 
-  const [user, goals, recent, google] = await Promise.all([
+  const [user, goals, recent, memories, google] = await Promise.all([
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
     db
       .prepare("SELECT text, reason FROM agent_goals WHERE user_id = ? AND status = 'active' ORDER BY created_at LIMIT 20")
@@ -288,6 +291,16 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
       .prepare("SELECT title, created_at FROM agent_notes WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
       .bind(userId, RECENT_NOTES)
       .all<{ title: string; created_at: number }>(),
+    // What the assistant has learned about them in conversation. The interactive
+    // turn has always had this; without it the agent doesn't know where they
+    // live, who anyone is, or anything it was told last week — and a morning
+    // brief that can't name a city can't look up the weather.
+    settings.memory_enabled
+      ? db
+          .prepare("SELECT content FROM memories WHERE user_id = ? ORDER BY created_at LIMIT ?")
+          .bind(userId, MEMORIES_SHOWN)
+          .all<{ content: string }>()
+      : { results: [] as { content: string }[] },
     // Autonomous turns never auto-approve: a change the user has not seen waits
     // for them, at every autonomy level. "act" widens what it may propose, not
     // what it may do behind their back.
@@ -404,6 +417,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
   };
 
   const goalLines = goals.results.map((g) => `- ${g.text}${g.reason ? ` (because ${g.reason})` : ""}`);
+  const known = memories.results.map((m) => `- ${m.content}`);
   const recentLines = recent.results.map(
     (n) => `- ${new Date(n.created_at).toLocaleString("en-US", { timeZone, dateStyle: "medium", timeStyle: "short" })}: ${n.title}`,
   );
@@ -426,6 +440,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     "You cannot send email or messages, and you cannot delete anything. Those tools are not available to you here, on purpose. If something needs sending, propose it and let them send it.",
     "You also cannot ask them a question and wait: there is nobody there. If you genuinely need an answer, say so with agent_say and kind 'question', and stop.",
     "",
+    known.length ? `What you know about ${user?.name ?? "them"} from talking with them:\n${known.join("\n")}` : "",
     goalLines.length ? `What they are trying to do, standing:\n${goalLines.join("\n")}` : "",
     recentLines.length ? `What you have already told them recently — do not repeat these:\n${recentLines.join("\n")}` : "",
     "",

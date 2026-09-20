@@ -13,6 +13,7 @@ import {
   listReminders,
   updateEvent,
 } from "./phoneCalendar";
+import { whereAmI } from "./phoneLocation";
 import {
   createContact,
   findContacts,
@@ -37,7 +38,12 @@ import {
 export async function phoneCaps(): Promise<PhoneCaps> {
   return {
     lookups: true,
-    capabilities: healthAvailable ? ["health"] : [],
+    // Location is offered whether or not it has been granted yet: the tool asks
+    // the first time it is used. Gating it on the permission would mean nothing
+    // ever asked for the permission, and iOS expects an app to ask at the
+    // moment the user wants the thing — which is when they ask what the weather
+    // is doing, not on some earlier screen.
+    capabilities: ["location", ...(healthAvailable ? ["health"] : [])],
     autoSendTexts: await autoSendTextsPref.get().catch(() => false),
   };
 }
@@ -49,6 +55,7 @@ const lookups: Record<string, (args: any) => Promise<unknown>> = {
   phone_calendar_events: listEvents,
   phone_reminders_list: listReminders,
   phone_health_summary: healthSummary,
+  phone_location: whereAmI,
 };
 
 /** Runs a lookup the assistant asked for. Errors go back to the assistant as data. */
