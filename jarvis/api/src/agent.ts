@@ -285,7 +285,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
   const autonomy = (settings.agent_autonomy as Autonomy) ?? "suggest";
   const db = env.DB;
 
-  const [user, goals, recent, memories, said, google] = await Promise.all([
+  const [user, goals, recent, memories, history, google] = await Promise.all([
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
     db
       .prepare("SELECT text, reason FROM agent_goals WHERE user_id = ? AND status = 'active' ORDER BY created_at LIMIT 20")
@@ -430,7 +430,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
   const goalLines = goals.results.map((g) => `- ${g.text}${g.reason ? ` (because ${g.reason})` : ""}`);
   const known = memories.results.map((m) => `- ${m.content}`);
   // Oldest first, so it reads as a conversation rather than backwards.
-  const conversation = said.results
+  const conversation = history.results
     .slice()
     .reverse()
     .map(
@@ -498,6 +498,9 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
   let detail = "";
   let engine = "";
 
+  // Cleared either way: an uncleared timer keeps the invocation alive for the
+  // rest of the timeout, and a cron tick runs twenty of these.
+  let expire: ReturnType<typeof setTimeout> | null = null;
   try {
     const result = await Promise.race([
       chatWithTools(env, {
@@ -507,7 +510,9 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
         tools,
         callTool,
       }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Run took too long")), RUN_TIMEOUT_MS)),
+      new Promise<never>((_, reject) => {
+        expire = setTimeout(() => reject(new Error("Run took too long")), RUN_TIMEOUT_MS);
+      }),
     ]);
     engine = result.engine;
 
@@ -535,6 +540,8 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     outcome = "error";
     detail = err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300);
     console.error("agent: run failed", err);
+  } finally {
+    if (expire !== null) clearTimeout(expire);
   }
 
   const pending = google.pending;
@@ -559,15 +566,13 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     )
     .run();
 
-  if (spoke) {
-    const note = spoke as NewNote;
-    await writeNote(
-      env,
-      userId,
-      { ...note, actionId: pending[0]?.id },
-      job?.id ?? null,
-      runId,
-    );
+  // A note exists only for a run that decided to speak and got to the end. A
+  // timed-out run can still land an agent_say afterwards, and half a thought
+  // from a failed run is worse than silence — the failure is in the log either
+  // way, which is where it belongs.
+  const note = outcome === "spoke" ? (spoke as NewNote | null) : null;
+  if (note) {
+    await writeNote(env, userId, { ...note, actionId: pending[0]?.id }, job?.id ?? null, runId);
   }
 
   console.log(
@@ -575,7 +580,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
       `(${used.length} tools${scheduled ? ", scheduled a follow-up" : ""})`,
   );
 
-  return { runId, outcome, detail, spoke: spoke as NewNote | null };
+  return { runId, outcome, detail, spoke: note };
 }
 
 // ---------- Jobs ----------
