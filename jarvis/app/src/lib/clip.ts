@@ -205,6 +205,9 @@ function ensureStarted() {
     noteInput("Clip button", "stopped recording");
     // Stopped on the clip itself: bring it over like one the app stopped.
     if (event.saved !== false && event.fileSize > 0) {
+      stoppedAt.set(event.sessionId, Date.now());
+      // The clip needs a moment to close the file. Ask soon and retry rather than
+      // waiting out a flat second every time.
       setTimeout(() => {
         const job = importSession(event.sessionId, event.fileSize);
         if (!bandMode) {
@@ -215,7 +218,7 @@ function ensureStarted() {
           (entry) => bandListeners.forEach((l) => l(entry, null)),
           (err) => bandListeners.forEach((l) => l(null, err instanceof Error ? err : new Error(String(err)))),
         );
-      }, 1000);
+      }, READY_DELAY_MS);
     } else if (bandMode) {
       bandListeners.forEach((l) => l(null, new Error("the clip didn't keep that recording (it may have been too short)")));
     }
@@ -226,7 +229,12 @@ function ensureStarted() {
     onMotionBatch(source ?? "game", samples);
   });
 
-  ute.addListener("onSyncProgress", (p) => set({ download: { sessionId: p.sessionId, received: p.received, total: p.total } }));
+  ute.addListener("onSyncProgress", (p) => {
+    const mark = transferMarks.get(p.sessionId);
+    if (mark) mark.last = Date.now();
+    else transferMarks.set(p.sessionId, { first: Date.now(), last: Date.now() });
+    set({ download: { sessionId: p.sessionId, received: p.received, total: p.total } });
+  });
 
   ute.addListener("onInput", (input) => {
     if (input.kind === "battery") {
@@ -1226,14 +1234,22 @@ export async function stopRecording() {
   set({ recording: null });
   say(`stopped #${stopped.sessionId}: ${stopped.fileSize} bytes${stopped.saved ? "" : ", not saved"}`);
   if (!stopped.saved || stopped.fileSize <= 0) throw new Error("The clip didn't keep that recording (it may have been too short).");
-  // The vendor demo waits a beat after stopping before asking for the file.
-  await new Promise((r) => setTimeout(r, 800));
+  // The clip needs a moment to close the file; downloadOne retries if it wasn't ready.
+  stoppedAt.set(stopped.sessionId, Date.now());
+  await new Promise((r) => setTimeout(r, READY_DELAY_MS));
   return importSession(stopped.sessionId, stopped.fileSize);
 }
 
 // --- Downloading -----------------------------------------------------------
 
 let importing: Promise<unknown> = Promise.resolve();
+
+/** How long to let the clip close the file before asking for it. */
+const READY_DELAY_MS = 150;
+/** When the clip said it stopped, so the wait before the first byte is measurable. */
+const stoppedAt = new Map<number, number>();
+/** First and last sync-progress tick, which separates BLE time from decode time. */
+const transferMarks = new Map<number, { first: number; last: number }>();
 
 /** Downloads one clip recording into the phone's list. Runs one at a time. */
 export function importSession(sessionId: number, size: number) {
@@ -1244,10 +1260,30 @@ export function importSession(sessionId: number, size: number) {
 
 async function downloadOne(sessionId: number, size: number) {
   set({ busy: "Downloading", download: { sessionId, received: 0, total: size } });
-  say(`downloading #${sessionId} (${Math.round(size / 1024)} KB)…`);
+  const stopGap = stoppedAt.get(sessionId);
+  stoppedAt.delete(sessionId);
+  say(`downloading #${sessionId} (${Math.round(size / 1024)} KB)…${stopGap ? ` ${Date.now() - stopGap} ms after stop` : ""}`);
+  const asked = Date.now();
   try {
     // Opus (mono) is what the phone can decode and play; the vendor demo always asks for it.
-    const result = await ute.syncFile(sessionId, ute.RecordFileType.Opus, size);
+    // We ask sooner than the vendor demo does, so a clip that wasn't ready gets one retry.
+    let result = await ute.syncFile(sessionId, ute.RecordFileType.Opus, size).catch((err) => err as Error);
+    if (result instanceof Error || result.bytes <= 0) {
+      say(`nothing came back — retrying once (${result instanceof Error ? result.message : "0 bytes"})`);
+      transferMarks.delete(sessionId);
+      await new Promise((r) => setTimeout(r, 600));
+      result = await ute.syncFile(sessionId, ute.RecordFileType.Opus, size);
+    }
+    const marks = transferMarks.get(sessionId);
+    transferMarks.delete(sessionId);
+    if (marks) {
+      // Everything after the last byte arrived is decode + disk, not Bluetooth.
+      say(
+        `#${sessionId} timing: ${marks.first - asked} ms to first byte, ` +
+          `${marks.last - marks.first} ms transfer (${Math.round(result.bytes / Math.max(1, marks.last - marks.first) * 1000)} B/s), ` +
+          `${Date.now() - marks.last} ms decode`,
+      );
+    }
     if (result.bytes < size) say(`only got ${result.bytes} of ${size} bytes; keeping what arrived`);
     if (result.decodeError) say(`couldn't make it playable — ${result.decodeError}`);
     else say(`saved #${sessionId}: ${result.seconds?.toFixed(1)} s${result.badPackets ? `, ${result.badPackets} bad packets` : ""}`);

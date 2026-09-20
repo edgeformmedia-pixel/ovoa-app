@@ -94,23 +94,42 @@ voice.post("/voice/speak", async (c) => {
   if (!text) return c.json({ error: "Nothing to say" }, 400);
   const model = parsed.data.voice ?? VOICES[0];
 
-  // Long replies go out in pieces; MP3 frames can simply be joined.
-  const parts: ArrayBuffer[] = [];
-  for (const chunk of splitText(text, MAX_SPEAK_CHARS)) {
-    const res = await fetch(`${DEEPGRAM}/speak?model=${model}&encoding=mp3`, {
+  const started = Date.now();
+  const speakChunk = (chunk: string) =>
+    fetch(`${DEEPGRAM}/speak?model=${model}&encoding=mp3`, {
       method: "POST",
       headers: { authorization: `Token ${c.env.DEEPGRAM_API_KEY}`, "content-type": "application/json" },
       body: JSON.stringify({ text: chunk }),
     });
+
+  // Long replies go out in pieces; MP3 frames can simply be joined.
+  const chunks = splitText(text, MAX_SPEAK_CHARS);
+  const audioHeaders = { "content-type": "audio/mpeg", "cache-control": "no-store" };
+
+  // A sentence is almost always one chunk: hand Deepgram's body straight to the
+  // phone rather than holding the whole clip here first.
+  if (chunks.length === 1) {
+    const res = await speakChunk(chunks[0]);
+    if (!res.ok || !res.body) {
+      console.error("deepgram speak", res.status, await res.text());
+      return c.json({ error: "Couldn't speak that" }, 502);
+    }
+    console.log(`speak: ${text.length} chars, streamed, ${Date.now() - started} ms to first byte`);
+    return new Response(res.body, { headers: audioHeaders });
+  }
+
+  // Several chunks: ask for them at once instead of one after another.
+  const results = await Promise.all(chunks.map(speakChunk));
+  const parts: ArrayBuffer[] = [];
+  for (const res of results) {
     if (!res.ok) {
       console.error("deepgram speak", res.status, await res.text());
       return c.json({ error: "Couldn't speak that" }, 502);
     }
     parts.push(await res.arrayBuffer());
   }
-  return new Response(new Blob(parts, { type: "audio/mpeg" }), {
-    headers: { "content-type": "audio/mpeg", "cache-control": "no-store" },
-  });
+  console.log(`speak: ${text.length} chars, ${chunks.length} parts, ${Date.now() - started} ms`);
+  return new Response(new Blob(parts, { type: "audio/mpeg" }), { headers: audioHeaders });
 });
 
 /** Strips markdown and links so the voice doesn't read out symbols. */

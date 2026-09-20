@@ -317,9 +317,11 @@ async function runTurn(
 ) {
   const started = Date.now();
   const db = env.DB;
-  const settings = await getSettings(db, userId);
-  const autoApprove = !!settings.auto_approve;
-  const [user, history, memories, activity, google] = await Promise.all([
+  // Everything here is independent, so none of it should wait on the rest.
+  // googleAssistant needs auto-approve, which only arrives with the settings.
+  const settingsRead = getSettings(db, userId);
+  const [settings, user, history, memories, activity, google] = await Promise.all([
+    settingsRead,
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
     db
       .prepare("SELECT role, content FROM messages WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
@@ -327,8 +329,10 @@ async function runTurn(
       .all<{ role: "user" | "assistant"; content: string }>(),
     listMemories(db, userId),
     fitnessSummary(db, userId),
-    googleAssistant(env, userId, timeZone, autoApprove),
+    settingsRead.then((s) => googleAssistant(env, userId, timeZone, !!s.auto_approve)),
   ]);
+  const autoApprove = !!settings.auto_approve;
+  const contextMs = Date.now() - started;
   const phone = phoneAssistant(env, userId, caps, autoApprove);
   const shortcuts = shortcutAssistant(env, userId, autoApprove);
 
@@ -361,13 +365,26 @@ async function runTurn(
     .join("\n\n");
 
   // Streamed replies go out a sentence at a time; a looping model is cut off (see sentences.ts).
-  const spoken = onSentence ? sentenceStream(onSentence, voice ? undefined : Infinity) : null;
-  const onText: OnText | undefined = spoken ? (delta) => spoken.push(delta) : undefined;
+  let firstSentenceMs: number | null = null;
+  const spoken = onSentence
+    ? sentenceStream((s) => {
+        firstSentenceMs ??= Date.now() - started;
+        onSentence(s);
+      }, voice ? undefined : Infinity)
+    : null;
+  let firstTokenMs: number | null = null;
+  const onText: OnText | undefined = spoken
+    ? (delta) => {
+        firstTokenMs ??= Date.now() - started;
+        spoken.push(delta);
+      }
+    : undefined;
+  const tools = [...phone.tools, ...shortcuts.tools, ...google.tools];
   const outcome = await chatWithTools(env, {
     model: env.CHAT_MODEL,
     system,
     turns,
-    tools: [...phone.tools, ...shortcuts.tools, ...google.tools],
+    tools,
     callTool: (name, args) =>
       (isPhoneTool(name) ? phone.callTool : isShortcutTool(name) ? shortcuts.callTool : google.callTool)(name, args),
     resume,
@@ -376,8 +393,21 @@ async function runTurn(
   });
   spoken?.end();
   const pendingActions = [...phone.pending, ...shortcuts.pending, ...google.pending];
-  const meta = { engine: outcome.engine, ms: Date.now() - started };
-  console.log(`turn: ${meta.engine}, ${meta.ms} ms${voice ? ", voice" : ""}${spoken ? ", streamed" : ""}`);
+  const meta = {
+    engine: outcome.engine,
+    ms: Date.now() - started,
+    contextMs,
+    firstTokenMs,
+    firstSentenceMs,
+    // Prefill is most of the wait before the first word, and the tool list is the bulk of it.
+    promptChars: system.length + JSON.stringify(tools).length + turns.reduce((n, t) => n + t.text.length, 0),
+    toolCount: tools.length,
+  };
+  console.log(
+    `turn: ${meta.engine}, ${meta.ms} ms${voice ? ", voice" : ""}${spoken ? ", streamed" : ""} ` +
+      `(context ${meta.contextMs} ms, first token ${meta.firstTokenMs ?? "-"} ms, ` +
+      `first sentence ${meta.firstSentenceMs ?? "-"} ms, ${meta.toolCount} tools, ${meta.promptChars} prompt chars)`,
+  );
 
   if (outcome.kind === "paused") {
     const turnId = crypto.randomUUID();
@@ -484,13 +514,18 @@ async function chatTurn(
     }
   }
   const timeZone = validTimeZone(data.timeZone);
-  await db.batch([
-    // Drop turns the app never resumed; they can hold looked-up phone data.
-    db
-      .prepare("DELETE FROM paused_turns WHERE user_id = ? AND created_at < ?")
-      .bind(userId, Date.now() - PAUSED_TURN_TTL_MS),
-    ...(data.timeZone ? [db.prepare("UPDATE settings SET time_zone = ? WHERE user_id = ?").bind(timeZone, userId)] : []),
-  ]);
+  // Housekeeping nothing in this turn reads, so it runs alongside the reply rather than before it.
+  ctx.waitUntil(
+    db.batch([
+      // Drop turns the app never resumed; they can hold looked-up phone data.
+      db
+        .prepare("DELETE FROM paused_turns WHERE user_id = ? AND created_at < ?")
+        .bind(userId, Date.now() - PAUSED_TURN_TTL_MS),
+      ...(data.timeZone
+        ? [db.prepare("UPDATE settings SET time_zone = ? WHERE user_id = ?").bind(timeZone, userId)]
+        : []),
+    ]),
+  );
 
   return runTurn(env, ctx, {
     userId,
