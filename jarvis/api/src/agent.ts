@@ -554,6 +554,8 @@ export async function createJob(
     nextRunAt?: number;
     notify?: Notify;
     source?: "user" | "agent" | "system";
+    /** The commitment this job exists to chase, when it isn't just the clock. */
+    about?: string;
   },
 ) {
   const timeZone = validTimeZone(
@@ -570,8 +572,8 @@ export async function createJob(
   const next = job.nextRunAt ?? nextRun(spec, Date.now(), timeZone) ?? Date.now() + 60_000;
 
   await env.DB.prepare(
-    `INSERT INTO agent_jobs (id, user_id, title, instruction, kind, at_minutes, weekday, every_minutes, next_run_at, notify, source, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO agent_jobs (id, user_id, title, instruction, kind, at_minutes, weekday, every_minutes, next_run_at, notify, source, about, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
@@ -585,11 +587,96 @@ export async function createJob(
       next,
       job.notify ?? "ifuseful",
       job.source ?? "user",
+      job.about ?? null,
       Date.now(),
     )
     .run();
   return id;
 }
+
+// ---------- Chasing what was promised ----------
+
+/** Nothing is chased further out than this; past it, a nudge is noise. */
+const NUDGE_HORIZON_MS = 60 * 86_400_000;
+/** How far ahead of the moment itself to speak up. */
+const NUDGE_LEAD_MS = 3 * 60 * 60_000;
+/** Per block, so one long conversation can't fill the schedule. */
+const NUDGE_PER_BLOCK = 3;
+/** In total, so a busy month can't either. */
+const MAX_NUDGES = 40;
+
+export type PromisedThing = { id: string; text: string; quote: string | null; dueAt: number | null };
+
+/**
+ * Turns the dated promises out of one block into jobs that will chase them.
+ *
+ * This is the thing people mean when they say an assistant should be useful:
+ * it heard you say you'd call the plumber Thursday, and on Thursday it says
+ * something. Nothing here decides whether to interrupt — that is still the
+ * autonomous turn's call when the job runs, and it can and should decide the
+ * answer is no. This only makes sure somebody is awake at the right time to
+ * ask the question.
+ *
+ * Undated promises get no job. They are real intentions, but there is no
+ * moment to attach a reminder to, so they stay with the daily sweep.
+ */
+export async function scheduleNudges(env: Env, userId: string, promises: PromisedThing[]) {
+  const dated = promises.filter((p) => p.dueAt && p.dueAt > Date.now() && p.dueAt < Date.now() + NUDGE_HORIZON_MS);
+  if (!dated.length) return 0;
+
+  const settings = await settingsFor(env.DB, userId);
+  if (!settings?.agent_enabled || settings.agent_autonomy === "off") return 0;
+
+  const existing = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM agent_jobs WHERE user_id = ? AND status = 'active' AND about IS NOT NULL",
+  )
+    .bind(userId)
+    .first<{ n: number }>();
+  let room = Math.max(0, MAX_NUDGES - (existing?.n ?? 0));
+  if (!room) return 0;
+
+  let made = 0;
+  for (const promise of dated.slice(0, NUDGE_PER_BLOCK)) {
+    if (!room) break;
+    const already = await env.DB.prepare("SELECT 1 FROM agent_jobs WHERE user_id = ? AND about = ?")
+      .bind(userId, promise.id)
+      .first();
+    if (already) continue;
+
+    // Never sooner than the floor: something promised for an hour from now
+    // shouldn't fire before the user has put their phone down.
+    const at = Math.max(Date.now() + MIN_INTERVAL_MINUTES * 60_000, promise.dueAt! - NUDGE_LEAD_MS);
+    await createJob(env, userId, {
+      title: promise.text.slice(0, 60),
+      instruction: [
+        `They said they would: ${promise.text}.`,
+        promise.quote ? `Their words were: "${promise.quote}".` : "",
+        "That is due about now.",
+        "Check first whether it has already happened — their calendar, their tasks, anything recorded since — and if it has, say nothing.",
+        "If it hasn't, say the one thing they need to hear, in their own words where you have them. Don't explain that you were keeping track.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      kind: "once",
+      nextRunAt: at,
+      notify: "ifuseful",
+      source: "agent",
+      about: promise.id,
+    });
+    room--;
+    made++;
+  }
+  if (made) console.log(`agent: will chase ${made} promise${made === 1 ? "" : "s"}`);
+  return made;
+}
+
+/** Called when a promise is settled: nothing left to chase. */
+export async function cancelNudges(env: Env, userId: string, commitmentId: string) {
+  await env.DB.prepare("DELETE FROM agent_jobs WHERE user_id = ? AND about = ? AND status != 'done'")
+    .bind(userId, commitmentId)
+    .run();
+}
+
 
 /**
  * The two jobs everyone gets when they turn the agent on. They are ordinary

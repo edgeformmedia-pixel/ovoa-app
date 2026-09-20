@@ -15,11 +15,13 @@ import {
   createJob,
   describeSchedule,
   isAgentTool,
+  cancelNudges,
   maintenance,
   MIN_INTERVAL_MINUTES,
   drainNotes,
   runDueJobs,
   runJobNow,
+  scheduleNudges,
   seedSystemJobs,
   tick,
   type AgentSettings,
@@ -818,7 +820,16 @@ authed.post("/context/blocks", async (c) => {
     timeZone,
   );
   if (!block) return c.json({ error: "Nothing worth keeping in that" }, 422);
-  return c.json({ block: { id: block.id, title: block.title, summary: block.summary } });
+  // Anything they promised with a date on it gets something scheduled to chase
+  // it. Alongside the response rather than before it: the phone is waiting to
+  // hear the block was filed, not for this.
+  c.executionCtx.waitUntil(
+    scheduleNudges(c.env, userId, block.commitments).catch((err) => console.error("agent: couldn't schedule a nudge", err)),
+  );
+  return c.json({
+    block: { id: block.id, title: block.title, summary: block.summary },
+    promised: block.commitments.length,
+  });
 });
 
 authed.get("/context/days/:date", async (c) => {
@@ -851,9 +862,12 @@ authed.patch("/context/commitments/:id", async (c) => {
   const body = await c.req.json().catch(() => null);
   const status = z.enum(["open", "done", "dropped"]).safeParse(body?.status);
   if (!status.success) return c.json({ error: "Bad status" }, 400);
+  const id = c.req.param("id");
   await c.env.DB.prepare("UPDATE context_commitments SET status = ? WHERE id = ? AND user_id = ?")
-    .bind(status.data, c.req.param("id"), c.var.userId)
+    .bind(status.data, id, c.var.userId)
     .run();
+  // Settled: nothing left to chase, so the reminder goes too.
+  if (status.data !== "open") await cancelNudges(c.env, c.var.userId, id);
   return c.json({ ok: true });
 });
 
