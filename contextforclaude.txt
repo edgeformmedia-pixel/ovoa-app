@@ -1,0 +1,6 @@
+OVOA - context (2026-09-20)
+- Measured a voice turn from D1 device_logs (9 turns): stop->first audio 9.7 s median, 12.4 s worst. Stages: 1.05 s dead time, 2.46 s BLE, 0.99 s STT, 2.13 s LLM first sentence (5.28 s worst), 2.25 s TTS (flat regardless of length). Tool-using turns 13-16 s.
+- Cause of the LLM stage: ~45 tool schemas / 6-10k tokens of prefill on EVERY turn. History was trimmed for voice; the tool list never was.
+- Shipped c4b758a (api deployed, app needs build 45): killed the 1 s + 0.8 s sleeps (now 150 ms + one retry), /voice/speak streams single sentences through, settings joined the Promise.all, housekeeping to waitUntil. Added timing logs: BLE first-byte/transfer/decode split, server context/first-token/first-sentence/tool-count/prompt-chars.
+- Next: build 45, measure again from logs, then Phase 2 (trim tool schemas per turn, est 1-3 s) and a filler line during tool rounds (silence is the 13-16 s case).
+- Still untested: one-click-to-talk (36), rebrand (37), clip light, buzz 3, autosend text wording.
