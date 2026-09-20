@@ -10,6 +10,7 @@ import {
   verifyPassword,
 } from "./auth";
 import { isMeantForAssistant } from "./ambient";
+import { contextAssistant, isContextTool, recordBlock, type BlockSource } from "./context";
 import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
 import { googleAuthed, googlePublic } from "./google/oauth";
@@ -40,6 +41,8 @@ type Settings = {
   fall_detection: number;
   auto_approve: number;
   time_zone: string | null;
+  context_enabled: number;
+  context_retain_days: number;
 };
 
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -89,7 +92,7 @@ async function publicUser(db: D1Database, userId: string) {
 async function getSettings(db: D1Database, userId: string) {
   return (await db
     .prepare(
-      "SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone FROM settings WHERE user_id = ?",
+      "SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone, context_enabled, context_retain_days FROM settings WHERE user_id = ?",
     )
     .bind(userId)
     .first<Settings>())!;
@@ -103,6 +106,8 @@ function formatSettings(s: Settings) {
     stepGoal: s.step_goal,
     fallDetection: !!s.fall_detection,
     autoApprove: !!s.auto_approve,
+    contextEnabled: !!s.context_enabled,
+    contextRetainDays: s.context_retain_days,
   };
 }
 
@@ -178,12 +183,15 @@ const updateMeSchema = z.object({
   stepGoal: z.number().int().min(500).max(100_000).optional(),
   fallDetection: z.boolean().optional(),
   autoApprove: z.boolean().optional(),
+  contextEnabled: z.boolean().optional(),
+  contextRetainDays: z.number().int().min(0).max(3650).optional(),
 });
 
 authed.patch("/me", async (c) => {
   const parsed = updateMeSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Invalid settings" }, 400);
-  const { name, assistantName, personality, memoryEnabled, stepGoal, fallDetection, autoApprove } = parsed.data;
+  const { name, assistantName, personality, memoryEnabled, stepGoal, fallDetection, autoApprove, contextEnabled, contextRetainDays } =
+    parsed.data;
   const db = c.env.DB;
   const id = c.var.userId;
 
@@ -199,6 +207,8 @@ authed.patch("/me", async (c) => {
            step_goal      = COALESCE(?, step_goal),
            fall_detection = COALESCE(?, fall_detection),
            auto_approve   = COALESCE(?, auto_approve),
+           context_enabled = COALESCE(?, context_enabled),
+           context_retain_days = COALESCE(?, context_retain_days),
            updated_at     = ?
          WHERE user_id = ?`,
       )
@@ -209,6 +219,8 @@ authed.patch("/me", async (c) => {
         stepGoal ?? null,
         fallDetection === undefined ? null : Number(fallDetection),
         autoApprove === undefined ? null : Number(autoApprove),
+        contextEnabled === undefined ? null : Number(contextEnabled),
+        contextRetainDays ?? null,
         Date.now(),
         id,
       ),
@@ -335,6 +347,7 @@ async function runTurn(
   const contextMs = Date.now() - started;
   const phone = phoneAssistant(env, userId, caps, autoApprove);
   const shortcuts = shortcutAssistant(env, userId, autoApprove);
+  const timeline = contextAssistant(env, userId, timeZone, !!settings.context_enabled);
 
   const turns: Turn[] = history.results.reverse().map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -357,6 +370,7 @@ async function runTurn(
     phone.prompt,
     shortcuts.prompt,
     google.prompt,
+    timeline.prompt,
     settings.memory_enabled && memories.length
       ? `Things you remember about ${user!.name} from earlier conversations:\n${memories.map((m) => `- ${m.content}`).join("\n")}`
       : "",
@@ -379,14 +393,20 @@ async function runTurn(
         spoken.push(delta);
       }
     : undefined;
-  const tools = [...phone.tools, ...shortcuts.tools, ...google.tools];
+  const tools = [...phone.tools, ...shortcuts.tools, ...google.tools, ...timeline.tools];
   const outcome = await chatWithTools(env, {
     model: env.CHAT_MODEL,
     system,
     turns,
     tools,
     callTool: (name, args) =>
-      (isPhoneTool(name) ? phone.callTool : isShortcutTool(name) ? shortcuts.callTool : google.callTool)(name, args),
+      (isPhoneTool(name)
+        ? phone.callTool
+        : isShortcutTool(name)
+          ? shortcuts.callTool
+          : isContextTool(name)
+            ? timeline.callTool
+            : google.callTool)(name, args),
     resume,
     voice,
     onText,
@@ -693,6 +713,89 @@ authed.delete("/memories/:id", async (c) => {
 authed.delete("/memories", async (c) => {
   await c.env.DB.prepare("DELETE FROM memories WHERE user_id = ?").bind(c.var.userId).run();
   return c.json({ ok: true });
+});
+
+// ---------- Context timeline ----------
+//
+// Everything here needs the user to have asked for it: context_enabled is off
+// until they turn it on, and a block only arrives because they recorded one.
+
+const blockSchema = z.object({
+  startedAt: z.number().int().positive(),
+  endedAt: z.number().int().positive(),
+  source: z.enum(["voice", "chat", "calendar", "location", "health"]),
+  /** Read to write the summary, then dropped. Never stored. */
+  transcript: z.string().trim().max(20_000).optional(),
+  note: z.string().trim().max(2000).optional(),
+  timeZone: z.string().optional(),
+});
+
+authed.post("/context/blocks", async (c) => {
+  const parsed = blockSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "Invalid block" }, 400);
+  const userId = c.var.userId;
+  const settings = await getSettings(c.env.DB, userId);
+  if (!settings.context_enabled) return c.json({ error: "Context is off" }, 403);
+
+  const timeZone = validTimeZone(parsed.data.timeZone ?? settings.time_zone ?? undefined);
+  const block = await recordBlock(
+    c.env,
+    userId,
+    {
+      startedAt: parsed.data.startedAt,
+      endedAt: parsed.data.endedAt,
+      source: parsed.data.source as BlockSource,
+      transcript: parsed.data.transcript,
+      note: parsed.data.note,
+    },
+    timeZone,
+  );
+  if (!block) return c.json({ error: "Nothing worth keeping in that" }, 422);
+  return c.json({ block: { id: block.id, title: block.title, summary: block.summary } });
+});
+
+authed.get("/context/days/:date", async (c) => {
+  const date = c.req.param("date");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: "Bad date" }, 400);
+  const settings = await getSettings(c.env.DB, c.var.userId);
+  const timeZone = validTimeZone(c.req.query("timeZone") ?? settings.time_zone ?? undefined);
+  const timeline = contextAssistant(c.env, c.var.userId, timeZone, !!settings.context_enabled);
+  return c.json(await timeline.callTool("context_day", { date }));
+});
+
+authed.get("/context/commitments", async (c) => {
+  const settings = await getSettings(c.env.DB, c.var.userId);
+  const timeZone = validTimeZone(settings.time_zone ?? undefined);
+  const timeline = contextAssistant(c.env, c.var.userId, timeZone, !!settings.context_enabled);
+  return c.json(await timeline.callTool("context_commitments", {}));
+});
+
+authed.patch("/context/commitments/:id", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const status = z.enum(["open", "done", "dropped"]).safeParse(body?.status);
+  if (!status.success) return c.json({ error: "Bad status" }, 400);
+  await c.env.DB.prepare("UPDATE context_commitments SET status = ? WHERE id = ? AND user_id = ?")
+    .bind(status.data, c.req.param("id"), c.var.userId)
+    .run();
+  return c.json({ ok: true });
+});
+
+/** "Forget that." Takes the block and anything pulled out of it. */
+authed.delete("/context/blocks/:id", async (c) => {
+  await c.env.DB.prepare("DELETE FROM context_blocks WHERE id = ? AND user_id = ?")
+    .bind(c.req.param("id"), c.var.userId)
+    .run();
+  return c.json({ ok: true });
+});
+
+/** "Forget the last hour." Everything recorded since a moment. */
+authed.delete("/context/blocks", async (c) => {
+  const since = Number(c.req.query("since"));
+  if (!Number.isFinite(since) || since <= 0) return c.json({ error: "since is required" }, 400);
+  const { meta } = await c.env.DB.prepare("DELETE FROM context_blocks WHERE user_id = ? AND started_at >= ?")
+    .bind(c.var.userId, since)
+    .run();
+  return c.json({ ok: true, forgot: meta.changes ?? 0 });
 });
 
 authed.route("/", fitness);
