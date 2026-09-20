@@ -773,11 +773,16 @@ async function runJob(env: Env, job: JobRow) {
 
   if (result.outcome === "error") {
     const fails = job.fail_count + 1;
+    // A one-off was marked done when it was claimed, and a failure does not
+    // bring it back: the moment it existed for has passed, and a nudge about
+    // last Thursday turning up next Thursday is worse than no nudge.
+    // A recurring job that keeps failing is paused rather than retried forever.
+    const status = !next ? "done" : fails >= MAX_FAILS ? "paused" : job.status;
     await db
       .prepare("UPDATE agent_jobs SET fail_count = ?, status = ? WHERE id = ?")
-      .bind(fails, fails >= MAX_FAILS ? "paused" : job.status, job.id)
+      .bind(fails, status, job.id)
       .run();
-    if (fails >= MAX_FAILS) {
+    if (status === "paused") {
       console.error(`agent: paused job ${job.id} after ${fails} failures`);
     }
   } else if (job.fail_count) {

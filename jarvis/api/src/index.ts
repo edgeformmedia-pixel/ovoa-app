@@ -1055,6 +1055,22 @@ authed.patch("/agent/goals/:id", async (c) => {
 });
 
 /**
+ * Brings a job's next run forward to now, so a tick picks it up instead of
+ * waiting for the clock. For watching the scheduler work, and for the smoke
+ * test in test/smoke.sh. Needs the DEBUG_KEY secret, which is unset in
+ * production unless someone sets it.
+ */
+app.post("/debug/agent/due", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const id = c.req.query("id");
+  if (!id) return c.json({ error: "id is required" }, 400);
+  const { meta } = await c.env.DB.prepare("UPDATE agent_jobs SET next_run_at = ? WHERE id = ?")
+    .bind(Date.now() - 1000, id)
+    .run();
+  return meta.changes ? c.json({ ok: true }) : c.json({ error: "No such job" }, 404);
+});
+
+/**
  * Runs a cron tick by hand, so the agent can be watched working instead of
  * waited on for the next scheduled one. Needs the DEBUG_KEY secret.
  */
