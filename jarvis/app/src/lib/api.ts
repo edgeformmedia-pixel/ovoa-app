@@ -87,6 +87,20 @@ export type ContextDay =
   | { date: string; nothing: string; title?: undefined; blocks?: undefined }
   | { date: string; title?: string; summary?: string; blocks: ContextBlock[]; nothing?: undefined };
 
+export type ContextWeek =
+  // The absent fields are spelled out so a component can read `week.title`
+  // without narrowing first, the same way ContextDay works.
+  | { week: string; nothing: string; days?: undefined; from?: undefined; to?: undefined; title?: undefined; summary?: undefined }
+  | {
+      week: string;
+      from: string;
+      to: string;
+      title?: string;
+      summary?: string;
+      days: { date: string; weekday: string; happened: string[] }[];
+      nothing?: undefined;
+    };
+
 export type Commitment = { said: string; text: string; theirWords: string | null; who: string | null; when: string | null };
 
 export type User = { id: string; email: string; name: string; created_at: number; settings: Settings };
@@ -301,8 +315,16 @@ export const api = {
     }),
   logout: (token: string) => request("/auth/logout", token, { method: "POST" }),
   me: (token: string) => request<{ user: User }>("/me", token),
+  /**
+   * The zone rides along with every settings change: the server needs it to
+   * schedule background work in the user's own day, and a chat turn used to be
+   * the only thing that ever told it.
+   */
   updateMe: (token: string, patch: Partial<Settings> & { name?: string }) =>
-    request<{ user: User }>("/me", token, { method: "PATCH", body: JSON.stringify(patch) }),
+    request<{ user: User }>("/me", token, {
+      method: "PATCH",
+      body: JSON.stringify({ ...patch, timeZone: timeZone() }),
+    }),
   changePassword: (token: string, currentPassword: string, newPassword: string) =>
     request("/me/password", token, { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) }),
   deleteAccount: (token: string) => request("/me", token, { method: "DELETE" }),
@@ -442,6 +464,9 @@ export const api = {
     }),
   contextDay: (token: string, date: string) =>
     request<ContextDay>(`/context/days/${date}?timeZone=${encodeURIComponent(timeZone())}`, token),
+  /** The week that `date` falls in. One call instead of seven. */
+  contextWeek: (token: string, date: string) =>
+    request<ContextWeek>(`/context/weeks/${date}?timeZone=${encodeURIComponent(timeZone())}`, token),
   commitments: (token: string) =>
     request<{ open?: number; commitments?: Commitment[]; note?: string }>("/context/commitments", token),
   /** "Forget that." Takes the block and everything pulled out of it. */

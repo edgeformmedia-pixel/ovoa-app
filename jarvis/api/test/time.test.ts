@@ -3,7 +3,16 @@
 // the wall-clock time that doesn't exist, the window that wraps midnight, the
 // zone that isn't a whole number of hours off.
 
-import { atLocalTime, buckets, inQuietHours, localMinutes, localWeekday, quietEndsAt, clockFromMinutes } from "../src/time";
+import {
+  atLocalTime,
+  buckets,
+  clockFromMinutes,
+  inQuietHours,
+  localMinutes,
+  localWeekday,
+  quietEndsAt,
+  weekDays,
+} from "../src/time";
 import { nextRun, describeSchedule } from "../src/agent";
 
 let fails = 0;
@@ -97,6 +106,29 @@ eq("Sydney weekday", localWeekday(atLocalTime("2026-09-20", 600, SYD), SYD), 0);
 const KOL = "Asia/Kolkata";
 eq("Kolkata 07:30", show(atLocalTime("2026-09-20", 450, KOL), KOL), "2026-09-20, 07:30");
 eq("Kolkata minutes", localMinutes(atLocalTime("2026-09-20", 450, KOL), KOL), 450);
+
+
+// --- ISO weeks round-trip -------------------------------------------------
+// weekDays is the inverse of buckets().week, and the pair has to agree at the
+// year boundary, where "the week of 29 December" belongs to the next year.
+eq("week 38 of 2026 starts Monday", weekDays("2026-W38")?.[0], "2026-09-14");
+eq("week 38 of 2026 ends Sunday", weekDays("2026-W38")?.[6], "2026-09-20");
+eq("week 1 of 2026", weekDays("2026-W01")?.[0], "2025-12-29");
+eq("bad week string", weekDays("nonsense"), null);
+
+// Every day in a week must map back to that week, in both hemispheres.
+for (const zone of [NY, SYD, KOL]) {
+  let roundTrips = 0;
+  for (const week of ["2026-W01", "2026-W18", "2026-W38", "2026-W53", "2027-W01"]) {
+    const days = weekDays(week);
+    if (!days) continue;
+    for (const day of days) {
+      // Noon, so the answer doesn't depend on which side of midnight it lands.
+      if (buckets(atLocalTime(day, 720, zone), zone).week === week) roundTrips++;
+    }
+  }
+  eq(`every day maps back to its week (${zone})`, roundTrips, 35);
+}
 
 console.log(fails ? `\n${fails} FAILED` : "\nall passed");
 process.exit(fails ? 1 : 0);

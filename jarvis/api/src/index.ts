@@ -219,6 +219,12 @@ const updateMeSchema = z.object({
   quietStart: z.number().int().min(0).max(1439).optional(),
   quietEnd: z.number().int().min(0).max(1439).optional(),
   agentDailyRuns: z.number().int().min(0).max(500).optional(),
+  /**
+   * The phone's zone. Sent with every settings change, because until now it was
+   * only ever recorded by a chat turn — so someone who turned the agent on
+   * before saying anything to it got a "morning" brief at 7am UTC.
+   */
+  timeZone: z.string().max(64).optional(),
 });
 
 authed.patch("/me", async (c) => {
@@ -227,6 +233,9 @@ authed.patch("/me", async (c) => {
   const { name, assistantName, personality, memoryEnabled, stepGoal, fallDetection, autoApprove, contextEnabled, contextRetainDays } =
     parsed.data;
   const { agentEnabled, agentAutonomy, quietStart, quietEnd, agentDailyRuns } = parsed.data;
+  // Written before anything reads it below, so a job seeded in this same
+  // request is scheduled against the right zone.
+  const timeZone = parsed.data.timeZone ? validTimeZone(parsed.data.timeZone) : null;
   const db = c.env.DB;
   const id = c.var.userId;
 
@@ -249,6 +258,7 @@ authed.patch("/me", async (c) => {
            quiet_start    = COALESCE(?, quiet_start),
            quiet_end      = COALESCE(?, quiet_end),
            agent_daily_runs = COALESCE(?, agent_daily_runs),
+           time_zone      = COALESCE(?, time_zone),
            updated_at     = ?
          WHERE user_id = ?`,
       )
@@ -266,6 +276,7 @@ authed.patch("/me", async (c) => {
         quietStart ?? null,
         quietEnd ?? null,
         agentDailyRuns ?? null,
+        timeZone,
         Date.now(),
         id,
       ),
@@ -817,6 +828,16 @@ authed.get("/context/days/:date", async (c) => {
   const timeZone = validTimeZone(c.req.query("timeZone") ?? settings.time_zone ?? undefined);
   const timeline = contextAssistant(c.env, c.var.userId, timeZone, !!settings.context_enabled);
   return c.json(await timeline.callTool("context_day", { date }));
+});
+
+/** The week that `date` falls in, with what happened on each day of it. */
+authed.get("/context/weeks/:date", async (c) => {
+  const date = c.req.param("date");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: "Bad date" }, 400);
+  const settings = await getSettings(c.env.DB, c.var.userId);
+  const timeZone = validTimeZone(c.req.query("timeZone") ?? settings.time_zone ?? undefined);
+  const timeline = contextAssistant(c.env, c.var.userId, timeZone, !!settings.context_enabled);
+  return c.json(await timeline.callTool("context_week", { date }));
 });
 
 authed.get("/context/commitments", async (c) => {

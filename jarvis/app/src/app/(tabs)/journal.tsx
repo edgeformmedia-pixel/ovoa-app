@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { api, type AgentNote, type Commitment, type ContextDay } from "../../lib/api";
+import { api, type AgentNote, type Commitment, type ContextDay, type ContextWeek } from "../../lib/api";
 import { useAgent } from "../../lib/agent";
 import { useSession } from "../../lib/auth";
 import { colors } from "../../lib/theme";
@@ -33,6 +33,15 @@ const NOTE_ICON: Record<AgentNote["kind"], { icon: keyof typeof Ionicons.glyphMa
 };
 
 const today = () => new Date().toLocaleDateString("en-CA");
+
+const short = (date: string) =>
+  new Date(`${date}T12:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+/** "Sep 14 – Sep 20", once the week has come back; its number until then. */
+function weekLabel(week: ContextWeek | null) {
+  if (!week) return "This week";
+  return "days" in week && week.days ? `${short(week.from)} – ${short(week.to)}` : week.week;
+}
 
 export default function Journal() {
   const [tab, setTab] = useState<Tab>("notes");
@@ -114,6 +123,7 @@ function Notes() {
 }
 
 function NoteCard({ note, onDismiss }: { note: AgentNote; onDismiss: () => void }) {
+  const router = useRouter();
   const { icon, color } = NOTE_ICON[note.kind];
   const when = new Date(note.created_at);
   const stamp =
@@ -132,7 +142,12 @@ function NoteCard({ note, onDismiss }: { note: AgentNote; onDismiss: () => void 
       <View style={styles.noteFoot}>
         {!!note.job && <Text style={styles.meta}>{note.job}</Text>}
         {!!note.action_id && (
-          <Text style={[styles.meta, { color: colors.warning }]}>Waiting for you to approve something</Text>
+          // The approval card itself lives on the assistant tab, with the rest
+          // of them; this is the way there rather than a second place to tap
+          // Approve.
+          <Pressable onPress={() => router.push("/chat")} hitSlop={6}>
+            <Text style={[styles.meta, { color: colors.warning }]}>Waiting for you to approve something →</Text>
+          </Pressable>
         )}
         <View style={{ flex: 1 }} />
         <Pressable onPress={onDismiss} hitSlop={10}>
@@ -149,7 +164,9 @@ function Days() {
   const router = useRouter();
   const { token, user } = useSession();
   const [date, setDate] = useState(today());
+  const [grain, setGrain] = useState<"day" | "week">("day");
   const [day, setDay] = useState<ContextDay | null>(null);
+  const [week, setWeek] = useState<ContextWeek | null>(null);
   const [commitments, setCommitments] = useState<Commitment[]>([]);
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState("");
@@ -160,15 +177,20 @@ function Days() {
     if (!enabled) return;
     setLoading(true);
     try {
-      const [d, c] = await Promise.all([api.contextDay(token, date), api.commitments(token)]);
-      setDay(d);
+      const [shown, c] = await Promise.all([
+        grain === "day" ? api.contextDay(token, date) : api.contextWeek(token, date),
+        api.commitments(token),
+      ]);
+      if (grain === "day") setDay(shown as ContextDay);
+      else setWeek(shown as ContextWeek);
       setCommitments(c.commitments ?? []);
     } catch {
-      setDay(null);
+      if (grain === "day") setDay(null);
+      else setWeek(null);
     } finally {
       setLoading(false);
     }
-  }, [token, date, enabled]);
+  }, [token, date, grain, enabled]);
 
   useEffect(() => {
     load();
@@ -185,8 +207,10 @@ function Days() {
     );
   }
 
-  const shift = (days: number) =>
+  const shift = (steps: number) => {
+    const days = steps * (grain === "week" ? 7 : 1);
     setDate(new Date(Date.parse(`${date}T12:00:00Z`) + days * 86_400_000).toLocaleDateString("en-CA"));
+  };
 
   const add = async () => {
     const text = note.trim();
@@ -218,19 +242,59 @@ function Days() {
       refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={colors.accent} />}
       keyboardShouldPersistTaps="handled"
     >
+      <View style={styles.grainRow}>
+        {(["day", "week"] as const).map((g) => (
+          <Pressable key={g} onPress={() => setGrain(g)} hitSlop={6}>
+            <Text style={[styles.grain, grain === g && styles.grainOn]}>{g === "day" ? "Day" : "Week"}</Text>
+          </Pressable>
+        ))}
+      </View>
+
       <View style={styles.dayNav}>
         <Pressable onPress={() => shift(-1)} hitSlop={12}>
           <Ionicons name="chevron-back" size={22} color={colors.accent} />
         </Pressable>
         <Pressable onPress={() => setDate(today())}>
-          <Text style={styles.dayLabel}>{isToday ? "Today" : label}</Text>
+          <Text style={styles.dayLabel}>
+            {grain === "week" ? weekLabel(week) : isToday ? "Today" : label}
+          </Text>
         </Pressable>
         <Pressable onPress={() => shift(1)} hitSlop={12} disabled={isToday}>
           <Ionicons name="chevron-forward" size={22} color={isToday ? colors.border : colors.accent} />
         </Pressable>
       </View>
 
-      {day && "nothing" in day && day.nothing ? (
+      {grain === "week" ? (
+        week && "nothing" in week && week.nothing ? (
+          <Empty icon="ellipse-outline" title="Nothing recorded" body={week.nothing} />
+        ) : (
+          week && (
+            <>
+              {!!week.title && (
+                <View style={styles.card}>
+                  <Text style={styles.dayTitle}>{week.title}</Text>
+                  {!!week.summary && <Text style={styles.noteBody}>{week.summary}</Text>}
+                </View>
+              )}
+              {week.days?.map((d) => (
+                <Pressable
+                  key={d.date}
+                  style={styles.blockRow}
+                  onPress={() => {
+                    setDate(d.date);
+                    setGrain("day");
+                  }}
+                >
+                  <Text style={styles.blockTime}>{d.weekday.slice(0, 3)}</Text>
+                  <View style={styles.blockBody}>
+                    <Text style={styles.meta}>{d.happened.join(" · ")}</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </>
+          )
+        )
+      ) : day && "nothing" in day && day.nothing ? (
         <Empty icon="ellipse-outline" title="Nothing recorded" body={day.nothing} />
       ) : (
         day && (
@@ -359,6 +423,9 @@ const styles = StyleSheet.create({
   meta: { color: colors.textDim, fontSize: 13, lineHeight: 19 },
   quote: { color: colors.textDim, fontSize: 13, fontStyle: "italic" },
   dismiss: { color: colors.textDim, fontSize: 13 },
+  grainRow: { flexDirection: "row", gap: 16, justifyContent: "center" },
+  grain: { color: colors.textDim, fontSize: 13, fontWeight: "600" },
+  grainOn: { color: colors.accent },
   dayNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4 },
   dayLabel: { color: colors.text, fontSize: 16, fontWeight: "600" },
   dayTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },

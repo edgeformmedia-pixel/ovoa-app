@@ -82,6 +82,24 @@ export function dayRange(day: string, timeZone: string): [number, number] {
   return [startOfDay(day, timeZone), startOfDay(addDays(day, 1), timeZone)];
 }
 
+/**
+ * The seven local dates of an ISO week, Monday first. The inverse of the
+ * `week` that `buckets` returns.
+ *
+ * The anchor is 4 January, which is in week 1 of its year by definition — the
+ * same rule that makes a late-December Monday belong to the next year's week 1.
+ */
+export function weekDays(week: string) {
+  const m = /^(\d{4})-W(\d{2})$/.exec(week);
+  if (!m) return null;
+  const jan4 = new Date(Date.UTC(Number(m[1]), 0, 4, 12));
+  // Monday of week 1. getUTCDay is 0 for Sunday, so this maps Monday to 0.
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7) + (Number(m[2]) - 1) * 7);
+  const start = monday.toISOString().slice(0, 10);
+  return Array.from({ length: 7 }, (_, i) => addDays(start, i));
+}
+
 /** Minutes past local midnight at one moment: 07:30 is 450. */
 export function localMinutes(at: number, timeZone: string) {
   const p = new Intl.DateTimeFormat("en-CA", {

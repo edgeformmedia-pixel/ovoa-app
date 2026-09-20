@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, type User } from "./api";
+import { unregisterPush } from "./push";
 import { setLogToken } from "./remoteLog";
 import { storage } from "./storage";
 
@@ -73,7 +74,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await start(session);
     },
     signOut: async () => {
-      if (token) await api.logout(token).catch(() => {});
+      // Before the token goes: otherwise the next person to sign in on this
+      // phone gets the last one's notifications.
+      if (token) {
+        await unregisterPush(token);
+        await api.logout(token).catch(() => {});
+      }
       await clear();
     },
     setUser,

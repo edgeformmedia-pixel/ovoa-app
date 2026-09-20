@@ -376,16 +376,24 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     });
   }, [twistOn]);
 
-  // Pick up actions waiting from Siri or an earlier session.
+  // Pick up actions waiting from Siri, an earlier session, or something the
+  // agent proposed while the app was closed. Also on every return to the app:
+  // an overnight proposal would otherwise sit unseen until the next chat turn.
   useEffect(() => {
     if (!onAssistantTab) return;
-    api
-      .pendingActions(token)
-      .then((r) => {
-        setApprovals(r.actions);
-        r.actions.forEach(queueAuto);
-      })
-      .catch(() => {});
+    const pull = () =>
+      api
+        .pendingActions(token)
+        .then((r) => {
+          setApprovals(r.actions);
+          r.actions.forEach(queueAuto);
+        })
+        .catch(() => {});
+    pull();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") pull();
+    });
+    return () => sub.remove();
   }, [token, onAssistantTab]);
 
   // The Assistant tab's orb stops in the background; Always listen keeps going
