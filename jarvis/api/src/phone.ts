@@ -172,7 +172,7 @@ const actionTools: PhoneTool[] = [
   tool({
     name: "phone_message_compose",
     description:
-      "Open a text message (iMessage/SMS) with the recipients and text filled in. The user taps Send in Messages; it is never sent automatically.",
+      "Send a text message (iMessage/SMS). ALWAYS use this to text someone, never phone_shortcut_run. Depending on the user's settings it either opens Messages with everything filled in for them to tap Send, or sends it without asking.",
     props: {
       to: strList("Phone numbers, or contact names the app looks up on the phone"),
       body: str("Message text"),
@@ -205,7 +205,7 @@ const actionTools: PhoneTool[] = [
   tool({
     name: "phone_shortcut_run",
     description:
-      "Run a shortcut from the iPhone's Shortcuts app by its exact name, optionally passing it text. Works for the user's own shortcuts and ones you wrote.",
+      "Run a shortcut from the iPhone's Shortcuts app by its exact name, optionally passing it text. Works for the user's own shortcuts and ones you wrote. Never use it to send a text message or to run a shortcut whose job is sending one: use phone_message_compose, which knows the recipient and the format the shortcut expects.",
     props: { name: str("The shortcut's exact name"), input: str("Text to pass to the shortcut as its input") },
     fields: { name: "text", input: "text" },
     required: ["name"],
