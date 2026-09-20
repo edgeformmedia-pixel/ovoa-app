@@ -111,8 +111,12 @@ export async function runPhoneAction(action: PendingAction, { contactId, prep }:
       // The Shortcuts app can, so "Send texts automatically" hands the text to the user's
       // "OVOA Send Text" shortcut (number, then the message, one per line) and comes back here.
       if (await autoSendTextsPref.get()) {
+        // The shortcut splits on line breaks, so the message itself has to be one line.
+        const body = String(args.body ?? "")
+          .replace(/\s*[\r\n]+\s*/g, " ")
+          .trim();
         const input = `${resolved(prep).join(", ")}
-${args.body}`;
+${body}`;
         const url =
           `shortcuts://x-callback-url/run-shortcut?name=${encodeURIComponent(SEND_TEXT_SHORTCUT)}` +
           `&input=text&text=${encodeURIComponent(input)}&x-success=${encodeURIComponent("ovoa://")}`;
