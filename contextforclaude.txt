@@ -1,6 +1,7 @@
-Context timeline (server side) is built: migrations/0010_context.sql + jarvis/api/src/context.ts,
-wired into runTurn and routed under /context/*. Explicit capture only - no ambient listening, ever
-(legal: all-party consent, BIPA). Verbatim transcripts are never stored server side; only summaries.
-Verified: bucketing/DST day math, FTS triggers, cascade deletes. Typecheck clean.
-BLOCKED: wrangler auth is dead (code 7403/1031) - remote migrate + deploy and any LLM call need `npx wrangler login`.
-Not built yet: phone capture path, library UI, settings toggle, hour/week rollups.
+The agent is built: cron-driven standing jobs, goals, an outbox, an audit log and a daily
+budget (api/src/agent.ts, migrations 0011+0012, design in docs/agent.md). Speaking is a tool
+call and the send/delete tools are removed from autonomous runs, so silence is the default.
+Also shipped: web_search, context_week, the timeline capture path, and the Journal tab.
+Verified with `npm test` and `npm run smoke` against `wrangler dev --local` (47 checks green).
+BLOCKED on the user: `npx wrangler login` (remote migrate + deploy), and `eas init` in
+jarvis/app so push has a project id. Until both, nothing runs in production.

@@ -44,7 +44,12 @@ function load() {
   loaded = true;
   try {
     const file = indexFile();
-    if (file.exists) list = JSON.parse(file.textSync()) as Recording[];
+    if (file.exists) {
+      // `capturing` is about this run of the app. If the app was killed mid-way
+      // it would otherwise come back reading "Adding to your timeline…" forever,
+      // for something nothing is working on any more.
+      list = (JSON.parse(file.textSync()) as Recording[]).map(({ capturing: _, ...r }) => r);
+    }
   } catch (err) {
     devlog("err", "couldn't read the recordings list", String(err));
   }

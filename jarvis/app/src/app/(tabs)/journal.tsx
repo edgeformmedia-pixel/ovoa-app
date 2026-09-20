@@ -2,7 +2,6 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
   RefreshControl,
@@ -74,11 +73,14 @@ function Notes() {
   const { notes, unread, loading, refresh, markRead, dismiss, pushProblem } = useAgent();
   const name = user.settings.assistantName || "OVOA";
 
-  // Opening the screen is reading them. Done once, on the way in.
+  // Opening the screen is reading them — but the notes may not have arrived
+  // when it mounts, so this waits for a count rather than firing once on the
+  // way in. markRead sets the count to zero, so it runs once and settles; a
+  // note arriving while the screen is open is read as it lands, which is true.
   useEffect(() => {
     if (unread) markRead();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [unread]);
 
   if (!user.settings.agentEnabled) {
     return (
@@ -378,15 +380,6 @@ function Empty({
   );
 }
 
-export function NotesBadge() {
-  const { unread } = useAgent();
-  if (!unread) return null;
-  return (
-    <View style={styles.badge}>
-      <Text style={styles.badgeText}>{unread > 9 ? "9+" : unread}</Text>
-    </View>
-  );
-}
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
@@ -452,17 +445,4 @@ const styles = StyleSheet.create({
   emptyBody: { color: colors.textDim, fontSize: 14, lineHeight: 21, textAlign: "center" },
   linkRow: { flexDirection: "row", alignItems: "center", gap: 6, justifyContent: "center", paddingVertical: 14 },
   link: { color: colors.accent, fontSize: 14, fontWeight: "600" },
-  badge: {
-    position: "absolute",
-    top: -3,
-    right: -10,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    paddingHorizontal: 4,
-    backgroundColor: colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  badgeText: { color: colors.bg, fontSize: 10, fontWeight: "700" },
 });

@@ -31,9 +31,13 @@ Live API: https://jarvis-api.edgeformmedia.workers.dev
     impact, then lying still. It shows a 30-second "Did you fall?" countdown,
     then opens the same text. There's a button to test the alert.
   - **Call 911**, up to 5 emergency contacts, and a list of recent alerts.
+- **Journal**: two views of the same question, from two directions.
+  **From OVOA** is what the agent went and found out while you weren't
+  looking; **Your days** is what your days were made of, by day or by week.
+  See [Background work](#background-work) and [Timeline](#timeline).
 - **Settings**: name, assistant name and personality, Google, Siri, memory
-  controls, password, and sign out. **Danger zone** has **Approve for me** and
-  delete account.
+  controls, background work, timeline, password, and sign out. **Danger zone**
+  has **Approve for me** and delete account.
 
 ### Approve for me
 
@@ -315,6 +319,53 @@ project from the installed app.
 `expo-dev-client` isn't installed yet on purpose: while it is, `npx expo
 start` targets the development build instead of Expo Go.
 
+## Background work
+
+Off by default. When on, OVOA runs on a schedule with nobody in the room:
+standing jobs with a due time, an outbox it writes notes into, and a log of
+every run including the quiet ones. Two jobs are seeded when you turn it on —
+a 7am brief, and a 6pm sweep of what you said you'd do.
+
+It can't send a message or email on its own, and can't delete anything, at any
+autonomy level: those tools are removed from the autonomous tool list rather
+than discouraged in the prompt. **Suggest** (the default) means it looks and
+tells you, and anything that would change something waits for a tap. **Act**
+lets it create calendar events, tasks and drafts on its own as well.
+
+Speaking is a deliberate act: the turn's text is discarded and reaching you
+needs a tool call, so an agent with nothing to say says nothing. Quiet hours
+(22:00–07:00 by default) hold notes back until morning unless something is
+about to be missed.
+
+The whole design, and why each piece is the way it is, is in
+[docs/agent.md](../docs/agent.md).
+
+**Setup:** migrations 0011 and 0012, `npm run deploy` (the cron triggers ride
+along), and `eas init` in `jarvis/app` for the Expo project id push tokens
+need. Without that last one, notes are written and shown in the app but never
+pushed, and Settings says so. Expo Go can't receive remote push at all; it
+needs the built app.
+
+## Timeline
+
+Off by default. What you record is summarised into a day OVOA can look things
+up in: "what did I do Tuesday", "did I ever call Sarah back", "how was last
+week". The assistant reaches it through `context_day`, `context_week`,
+`context_search` and `context_commitments` rather than being handed a pile of
+transcripts, which is what stops it falling over after a week of real use.
+
+Capture is explicit only, and there is no branch in the code that makes it
+otherwise. A saved recording is transcribed, the words go to the server to be
+summarised and are dropped there, and what is kept is a title and two
+sentences. The audio stays on the phone. Ambient capture was ruled out on
+legal grounds (all-party consent, BIPA), not deferred.
+
+Promises are pulled out while the words are still around, with the words
+attached, and their due date is resolved at the same time — so a dated promise
+can schedule its own reminder. See [docs/agent.md](../docs/agent.md).
+
+`contextRetainDays` (2 weeks by default) is enforced nightly.
+
 ## How memory works
 
 - **Short-term:** the last 30 messages are sent with every request.
@@ -346,6 +397,19 @@ npm run deploy
 Schema changes: add a file to `api/migrations/`, then run
 `npm run db:migrate`.
 
+`npm test` runs the unit tests (local-time and scheduling arithmetic, which is
+where the silent bugs live). `npm run smoke` runs the API end to end against a
+local worker:
+
+```powershell
+npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest
+npm run smoke
+```
+
+The Worker has cron triggers (`api/wrangler.jsonc`): every two minutes for the
+agent's due work and its outbox, and 04:13 UTC for retention and log trimming.
+`npm run deploy` registers them.
+
 | Method | Path | |
 |---|---|---|
 | POST | /auth/signup, /auth/login | `{ email, password, name? }` → `{ token, user }` |
@@ -370,6 +434,18 @@ Schema changes: add a file to `api/migrations/`, then run
 | GET | /actions | actions waiting for approval |
 | POST / DELETE | /actions/:id/approve, /actions/:id | approve / cancel |
 | GET | /shortcuts/file/:token/:name | signed shortcut download for the Shortcuts app (public, 24-hour link) |
+| GET / POST / PATCH / DELETE | /agent/jobs, /agent/jobs/:id | standing work; POST `{ title, instruction, kind, ... }` |
+| POST | /agent/jobs/:id/run | run one now instead of waiting for its time |
+| GET / POST / PATCH | /agent/goals, /agent/goals/:id | standing intent with no due time |
+| GET | /agent/notes | the outbox, plus an unread count |
+| POST / DELETE | /agent/notes/read, /agent/notes/:id | mark read / dismiss |
+| GET | /agent/runs | the audit log, plus today's run count |
+| POST / DELETE | /push/token | register or forget this phone's Expo push token |
+| POST | /context/blocks | `{ startedAt, endedAt, source, transcript? , note? }` — the transcript is read and dropped |
+| GET | /context/days/:date, /context/weeks/:date | a day, or the week it falls in |
+| GET | /context/commitments | what you said you'd do and haven't |
+| PATCH | /context/commitments/:id | `{ status }` — settling one cancels its reminder |
+| DELETE | /context/blocks/:id, /context/blocks?since= | "forget that" / "forget the last hour" |
 
 All routes except signup, login, the Google callback, and shortcut downloads need
 `Authorization: Bearer <token>`.

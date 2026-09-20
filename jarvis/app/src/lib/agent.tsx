@@ -61,10 +61,15 @@ export function AgentProvider({ children }: { children: ReactNode }) {
 
   // Register for push once the agent is actually on: asking for notification
   // permission before there is anything to notify about is how you get told no.
+  // Once per sign-in, tracked in a ref rather than by watching the result —
+  // the result changes identity on every attempt, which would have made this
+  // ask twice.
+  const askedForPush = useRef<string | null>(null);
   useEffect(() => {
-    if (!token || !enabled || push?.ok) return;
+    if (!token || !enabled || askedForPush.current === token) return;
+    askedForPush.current = token;
     registerForPush(token).then(setPush);
-  }, [token, enabled, push?.ok]);
+  }, [token, enabled]);
 
   useEffect(() => {
     if (!enabled) {

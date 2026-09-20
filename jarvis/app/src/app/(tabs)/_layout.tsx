@@ -8,8 +8,8 @@ import { AssistantProvider } from "../../lib/assistant";
 import { startClip } from "../../lib/clip";
 import { useAuth } from "../../lib/auth";
 import { SafetyProvider } from "../../lib/safety";
+import { NotesBadge } from "../../components/NotesBadge";
 import { colors } from "../../lib/theme";
-import { NotesBadge } from "./journal";
 
 type IconProps = ComponentProps<typeof Ionicons>;
 
