@@ -109,14 +109,15 @@ export async function runPhoneAction(action: PendingAction, { contactId, prep }:
     case "phone_message_compose": {
       // iOS never lets an app send a text by itself: the Messages sheet waits for a tap on Send.
       // The Shortcuts app can, so "Send texts automatically" hands the text to the user's
-      // "OVOA Send Text" shortcut (number, then the message, one per line) and comes back here.
+      // "OVOA Send Text" shortcut as "recipients|message" and comes back here.
       if (await autoSendTextsPref.get()) {
-        // The shortcut splits on line breaks, so the message itself has to be one line.
+        // A line break didn't survive the shortcuts:// URL (the shortcut saw one line and failed on
+        // item 2), so the two parts are separated by "|", which the shortcut splits on instead.
         const body = String(args.body ?? "")
           .replace(/\s*[\r\n]+\s*/g, " ")
+          .replace(/\|/g, "/")
           .trim();
-        const input = `${resolved(prep).join(", ")}
-${body}`;
+        const input = `${resolved(prep).join(", ")}|${body}`;
         const url =
           `shortcuts://x-callback-url/run-shortcut?name=${encodeURIComponent(SEND_TEXT_SHORTCUT)}` +
           `&input=text&text=${encodeURIComponent(input)}&x-success=${encodeURIComponent("ovoa://")}`;
