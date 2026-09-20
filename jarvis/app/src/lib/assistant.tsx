@@ -7,10 +7,14 @@ import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type App
 import { devlog } from "./devlog";
 import * as clip from "./clip";
 import { showIsland } from "./island";
+import { deleteRecording } from "./recordings";
+import { micSourcePref, type MicSource } from "./storage";
 import {
   alwaysListenPref,
+  createSpeaker,
   listeningPref,
   listenModePref,
+  transcribe,
   useConversation,
   type ListenMode,
   type VoicePhase,
@@ -38,6 +42,9 @@ type AssistantState = {
   /** How a turn starts: the name, a wrist twist on the ES100, or either. */
   listenMode: ListenMode;
   setListenMode: (mode: ListenMode) => void;
+  /** Which microphone a summon uses: the phone's, or the ES100's own. */
+  micSource: MicSource;
+  setMicSource: (source: MicSource) => void;
   interrupt: () => void;
   /** Approval cards to show (auto-run ones are hidden while they run). */
   approvals: PendingAction[];
@@ -65,6 +72,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [alwaysListen, setAlwaysListenState] = useState(false);
   const [listenMode, setListenModeState] = useState<ListenMode>("wake");
+  const [micSource, setMicSourceState] = useState<MicSource>("phone");
   const [held, setHeld] = useState(0);
   const [inForeground, setInForeground] = useState(true);
   const [status, setStatus] = useState<string | null>(null);
@@ -186,7 +194,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const twistOn = listenMode !== "wake";
   const clipPaired = clip.useClipPaired();
   // Twist mode without Always listen: keep the mic (and the app) running so a twist works from other apps.
-  const standby = twistOn && !alwaysListen && clipPaired;
+  // In band mode the phone's microphone is never used, so there's no standby to keep alive.
+  const standby = twistOn && !alwaysListen && clipPaired && micSource === "phone";
   const conversation = useConversation(token, ask, {
     interruptible: alwaysListen,
     background: alwaysListen,
@@ -204,8 +213,100 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   /** Listening was opened by a click (not by a switch): close it again once it goes idle. */
   const summonedOpen = useRef(false);
 
+  // --- The clip's own microphone ------------------------------------------------
+  // The ES100 has no live audio stream, only record-then-fetch, so a band turn is:
+  // click (record) -> click again, or 60 s (stop, fetch the file) -> transcribe -> answer.
+  // Nothing is heard between turns, and the phone's microphone stays off.
+  const [bandPhase, setBandPhase] = useState<VoicePhase | null>(null);
+  const bandRecording = useRef(false);
+  const bandTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bandSpeaker = useRef<ReturnType<typeof createSpeaker> | null>(null);
+  const bandPhaseRef = useRef<VoicePhase | null>(null);
+  bandPhaseRef.current = bandPhase;
+
+  useEffect(() => {
+    micSourcePref.get().then(setMicSourceState);
+  }, []);
+
+  const setMicSource = useCallback((source: MicSource) => {
+    setMicSourceState(source);
+    micSourcePref.set(source).catch(() => {});
+  }, []);
+
+  const bandFinish = useCallback(async () => {
+    if (bandTimer.current) clearTimeout(bandTimer.current);
+    bandTimer.current = null;
+    bandRecording.current = false;
+    setBandPhase("thinking");
+    try {
+      const entry = await clip.stopRecording();
+      if (!entry.wavUri) throw new Error(entry.decodeError ?? "the clip's recording couldn't be decoded");
+      // transcribe() deletes the audio it sends, and a question isn't worth keeping,
+      // so the clip's recording doesn't stay in the Recordings list either.
+      const text = await transcribe(token, entry.wavUri, "audio/wav");
+      deleteRecording(entry.id);
+      clip.deleteFromClip(entry.sessionId!).catch(() => {});
+      if (!text) {
+        devlog("voice", "band mic: nothing was said");
+        return;
+      }
+      const speaker = (bandSpeaker.current ??= createSpeaker(token));
+      const reply = speaker.open({ keepMic: false });
+      let streamed = false;
+      const full = await ask(text, true, (sentence) => {
+        if (!streamed) setBandPhase("speaking");
+        streamed = true;
+        reply.say(sentence);
+      });
+      // An older server sends no sentences as it writes: read the whole reply.
+      if (full && !streamed) {
+        setBandPhase("speaking");
+        reply.say(full);
+      }
+      reply.end();
+      await reply.done.catch(() => {});
+    } catch (err) {
+      devlog("err", "band mic: the turn failed", err instanceof Error ? err.message : String(err));
+    } finally {
+      setBandPhase(null);
+    }
+  }, [token]);
+
+  const bandClick = useCallback(() => {
+    if (bandPhaseRef.current === "thinking" || bandPhaseRef.current === "speaking") {
+      bandSpeaker.current?.stop();
+      setBandPhase(null);
+      devlog("voice", "band mic: cut the reply short");
+      return;
+    }
+    if (bandRecording.current) {
+      devlog("voice", "band mic: stopping, and asking");
+      void bandFinish();
+      return;
+    }
+    devlog("voice", "band mic: recording on the clip");
+    bandRecording.current = true;
+    setBandPhase("listening");
+    clip
+      .startRecording()
+      .then(() => clip.buzz(1))
+      .catch((err) => {
+        bandRecording.current = false;
+        setBandPhase(null);
+        devlog("err", "band mic: the clip wouldn't record", err instanceof Error ? err.message : String(err));
+      });
+    bandTimer.current = setTimeout(() => {
+      if (bandRecording.current) void bandFinish();
+    }, BAND_MAX_MS);
+  }, [bandFinish]);
+
   const onClick = useCallback(
     (source: string) => {
+      if (micSource === "band" && clipPaired) {
+        devlog("voice", `click: ${source} (band microphone)`);
+        bandClick();
+        return;
+      }
       const phase = currentPhase();
       if (phase === "listening" && summonedOpen.current) {
         if (finishNow()) {
@@ -223,7 +324,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       if (phase === "off") summonedOpen.current = true;
       summon();
     },
-    [summon, currentPhase, finishNow, end],
+    [summon, currentPhase, finishNow, end, micSource, clipPaired, bandClick],
   );
   const onClickRef = useRef(onClick);
   onClickRef.current = onClick;
@@ -264,10 +365,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   // Listening on or off, in the Dynamic Island: while a conversation runs, or twist standby is on.
   // Retried when the app comes to the front (a Live Activity can only start from there).
-  const islandStatus = conversation.phase !== "off" ? conversation.phase : standby ? "off" : null;
+  const islandStatus = bandPhase ?? (conversation.phase !== "off" ? conversation.phase : standby ? "off" : null);
   useEffect(() => showIsland(islandStatus), [islandStatus, inForeground]);
   // And green on the clip while listening.
-  const clipListening = conversation.phase === "listening";
+  const clipListening = bandPhase ? bandPhase === "listening" : conversation.phase === "listening";
   useEffect(() => clip.setListeningLight(clipListening), [clipListening]);
 
   // A summoned turn with nothing else keeping the microphone open: close it after a quiet spell.
@@ -353,6 +454,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     setAlwaysListen,
     listenMode,
     setListenMode,
+    micSource,
+    setMicSource,
     interrupt: conversation.interrupt,
     approvals: approvals.filter((a) => !autoRunning.includes(a.id)),
     autoRunning: autoRunning.length > 0,
@@ -363,6 +466,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;
 }
+
+/** A band turn stops itself after this long, in case the second click never comes. */
+const BAND_MAX_MS = 60_000;
 
 /** After a summon, how long the microphone stays open with nothing said. */
 const SUMMON_IDLE_MS = 12_000;

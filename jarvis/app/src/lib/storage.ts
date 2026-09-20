@@ -22,3 +22,13 @@ export const autoSendTextsPref = {
   get: async () => (await storage.get(AUTO_SEND_TEXTS_KEY).catch(() => null)) === "1",
   set: (on: boolean) => storage.set(AUTO_SEND_TEXTS_KEY, on ? "1" : "0"),
 };
+
+/** Which microphone a summon uses: the phone's, or the ES100's own (record, then transcribe). */
+export type MicSource = "phone" | "band";
+
+const MIC_SOURCE_KEY = "ovoa.micSource";
+
+export const micSourcePref = {
+  get: async (): Promise<MicSource> => ((await storage.get(MIC_SOURCE_KEY).catch(() => null)) === "band" ? "band" : "phone"),
+  set: (source: MicSource) => storage.set(MIC_SOURCE_KEY, source),
+};

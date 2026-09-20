@@ -32,7 +32,7 @@ export default function Settings() {
   const [autoSendTexts, setAutoSendTexts] = useState(false);
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
-  const { alwaysListen, setAlwaysListen, listenMode, setListenMode } = useAssistant();
+  const { alwaysListen, setAlwaysListen, listenMode, setListenMode, micSource, setMicSource } = useAssistant();
 
   useEffect(() => {
     autoSendTextsPref.get().then(setAutoSendTexts);
@@ -191,6 +191,19 @@ export default function Settings() {
           ))}
         </View>
         <Text style={styles.meta}>{LISTEN_MODES.find((m) => m.mode === listenMode)?.hint}</Text>
+        <Text style={[styles.label, { marginTop: 18 }]}>Microphone</Text>
+        <View style={styles.segment}>
+          {MIC_SOURCES.map((m) => (
+            <Pressable
+              key={m.source}
+              onPress={() => setMicSource(m.source)}
+              style={[styles.segmentItem, micSource === m.source && styles.segmentOn]}
+            >
+              <Text style={[styles.segmentText, micSource === m.source && styles.segmentTextOn]}>{m.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={styles.meta}>{MIC_SOURCES.find((m) => m.source === micSource)?.hint}</Text>
       </Section>
 
       <Section title="Google accounts">
@@ -354,6 +367,15 @@ function Field({ label, ...props }: { label: string } & React.ComponentProps<typ
     </View>
   );
 }
+
+const MIC_SOURCES = [
+  { source: "phone", label: "Phone", hint: "The iPhone's microphone hears you. It answers as soon as you stop talking." },
+  {
+    source: "band",
+    label: "ES100 band",
+    hint: "The clip records what you say on its own microphone. Click to start, click again when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.",
+  },
+] as const;
 
 const LISTEN_MODES = [
   { mode: "wake", label: "Wake word", hint: "Say the assistant's name. Turn on Always listen (Danger zone) to use it from any screen." },

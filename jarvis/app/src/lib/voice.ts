@@ -128,14 +128,14 @@ async function authedFetch(
 }
 
 /** Turns a recording into text. Deletes the recording afterwards. */
-export async function transcribe(token: string, uri: string): Promise<string> {
+export async function transcribe(token: string, uri: string, contentType = "audio/mp4"): Promise<string> {
   const file = new File(uri);
   try {
     const audio = new Uint8Array(await file.arrayBuffer());
     const res = await authedFetch(
       token,
       "/voice/transcribe",
-      { method: "POST", headers: { "content-type": "audio/mp4" }, body: audio },
+      { method: "POST", headers: { "content-type": contentType }, body: audio },
       `${Math.round(audio.byteLength / 1024)} KB of audio`,
     );
     const { text } = (await res.json()) as { text: string };
