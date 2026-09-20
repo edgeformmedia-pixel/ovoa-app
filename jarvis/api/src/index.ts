@@ -270,6 +270,8 @@ authed.delete("/chat/messages", async (c) => {
 const phoneCapsSchema = z.object({
   lookups: z.boolean(),
   capabilities: z.array(z.string().max(40)).max(20),
+  // "Send texts automatically" is on, so a text goes out with no sheet and no tap.
+  autoSendTexts: z.boolean().optional(),
 });
 
 const chatSchema = z.object({

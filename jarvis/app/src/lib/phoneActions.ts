@@ -28,8 +28,19 @@ import {
  * Tool names and args match api/src/phone.ts.
  */
 
-/** Sent with each chat message so the server offers only the tools this app can run. */
-export const phoneCaps: PhoneCaps = { lookups: true, capabilities: healthAvailable ? ["health"] : [] };
+/**
+ * Sent with each chat message so the server offers only the tools this app can run.
+ * autoSendTexts rides along so the assistant's wording matches what actually happens:
+ * without it the model told the user a text was "ready for you to send" after it had
+ * already gone out, and they asked for it again and again.
+ */
+export async function phoneCaps(): Promise<PhoneCaps> {
+  return {
+    lookups: true,
+    capabilities: healthAvailable ? ["health"] : [],
+    autoSendTexts: await autoSendTextsPref.get().catch(() => false),
+  };
+}
 
 // ---------- Lookups ----------
 

@@ -36,7 +36,7 @@ export type PendingAction = {
   auto?: boolean;
 };
 export type PhoneResult = { ok: boolean; detail: string };
-export type PhoneCaps = { lookups: boolean; capabilities: string[] };
+export type PhoneCaps = { lookups: boolean; capabilities: string[]; autoSendTexts?: boolean };
 /** Something the assistant wants looked up on the phone before it can answer. */
 export type PhoneCall = { id: string; name: string; args: Record<string, any> };
 /** A chat turn either finishes, or pauses until the app sends lookup results to `resume`. */

@@ -162,9 +162,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       // Always-listening hears everything, so unless its name was said the server first
       // decides whether this was meant for the assistant.
       const ambient = ambientRef.current && !addressed;
+      const caps = await phoneCaps();
       let res: ChatResponse = onSentence
-        ? await api.sendStreamed(token, text, phoneCaps, ambient, onSentence, signal)
-        : await api.send(token, text, phoneCaps, true, ambient);
+        ? await api.sendStreamed(token, text, caps, ambient, onSentence, signal)
+        : await api.send(token, text, caps, true, ambient);
       if (res.ignored) {
         devlog("voice", "not meant for the assistant; staying quiet", text);
         return null;

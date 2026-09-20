@@ -172,7 +172,7 @@ const actionTools: PhoneTool[] = [
   tool({
     name: "phone_message_compose",
     description:
-      "Send a text message (iMessage/SMS). ALWAYS use this to text someone, never phone_shortcut_run. Depending on the user's settings it either opens Messages with everything filled in for them to tap Send, or sends it without asking.",
+      "Send a text message (iMessage/SMS). ALWAYS use this to text someone, never phone_shortcut_run. How it finishes depends on the user's settings; the system prompt says which, and your reply must match it.",
     props: {
       to: strList("Phone numbers, or contact names the app looks up on the phone"),
       body: str("Message text"),
@@ -266,7 +266,7 @@ export const isPhoneLookup = (name: string) => lookupTools.some((t) => t.name ==
 const spec = ({ name, description, parameters }: PhoneTool): ToolSpec => ({ name, description, parameters });
 
 /** What the app on the other end can do, as it reports in the chat request. */
-export type PhoneCaps = { lookups: boolean; capabilities: string[] };
+export type PhoneCaps = { lookups: boolean; capabilities: string[]; autoSendTexts?: boolean };
 
 export function phoneToolSpecs(caps: PhoneCaps): ToolSpec[] {
   const lookups = caps.lookups
@@ -349,7 +349,10 @@ export function phonePrompt(caps: PhoneCaps) {
   return [
     "You can use the user's iPhone with the phone_ tools: Contacts, Calendar, Reminders, Messages, Mail, calls, and running shortcuts.",
     "'Add a contact', 'my calendar', 'remind me' mean the iPhone apps unless the user mentions Google.",
-    "Changes and composing messages or calls wait for the user to tap Approve in the app. Never say one is done until approved. Texts and emails still need the user to tap Send; say so.",
+    "Changes and composing messages or calls wait for the user to tap Approve in the app. Never say one is done until approved.",
+    caps.autoSendTexts
+      ? "The user has \"Send texts automatically\" on: phone_message_compose sends the text outright, with no Messages sheet and nothing for them to tap. Say it as sent (\"Sent Malachi that text\"). Never say you opened Messages, that it's ready to send, or that they need to tap Send — that is wrong here and makes them repeat themselves. Emails still need a tap; say so for those only."
+      : "Texts and emails open a compose sheet the user still has to tap Send in; say so.",
     caps.lookups
       ? "Look things up with phone_contacts_search, phone_calendar_events, and phone_reminders_list before changing them or when you need a number or email. Pass phone numbers to phone_message_compose and phone_call when you have them."
       : "You can't read the phone's contacts, calendar, or reminders from here. Pass contact names to phone_message_compose, phone_email_compose, and phone_call and the app looks them up. To change or delete an existing event or reminder, tell the user to ask in the OVOA app.",
