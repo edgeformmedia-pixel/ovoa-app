@@ -43,6 +43,7 @@ import { BUZZ_PATTERNS, sendBuzz, type BuzzPattern } from "./buzz";
 import { capabilities, deviceStateSchema, saveDeviceState } from "./capabilities";
 import { commands, enqueueCommand, FORBIDDEN_FOR_COMMANDS } from "./commands";
 import { escalate, fireDueRoutines, isRoutineTool, routines, routinesAssistant } from "./routines";
+import { getProfile, isProfileTool, onboarding, profileAssistant, profilePrompt } from "./onboarding";
 import { isWebTool, webAssistant } from "./web";
 
 const HISTORY_TURNS = 30;
@@ -114,8 +115,9 @@ async function publicUser(db: D1Database, userId: string) {
     .prepare("SELECT id, email, name, created_at FROM users WHERE id = ?")
     .bind(userId)
     .first<{ id: string; email: string; name: string; created_at: number }>();
-  const settings = await getSettings(db, userId);
-  return user && { ...user, settings: formatSettings(settings) };
+  const [settings, profile] = await Promise.all([getSettings(db, userId), getProfile(db, userId)]);
+  // onboarded: the app shows the setup conversation until this is true.
+  return user && { ...user, settings: formatSettings(settings), onboarded: !!profile.onboardedAt };
 }
 
 async function getSettings(db: D1Database, userId: string) {
@@ -449,7 +451,7 @@ async function runTurn(
   // Everything here is independent, so none of it should wait on the rest.
   // googleAssistant needs auto-approve, which only arrives with the settings.
   const settingsRead = getSettings(db, userId);
-  const [settings, user, history, memories, activity, google] = await Promise.all([
+  const [settings, user, history, memories, activity, google, profile] = await Promise.all([
     settingsRead,
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
     db
@@ -460,6 +462,7 @@ async function runTurn(
     fitnessSummary(db, userId),
     // The agent's commands never skip the approval card, whatever the setting says.
     settingsRead.then((s) => googleAssistant(env, userId, timeZone, !!s.auto_approve && !fromAgent)),
+    getProfile(db, userId),
   ]);
   const autoApprove = !!settings.auto_approve && !fromAgent;
   const contextMs = Date.now() - started;
@@ -469,6 +472,7 @@ async function runTurn(
   const web = webAssistant(env, timeZone);
   const agent = agentAssistant(env, userId, timeZone, settings as AgentSettings, voice);
   const routine = routinesAssistant(env, userId, timeZone, { voice, fromAgent });
+  const profileTools = profileAssistant(env, userId);
 
   const turns: Turn[] = history.results.reverse().map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -512,6 +516,7 @@ async function runTurn(
     ["web", web.prompt],
     ["agent", agent.prompt],
     ["routines", routine.prompt],
+    ["profile", profilePrompt(profile)],
     ["command", fromAgent
       ? [
           "This request was not typed by the user. Your own background agent queued it for the phone to run, because it needs something only the phone has (Reminders, the phone's calendar, Health).",
@@ -551,6 +556,7 @@ async function runTurn(
     ...web.tools,
     ...agent.tools,
     ...routine.tools,
+    ...profileTools.tools,
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
     (t) => !fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name),
@@ -579,7 +585,9 @@ async function runTurn(
                   ? agent.callTool
                   : isRoutineTool(name)
                     ? routine.callTool
-                    : google.callTool)(name, args);
+                    : isProfileTool(name)
+                      ? profileTools.callTool
+                      : google.callTool)(name, args);
         // Only what actually happened: a parked action is logged when it's approved.
         const kind = kindForTool(name);
         if (kind && result !== DEFER && toolSucceeded(result)) {
@@ -1254,6 +1262,7 @@ authed.post("/debug/commands", async (c) => {
 
 authed.route("/", commands);
 authed.route("/", routines);
+authed.route("/", onboarding);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);

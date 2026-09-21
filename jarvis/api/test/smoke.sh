@@ -216,6 +216,22 @@ check "deleted in Reminders, switched off here"   "$(curl -s -X POST "${A[@]}" "
 check "someone else has no routines" "$(curl -s -H "authorization: Bearer $OTHER" "$API/routines" | j "len(d['routines'])")" "0"
 
 echo
+echo "── onboarding ─────────────────────────────────────"
+check "a new account isn't onboarded" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['onboarded']")" "False"
+ONB=$(curl -s "${A[@]}" "$API/onboarding")
+check "it starts with the name"  "$(echo "$ONB" | j "d['step']")" "name"
+check "the question uses it"     "$(echo "$ONB" | j "'Smoke' in d['question']")" "True"
+check "nine questions"           "$(echo "$ONB" | j "d['total']")" "9"
+check "skipping moves on"        "$(curl -s -X POST "${A[@]}" "$API/onboarding/skip" -d '{"step":"name"}' | j "d['next']['step']")" "nicknames"
+check "an empty answer is refused"   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/onboarding/answer" -d '{"step":"nicknames","text":" "}')" "400"
+for s in nicknames wake_sleep work meds pets gym routines; do curl -s -o /dev/null -X POST "${A[@]}" "$API/onboarding/skip" -d "{\"step\":\"$s\"}"; done
+check "skipping the last one finishes" "$(curl -s -X POST "${A[@]}" "$API/onboarding/skip" -d '{"step":"emergency"}' | j "d['next']['done']")" "True"
+check "now onboarded"          "$(curl -s "${A[@]}" "$API/me" | j "d['user']['onboarded']")" "True"
+check "restart from Settings"  "$(curl -s -X POST "${A[@]}" "$API/onboarding/restart" | j "d['step']")" "name"
+check "finish later"           "$(curl -s -X POST "${A[@]}" "$API/onboarding/finish" | j "d['done']")" "True"
+check "the other account is untouched" "$(curl -s -H "authorization: Bearer $OTHER" "$API/me" | j "d['user']['onboarded']")" "False"
+
+echo
 echo "── capture everything is dev-only ─────────────────"
 check "refused for an ordinary account"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":true}')" "403"
 check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['captureEverything']")" "False"

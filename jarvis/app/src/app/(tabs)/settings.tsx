@@ -338,6 +338,24 @@ export default function Settings() {
         <Button label="Change password" onPress={changePassword} disabled={!currentPw || !newPw} />
       </Section>
 
+      <Section title="Your day">
+        <Text style={styles.meta}>
+          Wake and bed times, work hours, medications and routines. Going through it again adds to what's there; it
+          doesn't remove anything.
+        </Text>
+        <Button
+          label="Go through setup again"
+          onPress={async () => {
+            try {
+              await api.onboardingRestart(token);
+              setUser({ ...user!, onboarded: false });
+            } catch (err) {
+              Alert.alert("Couldn't start setup", err instanceof Error ? err.message : String(err));
+            }
+          }}
+        />
+      </Section>
+
       <Section title="Developer">
         <Button label="Sensors, inputs & ES100" onPress={() => router.push("/dev-tools")} />
       </Section>

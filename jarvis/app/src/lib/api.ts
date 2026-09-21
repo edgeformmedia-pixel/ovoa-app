@@ -158,7 +158,11 @@ export type ContextWeek =
 
 export type Commitment = { said: string; text: string; theirWords: string | null; who: string | null; when: string | null };
 
-export type User = { id: string; email: string; name: string; created_at: number; settings: Settings };
+/** onboarded: false until the setup conversation is finished or put off. */
+export type User = { id: string; email: string; name: string; created_at: number; settings: Settings; onboarded?: boolean };
+
+export type OnboardingStep = { done: false; step: string; index: number; total: number; question: string };
+export type OnboardingNext = OnboardingStep | { done: true };
 export type Message = { id: string; role: "user" | "assistant"; content: string; created_at: number };
 export type Memory = { id: string; content: string; created_at: number };
 
@@ -480,6 +484,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ pattern }),
     }),
+
+  // ---------- Onboarding ----------
+
+  onboarding: (token: string) => request<OnboardingNext>("/onboarding", token),
+  onboardingAnswer: (token: string, step: string, text: string) =>
+    request<{ understood: string | null; next: OnboardingNext }>("/onboarding/answer", token, {
+      method: "POST",
+      body: JSON.stringify({ step, text }),
+    }),
+  onboardingSkip: (token: string, step: string) =>
+    request<{ understood: null; next: OnboardingNext }>("/onboarding/skip", token, { method: "POST", body: JSON.stringify({ step }) }),
+  onboardingFinish: (token: string) => request("/onboarding/finish", token, { method: "POST" }),
+  onboardingRestart: (token: string) => request<OnboardingNext>("/onboarding/restart", token, { method: "POST" }),
 
   // ---------- Routines ----------
 

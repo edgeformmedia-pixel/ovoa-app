@@ -52,7 +52,11 @@ function RootStack() {
 
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
-      <Stack.Protected guard={!!user && !onboarding}>
+      {/* Older servers don't send `onboarded`; only an explicit false shows setup. */}
+      <Stack.Protected guard={!!user && !onboarding && user.onboarded === false}>
+        <Stack.Screen name="onboarding" />
+      </Stack.Protected>
+      <Stack.Protected guard={!!user && !onboarding && user.onboarded !== false}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="dev-tools" options={{ headerShown: true, title: "Dev tools" }} />
         <Stack.Screen name="es100" options={{ headerShown: true, title: "ES100" }} />
