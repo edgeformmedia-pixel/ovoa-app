@@ -1,4 +1,5 @@
 import { logAction } from "./actionlog";
+import { agentBuzz, agentBuzzTool } from "./buzz";
 import { contextAssistant, isContextTool } from "./context";
 import { googleAssistant, validTimeZone } from "./google/assistant";
 import { chatWithTools, type CallTool, type ToolSpec } from "./llm";
@@ -367,6 +368,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
         required: ["because"],
       },
     },
+    agentBuzzTool,
     {
       name: "agent_schedule_followup",
       description:
@@ -407,6 +409,14 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     if (name === "agent_stay_quiet") {
       stayedQuiet = true;
       return { ok: true, note: "Nothing sent. Stop now." };
+    }
+
+    if (name === "agent_buzz") {
+      // Quiet hours hold for the wrist as much as for the screen, unless it can't wait.
+      if (args.pattern !== "urgent" && inQuietHours(Date.now(), timeZone, settings.quiet_start, settings.quiet_end)) {
+        return { error: "It's quiet hours. Only an urgent buzz goes through now." };
+      }
+      return agentBuzz(env, userId, args);
     }
 
     if (name === "agent_schedule_followup") {

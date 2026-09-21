@@ -16,6 +16,8 @@ import type { EventSubscription } from "expo-modules-core";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { api } from "../lib/api";
+import { useSession } from "../lib/auth";
 import * as clip from "../lib/clip";
 import { devlog } from "../lib/devlog";
 import { createFallDetector } from "../lib/fallDetector";
@@ -453,6 +455,7 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
 
       <Card title="Clip — buzz" available={state.phase === "unavailable" ? false : true}>
         <BuzzOptions connected={connected} />
+        <ServerBuzz />
       </Card>
 
       <Card title="Shake to listen — calibrate" available={state.phase === "unavailable" ? false : true}>
@@ -515,6 +518,37 @@ function BuzzOptions({ connected }: { connected: boolean }) {
       </View>
       <Text style={styles.hint}>{result ?? "Tap one; the last one tapped is used when a shake summons the assistant."}</Text>
       <BuzzTest connected={connected} onChosen={setChosen} />
+    </>
+  );
+}
+
+/**
+ * The whole path a reminder takes: the server decides band or notification, sends
+ * a push, and the app buzzes. With the band linked this should vibrate; without
+ * it, a notification should appear.
+ */
+function ServerBuzz() {
+  const { token } = useSession();
+  const [result, setResult] = useState<string | null>(null);
+  return (
+    <>
+      <View style={styles.row}>
+        <Pressable
+          style={styles.button}
+          onPress={async () => {
+            setResult("sending…");
+            try {
+              const r = await api.buzzTest(token);
+              setResult(r.reached ? `sent as a ${r.via === "band" ? "silent push for the band" : "notification"}` : "no phone registered for push");
+            } catch (err) {
+              setResult(err instanceof Error ? err.message : String(err));
+            }
+          }}
+        >
+          <Text style={styles.buttonText}>Buzz through the server</Text>
+        </Pressable>
+      </View>
+      {result && <Text style={styles.hint}>{result}</Text>}
     </>
   );
 }

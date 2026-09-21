@@ -7,6 +7,9 @@ import { storage } from "./storage";
 // Storage key kept from the original app name so existing sign-ins survive.
 const TOKEN_KEY = "jarvis.session";
 
+/** The signed-in session, for code that runs outside React (a background push, say). */
+export const savedToken = () => storage.get(TOKEN_KEY).catch(() => null);
+
 type AuthState = {
   loading: boolean;
   token: string | null;

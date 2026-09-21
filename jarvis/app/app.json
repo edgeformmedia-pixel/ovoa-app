@@ -14,7 +14,8 @@
         "NSBluetoothAlwaysUsageDescription": "OVOA connects to your ES100 recorder over Bluetooth to pull in what it captured.",
         "UIBackgroundModes": [
           "audio",
-          "bluetooth-central"
+          "bluetooth-central",
+          "remote-notification"
         ]
       }
     },
@@ -84,7 +85,8 @@
       [
         "expo-notifications",
         {
-          "color": "#22E2FF"
+          "color": "#22E2FF",
+          "enableBackgroundRemoteNotifications": true
         }
       ],
       "expo-mail-composer",

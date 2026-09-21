@@ -39,6 +39,8 @@ import type { Env, Vars } from "./types";
 import { voice } from "./voice";
 import { logs } from "./logs";
 import { forgetPushToken, registerPushToken } from "./push";
+import { BUZZ_PATTERNS, sendBuzz, type BuzzPattern } from "./buzz";
+import { capabilities, deviceStateSchema, saveDeviceState } from "./capabilities";
 import { isWebTool, webAssistant } from "./web";
 
 const HISTORY_TURNS = 30;
@@ -67,6 +69,7 @@ type Settings = {
   quiet_start: number;
   quiet_end: number;
   agent_daily_runs: number;
+  capture_everything: number;
 };
 
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -117,7 +120,8 @@ async function getSettings(db: D1Database, userId: string) {
   return (await db
     .prepare(
       `SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone,
-              context_enabled, context_retain_days, agent_enabled, agent_autonomy, quiet_start, quiet_end, agent_daily_runs
+              context_enabled, context_retain_days, agent_enabled, agent_autonomy, quiet_start, quiet_end, agent_daily_runs,
+              capture_everything
          FROM settings WHERE user_id = ?`,
     )
     .bind(userId)
@@ -139,6 +143,7 @@ function formatSettings(s: Settings) {
     quietStart: s.quiet_start,
     quietEnd: s.quiet_end,
     agentDailyRuns: s.agent_daily_runs,
+    captureEverything: !!s.capture_everything,
   };
 }
 
@@ -222,6 +227,8 @@ const updateMeSchema = z.object({
   quietStart: z.number().int().min(0).max(1439).optional(),
   quietEnd: z.number().int().min(0).max(1439).optional(),
   agentDailyRuns: z.number().int().min(0).max(500).optional(),
+  /** Dev accounts only; see isDevAccount. */
+  captureEverything: z.boolean().optional(),
   /**
    * The phone's zone. Sent with every settings change, because until now it was
    * only ever recorded by a chat turn — so someone who turned the agent on
@@ -241,6 +248,11 @@ authed.patch("/me", async (c) => {
   const timeZone = parsed.data.timeZone ? validTimeZone(parsed.data.timeZone) : null;
   const db = c.env.DB;
   const id = c.var.userId;
+
+  const { captureEverything } = parsed.data;
+  if (captureEverything && !(await isDevAccount(c.env, id))) {
+    return c.json({ error: "Capture everything is a development setting and isn't available on this account" }, 403);
+  }
 
   const stmts: D1PreparedStatement[] = [];
   if (name !== undefined) stmts.push(db.prepare("UPDATE users SET name = ? WHERE id = ?").bind(name, id));
@@ -262,6 +274,7 @@ authed.patch("/me", async (c) => {
            quiet_end      = COALESCE(?, quiet_end),
            agent_daily_runs = COALESCE(?, agent_daily_runs),
            time_zone      = COALESCE(?, time_zone),
+           capture_everything = COALESCE(?, capture_everything),
            updated_at     = ?
          WHERE user_id = ?`,
       )
@@ -280,6 +293,7 @@ authed.patch("/me", async (c) => {
         quietEnd ?? null,
         agentDailyRuns ?? null,
         timeZone,
+        captureEverything === undefined ? null : Number(captureEverything),
         Date.now(),
         id,
       ),
@@ -289,6 +303,39 @@ authed.patch("/me", async (c) => {
   // everyone starts with, rather than an agent that is on and does nothing.
   if (agentEnabled) await seedSystemJobs(c.env, id);
   return c.json({ user: await publicUser(db, id) });
+});
+
+/**
+ * The accounts allowed the always-listening experiments. Named in wrangler.jsonc
+ * rather than in the database, so no request can grant it.
+ */
+async function isDevAccount(env: Env, userId: string) {
+  const allowed = (env.DEV_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  if (!allowed.length) return false;
+  const user = await env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(userId).first<{ email: string }>();
+  return !!user && allowed.includes(user.email.toLowerCase());
+}
+
+// ---------- The phone, and what it has ----------
+
+/** The app reports what it has — band, Health, location — on open and whenever it changes. */
+authed.put("/device/state", async (c) => {
+  const parsed = deviceStateSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "Invalid device state" }, 400);
+  await saveDeviceState(c.env.DB, c.var.userId, parsed.data);
+  return c.json({ capabilities: await capabilities(c.env.DB, c.var.userId) });
+});
+
+authed.get("/capabilities", async (c) => c.json({ capabilities: await capabilities(c.env.DB, c.var.userId) }));
+
+/** Sends a buzz the long way round, through the server and a push, so the whole path can be tested from the app. */
+authed.post("/buzz/test", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { pattern?: string } | null;
+  const pattern = (BUZZ_PATTERNS as string[]).includes(body?.pattern ?? "") ? (body!.pattern as BuzzPattern) : "ack";
+  return c.json(await sendBuzz(c.env, c.var.userId, pattern, "Test buzz from Dev tools", "chat"));
 });
 
 const passwordSchema = z.object({

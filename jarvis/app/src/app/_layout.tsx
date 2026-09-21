@@ -2,6 +2,8 @@ import { Stack, type ErrorBoundaryProps } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { AuthProvider, useAuth } from "../lib/auth";
+// For its side effect: the background push task has to be defined before anything mounts.
+import "../lib/background";
 import { devlog } from "../lib/devlog";
 import { startRemoteLog } from "../lib/remoteLog";
 import { colors } from "../lib/theme";

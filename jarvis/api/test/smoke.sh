@@ -146,6 +146,32 @@ check "can't touch someone else's job" \
 check "no token, no entry" "$(curl -s -o /dev/null -w '%{http_code}' "$API/agent/jobs")" "401"
 
 echo
+echo "── the phone and what it has ──────────────────────"
+check "nothing known yet: no band" "$(curl -s "${A[@]}" "$API/capabilities" | j "d['capabilities']['band']")" "False"
+CAPS=$(curl -s -X PUT "${A[@]}" "$API/device/state" -d '{"bandLinked":true,"notifications":"granted","health":true,"location":"always","buzzOption":2,"build":"smoke"}')
+check "a linked band counts"   "$(echo "$CAPS" | j "d['capabilities']['band']")" "True"
+check "Health counts"          "$(echo "$CAPS" | j "d['capabilities']['health']")" "True"
+check "always location counts" "$(echo "$CAPS" | j "d['capabilities']['locationAlways']")" "True"
+check "no Google here"         "$(echo "$CAPS" | j "d['capabilities']['google']")" "False"
+check "bad state refused" "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${A[@]}" "$API/device/state" -d '{"bandLinked":"yes"}')" "400"
+check "unlinking is remembered"   "$(curl -s -X PUT "${A[@]}" "$API/device/state" -d '{"bandLinked":false}' | j "d['capabilities']['band']")" "False"
+check "another account has its own phone"   "$(curl -s -H "authorization: Bearer $OTHER" "$API/capabilities" | j "d['capabilities']['health']")" "False"
+
+echo
+echo "── buzz ───────────────────────────────────────────"
+BUZZ=$(curl -s -X POST "${A[@]}" "$API/buzz/test" -d '{"pattern":"double"}')
+check "no band: a buzz becomes a notification" "$(echo "$BUZZ" | j "d['via']")" "notification"
+check "no push token: nothing reached"         "$(echo "$BUZZ" | j "d['reached']")" "False"
+curl -s -o /dev/null -X PUT "${A[@]}" "$API/device/state" -d '{"bandLinked":true}'
+check "band linked: a buzz goes to the band" "$(curl -s -X POST "${A[@]}" "$API/buzz/test" | j "d['via']")" "band"
+
+echo
+echo "── capture everything is dev-only ─────────────────"
+check "refused for an ordinary account"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":true}')" "403"
+check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['captureEverything']")" "False"
+check "turning it off is always allowed"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":false}')" "200"
+
+echo
 echo "───────────────────────────────────────────────────"
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ] || exit 1

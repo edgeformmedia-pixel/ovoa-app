@@ -21,6 +21,14 @@ export type PushMessage = {
   urgent?: boolean;
 };
 
+/**
+ * A push nobody sees: it wakes the app's background task with `data` and shows
+ * nothing. iOS decides whether to deliver it at all — never to an app the user
+ * swiped away, and sparingly to one it thinks is idle — so anything sent this
+ * way must also be safe to miss, with a queue or a visible fallback behind it.
+ */
+export type SilentPush = { silent: true; data: Record<string, unknown> };
+
 type ExpoTicket = { status: "ok" | "error"; id?: string; details?: { error?: string } };
 
 export async function registerPushToken(db: D1Database, userId: string, token: string, platform?: string) {
@@ -53,7 +61,7 @@ async function tokensFor(db: D1Database, userId: string) {
  * accepted; zero is normal and not an error (no app installed yet, notifications
  * declined, phone reinstalled).
  */
-export async function push(env: Env, userId: string, message: PushMessage): Promise<number> {
+export async function push(env: Env, userId: string, message: PushMessage | SilentPush): Promise<number> {
   const tokens = await tokensFor(env.DB, userId);
   if (!tokens.length) return 0;
 
@@ -63,16 +71,21 @@ export async function push(env: Env, userId: string, message: PushMessage): Prom
 
   for (let i = 0; i < tokens.length; i += CHUNK) {
     const batch = tokens.slice(i, i + CHUNK);
-    const body = batch.map((to) => ({
-      to,
-      title: message.title,
-      body: message.body,
-      sound: message.urgent ? "default" : null,
-      // Urgent notes wake the screen; the rest wait for the user to look.
-      priority: message.urgent ? "high" : "normal",
-      ...(message.urgent && { interruptionLevel: "time-sensitive" }),
-      ...(message.data && { data: message.data }),
-    }));
+    const body = batch.map((to) =>
+      "silent" in message
+        ? // Data only, no title or body: that is what makes it content-available on iOS.
+          { to, data: message.data, _contentAvailable: true, priority: "high" }
+        : {
+            to,
+            title: message.title,
+            body: message.body,
+            sound: message.urgent ? "default" : null,
+            // Urgent notes wake the screen; the rest wait for the user to look.
+            priority: message.urgent ? "high" : "normal",
+            ...(message.urgent && { interruptionLevel: "time-sensitive" }),
+            ...(message.data && { data: message.data }),
+          },
+    );
 
     let tickets: ExpoTicket[];
     try {

@@ -21,6 +21,29 @@ export type Settings = {
   quietStart: number;
   quietEnd: number;
   agentDailyRuns: number;
+  /** Dev accounts only: the always-listening experiments. */
+  captureEverything?: boolean;
+};
+
+/** What the server knows this user has; every feature picks its path from this. */
+export type Capabilities = {
+  band: boolean;
+  google: boolean;
+  health: boolean;
+  watchHr: boolean;
+  locationAlways: boolean;
+  ambient: boolean;
+  push: boolean;
+};
+
+export type DeviceState = {
+  bandLinked: boolean;
+  notifications?: "granted" | "denied" | "undetermined";
+  health?: boolean;
+  watchHr?: boolean;
+  location?: "none" | "when_in_use" | "always";
+  buzzOption?: number;
+  build?: string;
 };
 
 /** suggest: it looks and tells you. act: it may also make reversible changes. */
@@ -413,6 +436,18 @@ export const api = {
     }),
   cancelAction: (token: string, id: string) => request(`/actions/${id}`, token, { method: "DELETE" }),
 
+
+  // ---------- The phone ----------
+
+  reportDevice: (token: string, state: DeviceState) =>
+    request<{ capabilities: Capabilities }>("/device/state", token, { method: "PUT", body: JSON.stringify(state) }),
+  capabilities: (token: string) => request<{ capabilities: Capabilities }>("/capabilities", token),
+  /** A buzz sent the long way round: server, push, then the band (or a notification without one). */
+  buzzTest: (token: string, pattern = "ack") =>
+    request<{ via: "band" | "notification"; reached: boolean }>("/buzz/test", token, {
+      method: "POST",
+      body: JSON.stringify({ pattern }),
+    }),
 
   // ---------- The agent ----------
 

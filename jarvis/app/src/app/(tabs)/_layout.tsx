@@ -7,6 +7,8 @@ import { useAutoCapture } from "../../lib/capture";
 import { AssistantProvider } from "../../lib/assistant";
 import { startClip } from "../../lib/clip";
 import { useAuth } from "../../lib/auth";
+import { registerBackgroundPush } from "../../lib/background";
+import { startDeviceReports } from "../../lib/device";
 import { SafetyProvider } from "../../lib/safety";
 import { NotesBadge } from "../../components/NotesBadge";
 import { colors } from "../../lib/theme";
@@ -18,10 +20,13 @@ const icon =
   ({ color, size }: { color: IconProps["color"]; size: number }) => <Ionicons name={name} color={color} size={size} />;
 
 export default function TabsLayout() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
 
   // Reconnect to the ES100 as soon as the app is open, not only once Record is visited.
   useEffect(() => startClip(), []);
+  // What this phone has (band, Health, location), so the server picks how to reach it.
+  useEffect(() => (token ? startDeviceReports(token) : undefined), [token]);
+  useEffect(() => void registerBackgroundPush(), []);
   // Anything recorded but not yet in the timeline gets filed, while it's on.
   useAutoCapture();
 

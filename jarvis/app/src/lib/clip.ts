@@ -1086,9 +1086,29 @@ function keepMotionThroughBuzz(option: BuzzOption, count: number) {
   }, afterMs);
 }
 
+/** When the clip was last asked to vibrate, by anything. The buzz queue (buzz.ts) spaces itself from this. */
+let lastBuzz = 0;
+export const lastBuzzAt = () => lastBuzz;
+
+/** The app's own linked flag. The vendor SDK's connect status says "connected" by default and can't be trusted. */
+export const isLinked = () => state.phase === "connected";
+
+/** Called when the clip links or unlinks. Returns an unsubscribe. */
+export function onLinkChange(listener: (linked: boolean) => void) {
+  let was = isLinked();
+  return subscribe(() => {
+    const now = isLinked();
+    if (now !== was) {
+      was = now;
+      listener(now);
+    }
+  });
+}
+
 /** Vibrates the clip. Never throws: a missing buzz shouldn't break listening. */
 export async function buzz(count = 1, option: BuzzOption = buzzOption) {
   if (state.phase !== "connected") return false;
+  lastBuzz = Date.now();
   keepMotionThroughBuzz(option, count);
   try {
     await ute.buzz(count, option);

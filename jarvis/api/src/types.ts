@@ -19,6 +19,8 @@ export type Env = {
   SHORTCUT_SIGNING_TOKEN?: string;
   /** Deepgram key for speech to text and text to speech. Without it, voice routes return 503. */
   DEEPGRAM_API_KEY?: string;
+  /** Comma-separated account emails allowed the dev-only capture-everything flag. */
+  DEV_EMAILS?: string;
 };
 
 export type Vars = { userId: string; token: string };
