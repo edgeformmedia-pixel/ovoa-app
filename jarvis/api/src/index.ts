@@ -41,6 +41,7 @@ import { logs } from "./logs";
 import { forgetPushToken, registerPushToken } from "./push";
 import { BUZZ_PATTERNS, sendBuzz, type BuzzPattern } from "./buzz";
 import { capabilities, deviceStateSchema, saveDeviceState } from "./capabilities";
+import { commands, enqueueCommand, FORBIDDEN_FOR_COMMANDS } from "./commands";
 import { isWebTool, webAssistant } from "./web";
 
 const HISTORY_TURNS = 30;
@@ -374,7 +375,7 @@ authed.delete("/me", async (c) => {
 authed.get("/chat/messages", async (c) => {
   const { results } = await c.env.DB
     .prepare(
-      `SELECT id, role, content, created_at FROM (
+      `SELECT id, role, content, created_at, source FROM (
          SELECT * FROM messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 100
        ) ORDER BY created_at ASC`,
     )
@@ -406,6 +407,9 @@ const chatSchema = z.object({
   ambient: z.boolean().optional(),
   // Answer as newline-delimited JSON, the reply's sentences first as they're written (see streamTurn).
   stream: z.boolean().optional(),
+  // A command the background agent queued (commands.ts), run by the app. Such a
+  // turn gets no send or delete tools and never auto-approves.
+  source: z.literal("agent").optional(),
 });
 
 const resumeSchema = z.object({
@@ -422,6 +426,8 @@ type TurnInput = {
   timeZone: string;
   caps: PhoneCaps;
   voice?: boolean;
+  /** "agent": a queued command from the background agent rather than the user. */
+  source?: "agent";
   resume?: { state: LoopState; results: Record<string, unknown> };
   /** Streaming: receives each sentence of the reply as soon as it's written. */
   onSentence?: (sentence: string) => void;
@@ -434,8 +440,9 @@ type TurnInput = {
 async function runTurn(
   env: Env,
   ctx: Pick<ExecutionContext, "waitUntil">,
-  { userId, text, timeZone, caps, voice, resume, onSentence }: TurnInput,
+  { userId, text, timeZone, caps, voice, source, resume, onSentence }: TurnInput,
 ) {
+  const fromAgent = source === "agent";
   const started = Date.now();
   const db = env.DB;
   // Everything here is independent, so none of it should wait on the rest.
@@ -450,9 +457,10 @@ async function runTurn(
       .all<{ role: "user" | "assistant"; content: string }>(),
     listMemories(db, userId),
     fitnessSummary(db, userId),
-    settingsRead.then((s) => googleAssistant(env, userId, timeZone, !!s.auto_approve)),
+    // The agent's commands never skip the approval card, whatever the setting says.
+    settingsRead.then((s) => googleAssistant(env, userId, timeZone, !!s.auto_approve && !fromAgent)),
   ]);
-  const autoApprove = !!settings.auto_approve;
+  const autoApprove = !!settings.auto_approve && !fromAgent;
   const contextMs = Date.now() - started;
   const phone = phoneAssistant(env, userId, caps, autoApprove);
   const shortcuts = shortcutAssistant(env, userId, autoApprove);
@@ -501,6 +509,13 @@ async function runTurn(
     ["timeline", timeline.prompt],
     ["web", web.prompt],
     ["agent", agent.prompt],
+    ["command", fromAgent
+      ? [
+          "This request was not typed by the user. Your own background agent queued it for the phone to run, because it needs something only the phone has (Reminders, the phone's calendar, Health).",
+          "Do what it asks with the tools you have and reply in one short line saying what you did. Nobody is waiting to answer a question, so don't ask one.",
+          "You cannot send messages, email, make calls or delete anything in this turn; those tools are not available. If the request needs one, say it needs the user.",
+        ].join(" ")
+      : ""],
     ["memories", settings.memory_enabled && memories.length
       ? `Things you remember about ${user!.name} from earlier conversations:\n${memories.map((m) => `- ${m.content}`).join("\n")}`
       : ""],
@@ -525,7 +540,10 @@ async function runTurn(
         spoken.push(delta);
       }
     : undefined;
-  const tools = [...phone.tools, ...shortcuts.tools, ...google.tools, ...timeline.tools, ...web.tools, ...agent.tools];
+  const tools = [...phone.tools, ...shortcuts.tools, ...google.tools, ...timeline.tools, ...web.tools, ...agent.tools].filter(
+    // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
+    (t) => !fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name),
+  );
   // What each tool cost. A turn that felt slow is usually either the model thinking or one
   // slow lookup (a Google round trip, say), and the meta says which without guessing.
   const toolTimings: { name: string; ms: number }[] = [];
@@ -536,6 +554,7 @@ async function runTurn(
     tools,
     callTool: async (name, args) => {
       const call = Date.now();
+      if (fromAgent && FORBIDDEN_FOR_COMMANDS.has(name)) return { error: "Not available to the agent's commands." };
       try {
         const result = await (isPhoneTool(name)
           ? phone.callTool
@@ -551,7 +570,7 @@ async function runTurn(
         // Only what actually happened: a parked action is logged when it's approved.
         const kind = kindForTool(name);
         if (kind && result !== DEFER && toolSucceeded(result)) {
-          ctx.waitUntil(logAction(db, userId, kind, describeToolCall(name, args), "chat"));
+          ctx.waitUntil(logAction(db, userId, kind, describeToolCall(name, args), fromAgent ? "agent" : "chat"));
         }
         return result;
       } finally {
@@ -600,7 +619,7 @@ async function runTurn(
         userId,
         text,
         timeZone,
-        JSON.stringify({ ...caps, voice }),
+        JSON.stringify({ ...caps, voice, source }),
         JSON.stringify(outcome.state),
         JSON.stringify(outcome.calls.map((call) => call.id)),
         Date.now(),
@@ -614,10 +633,10 @@ async function runTurn(
   const now = Date.now();
   const userMsg = { id: crypto.randomUUID(), role: "user", content: text, created_at: now };
   const botMsg = { id: crypto.randomUUID(), role: "assistant", content: reply, created_at: now + 1 };
-  const insert = "INSERT INTO messages (id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)";
+  const insert = "INSERT INTO messages (id, user_id, role, content, created_at, source) VALUES (?, ?, ?, ?, ?, ?)";
   await db.batch([
-    db.prepare(insert).bind(userMsg.id, userId, userMsg.role, userMsg.content, userMsg.created_at),
-    db.prepare(insert).bind(botMsg.id, userId, botMsg.role, botMsg.content, botMsg.created_at),
+    db.prepare(insert).bind(userMsg.id, userId, userMsg.role, userMsg.content, userMsg.created_at, source ?? null),
+    db.prepare(insert).bind(botMsg.id, userId, botMsg.role, botMsg.content, botMsg.created_at, source ?? null),
   ]);
 
   if (settings.memory_enabled) {
@@ -713,6 +732,7 @@ async function chatTurn(
     timeZone,
     caps: data.phone ?? ACTIONS_ONLY,
     voice: data.voice,
+    source: data.source,
     onSentence,
   });
 }
@@ -748,6 +768,7 @@ authed.post("/chat/resume", async (c) => {
       timeZone: row.time_zone,
       caps: phoneCapsSchema.parse(caps),
       voice: !!caps.voice,
+      source: caps.source === "agent" ? "agent" : undefined,
       resume: { state: JSON.parse(row.state), results },
       onSentence,
     });
@@ -1195,6 +1216,15 @@ authed.get("/agent/runs", async (c) => {
   });
 });
 
+/** Queues a command as if the agent had, so the channel can be tested without a model. Needs DEBUG_KEY. */
+authed.post("/debug/commands", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const body = (await c.req.json().catch(() => null)) as { text?: string } | null;
+  if (!body?.text) return c.json({ error: "text is required" }, 400);
+  return c.json(await enqueueCommand(c.env, c.var.userId, body.text, "agent", "debug"));
+});
+
+authed.route("/", commands);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);

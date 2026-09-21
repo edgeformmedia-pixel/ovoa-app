@@ -166,6 +166,21 @@ curl -s -o /dev/null -X PUT "${A[@]}" "$API/device/state" -d '{"bandLinked":true
 check "band linked: a buzz goes to the band" "$(curl -s -X POST "${A[@]}" "$API/buzz/test" | j "d['via']")" "band"
 
 echo
+echo "── the agent's commands for the phone ─────────────"
+D=(-H "x-debug-key: $DEBUG_KEY")
+CID=$(curl -s -X POST "${A[@]}" "${D[@]}" "$API/debug/commands" -d '{"text":"Add milk to my reminders"}' | j "d['id']")
+check "queued" "$([ -n "$CID" ] && echo yes)" "yes"
+check "queueing needs the debug key"   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/debug/commands" -d '{"text":"x"}')" "404"
+PENDING=$(curl -s "${A[@]}" "$API/commands/pending")
+check "the phone gets it"          "$(echo "$PENDING" | j "d['commands'][0]['text']")" "Add milk to my reminders"
+check "a second drain doesn't"     "$(curl -s "${A[@]}" "$API/commands/pending" | j "len(d['commands'])")" "0"
+check "someone else never sees it" "$(curl -s -H "authorization: Bearer $OTHER" "$API/commands/pending" | j "len(d['commands'])")" "0"
+check "someone else can't finish it"   "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $OTHER" -H 'content-type: application/json'      "$API/commands/$CID/done" -d '{"ok":true}')" "404"
+check "done"             "$(curl -s -X POST "${A[@]}" "$API/commands/$CID/done" -d '{"ok":true,"result":"Added."}' | j "d['ok']")" "True"
+check "done only once"   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/commands/$CID/done" -d '{"ok":true}')" "404"
+check "listed as done"   "$(curl -s "${A[@]}" "$API/commands" | j "d['commands'][0]['status']")" "done"
+
+echo
 echo "── capture everything is dev-only ─────────────────"
 check "refused for an ordinary account"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":true}')" "403"
 check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['captureEverything']")" "False"

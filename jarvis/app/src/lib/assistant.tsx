@@ -1,10 +1,12 @@
 import { usePathname, useRouter } from "expo-router";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import * as Notifications from "expo-notifications";
 import { AppState } from "react-native";
 import { api, type ChatResponse, type PendingAction, type PhoneResult } from "./api";
 import { useSession } from "./auth";
 import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type Approval } from "./phoneActions";
 import { devlog } from "./devlog";
+import { onPush } from "./background";
 import * as clip from "./clip";
 import { showIsland } from "./island";
 import { deleteRecording, type Recording } from "./recordings";
@@ -154,6 +156,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     addressed: boolean,
     onSentence?: (sentence: string) => void,
     signal?: AbortSignal,
+    source?: "agent",
   ): Promise<string | null> => {
     if (busy.current) return null;
     busy.current = true;
@@ -177,7 +180,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         : undefined;
       let res: ChatResponse = timed
         ? await api.sendStreamed(token, text, caps, ambient, timed, signal)
-        : await api.send(token, text, caps, true, ambient);
+        : await api.send(token, text, caps, !source, ambient, source);
       if (res.meta) noteServer(res.meta);
       if (res.ignored) {
         devlog("voice", "not meant for the assistant; staying quiet", text);
@@ -207,6 +210,60 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       if (parked.length) addApprovals(parked);
     }
   };
+
+  // --- Commands the agent queued (server: commands.ts) ------------------------------
+  // The agent runs on the server and can't reach the phone's Reminders, calendar or
+  // Health, so it queues a request in words and rings with a silent push. The queue
+  // is drained on that push, whenever the app comes forward, and when the band
+  // reconnects; the push alone can't be relied on (iOS won't wake a killed app).
+  const draining = useRef(false);
+  const retryDrain = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const drainCommands = useCallback(async () => {
+    if (!token || draining.current) return;
+    // Someone is talking to it: try again once they're done rather than cutting in.
+    if (busy.current) {
+      if (!retryDrain.current) retryDrain.current = setTimeout(() => ((retryDrain.current = null), void drainRef.current()), 20_000);
+      return;
+    }
+    draining.current = true;
+    try {
+      const { commands } = await api.pendingCommands(token);
+      for (const command of commands) {
+        devlog("agent", `running a command from the agent`, command.text);
+        try {
+          const reply = await ask(command.text, true, undefined, undefined, "agent");
+          await api.commandDone(token, command.id, true, reply ?? "");
+          if (reply) await showAgentReply(reply);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          devlog("err", "the agent's command failed", message);
+          await api.commandDone(token, command.id, false, message).catch(() => {});
+        }
+      }
+    } catch (err) {
+      devlog("err", "couldn't fetch the agent's commands", String(err));
+    } finally {
+      draining.current = false;
+    }
+  }, [token]);
+  const drainRef = useRef(drainCommands);
+  drainRef.current = drainCommands;
+
+  useEffect(() => {
+    onPush("command", () => drainRef.current());
+    void drainRef.current();
+    const app = AppState.addEventListener("change", (state) => {
+      if (state === "active") void drainRef.current();
+    });
+    const link = clip.onLinkChange((linked) => {
+      if (linked) void drainRef.current();
+    });
+    return () => {
+      app.remove();
+      link();
+      if (retryDrain.current) clearTimeout(retryDrain.current);
+    };
+  }, [token]);
 
   ambientRef.current = alwaysListen;
   const twistOn = listenMode !== "wake";
@@ -570,6 +627,17 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   };
 
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;
+}
+
+/**
+ * What the agent's command came to, as a notification: nobody asked for it on
+ * screen, so there's no conversation for the reply to appear in.
+ */
+async function showAgentReply(reply: string) {
+  await Notifications.scheduleNotificationAsync({
+    content: { title: "🤖 OVOA agent", body: reply.slice(0, 180), data: { type: "agent-reply" } },
+    trigger: null,
+  }).catch(() => {});
 }
 
 /** A band turn stops itself after this long, in case the second click never comes. */

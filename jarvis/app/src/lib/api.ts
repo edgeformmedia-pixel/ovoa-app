@@ -25,6 +25,9 @@ export type Settings = {
   captureEverything?: boolean;
 };
 
+/** Something the background agent asked the phone to do, in words. */
+export type QueuedCommand = { id: string; text: string; source: "agent" | "system"; reason: string | null; created_at: number };
+
 /** What the server knows this user has; every feature picks its path from this. */
 export type Capabilities = {
   band: boolean;
@@ -369,10 +372,10 @@ export const api = {
    * `ambient`: overheard by always-listening; the server replies only if it was
    * meant for the assistant, and otherwise answers `ignored` and saves nothing.
    */
-  send: (token: string, message: string, phone: PhoneCaps, voice = false, ambient = false) =>
+  send: (token: string, message: string, phone: PhoneCaps, voice = false, ambient = false, source?: "agent") =>
     request<ChatResponse>("/chat", token, {
       method: "POST",
-      body: JSON.stringify({ message, timeZone: timeZone(), phone, voice, ambient }),
+      body: JSON.stringify({ message, timeZone: timeZone(), phone, voice, ambient, source }),
     }),
   resume: (token: string, turnId: string, results: Record<string, unknown>) =>
     request<ChatResponse>("/chat/resume", token, { method: "POST", body: JSON.stringify({ turnId, results }) }),
@@ -448,6 +451,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ pattern }),
     }),
+
+  // ---------- Commands the agent queued for the phone ----------
+
+  /** Claims what's waiting: the server marks these running, so a second drain won't get them too. */
+  pendingCommands: (token: string) => request<{ commands: QueuedCommand[] }>("/commands/pending", token),
+  commandDone: (token: string, id: string, ok: boolean, result?: string) =>
+    request(`/commands/${id}/done`, token, { method: "POST", body: JSON.stringify({ ok, result: result?.slice(0, 2000) }) }),
 
   // ---------- The agent ----------
 
