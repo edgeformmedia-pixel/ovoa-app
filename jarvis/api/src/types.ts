@@ -5,6 +5,8 @@ export type Env = {
   /** Second choice when Gemini fails or runs out; before Workers AI. */
   DEEPSEEK_API_KEY?: string;
   DEEPSEEK_MODEL: string;
+  /** "deepseek": try DeepSeek first, Gemini after it. */
+  PRIMARY_ENGINE?: string;
   CHAT_MODEL: string;
   /** Secret for the /debug routes; unset turns them off. */
   DEBUG_KEY?: string;

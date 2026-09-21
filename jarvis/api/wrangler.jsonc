@@ -15,6 +15,9 @@
     "MEMORY_MODEL": "gemini-3.8-flash",
     // Used when Gemini fails or runs out, if DEEPSEEK_API_KEY is set.
     "DEEPSEEK_MODEL": "deepseek-flash",
+    // Which keyed engine is tried first: "deepseek" or "gemini". DeepSeek since
+    // 2026-09-21: the Gemini key is on the free tier (20 requests) and kept 429ing.
+    "PRIMARY_ENGINE": "deepseek",
     // Cloudflare Workers AI: the last resort when the keyed models fail or aren't set.
     "FALLBACK_MODEL": "@cf/openai/gpt-oss-120b",
     "PUBLIC_URL": "https://jarvis-api.edgeformmedia.workers.dev",

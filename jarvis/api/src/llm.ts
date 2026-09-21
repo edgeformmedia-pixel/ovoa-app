@@ -8,6 +8,8 @@ export type LlmEnv = {
   DEEPSEEK_API_KEY?: string;
   DEEPSEEK_MODEL: string;
   FALLBACK_MODEL: string;
+  /** "deepseek" tries DeepSeek before Gemini. Anything else: Gemini first. */
+  PRIMARY_ENGINE?: string;
 };
 
 type Options = {
@@ -119,6 +121,8 @@ function coolDown(engine: Engine, err: unknown) {
 function engines(env: LlmEnv): Engine[] {
   const now = Date.now();
   const keyed: (Engine | false)[] = [!!env.GEMINI_API_KEY && "gemini", !!env.DEEPSEEK_API_KEY && "deepseek"];
+  // PRIMARY_ENGINE (wrangler.jsonc) puts one keyed engine first; the rest keep their order.
+  if (env.PRIMARY_ENGINE === "deepseek") keyed.reverse();
   const ready = [...keyed, "workers" as const].filter((e): e is Engine => !!e && (cooldownUntil.get(e) ?? 0) < now);
   return ready.length ? ready : ["workers"];
 }
