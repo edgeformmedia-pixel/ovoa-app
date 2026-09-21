@@ -6,6 +6,8 @@ import { AuthProvider, useAuth } from "../lib/auth";
 import "../lib/background";
 // Likewise the Done / Snooze handler: a tap on a locked phone can start the app just for it.
 import "../lib/routines";
+// And the location and geofence tasks, which iOS runs with the app closed.
+import "../lib/location";
 import { devlog } from "../lib/devlog";
 import { startRemoteLog } from "../lib/remoteLog";
 import { colors } from "../lib/theme";
@@ -62,6 +64,7 @@ function RootStack() {
         <Stack.Screen name="es100" options={{ headerShown: true, title: "ES100" }} />
         <Stack.Screen name="motion-lab" options={{ headerShown: true, title: "Motion lab" }} />
         <Stack.Screen name="agent" options={{ headerShown: true, title: "Background work" }} />
+        <Stack.Screen name="transcripts" options={{ headerShown: true, title: "Transcripts" }} />
       </Stack.Protected>
       <Stack.Protected guard={!!user && onboarding}>
         <Stack.Screen name="connect-google" />

@@ -266,6 +266,45 @@ check "a missed routine shows"      "$(echo "$FEED" | j "any(c['kind']=='missed'
 check "a quiet account's feed"      "$(curl -s -H "authorization: Bearer $OTHER" "$API/feed" | j "d['cards'][0]['body']")" "Nothing done for you yet today."
 
 echo
+echo "── location ───────────────────────────────────────"
+NOW=$(node -e "process.stdout.write(String(Date.now()))")
+PTS=$(node -e "const n=$NOW;const p=[];for(let i=0;i<8;i++)p.push({ts:n-3600000+i*300000,lat:42.4906+(i%2)*0.0001,lng:-83.1446,accuracy:20});process.stdout.write(JSON.stringify({points:p}))")
+check "points become one visit" "$(curl -s -X POST "${A[@]}" "$API/locations" -d "$PTS" | j "d['visits']")" "1"
+check "bad points refused" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/locations" -d '{"points":[{"ts":1,"lat":500,"lng":0}]}')" "400"
+check "no places yet"      "$(curl -s "${A[@]}" "$API/places" | j "len(d['places'])")" "0"
+check "an unknown place's geofence" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/places/event" -d '{"placeId":"nope","kind":"enter"}')" "404"
+check "nightly runs"       "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=nightly" | j "'places' in d")" "True"
+check "forget where I've been" "$(curl -s -X DELETE "${A[@]}" "$API/locations" | j "d['ok']")" "True"
+
+echo
+echo "── heart rate and workouts ────────────────────────"
+HR=$(node -e "const n=$NOW;const s=[];for(let m=0;m<30;m++)s.push({ts:n-7200000+m*60000,bpm:64});for(let m=30;m<60;m++)s.push({ts:n-7200000+m*60000,bpm:140});for(let m=60;m<90;m++)s.push({ts:n-7200000+m*60000,bpm:68});process.stdout.write(JSON.stringify({source:'band',samples:s}))")
+check "samples stored"     "$(curl -s -X POST "${A[@]}" "$API/hr" -d "$HR" | j "d['stored']")" "90"
+check "again: no duplicates" "$(curl -s -X POST "${A[@]}" "$API/hr" -d "$HR" >/dev/null; curl -s "${A[@]}" "$API/hr/today" | j "d['count']")" "90"
+sleep 2
+WK=$(curl -s "${A[@]}" "$API/workouts")
+check "the raised half hour is a workout" "$(echo "$WK" | j "len(d['workouts'])")" "1"
+check "standing still, cardio"            "$(echo "$WK" | j "d['workouts'][0]['kind']")" "cardio"
+check "average heart rate"                "$(echo "$WK" | j "d['workouts'][0]['avg_hr']")" "140"
+check "found once, not twice"             "$(curl -s -X POST "${A[@]}" "$API/hr" -d "$HR" >/dev/null; sleep 2; curl -s "${A[@]}" "$API/workouts" | j "len(d['workouts'])")" "1"
+check "impossible readings refused" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/hr" -d '{"source":"band","samples":[{"ts":1,"bpm":900}]}')" "400"
+
+echo
+echo "── transcripts ────────────────────────────────────"
+curl -s -o /dev/null -X POST "${A[@]}" "$API/context/blocks" -d "{\"startedAt\":$NOW,\"endedAt\":$NOW,\"source\":\"voice\",\"transcript\":\"Remember to pick up the dry cleaning on Friday\"}"
+TODAY=$(node -e "process.stdout.write(new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(new Date($NOW)))")
+DAY=$(curl -s "${A[@]}" "$API/transcripts/day/$TODAY")
+check "a recording is in today's transcript" "$(echo "$DAY" | j "sum(len(h['blocks']) for h in d['hours']) >= 1")" "True"
+check "marked as a recording"                "$(echo "$DAY" | j "'recording' in d['hours'][-1]['blocks'][-1]['sources']")" "True"
+check "found by its words" "$(curl -s "${A[@]}" "$API/transcripts/search?q=dry%20cleaning" | j "d['lines'][0]['source']")" "recording"
+check "not by someone else" "$(curl -s -H "authorization: Bearer $OTHER" "$API/transcripts/search?q=dry%20cleaning" | j "len(d['lines'])")" "0"
+FROM=$((NOW - 1000)); TO=$((NOW + 1000))
+check "the words themselves" "$(curl -s "${A[@]}" "$API/transcripts/lines?from=$FROM&to=$TO" | j "d['lines'][0]['text']")" "Remember to pick up the dry cleaning on Friday"
+check "forget that"          "$(curl -s -X DELETE "${A[@]}" "$API/transcripts?from=$FROM&to=$TO" | j "d['forgot']")" "1"
+check "background needs capture-everything" \
+  "$(curl -s "${A[@]}" "$API/transcripts/search?q=dry" | j "len(d['lines'])")" "0"
+
+echo
 echo "── capture everything is dev-only ─────────────────"
 check "refused for an ordinary account"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":true}')" "403"
 check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['captureEverything']")" "False"

@@ -47,6 +47,9 @@ import { getProfile, isProfileTool, onboarding, profileAssistant, profilePrompt 
 import { fireDueNotes, isNoteTool, notes, notesAssistant } from "./notes";
 import { eveningTick, isTodoTool, todos, todosAssistant } from "./todos";
 import { feed } from "./feed";
+import { isLocationTool, location, locationAssistant, locationNightly } from "./location";
+import { heart, heartAssistant, HR_RETAIN_DAYS, isHeartTool } from "./heart";
+import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
 
 const HISTORY_TURNS = 30;
@@ -478,6 +481,9 @@ async function runTurn(
   const profileTools = profileAssistant(env, userId);
   const noteTools = notesAssistant(env, userId, timeZone, { voice });
   const todoTools = todosAssistant(env, userId, timeZone);
+  const placeTools = locationAssistant(env, userId, timeZone);
+  const heartTools = heartAssistant(env, userId, timeZone);
+  const transcriptTools = transcriptAssistant(env, userId, timeZone);
 
   const turns: Turn[] = history.results.reverse().map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -524,6 +530,9 @@ async function runTurn(
     ["profile", profilePrompt(profile)],
     ["notes", noteTools.prompt],
     ["todos", todoTools.prompt],
+    ["location", placeTools.prompt],
+    ["heart", heartTools.prompt],
+    ["transcripts", settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : ""],
     ["command", fromAgent
       ? [
           "This request was not typed by the user. Your own background agent queued it for the phone to run, because it needs something only the phone has (Reminders, the phone's calendar, Health).",
@@ -566,6 +575,9 @@ async function runTurn(
     ...profileTools.tools,
     ...noteTools.tools,
     ...todoTools.tools,
+    ...placeTools.tools,
+    ...heartTools.tools,
+    ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
     (t) => !fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name),
@@ -600,7 +612,13 @@ async function runTurn(
                         ? noteTools.callTool
                         : isTodoTool(name)
                           ? todoTools.callTool
-                          : google.callTool)(name, args);
+                          : isLocationTool(name)
+                            ? placeTools.callTool
+                            : isHeartTool(name)
+                              ? heartTools.callTool
+                              : isTranscriptTool(name)
+                                ? transcriptTools.callTool
+                                : google.callTool)(name, args);
         // Only what actually happened: a parked action is logged when it's approved.
         const kind = kindForTool(name);
         if (kind && result !== DEFER && toolSucceeded(result)) {
@@ -673,6 +691,8 @@ async function runTurn(
     db.prepare(insert).bind(botMsg.id, userId, botMsg.role, botMsg.content, botMsg.created_at, source ?? null),
   ]);
 
+  if (!fromAgent && reply) ctx.waitUntil(storeLine(db, userId, reply, "assistant", now + 1).catch(() => false));
+
   if (settings.memory_enabled) {
     ctx.waitUntil(
       updateMemories(env, userId, memories, text, reply).catch((err) => console.error("memory update failed", err)),
@@ -742,10 +762,14 @@ async function chatTurn(
   if (data.ambient) {
     const { assistant_name } = await getSettings(db, userId);
     if (!(await isMeantForAssistant(env, userId, data.message, assistant_name))) {
-      // Not for us: nothing is saved and nothing is said.
+      // Not for us: nothing is said, and nothing is saved -- unless this is a
+      // development account with capture-everything on (transcripts.ts).
+      await storeLine(db, userId, data.message, "background");
       return { ignored: true };
     }
   }
+  // Said to OVOA: into the transcript, when the timeline is on.
+  if (!data.source) ctx.waitUntil(storeLine(db, userId, data.message, "mic").catch(() => false));
   const timeZone = validTimeZone(data.timeZone);
   // Housekeeping nothing in this turn reads, so it runs alongside the reply rather than before it.
   ctx.waitUntil(
@@ -953,6 +977,7 @@ authed.post("/context/blocks", async (c) => {
   if (!settings.context_enabled) return c.json({ error: "Context is off" }, 403);
 
   const timeZone = validTimeZone(parsed.data.timeZone ?? settings.time_zone ?? undefined);
+  if (parsed.data.transcript) await storeLine(c.env.DB, userId, parsed.data.transcript, "recording", parsed.data.startedAt);
   const block = await recordBlock(
     c.env,
     userId,
@@ -1237,6 +1262,8 @@ app.post("/debug/agent/tick", async (c) => {
   const started = Date.now();
   const which = c.req.query("what");
   if (which === "maintenance") return c.json({ purgedBlocks: await maintenance(c.env), ms: Date.now() - started });
+  if (which === "nightly") return c.json({ ...(await nightly(c.env)), ms: Date.now() - started });
+  if (which === "transcripts") return c.json({ titled: await titleTranscripts(c.env), ms: Date.now() - started });
   if (which === "routines") {
     return c.json({
       fired: await fireDueRoutines(c.env),
@@ -1285,12 +1312,33 @@ authed.route("/", onboarding);
 authed.route("/", notes);
 authed.route("/", todos);
 authed.route("/", feed);
+authed.route("/", location);
+authed.route("/", heart);
+authed.route("/", transcripts);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);
 authed.route("/", voice);
 
 app.route("/", authed);
+
+/**
+ * Once a night, alongside the agent's own maintenance: learn places, and hold
+ * each kind of personal data to its retention promise.
+ */
+async function nightly(env: Env) {
+  const now = Date.now();
+  const places = await locationNightly(env);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM hr_samples WHERE ts < ?").bind(now - HR_RETAIN_DAYS * 86_400_000),
+    env.DB.prepare("DELETE FROM raw_captures WHERE ts < ?").bind(now - TRANSCRIPT_RETAIN_DAYS * 86_400_000),
+    env.DB.prepare("DELETE FROM transcript_titles WHERE start < ?").bind(now - TRANSCRIPT_RETAIN_DAYS * 86_400_000),
+    env.DB.prepare("DELETE FROM action_log WHERE ts < ?").bind(now - 365 * 86_400_000),
+    env.DB.prepare("DELETE FROM command_queue WHERE created_at < ?").bind(now - 30 * 86_400_000),
+    env.DB.prepare("DELETE FROM daily_marks WHERE at < ?").bind(now - 30 * 86_400_000),
+  ]);
+  return { places };
+}
 
 /**
  * Cron. Every few minutes the agent looks for work that has come due and pushes
@@ -1303,6 +1351,7 @@ export default {
     ctx.waitUntil(tick(env, event.cron).catch((err) => console.error("agent tick failed", err)));
     // Routines run on the same two-minute beat. The phone's own local notifications
     // give exact timing; this is what escalates, buzzes and keeps the record.
+    if (event.cron.startsWith("13 4")) ctx.waitUntil(nightly(env).catch((err) => console.error("nightly failed", err)));
     if (!event.cron.startsWith("13 4")) {
       ctx.waitUntil(
         (async () => {
@@ -1310,6 +1359,7 @@ export default {
           const chased = await escalate(env);
           const reminded = await fireDueNotes(env);
           const evening = await eveningTick(env);
+          await titleTranscripts(env);
           if (fired || chased || reminded || evening.built || evening.told) {
             console.log(
               `routines: ${fired} fired, ${chased} followed up, ${reminded} notes, ${evening.built} lists, ${evening.told} bedtimes`,

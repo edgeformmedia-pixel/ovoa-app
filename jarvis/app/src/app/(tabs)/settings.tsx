@@ -1,4 +1,4 @@
-import { useRouter } from "expo-router";
+import { useRouter, type Href } from "expo-router";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
@@ -16,6 +16,7 @@ import { GoogleConnection } from "../../components/GoogleConnection";
 import { SiriSetup } from "../../components/SiriSetup";
 import { VoicePicker } from "../../components/VoicePicker";
 import { api, type Autonomy, type Memory } from "../../lib/api";
+import { disableTimeline, enableTimeline, timelinePref } from "../../lib/location";
 import { useAgent } from "../../lib/agent";
 import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
@@ -327,6 +328,8 @@ export default function Settings() {
       </Section>
 
       <Section title="Your day">
+        <LocationTimeline />
+        <Button label="Transcripts — everything said" onPress={() => router.push("/transcripts" as Href)} />
         <Text style={styles.meta}>
           Wake and bed times, work hours, medications and routines. Going through it again adds to what's there; it
           doesn't remove anything.
@@ -607,6 +610,43 @@ const LISTEN_MODES = [
     hint: "Click the ES100's button: it buzzes and listens until you stop talking, answers, then stops listening. Click again while it listens to send right away; click while it answers to cut it off. Works from other apps too.",
   },
 ] as const;
+
+/**
+ * The location timeline: off until turned on here, because it needs "Always"
+ * location and keeps where they've been for 14 days (places for good).
+ */
+function LocationTimeline() {
+  const [on, setOn] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    timelinePref.get().then(setOn);
+  }, []);
+  const toggle = async (next: boolean) => {
+    setProblem(null);
+    if (!next) {
+      await disableTimeline();
+      return setOn(false);
+    }
+    const r = await enableTimeline();
+    if (r.ok) setOn(true);
+    else setProblem(r.reason);
+  };
+  return (
+    <>
+      <View style={styles.row}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.label}>Location timeline</Text>
+          <Text style={styles.meta}>
+            Learns home, work and the places you go, so reminders can wait for where you'll be. Where you went is kept 14
+            days; named places until you remove them.
+          </Text>
+        </View>
+        <Switch value={on} onValueChange={toggle} trackColor={{ true: colors.accent, false: colors.border }} />
+      </View>
+      {problem && <Text style={[styles.meta, { color: colors.danger }]}>{problem}</Text>}
+    </>
+  );
+}
 
 function Button({
   label,

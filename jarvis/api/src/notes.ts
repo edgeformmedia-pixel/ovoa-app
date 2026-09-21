@@ -41,12 +41,12 @@ const cleanTags = (v: unknown) =>
 export async function addNote(
   db: D1Database,
   userId: string,
-  n: { text: string; tags?: string[]; place?: string | null; remindAt?: number | null },
+  n: { text: string; tags?: string[]; place?: string | null; remindAt?: number | null; placeId?: string | null },
 ) {
   const id = crypto.randomUUID();
   await db
-    .prepare("INSERT INTO notes (id, user_id, ts, text, tags, place, remind_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, userId, Date.now(), n.text.slice(0, 2000), JSON.stringify(n.tags ?? []), n.place ?? null, n.remindAt ?? null)
+    .prepare("INSERT INTO notes (id, user_id, ts, text, tags, place, remind_at, place_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(id, userId, Date.now(), n.text.slice(0, 2000), JSON.stringify(n.tags ?? []), n.place ?? null, n.remindAt ?? null, n.placeId ?? null)
     .run();
   return id;
 }
@@ -148,15 +148,24 @@ export function notesAssistant(env: Env, userId: string, timeZone: string, opts:
       if (args.remindAt && !remindAt) return { error: "remindAt must be YYYY-MM-DDTHH:MM" };
       if (remindAt && remindAt < Date.now()) return { error: "That time has already passed." };
       const place = String(args.place ?? "").trim().slice(0, 120) || null;
-      const id = await addNote(db, userId, { text, tags: cleanTags(args.tags), place, remindAt });
+      // A place OVOA has learned (location.ts) has a geofence, so the note can fire on arrival.
+      const known = place
+        ? await db
+            .prepare("SELECT id, name FROM places WHERE user_id = ? AND (lower(name) LIKE ? OR kind = ?) LIMIT 1")
+            .bind(userId, `%${place.toLowerCase()}%`, place.toLowerCase())
+            .first<{ id: string; name: string | null }>()
+        : null;
+      const id = await addNote(db, userId, { text, tags: cleanTags(args.tags), place, remindAt, placeId: known?.id ?? null });
       return {
         saved: true,
         id,
         ...(remindAt && { reminder: `${new Date(remindAt).toLocaleDateString("en-US", { timeZone, weekday: "long" })} at ${clock(remindAt, timeZone)}` }),
-        // Place reminders arrive with location tracking (F10); until then the place is only kept.
-        ...(place && {
-          note: "Kept the place with it, but reminders by place need location tracking, which isn't on yet. Say so briefly.",
-        }),
+        ...(place &&
+          (known
+            ? { place: known.name ?? place, note: "It will come up when they next arrive there. Say so briefly." }
+            : {
+                note: "Kept the place with it, but OVOA hasn't learned that place yet (it needs the location timeline on, and a few visits). Say so briefly.",
+              })),
       };
     }
     if (name === "note_search") {

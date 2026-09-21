@@ -54,6 +54,23 @@ export type RoutineSync = {
 
 type Occurrence = { dueAt?: number; eventId?: string };
 
+export type Place = {
+  id: string;
+  name: string | null;
+  kind: "home" | "work" | "gym" | "other";
+  lat: number;
+  lng: number;
+  radius: number;
+  address: string | null;
+  visit_count: number;
+};
+
+export type LineSource = "mic" | "assistant" | "recording" | "background";
+export type TranscriptLine = { id: string; ts: number; text: string; source: LineSource };
+export type TranscriptBlock = { start: number; at: string; title: string | null; summary: string | null; lines: number; sources: LineSource[] };
+export type TranscriptHour = { hour: string; start: number; label: string; title: string | null; summary: string | null; blocks: TranscriptBlock[] };
+export type TranscriptDay = { date: string; title: string | null; summary: string | null; hours: TranscriptHour[] };
+
 /** One card on the home screen's feed (api/src/feed.ts). */
 export type FeedCard =
   | { kind: "summary"; title: string; body: string; minutesSaved: number; counts: Record<string, number> }
@@ -63,6 +80,7 @@ export type FeedCard =
   | { kind: "missed"; title: string; body: string; routineId: string }
   | { kind: "agent"; title: string; items: { at: string; text: string }[] }
   | { kind: "week"; title: string; body: string; minutesSaved: number }
+  | { kind: "workout"; title: string; body: string; workoutId: string }
   | { kind: "activity"; title: string; items: { at: string; text: string; source: string }[] };
 
 /** One line on a day's list. */
@@ -507,6 +525,35 @@ export const api = {
     }),
 
   feed: (token: string) => request<{ cards: FeedCard[] }>("/feed", token),
+
+  // ---------- Location timeline ----------
+
+  sendLocations: (token: string, points: { ts: number; lat: number; lng: number; accuracy: number | null; speed: number | null }[]) =>
+    request<{ visits: number }>("/locations", token, { method: "POST", body: JSON.stringify({ points }) }),
+  places: (token: string) => request<{ places: Place[] }>("/places", token),
+  placeAddress: (token: string, id: string, address: string) =>
+    request(`/places/${id}/address`, token, { method: "POST", body: JSON.stringify({ address }) }),
+  placeEvent: (token: string, placeId: string, kind: "enter" | "exit") =>
+    request("/places/event", token, { method: "POST", body: JSON.stringify({ placeId, kind, ts: Date.now() }) }),
+  forgetLocations: (token: string) => request("/locations", token, { method: "DELETE" }),
+
+  // ---------- Heart rate ----------
+
+  sendHeartRate: (token: string, source: "health" | "band", samples: { ts: number; bpm: number }[]) =>
+    request<{ stored: number }>("/hr", token, { method: "POST", body: JSON.stringify({ source, samples }) }),
+  heartToday: (token: string) =>
+    request<{ baseline: number; latest: { ts: number; bpm: number } | null; count: number }>("/hr/today", token),
+
+  // ---------- Transcripts ----------
+
+  transcriptDay: (token: string, date: string) =>
+    request<TranscriptDay>(`/transcripts/day/${date}?timeZone=${encodeURIComponent(timeZone())}`, token),
+  transcriptLines: (token: string, from: number, to: number) =>
+    request<{ lines: TranscriptLine[] }>(`/transcripts/lines?from=${from}&to=${to}`, token),
+  searchTranscripts: (token: string, q: string) =>
+    request<{ lines: TranscriptLine[] }>(`/transcripts/search?q=${encodeURIComponent(q)}`, token),
+  forgetTranscript: (token: string, from: number, to: number) =>
+    request<{ forgot: number }>(`/transcripts?from=${from}&to=${to}`, token, { method: "DELETE" }),
 
   // ---------- To-do list ----------
 
