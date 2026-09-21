@@ -350,13 +350,15 @@ const pointsSchema = z.object({
         speed: z.number().nullish(),
       }),
     )
-    .min(1)
+    // An empty batch is the background task waking with nothing new, not a bad
+    // request: it was answered with a 400 the app then logged as an error.
     .max(500),
 });
 
 location.post("/locations", async (c) => {
   const parsed = pointsSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Invalid points" }, 400);
+  if (!parsed.data.points.length) return c.json({ visits: 0 });
   const points = parsed.data.points.map((p) => ({ ...p, ts: Math.round(p.ts) }));
   return c.json({ visits: await ingestPoints(c.env.DB, c.var.userId, points) });
 });

@@ -7,6 +7,8 @@ export type Env = {
   DEEPSEEK_MODEL: string;
   /** "deepseek": try DeepSeek first, Gemini after it. */
   PRIMARY_ENGINE?: string;
+  /** Which engine answers spoken turns first. "workers" by default; "keyed" restores the usual order. */
+  VOICE_PRIMARY?: string;
   CHAT_MODEL: string;
   /** Secret for the /debug routes; unset turns them off. */
   DEBUG_KEY?: string;

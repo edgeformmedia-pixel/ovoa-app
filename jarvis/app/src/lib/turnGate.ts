@@ -14,6 +14,8 @@
 const NAME_WAIT_MS = 3000;
 /** No new words for this long ends a request. */
 const QUIET_MS = 900;
+/** ...but a request that is plainly mid-sentence gets this long instead (see UNFINISHED). */
+const UNFINISHED_QUIET_MS = 2500;
 /**
  * After a click on the clip, the user is talking to the assistant on purpose: wait for them to be
  * done (this much quiet) instead of ending at the first sentence break or short pause.
@@ -34,6 +36,29 @@ const ECHO_MS = 6000;
 const FOLLOW_UP_MS = 8000;
 /** "What's the weather? ... OVOA." still counts if the name comes this soon after the question. */
 const NAME_AFTER_MS = 2000;
+/** Words held while the assistant was answering are still theirs for this long. */
+const HELD_MS = 30_000;
+
+/**
+ * Words a request is plainly not finished on. "Send a text to Ty saying please
+ * pick me up at six" was being sent as "Send a text to Ty." — transcription
+ * punctuates the pause before the message itself, and a full stop used to end the
+ * turn on the spot. Ending on one of these is treated as a pause, not an ending,
+ * and the rest of the sentence is waited for.
+ */
+const UNFINISHED = new Set([
+  "saying", "that", "to", "about", "at", "for", "and", "with", "from", "of", "on", "in", "it",
+  "tell", "telling", "ask", "asking", "remind", "reminding", "the", "a", "my", "his", "her",
+  "their", "our", "your", "i", "is", "im", "its", "please", "like", "if", "when", "because",
+  "but", "or", "so", "say", "says", "text", "call", "email", "message",
+]);
+
+/** Whether what has been heard so far is obviously mid-sentence. */
+export function soundsUnfinished(text: string) {
+  const words = wordsOf(text);
+  const last = words[words.length - 1];
+  return !!last && UNFINISHED.has(last);
+}
 
 const STOP_WORDS = new Set(["stop", "wait", "cancel", "quiet", "enough", "pause", "hold", "shut"]);
 const FILLER = new Set(["ovoa", "ok", "okay", "please", "it", "that", "up", "on", "now", "hey", "no", "just", "right"]);
@@ -164,6 +189,8 @@ export class TurnGate {
   private clicked = false;
   private sendNow = false;
   private lastIgnored: { text: string; at: number } | null = null;
+  /** Said while the assistant was busy answering. Kept, not dropped (see onFinal). */
+  private held: { text: string; at: number } | null = null;
 
   constructor(
     public name: string,
@@ -181,7 +208,17 @@ export class TurnGate {
   listen(now: number) {
     this.phase = "listening";
     // Words carried over from talking over the reply: the rest of the sentence follows.
-    if (this.pending) this.pending.lastAt = now;
+    if (this.pending) {
+      this.pending.lastAt = now;
+      return;
+    }
+    // Something was said while the assistant was busy. They were plainly talking to
+    // it, so it counts as addressed and doesn't need the name again — which is what
+    // used to happen: the rest of a request was answered with silence because the
+    // user didn't start it "hey OVOA" a second time.
+    const held = this.held;
+    this.held = null;
+    if (held && now - held.at < HELD_MS) this.start(held.text, true, now);
   }
 
   think() {
@@ -220,7 +257,14 @@ export class TurnGate {
 
   onFinal(text: string, sentenceEnd: boolean, now: number): GateResult {
     this.interim = "";
-    if (this.phase === "thinking") return { kind: "ignored", text, why: "still answering the last one" };
+    if (this.phase === "thinking") {
+      // Kept rather than thrown away: while the assistant is working, what the user
+      // carries on saying is usually the rest of what they were asking for. It is
+      // picked up again by listen().
+      const rest = withoutEcho(text, this.reply);
+      if (rest) this.held = { text: this.held ? `${this.held.text} ${rest}`.trim() : rest, at: now };
+      return { kind: "ignored", text, why: rest ? "still answering the last one (kept for after)" : "still answering the last one" };
+    }
 
     if (this.phase === "speaking") {
       if (this.pending) {
@@ -308,7 +352,10 @@ export class TurnGate {
       return now - Math.max(p.lastAt, this.interimAt) > CLICKED_QUIET_MS || now - p.at > CLICKED_MAX_MS ? this.finish() : null;
     }
     if (this.waitingForRequest()) return now - p.at > NAME_WAIT_MS ? this.finish() : null;
-    if (now - Math.max(p.lastAt, this.interimAt) > QUIET_MS) return this.finish();
+    // Mid-sentence gets longer to finish: people pause to think about what the
+    // message should say, and that pause is not the end of the request.
+    const quiet = soundsUnfinished(p.text) ? UNFINISHED_QUIET_MS : QUIET_MS;
+    if (now - Math.max(p.lastAt, this.interimAt) > quiet) return this.finish();
     if (now - p.at > (this.room ? ROOM_MAX_MS : OPEN_MAX_MS)) return this.finish();
     return null;
   }
@@ -334,6 +381,10 @@ export class TurnGate {
     const p = this.pending;
     if (!p || this.phase !== "listening" || this.waitingForRequest()) return null;
     if (this.clicked) return null; // tick ends it after CLICKED_QUIET_MS of quiet
+    // "Send a text to Ty," with the message still to come: a full stop there is
+    // transcription punctuating a pause, not the user finishing. Wait for quiet
+    // (tick, below) rather than sending half a request.
+    if (soundsUnfinished(p.text)) return null;
     if (sentenceEnd) return this.finish();
     // In a room it never goes quiet: a finished sentence is enough.
     if (this.room && /[.?!]$/.test(p.text) && contentWords(p.text, this.name).length >= 2) return this.finish();

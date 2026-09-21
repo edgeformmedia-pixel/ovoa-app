@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import { validTimeZone } from "./google/assistant";
 import { digestBlock, type Extracted } from "./people";
 import { generateText, type CallTool, type ToolSpec } from "./llm";
@@ -43,6 +44,37 @@ export async function storeLine(db: D1Database, userId: string, text: string, so
     .bind(crypto.randomUUID(), userId, ts, clean.slice(0, 4000), source)
     .run();
   return true;
+}
+
+/**
+ * The same, for a batch: one settings read and one write instead of a round trip
+ * per sentence. The phone overhears far more than it answers, and all of it has
+ * to be cheap or none of it is worth keeping.
+ */
+export async function storeLines(
+  db: D1Database,
+  userId: string,
+  lines: { text: string; ts: number }[],
+  source: LineSource,
+) {
+  const clean = lines
+    .map((l) => ({ text: l.text.trim().slice(0, 4000), ts: l.ts }))
+    .filter((l) => l.text);
+  if (!clean.length) return 0;
+  const s = await db
+    .prepare("SELECT context_enabled, capture_everything FROM settings WHERE user_id = ?")
+    .bind(userId)
+    .first<{ context_enabled: number; capture_everything: number }>();
+  const allowed = source === "background" ? !!s?.capture_everything : !!(s?.context_enabled || s?.capture_everything);
+  if (!allowed) return 0;
+  await db.batch(
+    clean.map((l) =>
+      db
+        .prepare("INSERT INTO raw_captures (id, user_id, ts, text, source) VALUES (?, ?, ?, ?, ?)")
+        .bind(crypto.randomUUID(), userId, l.ts, l.text, source),
+    ),
+  );
+  return clean.length;
 }
 
 // ---------- Titling ----------
@@ -365,6 +397,25 @@ transcripts.get("/transcripts/lines", async (c) => {
 
 transcripts.get("/transcripts/search", async (c) => {
   return c.json({ lines: await searchTranscripts(c.env.DB, c.var.userId, c.req.query("q") ?? "") });
+});
+
+const heardSchema = z.object({
+  lines: z
+    .array(z.object({ ts: z.number().int().positive(), text: z.string().trim().min(1).max(4000) }))
+    .max(200),
+});
+
+/**
+ * Everything the phone overheard and decided was not for the assistant. Until
+ * now that was written to the device log and dropped, so "what did I say today"
+ * could only answer from the handful of sentences addressed to OVOA. storeLines
+ * still enforces the setting: nothing is kept unless capture-everything is on,
+ * which is a development flag for one named account (index.ts, isDevAccount).
+ */
+transcripts.post("/transcripts/heard", async (c) => {
+  const parsed = heardSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "Invalid lines" }, 400);
+  return c.json({ kept: await storeLines(c.env.DB, c.var.userId, parsed.data.lines, "background") });
 });
 
 /** "Forget that": the lines in a span, and the titles written from them. */

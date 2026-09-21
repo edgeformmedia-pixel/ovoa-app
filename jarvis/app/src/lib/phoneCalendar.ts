@@ -30,6 +30,10 @@ export function localDate(s: string) {
 
 const addHours = (d: Date, h: number) => new Date(d.getTime() + h * 3600_000);
 const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86400_000);
+// expo-calendar insists on a date range for reminders, including undated ones.
+// Wide enough that "everything" is what comes back.
+export const yearAgo = () => addDays(new Date(), -365);
+export const yearAhead = () => addDays(new Date(), 365);
 
 /** Local time without an offset, which is what the assistant reads and writes. */
 function localIso(value: string | Date) {
@@ -131,8 +135,10 @@ export async function listReminders({ includeCompleted }: { includeCompleted?: b
   const lists = await Calendar.getCalendarsAsync(Calendar.EntityTypes.REMINDER);
   const ids = lists.map((l) => l.id);
   const names = new Map(lists.map((l) => [l.id, l.title]));
-  // No status filter: with one, expo-calendar demands a date range (and drops undated reminders).
-  const open = (await Calendar.getRemindersAsync(ids, null, null, null)).filter((r) => !r.completed);
+  // A date range is required either way: without one expo-calendar throws
+  // "getRemindersAsync must be called with a startDate". A wide window, then the
+  // open ones picked out here.
+  const open = (await Calendar.getRemindersAsync(ids, null, yearAgo(), yearAhead())).filter((r) => !r.completed);
   const done = includeCompleted
     ? await Calendar.getRemindersAsync(ids, Calendar.ReminderStatus.COMPLETED, addDays(new Date(), -7), new Date())
     : [];

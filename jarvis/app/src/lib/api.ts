@@ -622,6 +622,10 @@ export const api = {
   commandDone: (token: string, id: string, ok: boolean, result?: string) =>
     request(`/commands/${id}/done`, token, { method: "POST", body: JSON.stringify({ ok, result: result?.slice(0, 2000) }) }),
 
+  /** Overheard and not answered. Kept only for an account with capture-everything on. */
+  keepHeard: (token: string, lines: { ts: number; text: string }[]) =>
+    request<{ kept: number }>("/transcripts/heard", token, { method: "POST", body: JSON.stringify({ lines }) }),
+
   // ---------- The agent ----------
 
   /** Lets the agent reach this phone. Safe to call again; the server replaces the row. */

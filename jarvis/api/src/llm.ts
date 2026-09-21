@@ -10,6 +10,14 @@ export type LlmEnv = {
   FALLBACK_MODEL: string;
   /** "deepseek" tries DeepSeek before Gemini. Anything else: Gemini first. */
   PRIMARY_ENGINE?: string;
+  /**
+   * Which engine answers spoken turns first. "workers" (the default) because on
+   * the wrist the wait before the first word is the whole experience, and the
+   * measured first token is 1.0-2.9 s on Workers AI against 4.3-14.1 s on the
+   * free-tier Gemini key (device_logs, 2026-09-21). "keyed" restores the usual
+   * order for everything.
+   */
+  VOICE_PRIMARY?: string;
 };
 
 type Options = {
@@ -118,13 +126,32 @@ function coolDown(engine: Engine, err: unknown) {
  * (and they haven't just failed), then Cloudflare Workers AI, so chat keeps working
  * if the others fail or run out.
  */
-function engines(env: LlmEnv): Engine[] {
+function engines(env: LlmEnv, voice = false): Engine[] {
   const now = Date.now();
   const keyed: (Engine | false)[] = [!!env.GEMINI_API_KEY && "gemini", !!env.DEEPSEEK_API_KEY && "deepseek"];
   // PRIMARY_ENGINE (wrangler.jsonc) puts one keyed engine first; the rest keep their order.
   if (env.PRIMARY_ENGINE === "deepseek") keyed.reverse();
   const ready = [...keyed, "workers" as const].filter((e): e is Engine => !!e && (cooldownUntil.get(e) ?? 0) < now);
-  return ready.length ? ready : ["workers"];
+  if (!ready.length) return ["workers"];
+  // A spoken turn answers on whichever engine reaches the first word soonest, not
+  // on whichever is nominally primary. Workers AI has a free daily allocation, and
+  // when it runs out it cools down (4006) and the keyed engines take the turn.
+  if (voice && env.VOICE_PRIMARY !== "keyed" && ready.includes("workers")) {
+    return ["workers", ...ready.filter((e) => e !== "workers")];
+  }
+  return ready;
+}
+
+/**
+ * Engines being skipped right now, and what each last failed with. Goes into a
+ * turn's meta: from the phone there is no way to read the Worker's console, so
+ * "why was that slow" was previously unanswerable without `wrangler tail`.
+ */
+export function coolingEngines() {
+  const now = Date.now();
+  return [...cooldownUntil]
+    .filter(([, until]) => until > now)
+    .map(([engine]) => `${ENGINE_NAMES[engine]}: ${lastFailure.get(engine) ?? "unknown"}`);
 }
 
 /** The last engine's error, naming what the earlier ones failed with. */
@@ -217,7 +244,7 @@ export async function chatWithTools(
         return opts.onText!(delta);
       }
     : undefined;
-  const order = engines(env);
+  const order = engines(env, opts.voice);
   const failures: string[] = [];
   for (const [i, engine] of order.entries()) {
     try {

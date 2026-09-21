@@ -49,6 +49,26 @@ export function saysName(text: string, name: string) {
   return candidates.some((w) => Math.abs(w.length - target.length) <= allowed && editDistance(w, target) <= allowed);
 }
 
+/**
+ * Words a sentence aimed at an assistant tends to open with: a question, or an
+ * instruction. Deliberately generous — a real request wrongly dropped here is
+ * silence the user notices, while a stray line of television getting as far as
+ * the model only costs what it always cost.
+ */
+const REQUEST_START =
+  /^(what|whats|when|where|who|whose|why|how|which|is|are|was|were|can|could|would|will|do|does|did|should|shall|am|any|tell|remind|text|message|call|email|mail|send|set|add|put|schedule|book|play|pause|stop|start|cancel|delete|remove|open|show|find|look|check|search|read|write|draft|make|create|turn|give|help|log|note|remember|forget|snooze|wake|save)\b/i;
+
+/** The discourse markers people start a sentence with before getting to the point. */
+const PREAMBLE = /^(hey|hi|ok|okay|so|um|uh|well|yeah|alright|right|and|but|oh|now|please)[,\s]+/i;
+
+function looksLikeARequest(text: string) {
+  const trimmed = text.trim();
+  if (trimmed.includes("?")) return true;
+  if (REQUEST_START.test(trimmed)) return true;
+  const stripped = trimmed.replace(PREAMBLE, "");
+  return stripped !== trimmed && REQUEST_START.test(stripped);
+}
+
 export async function isMeantForAssistant(env: Env, userId: string | null, text: string, assistantName: string) {
   if (saysName(text, assistantName)) {
     console.log("ambient: says name", text);
@@ -71,6 +91,17 @@ export async function isMeantForAssistant(env: Env, userId: string | null, text:
   const now = Date.now();
   const lastReply = recent.results.find((m) => m.role === "assistant");
   const secondsSinceReply = lastReply ? Math.round((now - lastReply.created_at) / 1000) : null;
+
+  // A room the assistant isn't part of: unless it has just spoken, the only thing
+  // that earns a model call is something shaped like a request. A television
+  // produced dozens of these a minute on 2026-09-21, and each one spent the same
+  // quota the user's real questions needed -- which is how a spoken turn ended up
+  // waiting on the slowest engine available.
+  const inConversation = secondsSinceReply !== null && secondsSinceReply * 1000 < FOLLOW_UP_MS;
+  if (!inConversation && !looksLikeARequest(text)) {
+    console.log("ambient: room talk (no model call)", text);
+    return false;
+  }
 
   try {
     const raw = await generateText(env, {

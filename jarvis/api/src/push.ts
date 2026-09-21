@@ -9,8 +9,16 @@ import type { Env } from "./types";
 const EXPO_SEND = "https://exp.host/--/api/v2/push/send";
 /** Expo accepts 100 messages per request. */
 const CHUNK = 100;
-/** A token that has failed this many times in a row is assumed gone. */
+/** A token that has failed this many times in a row is rested rather than tried every time. */
 const MAX_FAILS = 3;
+/**
+ * ...but only rested, not buried. A token parked on fail_count alone could never
+ * come back: it was left out of every send, and fail_count was only cleared by a
+ * successful send, which could no longer happen. One phone sat unreachable for a
+ * day that way (push_tokens, 2026-09-21) and the agent's whole command channel
+ * went with it. After this long a rested token is tried again.
+ */
+const RETRY_AFTER_MS = 6 * 60 * 60 * 1000;
 
 export type PushMessage = {
   title: string;
@@ -40,7 +48,7 @@ export async function registerPushToken(db: D1Database, userId: string, token: s
     .prepare(
       `INSERT INTO push_tokens (token, user_id, platform, created_at, fail_count)
        VALUES (?, ?, ?, ?, 0)
-       ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, platform = excluded.platform, fail_count = 0`,
+       ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, platform = excluded.platform, fail_count = 0, last_fail_at = NULL`,
     )
     .bind(token, userId, platform ?? null, Date.now())
     .run();
@@ -52,8 +60,10 @@ export async function forgetPushToken(db: D1Database, userId: string, token: str
 
 async function tokensFor(db: D1Database, userId: string) {
   const { results } = await db
-    .prepare("SELECT token FROM push_tokens WHERE user_id = ? AND fail_count < ?")
-    .bind(userId, MAX_FAILS)
+    .prepare(
+      "SELECT token FROM push_tokens WHERE user_id = ? AND (fail_count < ? OR COALESCE(last_fail_at, 0) < ?)",
+    )
+    .bind(userId, MAX_FAILS, Date.now() - RETRY_AFTER_MS)
     .all<{ token: string }>();
   return results.map((r) => r.token);
 }
@@ -70,6 +80,12 @@ export async function push(env: Env, userId: string, message: PushMessage | Sile
   let accepted = 0;
   const dead: string[] = [];
   const failed: string[] = [];
+  /**
+   * Expo was unreachable or answered with an error for the whole batch. That says
+   * nothing about these tokens, so they are neither counted against nor marked
+   * good: three outages in a row used to retire a perfectly healthy phone.
+   */
+  const skipped: string[] = [];
 
   for (let i = 0; i < tokens.length; i += CHUNK) {
     const batch = tokens.slice(i, i + CHUNK);
@@ -99,13 +115,13 @@ export async function push(env: Env, userId: string, message: PushMessage | Sile
       });
       if (!res.ok) {
         console.error(`push: Expo ${res.status}`, (await res.text()).slice(0, 300));
-        failed.push(...batch);
+        skipped.push(...batch);
         continue;
       }
       tickets = ((await res.json()) as { data?: ExpoTicket[] }).data ?? [];
     } catch (err) {
       console.error("push: send failed", err);
-      failed.push(...batch);
+      skipped.push(...batch);
       continue;
     }
 
@@ -124,11 +140,13 @@ export async function push(env: Env, userId: string, message: PushMessage | Sile
   const db = env.DB;
   const now = Date.now();
   const writes: D1PreparedStatement[] = [];
-  const ok = tokens.filter((t) => !dead.includes(t) && !failed.includes(t));
+  const ok = tokens.filter((t) => !dead.includes(t) && !failed.includes(t) && !skipped.includes(t));
   if (ok.length) {
     writes.push(
       db
-        .prepare(`UPDATE push_tokens SET last_ok_at = ?, fail_count = 0 WHERE token IN (${ok.map(() => "?").join(",")})`)
+        .prepare(
+          `UPDATE push_tokens SET last_ok_at = ?, fail_count = 0, last_fail_at = NULL WHERE token IN (${ok.map(() => "?").join(",")})`,
+        )
         .bind(now, ...ok),
     );
   }
@@ -138,8 +156,10 @@ export async function push(env: Env, userId: string, message: PushMessage | Sile
   if (failed.length) {
     writes.push(
       db
-        .prepare(`UPDATE push_tokens SET fail_count = fail_count + 1 WHERE token IN (${failed.map(() => "?").join(",")})`)
-        .bind(...failed),
+        .prepare(
+          `UPDATE push_tokens SET fail_count = fail_count + 1, last_fail_at = ? WHERE token IN (${failed.map(() => "?").join(",")})`,
+        )
+        .bind(now, ...failed),
     );
   }
   if (writes.length) await db.batch(writes);

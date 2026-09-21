@@ -32,6 +32,7 @@ export default function Settings() {
   const [personality, setPersonality] = useState(user?.settings.personality ?? "");
   const [saving, setSaving] = useState(false);
   const [memories, setMemories] = useState<Memory[] | null>(null);
+  const [memoriesOpen, setMemoriesOpen] = useState(false);
   const [autoSendTexts, setAutoSendTexts] = useState(false);
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -314,17 +315,28 @@ export default function Settings() {
         ) : memories.length === 0 ? (
           <Text style={styles.meta}>Nothing remembered yet.</Text>
         ) : (
-          memories.map((m) => (
-            <View key={m.id} style={styles.memory}>
-              <Text style={styles.memoryText}>{m.content}</Text>
-              <Pressable onPress={() => forget(m.id)} hitSlop={10}>
-                <Text style={styles.forget}>Forget</Text>
-              </Pressable>
-            </View>
-          ))
+          // Folded away by default: a few months of use is a long scroll between
+          // the memory switch and everything under it.
+          <>
+            <Pressable style={styles.disclosure} onPress={() => setMemoriesOpen((open) => !open)} hitSlop={8}>
+              <Text style={styles.label}>
+                {memories.length} {memories.length === 1 ? "thing" : "things"} remembered
+              </Text>
+              <Text style={styles.chevron}>{memoriesOpen ? "▾" : "▸"}</Text>
+            </Pressable>
+            {memoriesOpen &&
+              memories.map((m) => (
+                <View key={m.id} style={styles.memory}>
+                  <Text style={styles.memoryText}>{m.content}</Text>
+                  <Pressable onPress={() => forget(m.id)} hitSlop={10}>
+                    <Text style={styles.forget}>Forget</Text>
+                  </Pressable>
+                </View>
+              ))}
+          </>
         )}
 
-        {!!memories?.length && (
+        {!!memories?.length && memoriesOpen && (
           <Button
             label="Forget everything"
             danger
@@ -720,6 +732,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+  disclosure: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 6 },
+  chevron: { color: colors.textDim, fontSize: 14 },
   memory: { flexDirection: "row", alignItems: "center", gap: 12 },
   memoryText: { flex: 1, color: colors.text, fontSize: 14, lineHeight: 20 },
   forget: { color: colors.danger, fontSize: 13 },

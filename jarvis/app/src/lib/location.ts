@@ -38,7 +38,13 @@ async function send(points: typeof pending) {
 }
 
 TaskManager.defineTask<{ locations: Location.LocationObject[] }>(LOCATION_TASK, async ({ data, error }) => {
-  if (error) return devlog("err", "location task error", String(error.message ?? error));
+  if (error) {
+    // kCLErrorLocationUnknown (code 0) is iOS saying "not yet" -- a tunnel, a cold
+    // GPS -- and it fixes itself. It isn't worth a line in the error log.
+    const why = String(error.message ?? error);
+    const transient = /Code=0\b/.test(why) || /kCLErrorDomain.*\(null\)/.test(why);
+    return devlog(transient ? "log" : "err", "location task error", why);
+  }
   if (!data?.locations?.length) return;
   devlog("log", `location task: ${data.locations.length} point(s)`);
   await send(

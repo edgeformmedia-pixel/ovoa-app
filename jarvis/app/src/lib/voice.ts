@@ -14,6 +14,7 @@ import { AppState } from "react-native";
 import { API_URL, ApiError } from "./api";
 import { devlog, logFail } from "./devlog";
 import { pickFiller } from "./fillers";
+import { flushHeard, keepHeard } from "./heard";
 import { openEar, stopStream, useLiveStream } from "./liveListen";
 import { storage } from "./storage";
 import { onlyStop, saidOverReply, TurnGate, type GateResult, type Turn } from "./turnGate";
@@ -273,8 +274,19 @@ function playFile(file: File, onStop: (stop: () => void) => void, onStart?: () =
 
 /** How many clips are voiced ahead of the one playing. */
 const FETCH_AHEAD = 3;
-/** A first sentence longer than this is split at a comma so the voice starts sooner. */
-const FIRST_PIECE_MAX = 70;
+/** A first sentence longer than this is split at a pause so the voice starts sooner. */
+const SPLIT_FIRST_OVER = 60;
+/** ...looking this far into it for one. Past here, the piece is long enough anyway. */
+const FIRST_PIECE_MAX = 120;
+/**
+ * The first clip is a network round trip, and it has taken as long as 10.8 s with
+ * the answer already written and nothing coming out of the phone (device_logs,
+ * 2026-09-21). If it hasn't arrived this soon, a cached filler covers it — by then
+ * a reply is certainly on its way, so this can never talk over a turn that stays
+ * silent.
+ */
+const FILLER_IF_SLOW_MS = 400;
+const SLOW = Symbol("slow");
 
 /**
  * Reads text aloud. `open` starts a reply that arrives a sentence at a time
@@ -332,7 +344,7 @@ export function createSpeaker(token: string) {
       pending = "";
       // A long first sentence takes seconds to voice (110 characters: 2.5 s): start with
       // the part before its first comma or dash, and voice the rest meanwhile.
-      if (pieces.length === 0 && text.length > FIRST_PIECE_MAX) {
+      if (pieces.length === 0 && text.length > SPLIT_FIRST_OVER) {
         const cut = text.slice(20, FIRST_PIECE_MAX).search(/[,;:—–]\s/);
         if (cut >= 0) {
           addPiece(text.slice(0, 20 + cut + 1));
@@ -360,18 +372,28 @@ export function createSpeaker(token: string) {
      * Plays a clip already on the phone, ahead of everything else ("One second
      * while I get that"): no network, so it starts at once. First thing only.
      */
+    let fillerPlayed = false;
     const clip = (file: File) => {
       if (mine !== generation || pieces.length) return;
       pieces.push("(filler)");
       clips.push(Promise.resolve(file));
+      fillerPlayed = true;
       wake();
     };
 
     let played = 0;
     // The turn's timer wants the moment the user first hears something, not every clip.
     let spoken = false;
+    const firstWord = () => {
+      if (spoken) return;
+      spoken = true;
+      markTurn("first word out loud");
+    };
     const done = (async () => {
       await ready;
+      // Switching the audio session can contend with the live microphone, so it
+      // gets its own mark rather than hiding inside the wait for the first word.
+      markTurn("audio session ready");
       for (let i = 0; mine === generation; i++) {
         played = i;
         while (i >= pieces.length && !ended && mine === generation) {
@@ -379,22 +401,31 @@ export function createSpeaker(token: string) {
         }
         if (i >= pieces.length || mine !== generation) break;
         fetchUpTo(i + FETCH_AHEAD);
+        // Nothing has been said yet and the first clip is taking its time: say
+        // something cached rather than leave the phone silent (see FILLER_IF_SLOW_MS).
+        if (i === 0 && !fillerPlayed) {
+          const soon = await Promise.race([clips[0], sleep(FILLER_IF_SLOW_MS).then(() => SLOW)]);
+          if (soon === SLOW && mine === generation) {
+            const filler = pickFiller();
+            if (filler) {
+              fillerPlayed = true;
+              markTurn("filler while the voice is fetched");
+              await playFile(filler, (s) => (stopCurrent = s), firstWord);
+            }
+          }
+          if (mine !== generation) break;
+        }
         const file = await clips[i];
         if (mine !== generation) {
           file?.delete();
           break;
         }
         played = i + 1; // playFile deletes it
-        if (file)
-          await playFile(
-            file,
-            (s) => (stopCurrent = s),
-            () => {
-              if (spoken) return;
-              spoken = true;
-              markTurn("first word out loud");
-            },
-          );
+        if (file) {
+          // Only the first: the rest are voiced ahead and cost the user nothing.
+          if (i === 0) markTurn("voice clip ready");
+          await playFile(file, (s) => (stopCurrent = s), firstWord);
+        }
         fetchUpTo(i + 1 + FETCH_AHEAD);
       }
       // Clean up clips voiced ahead that won't be played.
@@ -580,6 +611,10 @@ async function speakInterruptible(
 export type VoicePhase = "off" | "listening" | "thinking" | "speaking";
 
 const RETRY_MS = 3000;
+/** The voice loop backs off to this between failures rather than asking every 3 s forever. */
+const MAX_RETRY_MS = 60_000;
+/** How long to wait for the app to come forward before looking for a microphone again. */
+const BACKGROUND_WAIT_MS = 5000;
 const INTERRUPTED = Symbol("interrupted");
 const LIVE_RETRY_MS = 60_000;
 
@@ -778,8 +813,12 @@ export function useConversation(
       };
       const handle = (r: GateResult) => {
         if (!r) return;
-        if (r.kind === "ignored") devlog("voice", `ignored: ${r.why}`, r.text);
-        else if (r.kind === "interrupt") {
+        if (r.kind === "ignored") {
+          devlog("voice", `ignored: ${r.why}`, r.text);
+          // Not answered is not the same as not heard. The server keeps these only
+          // for an account with capture-everything on, and drops them otherwise.
+          keepHeard(token, r.text);
+        } else if (r.kind === "interrupt") {
           devlog("voice", r.stopOnly ? "told to stop" : "that was you: interrupting");
           speaker.current.stop();
         } else wake(r.turn);
@@ -851,7 +890,9 @@ export function useConversation(
     const hearRecorded = async (noSpeechMs: number) => {
       // In the background, iOS suspends the app the moment no audio is running, which
       // froze the reply request for 15 minutes once. Keep the stream going as a keep-alive.
-      if (keepsAudio() && stream && !stream.isStreaming) {
+      // Only from the foreground: starting it while the app is away is refused every
+      // time ('!int'), and the failures were the keep-alive's whole output.
+      if (keepsAudio() && stream && !stream.isStreaming && AppState.currentState === "active") {
         await stream.start().catch((err) => devlog("err", "background keep-alive mic failed", String(err)));
       }
       const uri = await recordUtterance(recorder, cancelled, setLevel, noSpeechMs);
@@ -892,8 +933,20 @@ export function useConversation(
       carried = await speakInterruptible(token, recorder, speaker.current, reply, cancelled, setLevel);
     };
 
+    let loopFailures = 0;
     while (!cancelled()) {
       try {
+        // iOS will not open a microphone for an app that isn't on screen. Background
+        // audio keeps a session that is *already* running alive; it does not let a
+        // stopped one start again, and every attempt comes back as
+        // AVAudioSessionErrorCodeCannotInterruptOthers ('!int', OSStatus 560557684).
+        // Asking anyway, every three seconds, filled the log with 190 identical
+        // failures in half an hour and left no working microphone at all
+        // (device_logs, 2026-09-21). Wait for the app to come forward instead.
+        if (AppState.currentState !== "active" && !stream?.isStreaming) {
+          await sleep(BACKGROUND_WAIT_MS);
+          continue;
+        }
         if (liveFailures.current >= 2 && Date.now() - liveFailedAt.current > LIVE_RETRY_MS) {
           devlog("voice", "trying live transcription again");
           liveFailures.current = 0;
@@ -917,13 +970,18 @@ export function useConversation(
           continue;
         }
         await recordingTurn();
+        loopFailures = 0;
       } catch (err) {
         // Usually a dropped connection: say so, wait a moment, and keep going.
+        // Backing off rather than retrying on a fixed beat: when the microphone is
+        // refused outright, asking again in three seconds only asks again forever.
         if (cancelled()) break;
-        devlog("err", "voice loop error, retrying in 3 s", err instanceof Error ? err.message : String(err));
+        loopFailures++;
+        const wait = Math.min(RETRY_MS * 2 ** (loopFailures - 1), MAX_RETRY_MS);
+        devlog("err", `voice loop error, retrying in ${Math.round(wait / 1000)} s`, err instanceof Error ? err.message : String(err));
         setError(err instanceof Error ? err.message : "Voice stopped working");
         if (recorder.getStatus().isRecording) await recorder.stop().catch(logFail("voice: recorder.stop"));
-        await sleep(RETRY_MS);
+        await sleep(wait);
       }
     }
     // The twist standby keeps the microphone (and the app) running for the next twist.
@@ -989,6 +1047,15 @@ export function useConversation(
       }
     };
   }, [standby, stream, background]);
+
+  // Overheard lines wait a few seconds before being sent; send what's waiting when
+  // the app goes away, rather than losing it if iOS suspends us.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s !== "active") void flushHeard(token);
+    });
+    return () => sub.remove();
+  }, [token]);
 
   /** While speaking: cut the reply short and listen again. */
   const interrupt = useCallback(() => speaker.current.stop(), []);

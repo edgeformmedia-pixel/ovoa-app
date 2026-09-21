@@ -1,5 +1,5 @@
 import * as LiveActivity from "expo-live-activity";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import { devlog } from "./devlog";
 
 // Whether OVOA is listening, in the Dynamic Island and on the Lock Screen: a Live Activity while
@@ -44,7 +44,10 @@ export function showIsland(status: IslandStatus | null) {
     } else if (activityId) {
       LiveActivity.updateActivity(activityId, LOOK[status]);
     } else {
-      // Only works with the app open; from the background it's tried again when the app opens.
+      // Only works with the app open; from the background it's tried again when the
+      // app opens. Asking anyway throws "Target is not foreground" every time, which
+      // is a log line rather than a problem, so don't ask.
+      if (AppState.currentState !== "active") return;
       activityId = LiveActivity.startActivity(LOOK[status], CONFIG) || null;
       if (!activityId) return;
       devlog("voice", "dynamic island: on");

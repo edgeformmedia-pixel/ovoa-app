@@ -7,6 +7,7 @@ import { onPush } from "./background";
 import { buzzPattern } from "./buzz";
 import * as clip from "./clip";
 import { devlog, logFail } from "./devlog";
+import { yearAgo, yearAhead } from "./phoneCalendar";
 import { copyTodosToReminders } from "./todos";
 import { createSpeaker } from "./voice";
 
@@ -72,9 +73,11 @@ const minutesOf = (d: Date) => d.getHours() * 60 + d.getMinutes();
  * reminder, not a schedule, and turning it into a daily routine would be wrong.
  */
 async function readMedsList(listId: string) {
-  // No status filter: with one, expo-calendar demands a date range, which would also
-  // leave out reminders with no date. All of them, then the open ones.
-  const reminders = (await Calendar.getRemindersAsync([listId], null, null, null)).filter((r) => !r.completed);
+  // A date range is required whether or not a status filter is given: without one
+  // expo-calendar throws "getRemindersAsync must be called with a startDate", which
+  // it did 51 times and took medication sync down with it (device_logs, 2026-09-21).
+  // A wide window, and the open ones picked out here.
+  const reminders = (await Calendar.getRemindersAsync([listId], null, yearAgo(), yearAhead())).filter((r) => !r.completed);
   devlog("agent", `Medications list: ${reminders.length} open reminder(s)`);
   const byTitle = new Map<string, { ids: string[]; times: number[]; days: number[] }>();
   for (const r of reminders) {

@@ -18,6 +18,16 @@ const UTTERANCE_END_MS = 1000; // backup: no new words for this long ends it too
 // still reports it as streaming. If no audio arrives for this long, restart it.
 const NO_AUDIO_RESTART_MS = 1500;
 const MIN_RESTART_GAP_MS = 3000;
+/**
+ * Restarting backs off instead of retrying on the same beat forever. Some
+ * failures never come right by being asked again — a session iOS won't let us
+ * interrupt stays that way until something else changes — and the flat 3-second
+ * retry logged 4,922 identical failures in a row (device_logs, 2026-09-21),
+ * holding the audio session and the radio that the reply's own audio needed.
+ */
+const RESTART_BACKOFF_MS = [3000, 6000, 12000, 30000];
+/** After this many restarts in a row achieve nothing, stop and let the caller fall back. */
+const MAX_RESTARTS = 5;
 const KEEPALIVE_MS = 4000;
 // A dropped connection is reopened; after this many failures in a row, give up
 // (the conversation falls back to recording for a while).
@@ -98,6 +108,8 @@ export async function openEar(
   let restarting = false;
   let lastKeepAlive = Date.now();
   let failures = 0;
+  /** Restarts in a row that achieved nothing. Resets the moment one works. */
+  let restartFailures = 0;
 
   const sub = stream.addListener("audioStreamBuffer", (buffer) => {
     events.onLevel(levelOf(buffer.data));
@@ -202,13 +214,32 @@ export async function openEar(
   const timer = setInterval(() => {
     const now = Date.now();
     const silentFor = now - lastAudioAt;
-    // The mic went quiet (not silence: no buffers at all). Bring it back.
-    if (!restarting && silentFor > NO_AUDIO_RESTART_MS && now - lastRestartAt > MIN_RESTART_GAP_MS) {
+    // The mic went quiet (not silence: no buffers at all). Bring it back, waiting
+    // longer after each failure rather than asking again on the same beat.
+    const gap = restartFailures ? (RESTART_BACKOFF_MS[restartFailures - 1] ?? 30_000) : MIN_RESTART_GAP_MS;
+    if (!restarting && silentFor > NO_AUDIO_RESTART_MS && now - lastRestartAt > gap) {
       restarting = true;
       lastRestartAt = now;
       devlog("voice", `no audio from the mic for ${silentFor} ms; restarting it`);
       restart(stream)
-        .catch((err) => devlog("err", "mic restart failed", String(err)))
+        .then(() => {
+          restartFailures = 0;
+        })
+        .catch((err) => {
+          restartFailures++;
+          const spent = restartFailures >= MAX_RESTARTS;
+          devlog(
+            "err",
+            spent ? "mic restart failed; giving up on live transcription" : "mic restart failed",
+            `${restartFailures}/${MAX_RESTARTS}: ${String(err)}`,
+          );
+          // Some failures don't come right by being asked again. Hand back to the
+          // caller, which falls back to record-then-upload, instead of spinning.
+          if (spent) {
+            teardown();
+            events.onDown(new Error("The microphone wouldn't restart"));
+          }
+        })
         .finally(() => {
           lastAudioAt = Date.now();
           restarting = false;
