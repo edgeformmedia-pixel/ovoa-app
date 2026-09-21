@@ -93,6 +93,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     listeningPref.get().then(setEnabled);
     alwaysListenPref.get().then(setAlwaysListenState);
     listenModePref.get().then(setListenModeState);
+    // The switch lives in Dev tools now, outside this provider.
+    return alwaysListenPref.onChange(setAlwaysListenState);
   }, []);
 
   const dropApproval = (id: string) => setApprovals((a) => a.filter((x) => x.id !== id));

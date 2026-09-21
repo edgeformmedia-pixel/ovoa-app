@@ -32,7 +32,7 @@ import {
   type TwistKind,
   type TwistProfiles,
 } from "../lib/twist";
-import { twistProfilePref } from "../lib/voice";
+import { alwaysListenPref, twistProfilePref } from "../lib/voice";
 import { breakdown, clearTurns, latencyTo, summary, useTurns, type TurnRecord } from "../lib/turnTimer";
 import { colors } from "../lib/theme";
 
@@ -453,6 +453,8 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
         </Text>
       </Card>
 
+      <AlwaysListen />
+
       <Card title="Clip — buzz" available={state.phase === "unavailable" ? false : true}>
         <BuzzOptions connected={connected} />
         <ServerBuzz />
@@ -519,6 +521,39 @@ function BuzzOptions({ connected }: { connected: boolean }) {
       <Text style={styles.hint}>{result ?? "Tap one; the last one tapped is used when a shake summons the assistant."}</Text>
       <BuzzTest connected={connected} onChosen={setChosen} />
     </>
+  );
+}
+
+/**
+ * Always listen, kept for development only. Ambient listening was ruled out for
+ * the product on 2026-09-20 (all-party consent laws), so it left Settings; the
+ * switch stays here so the wake-word path can still be worked on.
+ */
+function AlwaysListen() {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    alwaysListenPref.get().then(setOn);
+    return alwaysListenPref.onChange(setOn);
+  }, []);
+  const toggle = (next: boolean) => {
+    if (!next) return void alwaysListenPref.set(false);
+    Alert.alert(
+      "Always listen (development only)",
+      "The microphone stays on in the background and transcribes everything it hears, including other people. This was ruled out for the product on legal grounds; use it only on your own, for testing.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Turn on", style: "destructive", onPress: () => void alwaysListenPref.set(true) },
+      ],
+    );
+  };
+  return (
+    <View style={styles.toggleRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.itemText}>Always listen</Text>
+        <Text style={styles.dim}>Development only. Not in Settings any more.</Text>
+      </View>
+      <Switch value={on} onValueChange={toggle} trackColor={{ true: colors.danger, false: colors.border }} />
+    </View>
   );
 }
 

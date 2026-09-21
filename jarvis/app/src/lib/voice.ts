@@ -975,9 +975,24 @@ const SUMMON_MS = 8000;
 const ALWAYS_LISTEN_KEY = "ovoa.alwaysListen";
 
 /** Danger zone "Always listen": listen on every screen and allow talking over replies. */
+const alwaysListenListeners = new Set<(on: boolean) => void>();
+
+/**
+ * Always listen. Since 2026-09-20 it's only reachable from Dev tools: ambient
+ * listening was ruled out for the product on legal grounds, and the switch
+ * stays for development. Dev tools sits outside the assistant, so the provider
+ * hears about a change through onChange rather than by rendering the switch.
+ */
 export const alwaysListenPref = {
   get: async () => (await storage.get(ALWAYS_LISTEN_KEY).catch(() => null)) === "1",
-  set: (on: boolean) => storage.set(ALWAYS_LISTEN_KEY, on ? "1" : "0"),
+  set: async (on: boolean) => {
+    await storage.set(ALWAYS_LISTEN_KEY, on ? "1" : "0");
+    alwaysListenListeners.forEach((l) => l(on));
+  },
+  onChange: (listener: (on: boolean) => void) => {
+    alwaysListenListeners.add(listener);
+    return () => void alwaysListenListeners.delete(listener);
+  },
 };
 
 const LISTENING_KEY = "ovoa.alwaysListening";

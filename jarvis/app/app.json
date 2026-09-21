@@ -57,7 +57,9 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "OVOA includes your location in emergency alerts."
+          "locationWhenInUsePermission": "OVOA includes your location in emergency alerts.",
+          "locationAlwaysAndWhenInUsePermission": "OVOA learns the places you go, like home and work, so it can remind you of things when you arrive or leave. Your location stays in your OVOA account and is kept for 14 days.",
+          "isIosBackgroundLocationEnabled": true
         }
       ],
       [

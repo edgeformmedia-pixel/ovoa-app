@@ -33,7 +33,7 @@ export default function Settings() {
   const [autoSendTexts, setAutoSendTexts] = useState(false);
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
-  const { alwaysListen, setAlwaysListen, listenMode, setListenMode, micSource, setMicSource } = useAssistant();
+  const { listenMode, setListenMode, micSource, setMicSource } = useAssistant();
   const { pushProblem } = useAgent();
   const [quiet, setQuiet] = useState({
     start: minutesToClock(user?.settings.quietStart ?? 1320),
@@ -110,18 +110,6 @@ export default function Settings() {
       [
         { text: "Cancel", style: "cancel" },
         { text: "Turn on", style: "destructive", onPress: () => setAutoApprove(true) },
-      ],
-    );
-  };
-
-  const toggleAlwaysListen = (on: boolean) => {
-    if (!on) return setAlwaysListen(false);
-    Alert.alert(
-      "Always listen?",
-      `The microphone stays on, even with OVOA in the background or the phone locked. Everything it hears, including TV and other people, is transcribed live, but ${assistantName || "your assistant"} only answers when you say its name (or reply right after it speaks). Say its name over a reply, or "stop", to interrupt.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Turn on", style: "destructive", onPress: () => setAlwaysListen(true) },
       ],
     );
   };
@@ -526,20 +514,6 @@ export default function Settings() {
             trackColor={{ true: colors.danger, false: colors.border }}
           />
         </View>
-        <View style={styles.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.label}>Always listen</Text>
-            <Text style={styles.meta}>
-              The microphone stays on, even in the background or with the phone locked. It only answers when you
-              talk to it: say its name, ask something, or reply to it. Talk over a reply to interrupt.
-            </Text>
-          </View>
-          <Switch
-            value={alwaysListen}
-            onValueChange={toggleAlwaysListen}
-            trackColor={{ true: colors.danger, false: colors.border }}
-          />
-        </View>
         <Button
           label="Delete account"
           danger
@@ -626,13 +600,12 @@ const MIC_SOURCES = [
 ] as const;
 
 const LISTEN_MODES = [
-  { mode: "wake", label: "Wake word", hint: "Say the assistant's name. Turn on Always listen (Danger zone) to use it from any screen." },
+  { mode: "wake", label: "Wake word", hint: "Say the assistant's name while the Assistant tab is open." },
   {
     mode: "twist",
     label: "Clip click",
     hint: "Click the ES100's button: it buzzes and listens until you stop talking, answers, then stops listening. Click again while it listens to send right away; click while it answers to cut it off. Works from other apps too.",
   },
-  { mode: "both", label: "Both", hint: "Always listen for the name, and a click on the clip also gets its attention." },
 ] as const;
 
 function Button({
