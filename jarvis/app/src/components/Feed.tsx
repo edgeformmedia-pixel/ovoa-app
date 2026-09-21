@@ -127,6 +127,14 @@ export function Feed() {
                 ))}
               </Pressable>
             );
+          case "workout":
+            return (
+              <View key={i} style={styles.card}>
+                <Text style={styles.label}>WORKOUT</Text>
+                <Text style={[styles.body, { fontWeight: "600" }]}>{card.title}</Text>
+                {!!card.body && <Text style={styles.dim}>{card.body}</Text>}
+              </View>
+            );
           case "week":
             return (
               <View key={i} style={styles.card}>

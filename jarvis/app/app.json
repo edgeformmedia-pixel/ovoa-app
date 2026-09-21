@@ -80,7 +80,7 @@
         {
           "NSHealthShareUsageDescription": "OVOA reads your steps, heart rate, sleep, and workouts to answer your questions about them.",
           "NSHealthUpdateUsageDescription": "OVOA does not write to Apple Health. iOS requires this message because the Health library OVOA uses can save data.",
-          "background": false
+          "background": true
         }
       ],
       "expo-live-activity",

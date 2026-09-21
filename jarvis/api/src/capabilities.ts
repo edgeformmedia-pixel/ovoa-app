@@ -70,7 +70,7 @@ export async function saveDeviceState(db: D1Database, userId: string, s: z.infer
 }
 
 export async function capabilities(db: D1Database, userId: string): Promise<Capabilities> {
-  const [device, google, push, settings] = await Promise.all([
+  const [device, google, push, settings, watch] = await Promise.all([
     db
       .prepare("SELECT band_linked, band_seen_at, health, watch_hr, location FROM device_state WHERE user_id = ?")
       .bind(userId)
@@ -78,12 +78,17 @@ export async function capabilities(db: D1Database, userId: string): Promise<Capa
     db.prepare("SELECT 1 FROM google_accounts WHERE user_id = ? LIMIT 1").bind(userId).first(),
     db.prepare("SELECT 1 FROM push_tokens WHERE user_id = ? AND fail_count < 3 LIMIT 1").bind(userId).first(),
     db.prepare("SELECT capture_everything FROM settings WHERE user_id = ?").bind(userId).first<{ capture_everything: number }>(),
+    // Heart rate that arrived through Health in the last two days means something writes it there.
+    db
+      .prepare("SELECT 1 FROM hr_samples WHERE user_id = ? AND source = 'health' AND ts > ? LIMIT 1")
+      .bind(userId, Date.now() - 48 * 3_600_000)
+      .first(),
   ]);
   return {
     band: !!device?.band_linked && !!device.band_seen_at && Date.now() - device.band_seen_at < BAND_FRESH_MS,
     google: !!google,
     health: !!device?.health,
-    watchHr: !!device?.watch_hr,
+    watchHr: !!device?.watch_hr || !!watch,
     locationAlways: device?.location === "always",
     ambient: !!settings?.capture_everything,
     push: !!push,

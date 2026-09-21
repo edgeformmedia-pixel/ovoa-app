@@ -25,6 +25,7 @@ type Card =
   | { kind: "missed"; title: string; body: string; routineId: string }
   | { kind: "agent"; title: string; items: { at: string; text: string }[] }
   | { kind: "week"; title: string; body: string; minutesSaved: number }
+  | { kind: "workout"; title: string; body: string; workoutId: string }
   | { kind: "activity"; title: string; items: { at: string; text: string; source: string }[] };
 
 /** What a count means, in words, for the summary line. */
@@ -40,6 +41,8 @@ const DONE_KINDS: Record<string, [string, string]> = {
   todo_list: ["list built", "lists built"],
 };
 
+const WORKOUT_WORDS: Record<string, string> = { strength: "Strength", run_walk: "Run or walk", cardio: "Cardio" };
+
 /** Routine streaks worth a card of their own. */
 const STREAK_CARD_DAYS = 3;
 
@@ -49,7 +52,7 @@ export async function buildFeed(db: D1Database, userId: string, timeZone: string
   const [todayStart, todayEnd] = dayRange(today, timeZone);
   const weekStart = dayRange(addDays(today, -6), timeZone)[0];
 
-  const [rollup, recent, todos, routines, events, week] = await Promise.all([
+  const [rollup, recent, todos, routines, events, week, workouts] = await Promise.all([
     dailyRollup(db, userId, today, timeZone),
     getActions(db, userId, now - 86_400_000, now + 1, 60),
     listTodos(db, userId, today),
@@ -65,6 +68,10 @@ export async function buildFeed(db: D1Database, userId: string, timeZone: string
       .prepare("SELECT SUM(minutes_saved) AS minutes, COUNT(*) AS n FROM action_log WHERE user_id = ? AND ts >= ?")
       .bind(userId, weekStart)
       .first<{ minutes: number | null; n: number }>(),
+    db
+      .prepare("SELECT id, start_at, end_at, kind, confirmed_kind, summary FROM workouts WHERE user_id = ? AND start_at >= ? ORDER BY start_at DESC LIMIT 3")
+      .bind(userId, now - 86_400_000)
+      .all<{ id: string; start_at: number; end_at: number; kind: string; confirmed_kind: string | null; summary: string | null }>(),
   ]);
 
   const cards: Card[] = [];
@@ -115,6 +122,16 @@ export async function buildFeed(db: D1Database, userId: string, timeZone: string
     if (days >= STREAK_CARD_DAYS) {
       cards.push({ kind: "streak", title: `${days} days in a row`, body: r.title, routineId: r.id });
     }
+  }
+
+  for (const w of workouts.results) {
+    const minutes = Math.round((w.end_at - w.start_at) / 60_000);
+    cards.push({
+      kind: "workout",
+      title: `${w.confirmed_kind ?? WORKOUT_WORDS[w.kind] ?? w.kind} · ${minutes} min · ${clock(w.start_at, timeZone)}`,
+      body: w.summary ?? "",
+      workoutId: w.id,
+    });
   }
 
   const byAgent = recent.filter((a) => a.source === "agent" && a.kind !== "agent_run");

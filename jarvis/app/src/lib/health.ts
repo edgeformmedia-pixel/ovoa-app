@@ -148,6 +148,36 @@ export type TodayHealth = {
   workouts: { type: string; start: number; minutes?: number; energy?: string; distance?: string }[];
 };
 
+/**
+ * Heart-rate readings written to Health since `from`, oldest first. Whatever
+ * wrote them (a watch, usually); the ES100's readings come straight from the
+ * clip instead (lib/heart.ts).
+ */
+export async function heartRateSince(from: Date, limit = 2000) {
+  const hk = healthKit();
+  const samples = await hk.queryQuantitySamples("HKQuantityTypeIdentifierHeartRate", {
+    filter: { date: { startDate: from, endDate: new Date() } },
+    unit: "count/min",
+    limit,
+    ascending: true,
+  });
+  return samples.map((s) => ({ ts: new Date(s.endDate).getTime(), bpm: Math.round(s.quantity) }));
+}
+
+/**
+ * Lets Health wake the app when new heart rate is written, so readings reach
+ * the server without the app being opened. iOS decides how often; hourly is
+ * what it will honour for heart rate.
+ */
+export async function watchHeartRate(onChange: () => void) {
+  if (!healthAvailable) return () => {};
+  const hk = healthKit();
+  const { UpdateFrequency } = require("@kingstinct/react-native-healthkit/types") as typeof import("@kingstinct/react-native-healthkit/types");
+  await hk.configureBackgroundTypes(["HKQuantityTypeIdentifierHeartRate"], UpdateFrequency.hourly).catch(() => false);
+  const sub = hk.subscribeToChanges("HKQuantityTypeIdentifierHeartRate", () => onChange());
+  return () => sub.remove();
+}
+
 /** How far back the heart-rate graph reaches. */
 export const HEART_WINDOW_HOURS = 12;
 /** Readings are thinned to this many points, so the graph stays cheap to draw. */

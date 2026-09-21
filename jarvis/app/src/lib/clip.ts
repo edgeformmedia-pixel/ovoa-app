@@ -257,6 +257,7 @@ function ensureStarted() {
       noteInput("Wear state", `${input.value} (${input.detail ?? ""})`);
     } else if (input.kind === "heartRate" || input.kind === "spo2") {
       noteInput(input.kind === "spo2" ? "Blood oxygen" : "Heart rate", `${input.value} (${input.detail ?? ""})`);
+      if (input.kind === "heartRate" && input.value > 0) heartListeners.forEach((l) => l(input.value, input.detail ?? ""));
     } else {
       noteInput("Voice audio", `${input.value} bytes (${input.detail ?? ""})`);
     }
@@ -1089,6 +1090,18 @@ function keepMotionThroughBuzz(option: BuzzOption, count: number) {
     ute.setMotionSource(source, true, intervalFor(source)).catch((err) => say(`motion: ${source} failed — ${message(err)}`));
   }, afterMs);
 }
+
+type HeartListener = (bpm: number, detail: string) => void;
+const heartListeners = new Set<HeartListener>();
+
+/** Heart-rate readings from the clip's own sensor, however they were asked for. Returns an unsubscribe. */
+export function onHeartRate(listener: HeartListener) {
+  heartListeners.add(listener);
+  return () => void heartListeners.delete(listener);
+}
+
+/** Whether the clip is free for a quick command: linked, and not recording, downloading or being probed. */
+export const clipIdle = () => state.phase === "connected" && !state.recording && !state.download && !state.busy && !probe;
 
 /** When the clip was last asked to vibrate, by anything. The buzz queue (buzz.ts) spaces itself from this. */
 let lastBuzz = 0;

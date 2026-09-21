@@ -10,6 +10,8 @@ import { useAuth } from "../../lib/auth";
 import { registerBackgroundPush } from "../../lib/background";
 import { startDeviceReports } from "../../lib/device";
 import { startRoutineSync } from "../../lib/routines";
+import { startHeartRate } from "../../lib/heart";
+import { startLocationTimeline } from "../../lib/location";
 import { SafetyProvider } from "../../lib/safety";
 import { NotesBadge } from "../../components/NotesBadge";
 import { colors } from "../../lib/theme";
@@ -30,6 +32,9 @@ export default function TabsLayout() {
   useEffect(() => void registerBackgroundPush(), []);
   // Routines and medications: mirror Reminders, schedule the next two days on the phone.
   useEffect(() => (token ? startRoutineSync(token) : undefined), [token]);
+  // Heart rate from the band every few minutes, and from Health; places, when the timeline is on.
+  useEffect(() => (token ? startHeartRate(token) : undefined), [token]);
+  useEffect(() => (token ? startLocationTimeline(token) : undefined), [token]);
   // Anything recorded but not yet in the timeline gets filed, while it's on.
   useAutoCapture();
 
