@@ -533,7 +533,7 @@ export const api = {
 
   alarms: (token: string) =>
     request<{
-      alarms: { id: string; at: string; minutes: number; days: number[]; label: string | null; hard: boolean; nextAt: number | null; next: string | null; ringing: boolean }[];
+      alarms: { id: string; at: string; minutes: number; days: number[]; label: string | null; hard: boolean; nextAt: number | null; next: string | null; ringing: boolean; stopped: boolean }[];
     }>("/alarms", token),
   addAlarm: (token: string, a: { time: string; days?: number[]; label?: string; hard?: boolean }) =>
     request<{ id: string; nextAt: number | null }>("/alarms", token, { method: "POST", body: JSON.stringify(a) }),

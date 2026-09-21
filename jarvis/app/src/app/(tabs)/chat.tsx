@@ -20,7 +20,9 @@ export default function Assistant() {
 
   const onOrb = () => {
     if (a.phase === "speaking") a.interrupt();
-    else if (!a.alwaysListen) a.toggleEnabled();
+    // Always listen is always one tap from off.
+    else if (a.alwaysListen) a.setAlwaysListen(false);
+    else a.toggleEnabled();
   };
 
   return (
@@ -29,6 +31,13 @@ export default function Assistant() {
         <Ionicons name="terminal-outline" size={16} color={showLogs ? colors.accent : colors.textDim} />
         <Text style={[styles.logsText, showLogs && { color: colors.accent }]}>Logs</Text>
       </Pressable>
+
+      {a.alwaysListen && (
+        <Pressable style={styles.alwaysBar} onPress={() => a.setAlwaysListen(false)}>
+          <Ionicons name="ear" size={16} color={colors.bg} />
+          <Text style={styles.alwaysText}>Always listen is on · tap to turn off</Text>
+        </Pressable>
+      )}
 
       <View style={styles.center}>
         <Pressable
@@ -111,7 +120,7 @@ function label(on: boolean, phase: VoicePhase, status: string | null) {
 
 function hint(on: boolean, always: boolean, phase: VoicePhase) {
   if (!on) return "";
-  if (always) return phase === "speaking" ? "Talk or tap to interrupt" : "Always listen is on";
+  if (always) return phase === "speaking" ? "Talk or tap to interrupt" : "Always listen is on · tap the orb to turn it off";
   return phase === "speaking" ? "Tap to interrupt" : "Tap to stop listening";
 }
 
@@ -133,6 +142,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   logsText: { color: colors.textDim, fontSize: 13, fontWeight: "600" },
+  alwaysBar: {
+    position: "absolute",
+    top: 10,
+    left: 14,
+    zIndex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: colors.danger,
+  },
+  alwaysText: { color: colors.bg, fontSize: 13, fontWeight: "700" },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 24 },
   orbWrap: { width: 240, height: 240, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   orbWrapSmall: { transform: [{ scale: 0.6 }], marginVertical: -60 },

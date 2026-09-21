@@ -69,6 +69,16 @@ async function firstName(db: D1Database, userId: string) {
 
 export async function setAlarm(db: D1Database, userId: string, a: { minutes: number; days: number[]; label?: string | null; hard: boolean; on?: string | null }) {
   const timeZone = await tzOf(db, userId);
+  // Asked twice for the same alarm ("wake me at 10:30" … "set an alarm for 10:30"):
+  // one alarm, not two that both have to be stopped.
+  const same = await db
+    .prepare("SELECT id, next_at FROM alarms WHERE user_id = ? AND active = 1 AND time_minutes = ? AND days = ? LIMIT 1")
+    .bind(userId, a.minutes, JSON.stringify(a.days))
+    .first<{ id: string; next_at: number | null }>();
+  if (same) {
+    await db.prepare("UPDATE alarms SET hard = MAX(hard, ?), label = COALESCE(?, label) WHERE id = ?").bind(Number(a.hard), a.label ?? null, same.id).run();
+    return { id: same.id, next: same.next_at, timeZone };
+  }
   // A one-off on a given date: the next occurrence on or after that day.
   const from = a.on ? Math.max(Date.now(), resolveDue(`${a.on}T00:00`, timeZone) ?? Date.now()) - 1 : Date.now();
   const next = nextOccurrence([a.minutes], a.days, from, timeZone);
@@ -82,8 +92,13 @@ export async function setAlarm(db: D1Database, userId: string, a: { minutes: num
 
 export async function listAlarms(db: D1Database, userId: string) {
   const { results } = await db
-    .prepare("SELECT * FROM alarms WHERE user_id = ? AND active = 1 ORDER BY next_at")
-    .bind(userId)
+    // Plus a one-off that's going off right now: it's no longer active, but a phone
+    // that slept through it has to be able to find it, go off, and stop it.
+    .prepare(
+      `SELECT * FROM alarms WHERE user_id = ? AND (active = 1 OR ringing_at > ?)
+        ORDER BY next_at`,
+    )
+    .bind(userId, Date.now() - ALARM_GIVE_UP_MS)
     .all<AlarmRow>();
   return results;
 }
@@ -101,8 +116,16 @@ export async function stopAlarm(env: Env, userId: string, opts: { id?: string; s
   if (alarm.hard && (opts.steps ?? 0) < HARD_ALARM_STEPS) {
     return { error: `It's a hard alarm: it stops after ${HARD_ALARM_STEPS} steps, not by asking. Get up and walk.` };
   }
-  await db.prepare("UPDATE alarms SET stopped_at = ? WHERE id = ?").bind(Date.now(), alarm.id).run();
-  await stopNag(env, userId, `alarm:${alarm.id}`);
+  // "I'm awake" means awake: every ordinary alarm still going off stops, not
+  // only the newest (two set for the same time kept one nagging, 2026-09-21).
+  const { results: ringing } = await db
+    .prepare("SELECT id FROM alarms WHERE user_id = ? AND ringing_at IS NOT NULL AND stopped_at IS NULL AND (hard = 0 OR id = ?)")
+    .bind(userId, alarm.id)
+    .all<{ id: string }>();
+  for (const r of ringing) {
+    await db.prepare("UPDATE alarms SET stopped_at = ? WHERE id = ?").bind(Date.now(), r.id).run();
+    await stopNag(env, userId, `alarm:${r.id}`);
+  }
   await logAction(db, userId, "alarm", `Alarm stopped${alarm.hard ? ` after ${opts.steps} steps` : ""}`, "chat", alarm.id);
   return { stopped: true };
 }
@@ -282,6 +305,8 @@ alarms.get("/alarms", async (c) => {
       nextAt: a.next_at,
       next: a.next_at ? `${buckets(a.next_at, timeZone).day} ${clock(a.next_at, timeZone)}` : null,
       ringing: !!a.ringing_at && !a.stopped_at,
+      // Stopped since it last went off (by voice, say): the phone stops too.
+      stopped: !!a.ringing_at && !!a.stopped_at && a.stopped_at >= a.ringing_at,
     })),
   });
 });

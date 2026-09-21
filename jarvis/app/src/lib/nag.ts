@@ -134,7 +134,11 @@ async function sayLine(text: string) {
       const made = token ? await renderSpeech(token, text).catch(() => null) : null;
       phrase = { text, file: made };
     }
-    if (!phrase.file) return;
+    if (!phrase.file) {
+      devlog("err", "wake-up line: no audio (no network when it was voiced?)");
+      return;
+    }
+    devlog("agent", "saying the wake-up line", text);
     const copy = new File(Paths.cache, `ovoa-wake-${Date.now()}.mp3`);
     phrase.file.copy(copy);
     await new Promise<void>((resolve) => {
@@ -187,9 +191,11 @@ export async function answerNag(n: Nag) {
   if (n.kind === "alarm") {
     if (n.hard || !n.alarmId) return;
     await api.stopAlarm(token, n.alarmId, 0).catch(() => {});
-  } else {
-    await api.nagDone(token, n.key).catch(() => {});
+    // Awake is awake: every ordinary alarm going off here stops too (the server does the same).
+    for (const other of nags.filter((x) => x.kind === "alarm" && !x.hard)) stopNag(other.key, "answered");
+    return;
   }
+  await api.nagDone(token, n.key).catch(() => {});
   stopNag(n.key, "answered");
 }
 
@@ -293,6 +299,13 @@ export async function syncAlarms(token: string) {
     armed = alarms
       .filter((a) => a.nextAt && a.nextAt > Date.now() && a.nextAt - Date.now() < ARM_AHEAD_MS)
       .map((a) => ({ id: a.id, at: a.nextAt!, hard: a.hard, label: a.label }));
+    devlog("agent", armed.length ? `alarms armed: ${armed.map((a) => new Date(a.at).toLocaleTimeString()).join(", ")}` : "no alarm in the next 14 h");
+    // Stopped on the server ("I'm awake" said to OVOA): stop here too.
+    for (const a of alarms.filter((a) => a.stopped)) stopNag(`alarm:${a.id}`, "stopped");
+    // One that's ringing on the server but not here (the phone was asleep): go off now.
+    for (const a of alarms.filter((a) => a.ringing)) {
+      startNag({ key: `alarm:${a.id}`, kind: "alarm", label: a.label ?? "Alarm", hard: a.hard, alarmId: a.id, name: userName });
+    }
     for (const a of armed) {
       await scheduleFallbacks(a);
       fireTimers.push(
@@ -312,12 +325,26 @@ export async function syncAlarms(token: string) {
   }
 }
 
+/**
+ * Keeps the phone's copy of the alarms current. Silent pushes can't be relied on
+ * to say an alarm was set (build 54: the 11:13 one never reached the phone, so it
+ * wasn't kept awake and slept through it). So it also re-reads them when the app
+ * heads to the background — the last moment it can start the keep-awake audio —
+ * and every five minutes while it's open. After a voice turn that set one, the
+ * assistant calls syncAlarms itself (assistant.tsx).
+ */
 export function startAlarmSync(token: string) {
   void syncAlarms(token);
   const app = AppState.addEventListener("change", (s) => {
-    if (s === "active") void syncAlarms(token);
+    if (s === "active" || s === "inactive" || s === "background") void syncAlarms(token);
   });
-  return () => app.remove();
+  const every = setInterval(() => {
+    if (AppState.currentState === "active") void syncAlarms(token);
+  }, 5 * 60_000);
+  return () => {
+    app.remove();
+    clearInterval(every);
+  };
 }
 
 // ---------- Pushes ----------

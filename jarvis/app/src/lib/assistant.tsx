@@ -8,6 +8,7 @@ import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type App
 import { devlog } from "./devlog";
 import { onPush } from "./background";
 import { FILLERS, pickFiller } from "./fillers";
+import { syncAlarms } from "./nag";
 import * as clip from "./clip";
 import { showIsland } from "./island";
 import { deleteRecording, type Recording } from "./recordings";
@@ -206,6 +207,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         if (res.meta) noteServer(res.meta);
       }
       parked.push(...res.pendingActions);
+      // An alarm was set or changed: the phone arms it now rather than trusting a silent push.
+      if (res.meta?.tools?.some((t) => t.name.startsWith("alarm_"))) void syncAlarms(token);
       return res.messages.find((m) => m.role === "assistant")?.content ?? null;
     } finally {
       busy.current = false;
