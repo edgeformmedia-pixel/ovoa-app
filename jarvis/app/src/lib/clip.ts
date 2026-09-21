@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { Alert } from "react-native";
 import * as ute from "../../modules/ute-ble";
-import { devlog } from "./devlog";
+import { devlog, logFail } from "./devlog";
 import { addRecording, hasClipSession, type Recording } from "./recordings";
 import { storage } from "./storage";
 import { mark as markTurn } from "./turnTimer";
@@ -194,7 +194,7 @@ function ensureStarted() {
     // Gestures (single / double click) decide what a press means; see onClipGesture.
     if (event.startedByDevice && gestureListeners.size) {
       noteInput("Clip button", "pressed");
-      holdPress(event.sessionId);
+      press("start", event.sessionId);
       return;
     }
     if (event.startedByDevice) {
@@ -212,12 +212,8 @@ function ensureStarted() {
     if (appStopping) return;
     if (gestureListeners.size) {
       // The second press of a double click: the clip stopped the scrap it just started.
-      if (pendingPress?.sessionId === event.sessionId) {
-        clearTimeout(pendingPress.timer);
-        pendingPress = null;
-        void ute.deleteFile(event.sessionId, storedTypes.get(event.sessionId) ?? ute.RecordFileType.Opus).catch(() => {});
-        say("double click");
-        emitGesture("double");
+      if (pendingPress) {
+        press("stop", event.sessionId);
         return;
       }
       // A press stopped the recording the app started for a talk turn: that's "send".
@@ -232,7 +228,7 @@ function ensureStarted() {
       setTimeout(() => {
         const job = importSession(event.sessionId, event.fileSize);
         if (!bandMode) {
-          job.catch(() => {});
+          job.catch(logFail("clip: importSession"));
           return;
         }
         job.then(
@@ -337,13 +333,13 @@ async function onConnected() {
   setTimeout(() => void syncLight(), 10_000);
   say(`connected to ${device?.name || "clip"}`);
   if (device?.id) {
-    await storage.set(SAVED_DEVICE, device.id).catch(() => {});
+    await storage.set(SAVED_DEVICE, device.id).catch(logFail("clip: storage.set"));
     set({ savedDeviceId: device.id });
   }
   // The clip needs a moment after pairing before it answers record commands.
   setTimeout(() => {
     refreshInfo()
-      .catch(() => {})
+      .catch(logFail("clip: refreshInfo"))
       // The iOS SDK has no "stream ended" event: restart the stream after every (re)connect,
       // once the clip has answered what it was asked on connect.
       .then(() => {
@@ -363,7 +359,7 @@ function findDevice(id: string) {
     const finish = (found: boolean) => {
       clearTimeout(timer);
       waitingFor = null;
-      ute.stopScan().catch(() => {});
+      ute.stopScan().catch(logFail("clip: ute.stopScan"));
       resolve(found);
     };
     waitingFor = (device) => device.id === id && finish(true);
@@ -383,7 +379,7 @@ export async function scan() {
   }
   // The SDK scans until told to stop.
   setTimeout(() => {
-    ute.stopScan().catch(() => {});
+    ute.stopScan().catch(logFail("clip: ute.stopScan"));
     if (state.phase === "scanning") set({ phase: "idle" });
   }, 10_000);
 }
@@ -394,7 +390,7 @@ export async function connect(id: string) {
   userDisconnected = false;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   set({ phase: "connecting", problem: null });
-  await storage.set(SAVED_DEVICE, id).catch(() => {});
+  await storage.set(SAVED_DEVICE, id).catch(logFail("clip: storage.set"));
   set({ savedDeviceId: id });
 
   // After an app restart the SDK has forgotten every scan result; find the clip again first.
@@ -409,7 +405,7 @@ export async function connect(id: string) {
   }
 
   try {
-    await ute.stopScan().catch(() => {});
+    await ute.stopScan().catch(logFail("clip: ute.stopScan"));
     say(`connecting to ${state.devices.find((d) => d.id === id)?.name || id}…`);
     await ute.connect(id);
   } catch (err) {
@@ -427,7 +423,7 @@ export async function connect(id: string) {
     }
     if (state.phase !== "connecting") return;
     say(`no connection after ${CONNECT_TIMEOUT_MS / 1000} s`);
-    ute.disconnect().catch(() => {});
+    ute.disconnect().catch(logFail("clip: ute.disconnect"));
     set({ phase: "idle", problem: "The clip didn't finish connecting. Tap Connect to try again." });
   }, CONNECT_TIMEOUT_MS);
 }
@@ -435,7 +431,7 @@ export async function connect(id: string) {
 /** Connects to the remembered clip, if there is one. */
 export function autoConnect() {
   if (userDisconnected || !state.savedDeviceId || state.phase !== "idle" || state.bluetoothOn === false) return;
-  connect(state.savedDeviceId).catch(() => {});
+  connect(state.savedDeviceId).catch(logFail("clip: connect"));
 }
 
 function scheduleReconnect() {
@@ -455,14 +451,14 @@ export async function disconnect() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   clearConnectTimer();
   if (state.motion.on) await stopMotion();
-  await ute.disconnect().catch(() => {});
+  await ute.disconnect().catch(logFail("clip: ute.disconnect"));
   set({ phase: "idle", device: null, recording: null, motion: { ...state.motion, on: false } });
 }
 
 /** Disconnects and stops remembering the clip. */
 export async function forget() {
   await disconnect();
-  await storage.remove(SAVED_DEVICE).catch(() => {});
+  await storage.remove(SAVED_DEVICE).catch(logFail("clip: storage.remove"));
   set({ savedDeviceId: null });
 }
 
@@ -584,7 +580,7 @@ let probeName = "motion probe";
 export async function endProbe() {
   if (!probe) return;
   probe = null;
-  await ute.setSdkLogging(false).catch(() => {});
+  await ute.setSdkLogging(false).catch(logFail("clip: ute.setSdkLogging"));
   say(`${probeName} finished`);
   retryMotion();
 }
@@ -631,12 +627,12 @@ let preferred: PreferredMotion | null = null;
 storage
   .get(PREFERRED_MOTION)
   .then((saved) => (preferred = saved ? (JSON.parse(saved) as PreferredMotion) : null))
-  .catch(() => {});
+  .catch(logFail("clip: JSON.parse"));
 
 export async function setPreferredMotion(value: PreferredMotion | null) {
   preferred = value;
-  if (value) await storage.set(PREFERRED_MOTION, JSON.stringify(value)).catch(() => {});
-  else await storage.remove(PREFERRED_MOTION).catch(() => {});
+  if (value) await storage.set(PREFERRED_MOTION, JSON.stringify(value)).catch(logFail("clip: JSON.stringify"));
+  else await storage.remove(PREFERRED_MOTION).catch(logFail("clip: storage.remove"));
 }
 
 function motionSources(): ute.MotionSource[] {
@@ -803,7 +799,7 @@ async function ensureMotion(reason: string) {
         return;
       }
       // Given up on it, or nobody wants motion any more: turn it off either way.
-      await ute.setMotionSource(source, false).catch(() => {});
+      await ute.setMotionSource(source, false).catch(logFail("clip: ute.setMotionSource"));
       if (!motionWanted()) return;
       say(error ? `motion: ${source} failed — ${error}` : `motion: ${source} sent fewer than ${spec.firstReadings} readings in ${spec.firstMs / 1000} s`);
       sourceIndex++;
@@ -825,7 +821,7 @@ function activate(source: ute.MotionSource, reason: string) {
   lastLiveAt = healthAt = Date.now();
   set({ motion: { ...state.motion, on: true, source }, motionProblem: null });
   say(`twist: motion from ${source} (${reason})`);
-  checkRecordState(source).catch(() => {});
+  checkRecordState(source).catch(logFail("clip: checkRecordState"));
 }
 
 /** gyro3 and the g-sensor are factory tests: make sure one didn't put the clip in its test mode, which blocks recording. */
@@ -857,7 +853,7 @@ async function checkClipHealth(source: ute.MotionSource) {
   devlog("err", `twist: the clip stopped answering while ${source} polled it; using ${DEFAULT_SOURCE} instead`);
   activeSource = null;
   set({ motion: { ...state.motion, on: false } });
-  await ute.setMotionSource(source, false).catch(() => {});
+  await ute.setMotionSource(source, false).catch(logFail("clip: ute.setMotionSource"));
   await setPreferredMotion(null);
   sourceIndex = 0;
   failures = 0;
@@ -870,7 +866,7 @@ async function stopMotion() {
   buzzedAt = 0;
   set({ motion: { ...state.motion, on: false } });
   if (source && state.phase === "connected") {
-    await ute.setMotionSource(source, false).catch(() => {});
+    await ute.setMotionSource(source, false).catch(logFail("clip: ute.setMotionSource"));
     say(`motion: ${source} off`);
   }
 }
@@ -887,7 +883,7 @@ function checkMotion() {
     // A polled source keeps sending commands: it pauses while the clip records or transfers.
     if (activeSource && isPolled(activeSource) && !pausedForBusy) {
       pausedForBusy = activeSource;
-      ute.setMotionSource(activeSource, false).catch(() => {});
+      ute.setMotionSource(activeSource, false).catch(logFail("clip: ute.setMotionSource"));
       say(`motion: ${activeSource} paused while the clip is busy`);
     }
     return;
@@ -912,7 +908,7 @@ function checkMotion() {
   if (intervalFor(source) > 0 && now - healthAt >= HEALTH_MS && !healthChecking) {
     healthChecking = true;
     checkClipHealth(source)
-      .catch(() => {})
+      .catch(logFail("clip: checkClipHealth"))
       .finally(() => (healthChecking = false));
   }
   const quiet = now - Math.max(lastLiveAt, armedAt);
@@ -922,7 +918,7 @@ function checkMotion() {
     say(`twist: ${source} stopped sending motion`);
     activeSource = null;
     set({ motion: { ...state.motion, on: false } });
-    ute.setMotionSource(source, false).catch(() => {});
+    ute.setMotionSource(source, false).catch(logFail("clip: ute.setMotionSource"));
     failures++;
     sourceIndex = 0;
     motionUnavailable(`the clip stopped sending motion (${source}); trying again in ${retryDelay(failures) / 1000} s`);
@@ -1055,18 +1051,22 @@ const pressUsed = (source: "voiceButton" | "record") => [...buttonListeners].som
 
 // --- Gestures: single and double click -------------------------------------
 //
-// The clip starts recording on every press and stops on the next, and that's
-// all it reports. So a double click is a start and then a stop within
-// DOUBLE_CLICK_MS; a start with nothing after it is a single click. Either
-// way the scrap it recorded is thrown away. A press while the app is recording
-// for a talk turn stops that recording, which is "send" (and the recording is
-// kept: it's the question).
+// The clip starts recording on one press and stops on the next, but on the
+// device the second press of a quick double click shows up either as "recording
+// stopped" or as a fresh "recording started" (the first one having been cut
+// short), and up to ~2 s after the first. So any press from the clip within
+// DOUBLE_CLICK_MS of a first one makes a double click, whichever way it's
+// reported; a press with nothing after it is a single click. Every scrap it
+// recorded is thrown away. A press while the app is recording for a talk turn
+// stops that recording, which is "send" (and the recording is kept: it's the
+// question).
 
 export type ClipGesture = "single" | "double" | "stop";
 const gestureListeners = new Set<(g: ClipGesture) => void>();
-/** How long after one press a second still makes it a double click. */
-const DOUBLE_CLICK_MS = 1200;
-let pendingPress: { sessionId: number; timer: ReturnType<typeof setTimeout> } | null = null;
+/** How long after one press a second still makes it a double click (seen: ~2 s apart on the device). */
+const DOUBLE_CLICK_MS = 2500;
+let pendingPress: { sessionId: number; at: number; timer: ReturnType<typeof setTimeout> } | null = null;
+let lastPressAt = 0;
 
 /** Listening turns single and double clicks into gestures. Returns an unsubscribe. */
 export function onClipGesture(listener: (g: ClipGesture) => void) {
@@ -1076,17 +1076,52 @@ export function onClipGesture(listener: (g: ClipGesture) => void) {
 
 function emitGesture(g: ClipGesture) {
   devlog("voice", `clip: ${g === "double" ? "double click" : g === "single" ? "single click" : "press (send)"}`);
-  gestureListeners.forEach((l) => l(g));
+  gestureListeners.forEach((l) => {
+    try {
+      l(g);
+    } catch (err) {
+      devlog("err", `clip gesture handler threw on ${g}`, err instanceof Error ? err.message : String(err));
+    }
+  });
 }
 
-function holdPress(sessionId: number) {
-  if (pendingPress) clearTimeout(pendingPress.timer);
+/** One press from the clip, reported as a recording starting or stopping. */
+function press(kind: "start" | "stop", sessionId: number) {
+  const now = Date.now();
+  const since = lastPressAt ? now - lastPressAt : null;
+  lastPressAt = now;
+  const first = pendingPress;
+  devlog(
+    "voice",
+    `clip press: ${kind} #${sessionId}, ${since === null ? "first press" : `${since} ms since the last`}, ` +
+      (first ? `pending #${first.sessionId} (${now - first.at} ms ago) → double click` : "nothing pending → waiting for a second"),
+  );
+  if (first) {
+    clearTimeout(first.timer);
+    pendingPress = null;
+    const deleteScrap = (id: number) =>
+      ute.deleteFile(id, storedTypes.get(id) ?? ute.RecordFileType.Opus).catch(logFail(`clip: delete scrap #${id}`));
+    // A second "started" means a new scrap is recording: stop it and delete both.
+    if (kind === "start") void discardButtonRecording(sessionId).then(() => deleteScrap(first.sessionId));
+    else {
+      void deleteScrap(sessionId);
+      if (first.sessionId !== sessionId) void deleteScrap(first.sessionId);
+    }
+    emitGesture("double");
+    return;
+  }
+  if (kind === "stop") {
+    // A stop with no press before it (the start went unreported): count it as a first press.
+    devlog("voice", `clip press: stop #${sessionId} with nothing pending, treating it as the first press`);
+  }
   pendingPress = {
     sessionId,
+    at: now,
     timer: setTimeout(() => {
       pendingPress = null;
+      devlog("voice", `clip press: no second press within ${DOUBLE_CLICK_MS} ms → single click (#${sessionId})`);
       // Just one press: nothing to keep.
-      void discardButtonRecording(sessionId);
+      if (kind === "start") void discardButtonRecording(sessionId);
       emitGesture("single");
     }, DOUBLE_CLICK_MS),
   };
@@ -1096,9 +1131,9 @@ function holdPress(sessionId: number) {
 async function discardButtonRecording(sessionId: number) {
   appStopping = true;
   try {
-    await ute.stopRecord().catch(() => {});
+    await ute.stopRecord().catch(logFail("clip: ute.stopRecord"));
     set({ recording: null });
-    await ute.deleteFile(sessionId, storedTypes.get(sessionId) ?? ute.RecordFileType.Opus).catch(() => {});
+    await ute.deleteFile(sessionId, storedTypes.get(sessionId) ?? ute.RecordFileType.Opus).catch(logFail("clip: storedTypes.get"));
     say(`discarded the recording the button started (#${sessionId}); it was used to call the assistant`);
   } finally {
     setTimeout(() => (appStopping = false), 3000);
@@ -1116,13 +1151,13 @@ storage
   .then((v) => {
     if (v === "1" || v === "2" || v === "3") buzzOption = Number(v) as BuzzOption;
   })
-  .catch(() => {});
+  .catch(logFail("clip: Number"));
 
 export const getBuzzOption = () => buzzOption;
 
 export function setBuzzOption(option: BuzzOption) {
   buzzOption = option;
-  storage.set(BUZZ_OPTION, String(option)).catch(() => {});
+  storage.set(BUZZ_OPTION, String(option)).catch(logFail("clip: storage.set"));
 }
 
 let afterBuzz: ReturnType<typeof setTimeout> | null = null;
@@ -1351,7 +1386,7 @@ const transferMarks = new Map<number, { first: number; last: number }>();
 /** Downloads one clip recording into the phone's list. Runs one at a time. */
 export function importSession(sessionId: number, size: number) {
   const job = importing.then(() => downloadOne(sessionId, size));
-  importing = job.catch(() => {});
+  importing = job.catch(logFail("clip: downloadOne"));
   return job;
 }
 

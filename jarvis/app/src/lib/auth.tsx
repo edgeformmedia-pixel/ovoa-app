@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { logFail } from "./devlog";
 import { api, ApiError, type User } from "./api";
 import { unregisterPush } from "./push";
 import { setLogToken } from "./remoteLog";
@@ -81,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // phone gets the last one's notifications.
       if (token) {
         await unregisterPush(token);
-        await api.logout(token).catch(() => {});
+        await api.logout(token).catch(logFail("auth: api.logout"));
       }
       await clear();
     },

@@ -1,4 +1,5 @@
 import { useFocusEffect } from "expo-router";
+import { logFail } from "../../lib/devlog";
 import { Pedometer } from "expo-sensors";
 import { useCallback, useEffect, useState } from "react";
 import { Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -52,7 +53,7 @@ export default function Activity() {
         if (cancelled) return;
         setDays(history);
         setLiveExtra(0);
-        if (history.length) api.syncSteps(token, history).catch(() => {});
+        if (history.length) api.syncSteps(token, history).catch(logFail("index: api.syncSteps"));
       })();
       return () => {
         cancelled = true;

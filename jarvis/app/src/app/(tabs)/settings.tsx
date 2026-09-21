@@ -1,4 +1,5 @@
 import { useRouter, type Href } from "expo-router";
+import { logFail } from "../../lib/devlog";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
@@ -47,7 +48,7 @@ export default function Settings() {
 
   const toggleAutoSendTexts = (on: boolean) => {
     setAutoSendTexts(on);
-    autoSendTextsPref.set(on).catch(() => {});
+    autoSendTextsPref.set(on).catch(logFail("settings: autoSendTextsPref.set"));
     if (on) {
       Alert.alert(
         `Build the "${SEND_TEXT_SHORTCUT}" shortcut`,

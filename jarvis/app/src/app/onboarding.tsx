@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api, type OnboardingStep } from "../lib/api";
 import { useSession } from "../lib/auth";
-import { devlog } from "../lib/devlog";
+import { devlog, logFail } from "../lib/devlog";
 import { syncRoutines } from "../lib/routines";
 import { colors } from "../lib/theme";
 
@@ -41,7 +41,7 @@ export default function Onboarding() {
   const done = async () => {
     // Medications from setup go into Apple Reminders now, asking for Reminders access
     // at the moment it makes sense rather than on some later screen.
-    await syncRoutines(token, { ask: true }).catch(() => {});
+    await syncRoutines(token, { ask: true }).catch(logFail("onboarding: syncRoutines"));
     const { user } = await api.me(token);
     setUser(user);
   };
@@ -99,8 +99,8 @@ export default function Onboarding() {
 
   const later = async () => {
     setBusy(true);
-    await api.onboardingFinish(token).catch(() => {});
-    await done().catch(() => {});
+    await api.onboardingFinish(token).catch(logFail("onboarding: api.onboardingFinish"));
+    await done().catch(logFail("onboarding: done"));
     setBusy(false);
   };
 

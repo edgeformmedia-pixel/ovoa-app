@@ -3,7 +3,7 @@ import * as TaskManager from "expo-task-manager";
 import { AppState, Platform } from "react-native";
 import { api } from "./api";
 import { savedToken } from "./auth";
-import { devlog } from "./devlog";
+import { devlog, logFail } from "./devlog";
 import { storage } from "./storage";
 
 // The location timeline, the phone's half (server: api/src/location.ts).
@@ -38,10 +38,12 @@ async function send(points: typeof pending) {
 }
 
 TaskManager.defineTask<{ locations: Location.LocationObject[] }>(LOCATION_TASK, async ({ data, error }) => {
-  if (error || !data?.locations?.length) return;
+  if (error) return devlog("err", "location task error", String(error.message ?? error));
+  if (!data?.locations?.length) return;
+  devlog("log", `location task: ${data.locations.length} point(s)`);
   await send(
     data.locations.map((l) => ({
-      ts: l.timestamp,
+      ts: Math.round(l.timestamp),
       lat: l.coords.latitude,
       lng: l.coords.longitude,
       accuracy: l.coords.accuracy ?? null,
@@ -87,10 +89,10 @@ export async function enableTimeline(): Promise<{ ok: true } | { ok: false; reas
 export async function disableTimeline() {
   await timelinePref.set(false);
   if (await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false)) {
-    await Location.stopLocationUpdatesAsync(LOCATION_TASK).catch(() => {});
+    await Location.stopLocationUpdatesAsync(LOCATION_TASK).catch(logFail("location: Location.stopLocationUpdatesAsync"));
   }
   if (await Location.hasStartedGeofencingAsync(GEOFENCE_TASK).catch(() => false)) {
-    await Location.stopGeofencingAsync(GEOFENCE_TASK).catch(() => {});
+    await Location.stopGeofencingAsync(GEOFENCE_TASK).catch(logFail("location: Location.stopGeofencingAsync"));
   }
 }
 
@@ -120,7 +122,7 @@ export async function syncPlaces(token: string) {
     for (const p of places.filter((p) => !p.address).slice(0, 5)) {
       const [hit] = await Location.reverseGeocodeAsync({ latitude: p.lat, longitude: p.lng }).catch(() => []);
       const address = hit ? [hit.name ?? hit.street, hit.city].filter(Boolean).join(", ") : null;
-      if (address) await api.placeAddress(token, p.id, address).catch(() => {});
+      if (address) await api.placeAddress(token, p.id, address).catch(logFail("location: api.placeAddress"));
     }
     const regions = places.slice(0, MAX_GEOFENCES).map((p) => ({
       identifier: p.id,

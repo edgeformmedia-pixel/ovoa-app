@@ -1,5 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import * as Calendar from "expo-calendar";
+import * as Calendar from "expo-calendar/legacy";
 import * as Contacts from "expo-contacts";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
@@ -20,7 +20,7 @@ import { api } from "../lib/api";
 import { useSession } from "../lib/auth";
 import * as clip from "../lib/clip";
 import * as ute from "../../modules/ute-ble";
-import { devlog } from "../lib/devlog";
+import { devlog, logFail } from "../lib/devlog";
 import { createFallDetector } from "../lib/fallDetector";
 import {
   calibrate,
@@ -85,8 +85,8 @@ export default function DevTools() {
   // The clip only reports some values when asked.
   useEffect(() => {
     if (clipState.phase !== "connected") return;
-    clip.refreshInfo().catch(() => {});
-    const timer = setInterval(() => clip.pollLive().catch(() => {}), 3000);
+    clip.refreshInfo().catch(logFail("dev-tools: clip.refreshInfo"));
+    const timer = setInterval(() => clip.pollLive().catch(logFail("dev-tools: clip.pollLive")), 3000);
     return () => clearInterval(timer);
   }, [clipState.phase]);
 
@@ -128,7 +128,7 @@ export default function DevTools() {
     createFallDetector(() => {
       setFalls((count) => count + 1);
       setLastFall(new Date().toLocaleTimeString());
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(logFail("dev-tools: Haptics.notificationAsync"));
     }),
   );
 
@@ -278,7 +278,7 @@ export default function DevTools() {
               <Pressable
                 key={style}
                 style={styles.button}
-                onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle[style]).catch(() => {})}
+                onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle[style]).catch(logFail("dev-tools: Haptics.impactAsync"))}
               >
                 <Text style={styles.buttonText}>{style}</Text>
               </Pressable>
@@ -289,7 +289,7 @@ export default function DevTools() {
               <Pressable
                 key={type}
                 style={styles.button}
-                onPress={() => Haptics.notificationAsync(Haptics.NotificationFeedbackType[type]).catch(() => {})}
+                onPress={() => Haptics.notificationAsync(Haptics.NotificationFeedbackType[type]).catch(logFail("dev-tools: Haptics.notificationAsync"))}
               >
                 <Text style={styles.buttonText}>{type}</Text>
               </Pressable>
@@ -793,7 +793,7 @@ function HeartRateTest({ connected, capabilities }: { connected: boolean; capabi
           setStep(`${label}: listening ${s} s — keep the clip against your skin and stay still`);
           await wait(1000);
         }
-        if (method !== "measure") await ute.setHeartRate(method, false).catch(() => {});
+        if (method !== "measure") await ute.setHeartRate(method, false).catch(logFail("dev-tools: ute.setHeartRate"));
         devlog("ble", `heart probe: ${method} done`, JSON.stringify(current));
         found.push(current);
         setVerdicts([...found]);
@@ -916,13 +916,13 @@ function TwistCalibration({ connected, problem }: { connected: boolean; problem:
       for (let i = 1; i <= TWISTS; i++) {
         setStep(`Hold still… (${i}/${TWISTS})`);
         await wait(2000);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(logFail("dev-tools: Haptics.notificationAsync"));
         setStep(`Shake your wrist hard, back and forth, now! (${i}/${TWISTS})`);
         await wait(REACTION_MS);
         bucket = [];
         await wait(TWIST_MS - REACTION_MS);
         twists.push(bucket);
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(logFail("dev-tools: Haptics.impactAsync"));
       }
       const { profile, note } = calibrate(kind, rest, twists);
       await twistProfilePref.set(profile);
@@ -973,7 +973,7 @@ function TwistCalibration({ connected, problem }: { connected: boolean; problem:
       let detect = detectors.get(kind);
       if (!detect) {
         detect = createTwistDetector(profile, (why) => {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(logFail("dev-tools: Haptics.notificationAsync"));
           setHits((h) => [`${new Date().toLocaleTimeString()}  ${why}`, ...h].slice(0, 6));
           detected.push({ ms: Date.now() - began, why });
         });

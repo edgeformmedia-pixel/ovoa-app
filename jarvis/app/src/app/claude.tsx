@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { logFail } from "../lib/devlog";
 import { useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { api, ApiError } from "../lib/api";
@@ -60,7 +61,7 @@ export default function AskClaude() {
                 <Text style={styles.answer} selectable>
                   {x.answer}
                 </Text>
-                <Pressable style={styles.speak} onPress={() => createSpeaker(token).speak(x.answer!).catch(() => {})}>
+                <Pressable style={styles.speak} onPress={() => createSpeaker(token).speak(x.answer!).catch(logFail("claude: speak"))}>
                   <Ionicons name="volume-high" size={16} color={colors.accent} />
                   <Text style={styles.speakText}>Read it out</Text>
                 </Pressable>

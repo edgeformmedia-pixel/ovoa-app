@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { AppState } from "react-native";
 import { api, type AgentNote } from "./api";
 import { useAuth } from "./auth";
-import { devlog } from "./devlog";
+import { devlog, logFail } from "./devlog";
 import { clearBadge, onNotificationTapped, pushProblem, registerForPush, type PushSetup } from "./push";
 
 // What OVOA said while you weren't looking.
@@ -114,7 +114,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     },
     dismiss: async (id) => {
       setNotes((list) => list.filter((n) => n.id !== id));
-      if (token) await api.dismissNote(token, id).catch(() => {});
+      if (token) await api.dismissNote(token, id).catch(logFail("agent: api.dismissNote"));
     },
     push,
     pushProblem: push && !push.ok ? pushProblem(push.reason, push.detail) : null,

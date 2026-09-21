@@ -12,7 +12,7 @@ import { File, Paths } from "expo-file-system";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { API_URL, ApiError } from "./api";
-import { devlog } from "./devlog";
+import { devlog, logFail } from "./devlog";
 import { pickFiller } from "./fillers";
 import { openEar, stopStream, useLiveStream } from "./liveListen";
 import { storage } from "./storage";
@@ -105,7 +105,7 @@ async function applyAudioMode(allowsRecording: boolean) {
 let awakeHolds = 0;
 export async function holdAwake(on: boolean) {
   awakeHolds = Math.max(0, awakeHolds + (on ? 1 : -1));
-  await applyAudioMode(false).catch(() => {});
+  await applyAudioMode(false).catch(logFail("voice: applyAudioMode"));
 }
 
 function audioMode(allowsRecording: boolean) {
@@ -567,11 +567,11 @@ async function speakInterruptible(
             speaker.stop();
           }
         })
-        .catch(() => {}),
+        .catch(logFail("voice: speaker.stop")),
     );
   }
   onLevel(-160);
-  await playing.catch(() => {});
+  await playing.catch(logFail("voice: onLevel"));
   // The last piece may have caught the start of what they said next.
   await Promise.all(checks);
   return state.said;
@@ -731,7 +731,7 @@ export function useConversation(
       let full: string | null;
       try {
         const asking = handler.current(text, addressed, onSentence, abort.signal);
-        asking.catch(() => {}); // dropped after an interruption: its failure is expected
+        asking.catch(logFail("voice: handler.current")); // dropped after an interruption: its failure is expected
         const result = await Promise.race([asking, interrupted]);
         if (result === INTERRUPTED) {
           abort.abort();
@@ -922,7 +922,7 @@ export function useConversation(
         if (cancelled()) break;
         devlog("err", "voice loop error, retrying in 3 s", err instanceof Error ? err.message : String(err));
         setError(err instanceof Error ? err.message : "Voice stopped working");
-        if (recorder.getStatus().isRecording) await recorder.stop().catch(() => {});
+        if (recorder.getStatus().isRecording) await recorder.stop().catch(logFail("voice: recorder.stop"));
         await sleep(RETRY_MS);
       }
     }
@@ -931,7 +931,7 @@ export function useConversation(
       stopStream(stream);
       if (backgroundAudio) {
         backgroundAudio = false;
-        await applyAudioMode(false).catch(() => {});
+        await applyAudioMode(false).catch(logFail("voice: applyAudioMode"));
       }
     }
     finished();
@@ -968,10 +968,10 @@ export function useConversation(
         devlog("err", `twist standby: couldn't turn the microphone on (${why}, app ${AppState.currentState})`, err instanceof Error ? err.message : String(err));
       }
     };
-    hold("twist mode").catch(() => {});
-    const timer = setInterval(() => hold("it had stopped").catch(() => {}), STANDBY_CHECK_MS);
+    hold("twist mode").catch(logFail("voice: hold"));
+    const timer = setInterval(() => hold("it had stopped").catch(logFail("voice: hold")), STANDBY_CHECK_MS);
     const appState = AppState.addEventListener("change", (s) => {
-      if (s === "active") hold("app opened").catch(() => {});
+      if (s === "active") hold("app opened").catch(logFail("voice: hold"));
     });
     return () => {
       stopped = true;
@@ -984,7 +984,7 @@ export function useConversation(
         devlog("voice", "twist standby: microphone off");
         if (!background) {
           backgroundAudio = false;
-          applyAudioMode(false).catch(() => {});
+          applyAudioMode(false).catch(logFail("voice: applyAudioMode"));
         }
       }
     };

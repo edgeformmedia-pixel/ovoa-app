@@ -1,4 +1,5 @@
 import { useFocusEffect } from "expo-router";
+import { logFail } from "../../lib/devlog";
 import { useCallback, useState } from "react";
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { api, type SafetyEvent } from "../../lib/api";
@@ -24,7 +25,7 @@ export default function Safety() {
 
   useFocusEffect(
     useCallback(() => {
-      api.safetyEvents(token).then((r) => setEvents(r.events)).catch(() => {});
+      api.safetyEvents(token).then((r) => setEvents(r.events)).catch(logFail("safety: setEvents"));
     }, [token]),
   );
 
@@ -59,7 +60,7 @@ export default function Safety() {
         text: "Remove",
         style: "destructive",
         onPress: async () => {
-          await api.deleteContact(token, id).catch(() => {});
+          await api.deleteContact(token, id).catch(logFail("safety: api.deleteContact"));
           setContacts((contacts ?? []).filter((c) => c.id !== id));
         },
       },

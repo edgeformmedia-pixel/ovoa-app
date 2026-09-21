@@ -3,7 +3,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSyncExternalStore } from "react";
 import * as ute from "../../modules/ute-ble";
 import * as clip from "./clip";
-import { devlog } from "./devlog";
+import { devlog, logFail } from "./devlog";
 import {
   commandsPerSecond,
   PHASES,
@@ -244,7 +244,7 @@ export async function runProbe() {
   set({ running: true, step: 0, results: [], winner: null, error: null, finishedAt: null, samples: 0, raw: 0 });
   const began = Date.now();
   const results: StepResult[] = [];
-  await activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
+  await activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(logFail("motionProbe: activateKeepAwakeAsync"));
   try {
     await clip.beginProbe(tap);
     const [sensors, activity] = [await within(ute.probeSensors(), CALL_MS), await within(ute.readActivity(), CALL_MS)];
@@ -310,8 +310,8 @@ export async function runProbe() {
     devlog("err", "motion probe failed", message(err));
   } finally {
     collecting = false;
-    await clip.endProbe().catch(() => {});
-    deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => {});
+    await clip.endProbe().catch(logFail("motionProbe: clip.endProbe"));
+    deactivateKeepAwake(KEEP_AWAKE_TAG).catch(logFail("motionProbe: deactivateKeepAwake"));
     set({ running: false, instruction: null, what: null, finishedAt: Date.now() });
   }
 }
@@ -339,12 +339,12 @@ async function runStep(step: Step, index: number) {
   await wait(STILL_MS);
 
   phase = "twist";
-  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(logFail("motionProbe: Haptics.notificationAsync"));
   show(index, step, "Twist your wrist back and forth now!");
   await wait(TWIST_MS);
 
   phase = "after";
-  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(logFail("motionProbe: Haptics.impactAsync"));
   show(index, step, "Stop. Hold still…");
   const stop = step.source ? await within(ute.setMotionSource(step.source, false, step.intervalMs), CALL_MS) : null;
   await wait(AFTER_MS);

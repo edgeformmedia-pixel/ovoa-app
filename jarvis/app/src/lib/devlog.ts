@@ -34,6 +34,14 @@ export function devlog(kind: LogKind, text: string, detail?: unknown) {
   entryListeners.forEach((l) => l(entry));
 }
 
+/**
+ * For a .catch that used to swallow the error: logs what failed, and why, as a
+ * warning, so nothing that goes wrong on the phone is invisible (2026-09-21).
+ */
+export const logFail = (what: string) => (err: unknown) => {
+  devlog("warn", `${what} failed`, err instanceof Error ? err.message : String(err));
+};
+
 export function clearDevLog() {
   entries = [];
   listeners.forEach((l) => l());

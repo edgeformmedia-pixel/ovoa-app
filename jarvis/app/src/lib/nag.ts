@@ -8,7 +8,7 @@ import { api } from "./api";
 import { savedToken } from "./auth";
 import { onPush } from "./background";
 import * as clip from "./clip";
-import { devlog } from "./devlog";
+import { devlog, logFail } from "./devlog";
 import { holdAwake, renderSpeech } from "./voice";
 
 // Things that don't stop until they're answered (server: api/src/alarms.ts).
@@ -175,7 +175,7 @@ function countSteps() {
         stopNag(hard.key, `${steps} steps: awake`);
         void (async () => {
           const token = await savedToken();
-          if (token && hard.alarmId) await api.stopAlarm(token, hard.alarmId, steps).catch(() => {});
+          if (token && hard.alarmId) await api.stopAlarm(token, hard.alarmId, steps).catch(logFail("nag: api.stopAlarm"));
         })();
       }
     });
@@ -190,12 +190,12 @@ export async function answerNag(n: Nag) {
   if (!token) return;
   if (n.kind === "alarm") {
     if (n.hard || !n.alarmId) return;
-    await api.stopAlarm(token, n.alarmId, 0).catch(() => {});
+    await api.stopAlarm(token, n.alarmId, 0).catch(logFail("nag: api.stopAlarm"));
     // Awake is awake: every ordinary alarm going off here stops too (the server does the same).
     for (const other of nags.filter((x) => x.kind === "alarm" && !x.hard)) stopNag(other.key, "answered");
     return;
   }
-  await api.nagDone(token, n.key).catch(() => {});
+  await api.nagDone(token, n.key).catch(logFail("nag: api.nagDone"));
   stopNag(n.key, "answered");
 }
 
@@ -272,7 +272,7 @@ async function scheduleFallbacks(a: { id: string; at: number; hard: boolean; lab
         data: { type: "alarm-local", alarmId: a.id },
       },
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(a.at + i * 60_000) },
-    }).catch(() => {});
+    }).catch(logFail("nag: Date"));
   }
 }
 
@@ -281,7 +281,7 @@ async function cancelFallbacks(key: string) {
   const id = key.slice(6);
   const scheduled = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
   await Promise.all(
-    scheduled.filter((n) => n.identifier.startsWith(`alarm:${id}:`)).map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier).catch(() => {})),
+    scheduled.filter((n) => n.identifier.startsWith(`alarm:${id}:`)).map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier).catch(logFail("nag: Notifications.cancelScheduledNotificationAsync"))),
   );
 }
 
@@ -294,7 +294,7 @@ export async function syncAlarms(token: string) {
     fireTimers = [];
     const scheduled = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
     await Promise.all(
-      scheduled.filter((n) => n.identifier.startsWith("alarm:")).map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier).catch(() => {})),
+      scheduled.filter((n) => n.identifier.startsWith("alarm:")).map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier).catch(logFail("nag: Notifications.cancelScheduledNotificationAsync"))),
     );
     armed = alarms
       .filter((a) => a.nextAt && a.nextAt > Date.now() && a.nextAt - Date.now() < ARM_AHEAD_MS)

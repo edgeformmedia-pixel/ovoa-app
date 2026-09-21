@@ -1,4 +1,5 @@
 import * as Haptics from "expo-haptics";
+import { logFail } from "./devlog";
 import * as Location from "expo-location";
 import { Accelerometer } from "expo-sensors";
 import * as SMS from "expo-sms";
@@ -61,7 +62,7 @@ export function SafetyProvider({ children }: { children: ReactNode }) {
     async (kind: Kind) => {
       setPending(null);
       const location = await currentLocation();
-      api.logSafetyEvent(token, { kind, status: "alerted", ...location }).catch(() => {});
+      api.logSafetyEvent(token, { kind, status: "alerted", ...location }).catch(logFail("safety: api.logSafetyEvent"));
 
       const list = contactsRef.current;
       const name = user?.name ?? "Your contact";
@@ -90,7 +91,7 @@ export function SafetyProvider({ children }: { children: ReactNode }) {
 
   const trigger = useCallback(
     (kind: Kind) => {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(logFail("safety: Haptics.notificationAsync"));
       if (kind === "sos") {
         void alertContacts("sos");
         return;
@@ -101,7 +102,7 @@ export function SafetyProvider({ children }: { children: ReactNode }) {
       void buzzPattern("urgent", "Did you fall? Open OVOA and tap I'm OK.");
       createSpeaker(token)
         .speak(`Are you OK? If I don't hear from you in ${FALL_COUNTDOWN_S} seconds, I'll text your emergency contacts.`)
-        .catch(() => {});
+        .catch(logFail("safety: speak"));
     },
     [alertContacts, token],
   );
@@ -113,14 +114,14 @@ export function SafetyProvider({ children }: { children: ReactNode }) {
       void alertContacts("fall");
       return;
     }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(logFail("safety: Haptics.impactAsync"));
     const t = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
     return () => clearTimeout(t);
   }, [pending, secondsLeft, alertContacts]);
 
   const imOk = () => {
     setPending(null);
-    api.logSafetyEvent(token, { kind: "fall", status: "ok" }).catch(() => {});
+    api.logSafetyEvent(token, { kind: "fall", status: "ok" }).catch(logFail("safety: api.logSafetyEvent"));
   };
 
   // Fall detection runs while the app is open (Expo Go cannot run it in the background).

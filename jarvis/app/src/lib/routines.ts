@@ -6,7 +6,7 @@ import { savedToken } from "./auth";
 import { onPush } from "./background";
 import { buzzPattern } from "./buzz";
 import * as clip from "./clip";
-import { devlog } from "./devlog";
+import { devlog, logFail } from "./devlog";
 import { copyTodosToReminders } from "./todos";
 import { createSpeaker } from "./voice";
 
@@ -72,7 +72,10 @@ const minutesOf = (d: Date) => d.getHours() * 60 + d.getMinutes();
  * reminder, not a schedule, and turning it into a daily routine would be wrong.
  */
 async function readMedsList(listId: string) {
-  const reminders = await Calendar.getRemindersAsync([listId], Calendar.ReminderStatus.INCOMPLETE, null, null);
+  // No status filter: with one, expo-calendar demands a date range, which would also
+  // leave out reminders with no date. All of them, then the open ones.
+  const reminders = (await Calendar.getRemindersAsync([listId], null, null, null)).filter((r) => !r.completed);
+  devlog("agent", `Medications list: ${reminders.length} open reminder(s)`);
   const byTitle = new Map<string, { ids: string[]; times: number[]; days: number[] }>();
   for (const r of reminders) {
     const due = r.dueDate ? new Date(r.dueDate) : null;
@@ -174,7 +177,7 @@ async function scheduleLocal(token: string, routines: Routine[]) {
   await Promise.all(
     scheduled
       .filter((n) => (n.content.data as { type?: string } | undefined)?.type === "routine")
-      .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier).catch(() => {})),
+      .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier).catch(logFail("routines: Notifications.cancelScheduledNotificationAsync"))),
   );
 
   const now = Date.now();
@@ -198,7 +201,7 @@ async function scheduleLocal(token: string, routines: Routine[]) {
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(dueAt) },
     }).catch((err) => devlog("err", `couldn't schedule ${r.title}`, String(err)));
   }
-  await api.routinesScheduled(token).catch(() => {});
+  await api.routinesScheduled(token).catch(logFail("routines: api.routinesScheduled"));
   devlog("agent", `scheduled ${all.length} routine notification${all.length === 1 ? "" : "s"}`);
 }
 
@@ -232,7 +235,7 @@ export function syncRoutines(token: string, { ask = false } = {}) {
                 devlog("err", `couldn't add ${r.title} to Reminders`, String(err));
                 return null;
               });
-              if (externalId) await api.routineExternal(token, r.id, externalId).catch(() => {});
+              if (externalId) await api.routineExternal(token, r.id, externalId).catch(logFail("routines: api.routineExternal"));
             }
           }
         }
@@ -242,7 +245,7 @@ export function syncRoutines(token: string, { ask = false } = {}) {
           if (await tickOff(w.externalId, w.dueAt).catch(() => false)) written.push(w.eventId);
           else written.push(w.eventId); // Already moved on there: nothing left to tick.
         }
-        if (written.length) await api.routinesWrittenBack(token, written).catch(() => {});
+        if (written.length) await api.routinesWrittenBack(token, written).catch(logFail("routines: api.routinesWrittenBack"));
       } else {
         routines = (await api.routines(token)).routines;
       }
@@ -282,7 +285,7 @@ async function respond(action: string, data: RoutineData) {
       devlog("err", "couldn't record the dose", String(err)),
     );
   } else if (action === "snooze") {
-    await api.snoozeRoutine(token, data.routineId, { ...at, minutes: SNOOZE_MIN }).catch(() => {});
+    await api.snoozeRoutine(token, data.routineId, { ...at, minutes: SNOOZE_MIN }).catch(logFail("routines: api.snoozeRoutine"));
     // The phone's own copy too, so it comes back even offline.
     await Notifications.scheduleNotificationAsync({
       content: {
@@ -292,7 +295,7 @@ async function respond(action: string, data: RoutineData) {
         data: { ...data, type: "routine" },
       },
       trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: SNOOZE_MIN * 60 },
-    }).catch(() => {});
+    }).catch(logFail("routines: call"));
   }
   devlog("push", `routine ${action}`, data);
 }

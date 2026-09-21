@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { logFail } from "../lib/devlog";
 import { Stack } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -76,7 +77,7 @@ export default function AgentScreen() {
         style: "destructive",
         onPress: async () => {
           setJobs((list) => list?.filter((j) => j.id !== job.id) ?? null);
-          await api.deleteJob(token, job.id).catch(() => {});
+          await api.deleteJob(token, job.id).catch(logFail("agent: api.deleteJob"));
         },
       },
     ]);
@@ -111,7 +112,7 @@ export default function AgentScreen() {
 
   const dropGoal = async (goal: AgentGoal) => {
     setGoals((list) => list?.filter((g) => g.id !== goal.id) ?? null);
-    await api.closeGoal(token, goal.id, "dropped").catch(() => {});
+    await api.closeGoal(token, goal.id, "dropped").catch(logFail("agent: api.closeGoal"));
   };
 
   return (

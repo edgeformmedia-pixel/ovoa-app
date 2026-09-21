@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import * as ute from "../../modules/ute-ble";
 import * as clip from "../lib/clip";
-import { devlog } from "../lib/devlog";
+import { devlog, logFail } from "../lib/devlog";
 import { healthAvailable, todayHealth } from "../lib/health";
 import { setLiveHeart } from "../lib/heart";
 import { colors } from "../lib/theme";
@@ -46,13 +46,13 @@ export default function Live() {
       } else if (healthAvailable) {
         todayHealth()
           .then((h) => h.heartRate && !stopped && setBpm({ value: h.heartRate.bpm, at: h.heartRate.at, from: "health" }))
-          .catch(() => {});
+          .catch(logFail("live: setBpm"));
       }
       return () => {
         stopped = true;
         off();
         if (linked) {
-          ute.setHeartRate("factory", false).catch(() => {});
+          ute.setHeartRate("factory", false).catch(logFail("live: ute.setHeartRate"));
           setLiveHeart(false);
         }
       };
@@ -87,7 +87,7 @@ export default function Live() {
                     country: hit.country ?? null,
                   });
                 })
-                .catch(() => {});
+                .catch(logFail("live: call"));
             }
           },
         );
@@ -112,7 +112,7 @@ export default function Live() {
         base = r.steps;
         setSteps(r.steps);
       })
-      .catch(() => {});
+      .catch(logFail("live: setSteps"));
     const p = Pedometer.watchStepCount((r) => setSteps(base + r.steps));
     return () => {
       b.remove();

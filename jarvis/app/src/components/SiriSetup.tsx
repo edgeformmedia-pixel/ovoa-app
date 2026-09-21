@@ -1,4 +1,5 @@
 import * as Clipboard from "expo-clipboard";
+import { logFail } from "../lib/devlog";
 import { useState } from "react";
 import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { api } from "../lib/api";
@@ -31,7 +32,7 @@ export function SiriSetup({ token }: { token: string }) {
         text: "Turn off",
         style: "destructive",
         onPress: async () => {
-          await api.deleteSiriKey(token).catch(() => {});
+          await api.deleteSiriKey(token).catch(logFail("SiriSetup: api.deleteSiriKey"));
           setSetup(null);
         },
       },

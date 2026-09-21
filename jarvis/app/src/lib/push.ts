@@ -2,7 +2,7 @@ import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { api } from "./api";
-import { devlog } from "./devlog";
+import { devlog, logFail } from "./devlog";
 import { storage } from "./storage";
 
 // Letting the agent reach the phone.
@@ -89,7 +89,7 @@ export async function registerForPush(token: string): Promise<PushSetup> {
     const known = await storage.get(TOKEN_KEY).catch(() => null);
     if (known !== pushToken) {
       await api.registerPush(token, pushToken, Platform.OS);
-      await storage.set(TOKEN_KEY, pushToken).catch(() => {});
+      await storage.set(TOKEN_KEY, pushToken).catch(logFail("push: storage.set"));
       devlog("push", "registered with the server");
     }
     return { ok: true, token: pushToken };
@@ -107,12 +107,12 @@ export async function registerForPush(token: string): Promise<PushSetup> {
 export async function unregisterPush(token: string) {
   const known = await storage.get(TOKEN_KEY).catch(() => null);
   if (!known) return;
-  await api.unregisterPush(token, known).catch(() => {});
-  await storage.remove(TOKEN_KEY).catch(() => {});
+  await api.unregisterPush(token, known).catch(logFail("push: api.unregisterPush"));
+  await storage.remove(TOKEN_KEY).catch(logFail("push: storage.remove"));
 }
 
 /** Clears the little red number on the app icon. */
-export const clearBadge = () => Notifications.setBadgeCountAsync(0).catch(() => {});
+export const clearBadge = () => Notifications.setBadgeCountAsync(0).catch(logFail("push: Notifications.setBadgeCountAsync"));
 
 /** Fires when the user taps a notification. Returns an unsubscribe. */
 export function onNotificationTapped(handler: (data: Record<string, unknown>) => void) {

@@ -342,7 +342,8 @@ const pointsSchema = z.object({
   points: z
     .array(
       z.object({
-        ts: z.number().int().positive(),
+        // iOS sends fractions of a millisecond; rounded below (they were all refused, 2026-09-21).
+        ts: z.number().positive(),
         lat: z.number().min(-90).max(90),
         lng: z.number().min(-180).max(180),
         accuracy: z.number().nullish(),
@@ -356,7 +357,8 @@ const pointsSchema = z.object({
 location.post("/locations", async (c) => {
   const parsed = pointsSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Invalid points" }, 400);
-  return c.json({ visits: await ingestPoints(c.env.DB, c.var.userId, parsed.data.points) });
+  const points = parsed.data.points.map((p) => ({ ...p, ts: Math.round(p.ts) }));
+  return c.json({ visits: await ingestPoints(c.env.DB, c.var.userId, points) });
 });
 
 location.get("/places", async (c) => c.json({ places: await listPlaces(c.env.DB, c.var.userId) }));

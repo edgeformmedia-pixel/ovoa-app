@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { api, type LineSource, type TranscriptBlock, type TranscriptDay, type TranscriptLine } from "../lib/api";
 import { useSession } from "../lib/auth";
-import { devlog } from "../lib/devlog";
+import { devlog, logFail } from "../lib/devlog";
 import { colors } from "../lib/theme";
 
 // Everything said, by day: the day's title, then each hour with its title, then
@@ -84,7 +84,7 @@ export default function Transcripts() {
         text: "Forget",
         style: "destructive",
         onPress: async () => {
-          await api.forgetTranscript(token, b.start, b.start + BLOCK_MS).catch(() => {});
+          await api.forgetTranscript(token, b.start, b.start + BLOCK_MS).catch(logFail("transcripts: api.forgetTranscript"));
           setOpenBlock(null);
           void load();
         },

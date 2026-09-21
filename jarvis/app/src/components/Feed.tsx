@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { api, type FeedCard } from "../lib/api";
 import { useSession } from "../lib/auth";
-import { devlog } from "../lib/devlog";
+import { devlog, logFail } from "../lib/devlog";
 import { colors } from "../lib/theme";
 
 // What OVOA did for you, what's due, and what slipped — at the top of the
@@ -43,19 +43,19 @@ export function Feed() {
 
   const tickTodo = async (id: string) => {
     setCards((all) => all?.map((c) => (c.kind === "todos" ? { ...c, items: c.items.map((i) => (i.id === id ? { ...i, done: true } : i)) } : c)) ?? null);
-    await api.todoDone(token, id).catch(() => {});
+    await api.todoDone(token, id).catch(logFail("Feed: api.todoDone"));
     void load();
   };
 
   const confirm = async (routineId: string, dueAt: number) => {
-    await api.confirmRoutine(token, routineId, { dueAt, via: "app" }).catch(() => {});
+    await api.confirmRoutine(token, routineId, { dueAt, via: "app" }).catch(logFail("Feed: api.confirmRoutine"));
     void load();
   };
 
   const settle = async (id: string, how: "keep" | "done" | "drop") => {
     setCards((all) => all?.filter((c) => !(c.kind === "favor" && c.commitmentId === id)) ?? null);
-    if (how === "keep") await api.confirmFavor(token, id).catch(() => {});
-    else await api.setCommitment(token, id, how === "done" ? "done" : "dropped").catch(() => {});
+    if (how === "keep") await api.confirmFavor(token, id).catch(logFail("Feed: api.confirmFavor"));
+    else await api.setCommitment(token, id, how === "done" ? "done" : "dropped").catch(logFail("Feed: api.setCommitment"));
     void load();
   };
 

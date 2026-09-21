@@ -5,7 +5,7 @@ import { AppState } from "react-native";
 import { api, type ChatResponse, type PendingAction, type PhoneResult } from "./api";
 import { useSession } from "./auth";
 import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type Approval } from "./phoneActions";
-import { devlog } from "./devlog";
+import { devlog, logFail } from "./devlog";
 import { onPush } from "./background";
 import { FILLERS, pickFiller } from "./fillers";
 import { syncAlarms } from "./nag";
@@ -243,7 +243,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           devlog("err", "the agent's command failed", message);
-          await api.commandDone(token, command.id, false, message).catch(() => {});
+          await api.commandDone(token, command.id, false, message).catch(logFail("assistant: api.commandDone"));
         }
       }
     } catch (err) {
@@ -313,7 +313,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   const setMicSource = useCallback((source: MicSource) => {
     setMicSourceState(source);
-    micSourcePref.set(source).catch(() => {});
+    micSourcePref.set(source).catch(logFail("assistant: micSourcePref.set"));
   }, []);
 
   /** The clip's finished recording: transcribe it and answer. */
@@ -329,7 +329,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         // so the clip's recording doesn't stay in the Recordings list either.
         const text = await transcribe(token, entry.wavUri, "audio/wav");
         deleteRecording(entry.id);
-        if (entry.sessionId) clip.deleteFromClip(entry.sessionId).catch(() => {});
+        if (entry.sessionId) clip.deleteFromClip(entry.sessionId).catch(logFail("assistant: clip.deleteFromClip"));
         if (!text) {
           devlog("voice", "band mic: nothing was said");
           clip.buzz(2);
@@ -373,7 +373,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
           reply.say(full);
         }
         reply.end();
-        await reply.done.catch(() => {});
+        await reply.done.catch(logFail("assistant: reply.end"));
         endTurn();
       } catch (err) {
         if (filler) clearTimeout(filler);
@@ -383,7 +383,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         // Failing silently is the worst of it: from the wrist there's no screen to check,
         // so the same speaker that would have read the answer says what went wrong.
         clip.buzz(2);
-        if (!spoke) await speaker.speak(excuse(message)).catch(() => {});
+        if (!spoke) await speaker.speak(excuse(message)).catch(logFail("assistant: excuse"));
       } finally {
         setBandPhase(null);
       }
@@ -577,7 +577,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
           setApprovals(r.actions);
           r.actions.forEach(queueAuto);
         })
-        .catch(() => {});
+        .catch(logFail("assistant: r.actions.forEach"));
     pull();
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") pull();
@@ -673,7 +673,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cancel = async (id: string) => {
-    await api.cancelAction(token, id).catch(() => {});
+    await api.cancelAction(token, id).catch(logFail("assistant: api.cancelAction"));
     dropApproval(id);
   };
 
@@ -710,7 +710,7 @@ async function showAgentReply(reply: string) {
   await Notifications.scheduleNotificationAsync({
     content: { title: "🤖 OVOA agent", body: reply.slice(0, 180), data: { type: "agent-reply" } },
     trigger: null,
-  }).catch(() => {});
+  }).catch(logFail("assistant: reply.slice"));
 }
 
 /** A band turn stops itself after this long, in case the second click never comes. */

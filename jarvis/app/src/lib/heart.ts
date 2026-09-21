@@ -2,7 +2,7 @@ import { AppState } from "react-native";
 import * as ute from "../../modules/ute-ble";
 import { api } from "./api";
 import * as clip from "./clip";
-import { devlog } from "./devlog";
+import { devlog, logFail } from "./devlog";
 import { healthAvailable, healthPermission, heartRateSince, watchHeartRate } from "./health";
 import { storage } from "./storage";
 
@@ -73,7 +73,7 @@ export async function sendHealthHeartRate(token: string) {
   const samples = await heartRateSince(new Date(last + 1)).catch(() => []);
   if (!samples.length) return;
   for (let i = 0; i < samples.length; i += 1000) await api.sendHeartRate(token, "health", samples.slice(i, i + 1000));
-  await storage.set(HEALTH_LAST_KEY, String(samples[samples.length - 1].ts)).catch(() => {});
+  await storage.set(HEALTH_LAST_KEY, String(samples[samples.length - 1].ts)).catch(logFail("heart: storage.set"));
   devlog("log", `heart rate: sent ${samples.length} readings from Health`);
 }
 
@@ -82,7 +82,7 @@ export function startHeartRate(token: string) {
   api
     .heartToday(token)
     .then((r) => (resting = r.baseline || resting))
-    .catch(() => {});
+    .catch(logFail("heart: heartToday"));
 
   const offReading = clip.onHeartRate((bpm) => {
     if (bpm < 30 || bpm > 230) return;
@@ -109,7 +109,7 @@ export function startHeartRate(token: string) {
   let offHealth: () => void = () => {};
   watchHeartRate(() => void sendHealthHeartRate(token))
     .then((off) => (offHealth = off))
-    .catch(() => {});
+    .catch(logFail("heart: sendHealthHeartRate"));
   const app = AppState.addEventListener("change", (s) => {
     if (s === "active") void sendHealthHeartRate(token);
     if (s === "background") void flushBand(token, true);

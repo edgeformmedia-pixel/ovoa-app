@@ -131,7 +131,8 @@ export async function listReminders({ includeCompleted }: { includeCompleted?: b
   const lists = await Calendar.getCalendarsAsync(Calendar.EntityTypes.REMINDER);
   const ids = lists.map((l) => l.id);
   const names = new Map(lists.map((l) => [l.id, l.title]));
-  const open = await Calendar.getRemindersAsync(ids, Calendar.ReminderStatus.INCOMPLETE, null, null);
+  // No status filter: with one, expo-calendar demands a date range (and drops undated reminders).
+  const open = (await Calendar.getRemindersAsync(ids, null, null, null)).filter((r) => !r.completed);
   const done = includeCompleted
     ? await Calendar.getRemindersAsync(ids, Calendar.ReminderStatus.COMPLETED, addDays(new Date(), -7), new Date())
     : [];

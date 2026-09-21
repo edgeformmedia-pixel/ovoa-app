@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { logFail } from "../../lib/devlog";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useRouter } from "expo-router";
 import { useEffect, useState, type ComponentProps } from "react";
@@ -44,7 +45,7 @@ export default function RecordScreen() {
   // Keep battery, signal and the button state fresh while this tab is open.
   useEffect(() => {
     if (state.phase !== "connected") return;
-    const timer = setInterval(() => clip.pollLive().catch(() => {}), 5000);
+    const timer = setInterval(() => clip.pollLive().catch(logFail("record: clip.pollLive")), 5000);
     return () => clearInterval(timer);
   }, [state.phase]);
 
@@ -300,7 +301,7 @@ function RecordingList({ recordings }: { recordings: Recording[] }) {
   useEffect(() => {
     if (status.didJustFinish) {
       player.pause();
-      player.seekTo(0).catch(() => {});
+      player.seekTo(0).catch(logFail("record: player.seekTo"));
     }
   }, [status.didJustFinish, player]);
 
