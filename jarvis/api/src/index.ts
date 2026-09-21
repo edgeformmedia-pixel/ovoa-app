@@ -46,6 +46,7 @@ import { escalate, fireDueRoutines, isRoutineTool, routines, routinesAssistant }
 import { getProfile, isProfileTool, onboarding, profileAssistant, profilePrompt } from "./onboarding";
 import { fireDueNotes, isNoteTool, notes, notesAssistant } from "./notes";
 import { eveningTick, isTodoTool, todos, todosAssistant } from "./todos";
+import { feed } from "./feed";
 import { isWebTool, webAssistant } from "./web";
 
 const HISTORY_TURNS = 30;
@@ -1283,6 +1284,7 @@ authed.route("/", routines);
 authed.route("/", onboarding);
 authed.route("/", notes);
 authed.route("/", todos);
+authed.route("/", feed);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);

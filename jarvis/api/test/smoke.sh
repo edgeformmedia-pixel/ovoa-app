@@ -257,6 +257,15 @@ check "and the note with it"       "$(curl -s "${A[@]}" "$API/notes?tag=todo" | 
 check "not someone else's list"    "$(curl -s -H "authorization: Bearer $OTHER" "$API/todos?date=$TOMORROW" | j "len(d['todos'])")" "0"
 
 echo
+echo "── the feed ───────────────────────────────────────"
+FEED=$(curl -s "${A[@]}" "$API/feed")
+check "it starts with today"        "$(echo "$FEED" | j "d['cards'][0]['kind']")" "summary"
+check "what was done is counted"    "$(echo "$FEED" | j "d['cards'][0]['counts'].get('note', 0) >= 2")" "True"
+check "the agent's work has a card" "$(echo "$FEED" | j "any(c['kind']=='agent' for c in d['cards'])")" "True"
+check "a missed routine shows"      "$(echo "$FEED" | j "any(c['kind']=='missed' for c in d['cards'])")" "True"
+check "a quiet account's feed"      "$(curl -s -H "authorization: Bearer $OTHER" "$API/feed" | j "d['cards'][0]['body']")" "Nothing done for you yet today."
+
+echo
 echo "── capture everything is dev-only ─────────────────"
 check "refused for an ordinary account"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":true}')" "403"
 check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['captureEverything']")" "False"

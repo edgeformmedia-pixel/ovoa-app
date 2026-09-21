@@ -54,6 +54,17 @@ export type RoutineSync = {
 
 type Occurrence = { dueAt?: number; eventId?: string };
 
+/** One card on the home screen's feed (api/src/feed.ts). */
+export type FeedCard =
+  | { kind: "summary"; title: string; body: string; minutesSaved: number; counts: Record<string, number> }
+  | { kind: "todos"; title: string; date: string; items: { id: string; text: string; done: boolean }[] }
+  | { kind: "routines"; title: string; items: { id: string; title: string; at: string; dueAt: number; status: string; streak: number }[] }
+  | { kind: "streak"; title: string; body: string; routineId: string }
+  | { kind: "missed"; title: string; body: string; routineId: string }
+  | { kind: "agent"; title: string; items: { at: string; text: string }[] }
+  | { kind: "week"; title: string; body: string; minutesSaved: number }
+  | { kind: "activity"; title: string; items: { at: string; text: string; source: string }[] };
+
 /** One line on a day's list. */
 export type Todo = {
   id: string;
@@ -494,6 +505,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ pattern }),
     }),
+
+  feed: (token: string) => request<{ cards: FeedCard[] }>("/feed", token),
 
   // ---------- To-do list ----------
 
