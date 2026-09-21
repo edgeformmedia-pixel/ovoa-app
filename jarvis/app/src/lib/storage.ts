@@ -4,12 +4,44 @@ import { Platform } from "react-native";
 // SecureStore has no web implementation; the web build is only for previews.
 const web = Platform.OS === "web";
 
+// Readable while the phone is locked. The keychain's default is "only while
+// unlocked", so a band turn or a background push with the phone in a pocket
+// couldn't read the chosen voice (it fell back to the default: the voice kept
+// changing, device_logs 2026-09-21) or even the saved sign-in.
+const KEYCHAIN = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK };
+
+/** What was last read or written, for when the keychain can't be reached. */
+const cache = new Map<string, string | null>();
+/** Keys already rewritten with the new accessibility this launch. */
+const migrated = new Set<string>();
+
 export const storage = {
-  get: (key: string) => (web ? Promise.resolve(localStorage.getItem(key)) : SecureStore.getItemAsync(key)),
-  set: (key: string, value: string) =>
-    web ? Promise.resolve(localStorage.setItem(key, value)) : SecureStore.setItemAsync(key, value),
-  remove: (key: string) =>
-    web ? Promise.resolve(localStorage.removeItem(key)) : SecureStore.deleteItemAsync(key),
+  get: async (key: string) => {
+    if (web) return localStorage.getItem(key);
+    try {
+      const value = await SecureStore.getItemAsync(key, KEYCHAIN);
+      cache.set(key, value);
+      // Items saved before this change keep "only while unlocked" until rewritten.
+      if (value !== null && !migrated.has(key)) {
+        migrated.add(key);
+        SecureStore.setItemAsync(key, value, KEYCHAIN).catch(() => migrated.delete(key));
+      }
+      return value;
+    } catch (err) {
+      if (cache.has(key)) return cache.get(key) ?? null;
+      throw err;
+    }
+  },
+  set: async (key: string, value: string) => {
+    cache.set(key, value);
+    if (web) return localStorage.setItem(key, value);
+    await SecureStore.setItemAsync(key, value, KEYCHAIN);
+  },
+  remove: async (key: string) => {
+    cache.delete(key);
+    if (web) return localStorage.removeItem(key);
+    await SecureStore.deleteItemAsync(key, KEYCHAIN);
+  },
 };
 
 /** The shortcut the user builds to send texts without tapping Send (see phoneActions). */
