@@ -317,9 +317,10 @@ async function geminiToolLoop(
         contents,
         // No tools on the last round, so the model has to answer.
         ...(round < MAX_TOOL_ROUNDS && tools.length && { tools: [{ functionDeclarations: tools }] }),
-        // Spoken replies are short and someone is standing there waiting: the
-        // least thinking Gemini allows. "low" measured 5-11 s for "thanks".
-        ...(voice && { generationConfig: { thinkingConfig: { thinkingLevel: "minimal" } } }),
+        // Spoken replies are short: a little thinking is plenty, and much faster.
+        // ("minimal" would be faster still, but gemini-3.8-flash rejects it: 400,
+        // "Thinking level MINIMAL is not supported for this model", 2026-09-21.)
+        ...(voice && { generationConfig: { thinkingConfig: { thinkingLevel: "low" } } }),
       },
       onText,
     );
