@@ -4,6 +4,8 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "rea
 import { AuthProvider, useAuth } from "../lib/auth";
 // For its side effect: the background push task has to be defined before anything mounts.
 import "../lib/background";
+// Likewise the Done / Snooze handler: a tap on a locked phone can start the app just for it.
+import "../lib/routines";
 import { devlog } from "../lib/devlog";
 import { startRemoteLog } from "../lib/remoteLog";
 import { colors } from "../lib/theme";

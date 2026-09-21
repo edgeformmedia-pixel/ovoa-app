@@ -181,6 +181,41 @@ check "done only once"   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[
 check "listed as done"   "$(curl -s "${A[@]}" "$API/commands" | j "d['commands'][0]['status']")" "done"
 
 echo
+echo "── routines and medications ───────────────────────"
+SYNC=$(curl -s -X POST "${A[@]}" "$API/routines/sync"   -d '{"source":"apple_reminders","items":[{"externalId":"rem-1","title":"Vitamin D","times":[480]}]}')
+check "a reminder becomes a routine" "$(echo "$SYNC" | j "d['routines'][0]['title']")" "Vitamin D"
+check "it's a medication"            "$(echo "$SYNC" | j "d['routines'][0]['kind']")" "med"
+check "read back"                    "$(echo "$SYNC" | j "d['routines'][0]['when']")" "every day at 8:00 AM"
+check "nothing to create"            "$(echo "$SYNC" | j "len(d['toCreate'])")" "0"
+RID=$(echo "$SYNC" | j "d['routines'][0]['id']")
+check "syncing again doesn't duplicate"   "$(curl -s -X POST "${A[@]}" "$API/routines/sync" -d '{"source":"apple_reminders","items":[{"externalId":"rem-1","title":"Vitamin D","times":[480]}]}' | j "len(d['routines'])")" "1"
+check "a time changed in Reminders wins"   "$(curl -s -X POST "${A[@]}" "$API/routines/sync" -d '{"source":"apple_reminders","items":[{"externalId":"rem-1","title":"Vitamin D","times":[540]}]}' | j "d['routines'][0]['when']")" "every day at 9:00 AM"
+# Fire it: pull the next occurrence into the past and tick.
+curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/routines/due?id=$RID"
+check "the tick fires it" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=routines" | j "d['fired'] >= 1")" "True"
+check "an occurrence is waiting" "$(curl -s "${A[@]}" "$API/routines" | j "d['routines'][0]['today'][0]['status'] if d['routines'][0]['today'] else 'pending'")" "pending"
+check "firing is once" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=routines" | j "d['fired']")" "0"
+CONF=$(curl -s -X POST "${A[@]}" "$API/routines/$RID/confirm" -d '{"via":"app"}')
+check "'took it' confirms the waiting one" "$(echo "$CONF" | j "d['title']")" "Vitamin D"
+check "nothing left to confirm" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/routines/$RID/confirm" -d '{}')" "404"
+check "confirmed in OVOA, so tick it off in Reminders"   "$(curl -s -X POST "${A[@]}" "$API/routines/sync" -d '{"source":"apple_reminders","items":[{"externalId":"rem-1","title":"Vitamin D","times":[540]}]}' | j "d['toWriteBack'][0]['externalId']")" "rem-1"
+# Confirmed on the phone before the server fired: recorded, and the tick then says nothing.
+FUTURE=$(curl -s "${A[@]}" "$API/routines" | j "d['routines'][0]['nextDueAt']")
+check "confirming ahead of the tick" "$(curl -s -X POST "${A[@]}" "$API/routines/$RID/confirm" -d "{\"dueAt\":$FUTURE,\"via\":\"notification\"}" | j "d['title']")" "Vitamin D"
+# Escalation: a new occurrence left unconfirmed for over an hour.
+curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/routines/due?id=$RID&agoMinutes=0"
+curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/agent/tick?what=routines"
+curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/routines/due?id=$RID&agoMinutes=20"
+check "15 minutes on, it follows up" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=routines" | j "d['followedUp'] >= 1")" "True"
+curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/routines/due?id=$RID&agoMinutes=50"
+check "an hour on, it follows up again" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=routines" | j "d['followedUp'] >= 1")" "True"
+curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/routines/due?id=$RID&agoMinutes=120"
+curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/agent/tick?what=routines"
+check "past its window it's missed"   "$(curl -s "${A[@]}" "$API/debug/agent/tick" -o /dev/null; curl -s -X POST "${A[@]}" "$API/routines/$RID/confirm" -d '{}' -o /dev/null -w '%{http_code}')" "404"
+check "deleted in Reminders, switched off here"   "$(curl -s -X POST "${A[@]}" "$API/routines/sync" -d '{"source":"apple_reminders","items":[]}' | j "len(d['routines'])")" "0"
+check "someone else has no routines" "$(curl -s -H "authorization: Bearer $OTHER" "$API/routines" | j "len(d['routines'])")" "0"
+
+echo
 echo "── capture everything is dev-only ─────────────────"
 check "refused for an ordinary account"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":true}')" "403"
 check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['captureEverything']")" "False"

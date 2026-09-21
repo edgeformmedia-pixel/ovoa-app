@@ -9,6 +9,7 @@ import { startClip } from "../../lib/clip";
 import { useAuth } from "../../lib/auth";
 import { registerBackgroundPush } from "../../lib/background";
 import { startDeviceReports } from "../../lib/device";
+import { startRoutineSync } from "../../lib/routines";
 import { SafetyProvider } from "../../lib/safety";
 import { NotesBadge } from "../../components/NotesBadge";
 import { colors } from "../../lib/theme";
@@ -27,6 +28,8 @@ export default function TabsLayout() {
   // What this phone has (band, Health, location), so the server picks how to reach it.
   useEffect(() => (token ? startDeviceReports(token) : undefined), [token]);
   useEffect(() => void registerBackgroundPush(), []);
+  // Routines and medications: mirror Reminders, schedule the next two days on the phone.
+  useEffect(() => (token ? startRoutineSync(token) : undefined), [token]);
   // Anything recorded but not yet in the timeline gets filed, while it's on.
   useAutoCapture();
 

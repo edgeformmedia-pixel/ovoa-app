@@ -25,6 +25,35 @@ export type Settings = {
   captureEverything?: boolean;
 };
 
+/** Something that repeats: a medication, the dog, water. Medications come from Apple Reminders. */
+export type Routine = {
+  id: string;
+  kind: "med" | "pet" | "habit" | "custom";
+  title: string;
+  /** Minutes past local midnight. */
+  times: number[];
+  /** 0 = Sunday. Empty means every day. */
+  days: number[];
+  when: string;
+  buzzPattern: string;
+  externalSource: string | null;
+  externalId: string | null;
+  nextDueAt: number | null;
+  updatedAt: number;
+  streak: number;
+  today: { id: string; due_at: number; status: "pending" | "done" | "missed" | "snoozed" | "skipped" }[];
+};
+
+export type RoutineSync = {
+  routines: Routine[];
+  /** Added by voice or onboarding: the phone creates these in Reminders. */
+  toCreate: { id: string; title: string; times: number[]; days: number[] }[];
+  /** Confirmed in OVOA: the phone ticks these off in Reminders. */
+  toWriteBack: { eventId: string; externalId: string; dueAt: number }[];
+};
+
+type Occurrence = { dueAt?: number; eventId?: string };
+
 /** Something the background agent asked the phone to do, in words. */
 export type QueuedCommand = { id: string; text: string; source: "agent" | "system"; reason: string | null; created_at: number };
 
@@ -451,6 +480,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ pattern }),
     }),
+
+  // ---------- Routines ----------
+
+  routines: (token: string) => request<{ routines: Routine[] }>("/routines", token),
+  syncRoutines: (token: string, items: { externalId: string; title: string; times: number[]; days: number[] }[]) =>
+    request<RoutineSync>("/routines/sync", token, {
+      method: "POST",
+      body: JSON.stringify({ source: "apple_reminders", items }),
+    }),
+  routineExternal: (token: string, id: string, externalId: string) =>
+    request(`/routines/${id}/external`, token, { method: "POST", body: JSON.stringify({ externalId }) }),
+  routinesWrittenBack: (token: string, ids: string[]) =>
+    request("/routines/written-back", token, { method: "POST", body: JSON.stringify({ ids }) }),
+  routinesScheduled: (token: string) => request("/routines/scheduled", token, { method: "POST" }),
+  confirmRoutine: (token: string, id: string, at: Occurrence & { via?: "notification" | "voice" | "app" }) =>
+    request<{ title: string | null }>(`/routines/${id}/confirm`, token, { method: "POST", body: JSON.stringify(at) }),
+  snoozeRoutine: (token: string, id: string, at: Occurrence & { minutes?: number }) =>
+    request(`/routines/${id}/snooze`, token, { method: "POST", body: JSON.stringify(at) }),
 
   // ---------- Commands the agent queued for the phone ----------
 

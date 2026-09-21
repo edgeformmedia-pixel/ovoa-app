@@ -19,6 +19,8 @@ export type PushMessage = {
   data?: Record<string, unknown>;
   /** High-urgency notes interrupt; everything else arrives quietly. */
   urgent?: boolean;
+  /** Buttons on the notification, registered by the app under this name ("routine": Done / Snooze). */
+  categoryId?: string;
 };
 
 /**
@@ -84,6 +86,7 @@ export async function push(env: Env, userId: string, message: PushMessage | Sile
             priority: message.urgent ? "high" : "normal",
             ...(message.urgent && { interruptionLevel: "time-sensitive" }),
             ...(message.data && { data: message.data }),
+            ...(message.categoryId && { categoryId: message.categoryId }),
           },
     );
 

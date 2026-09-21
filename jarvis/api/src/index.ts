@@ -42,6 +42,7 @@ import { forgetPushToken, registerPushToken } from "./push";
 import { BUZZ_PATTERNS, sendBuzz, type BuzzPattern } from "./buzz";
 import { capabilities, deviceStateSchema, saveDeviceState } from "./capabilities";
 import { commands, enqueueCommand, FORBIDDEN_FOR_COMMANDS } from "./commands";
+import { escalate, fireDueRoutines, isRoutineTool, routines, routinesAssistant } from "./routines";
 import { isWebTool, webAssistant } from "./web";
 
 const HISTORY_TURNS = 30;
@@ -467,6 +468,7 @@ async function runTurn(
   const timeline = contextAssistant(env, userId, timeZone, !!settings.context_enabled);
   const web = webAssistant(env, timeZone);
   const agent = agentAssistant(env, userId, timeZone, settings as AgentSettings, voice);
+  const routine = routinesAssistant(env, userId, timeZone, { voice, fromAgent });
 
   const turns: Turn[] = history.results.reverse().map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -509,6 +511,7 @@ async function runTurn(
     ["timeline", timeline.prompt],
     ["web", web.prompt],
     ["agent", agent.prompt],
+    ["routines", routine.prompt],
     ["command", fromAgent
       ? [
           "This request was not typed by the user. Your own background agent queued it for the phone to run, because it needs something only the phone has (Reminders, the phone's calendar, Health).",
@@ -540,7 +543,15 @@ async function runTurn(
         spoken.push(delta);
       }
     : undefined;
-  const tools = [...phone.tools, ...shortcuts.tools, ...google.tools, ...timeline.tools, ...web.tools, ...agent.tools].filter(
+  const tools = [
+    ...phone.tools,
+    ...shortcuts.tools,
+    ...google.tools,
+    ...timeline.tools,
+    ...web.tools,
+    ...agent.tools,
+    ...routine.tools,
+  ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
     (t) => !fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name),
   );
@@ -566,7 +577,9 @@ async function runTurn(
                 ? web.callTool
                 : isAgentTool(name)
                   ? agent.callTool
-                  : google.callTool)(name, args);
+                  : isRoutineTool(name)
+                    ? routine.callTool
+                    : google.callTool)(name, args);
         // Only what actually happened: a parked action is logged when it's approved.
         const kind = kindForTool(name);
         if (kind && result !== DEFER && toolSucceeded(result)) {
@@ -1182,6 +1195,18 @@ app.post("/debug/agent/due", async (c) => {
   return meta.changes ? c.json({ ok: true }) : c.json({ error: "No such job" }, 404);
 });
 
+/** Brings a routine's next occurrence forward to now, for the smoke test. Needs DEBUG_KEY. */
+app.post("/debug/routines/due", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const id = c.req.query("id");
+  const ago = Number(c.req.query("agoMinutes") ?? 0) * 60_000;
+  if (!id) return c.json({ error: "id is required" }, 400);
+  const { meta } = await c.env.DB.prepare("UPDATE routines SET next_due_at = ? WHERE id = ?").bind(Date.now() - 1000 - ago, id).run();
+  // Older events too, so escalation can be tested without waiting an hour.
+  if (ago) await c.env.DB.prepare("UPDATE routine_events SET due_at = due_at - ? WHERE routine_id = ?").bind(ago, id).run();
+  return meta.changes ? c.json({ ok: true }) : c.json({ error: "No such routine" }, 404);
+});
+
 /**
  * Runs a cron tick by hand, so the agent can be watched working instead of
  * waited on for the next scheduled one. Needs the DEBUG_KEY secret.
@@ -1191,6 +1216,9 @@ app.post("/debug/agent/tick", async (c) => {
   const started = Date.now();
   const which = c.req.query("what");
   if (which === "maintenance") return c.json({ purgedBlocks: await maintenance(c.env), ms: Date.now() - started });
+  if (which === "routines") {
+    return c.json({ fired: await fireDueRoutines(c.env), followedUp: await escalate(c.env), ms: Date.now() - started });
+  }
   const jobs = await runDueJobs(c.env);
   const pushed = await drainNotes(c.env);
   return c.json({ jobsRun: jobs, notesPushed: pushed, ms: Date.now() - started });
@@ -1225,6 +1253,7 @@ authed.post("/debug/commands", async (c) => {
 });
 
 authed.route("/", commands);
+authed.route("/", routines);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);
@@ -1241,5 +1270,16 @@ export default {
   fetch: app.fetch,
   scheduled: (event: ScheduledController, env: Env, ctx: ExecutionContext) => {
     ctx.waitUntil(tick(env, event.cron).catch((err) => console.error("agent tick failed", err)));
+    // Routines run on the same two-minute beat. The phone's own local notifications
+    // give exact timing; this is what escalates, buzzes and keeps the record.
+    if (!event.cron.startsWith("13 4")) {
+      ctx.waitUntil(
+        (async () => {
+          const fired = await fireDueRoutines(env);
+          const chased = await escalate(env);
+          if (fired || chased) console.log(`routines: ${fired} fired, ${chased} followed up`);
+        })().catch((err) => console.error("routines tick failed", err)),
+      );
+    }
   },
 } satisfies ExportedHandler<Env>;
