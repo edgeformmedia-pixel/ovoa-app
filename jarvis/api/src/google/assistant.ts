@@ -9,6 +9,7 @@ import {
   phoneToolSpecs,
   type PhoneCaps,
 } from "../phone";
+import { describeToolCall, kindForTool, logAction } from "../actionlog";
 import type { Env, Vars } from "../types";
 import {
   cleanLabel,
@@ -349,6 +350,11 @@ actions.post("/actions/:id/approve", async (c) => {
             : `That didn't work: ${err instanceof Error ? err.message : "unknown error"}`;
       }
     }
+  }
+
+  const kind = kindForTool(row.tool);
+  if (kind && content.startsWith("Done")) {
+    await logAction(db, userId, kind, describeToolCall(row.tool, JSON.parse(row.args)), "approval");
   }
 
   const message = { id: crypto.randomUUID(), role: "assistant", content, created_at: Date.now() };

@@ -30,7 +30,8 @@ import { contextAssistant, isContextTool, recordBlock, type BlockSource } from "
 import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
 import { googleAuthed, googlePublic } from "./google/oauth";
-import { chatWithTools, generateText, type LoopState, type OnText, type Turn } from "./llm";
+import { chatWithTools, DEFER, generateText, type LoopState, type OnText, type Turn } from "./llm";
+import { describeToolCall, kindForTool, logAction, toolSucceeded } from "./actionlog";
 import { dropRepeats, sentenceStream } from "./sentences";
 import { isPhoneTool, type PhoneCaps } from "./phone";
 import { isShortcutTool, shortcutAssistant, shortcutFiles } from "./shortcuts/assistant";
@@ -489,7 +490,7 @@ async function runTurn(
     callTool: async (name, args) => {
       const call = Date.now();
       try {
-        return await (isPhoneTool(name)
+        const result = await (isPhoneTool(name)
           ? phone.callTool
           : isShortcutTool(name)
             ? shortcuts.callTool
@@ -500,6 +501,12 @@ async function runTurn(
                 : isAgentTool(name)
                   ? agent.callTool
                   : google.callTool)(name, args);
+        // Only what actually happened: a parked action is logged when it's approved.
+        const kind = kindForTool(name);
+        if (kind && result !== DEFER && toolSucceeded(result)) {
+          ctx.waitUntil(logAction(db, userId, kind, describeToolCall(name, args), "chat"));
+        }
+        return result;
       } finally {
         toolTimings.push({ name, ms: Date.now() - call });
       }

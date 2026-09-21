@@ -1,3 +1,4 @@
+import { logAction } from "./actionlog";
 import { contextAssistant, isContextTool } from "./context";
 import { googleAssistant, validTimeZone } from "./google/assistant";
 import { chatWithTools, type CallTool, type ToolSpec } from "./llm";
@@ -565,6 +566,9 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
       detail.slice(0, 500),
     )
     .run();
+
+  const said = { spoke: "told you something", error: "failed", acted: "proposed a change", quiet: "nothing to say" }[outcome];
+  await logAction(db, userId, "agent_run", `${job?.title ?? "Background check"}: ${said}`, "agent", runId);
 
   // A note exists only for a run that decided to speak and got to the end. A
   // timed-out run can still land an agent_say afterwards, and half a thought
