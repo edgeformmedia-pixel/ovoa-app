@@ -45,6 +45,7 @@ import { commands, enqueueCommand, FORBIDDEN_FOR_COMMANDS } from "./commands";
 import { escalate, fireDueRoutines, isRoutineTool, routines, routinesAssistant } from "./routines";
 import { getProfile, isProfileTool, onboarding, profileAssistant, profilePrompt } from "./onboarding";
 import { fireDueNotes, isNoteTool, notes, notesAssistant } from "./notes";
+import { eveningTick, isTodoTool, todos, todosAssistant } from "./todos";
 import { isWebTool, webAssistant } from "./web";
 
 const HISTORY_TURNS = 30;
@@ -475,6 +476,7 @@ async function runTurn(
   const routine = routinesAssistant(env, userId, timeZone, { voice, fromAgent });
   const profileTools = profileAssistant(env, userId);
   const noteTools = notesAssistant(env, userId, timeZone, { voice });
+  const todoTools = todosAssistant(env, userId, timeZone);
 
   const turns: Turn[] = history.results.reverse().map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -520,6 +522,7 @@ async function runTurn(
     ["routines", routine.prompt],
     ["profile", profilePrompt(profile)],
     ["notes", noteTools.prompt],
+    ["todos", todoTools.prompt],
     ["command", fromAgent
       ? [
           "This request was not typed by the user. Your own background agent queued it for the phone to run, because it needs something only the phone has (Reminders, the phone's calendar, Health).",
@@ -561,6 +564,7 @@ async function runTurn(
     ...routine.tools,
     ...profileTools.tools,
     ...noteTools.tools,
+    ...todoTools.tools,
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
     (t) => !fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name),
@@ -593,7 +597,9 @@ async function runTurn(
                       ? profileTools.callTool
                       : isNoteTool(name)
                         ? noteTools.callTool
-                        : google.callTool)(name, args);
+                        : isTodoTool(name)
+                          ? todoTools.callTool
+                          : google.callTool)(name, args);
         // Only what actually happened: a parked action is logged when it's approved.
         const kind = kindForTool(name);
         if (kind && result !== DEFER && toolSucceeded(result)) {
@@ -1235,6 +1241,7 @@ app.post("/debug/agent/tick", async (c) => {
       fired: await fireDueRoutines(c.env),
       followedUp: await escalate(c.env),
       notes: await fireDueNotes(c.env),
+      evening: await eveningTick(c.env),
       ms: Date.now() - started,
     });
   }
@@ -1275,6 +1282,7 @@ authed.route("/", commands);
 authed.route("/", routines);
 authed.route("/", onboarding);
 authed.route("/", notes);
+authed.route("/", todos);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);
@@ -1299,7 +1307,12 @@ export default {
           const fired = await fireDueRoutines(env);
           const chased = await escalate(env);
           const reminded = await fireDueNotes(env);
-          if (fired || chased || reminded) console.log(`routines: ${fired} fired, ${chased} followed up, ${reminded} notes`);
+          const evening = await eveningTick(env);
+          if (fired || chased || reminded || evening.built || evening.told) {
+            console.log(
+              `routines: ${fired} fired, ${chased} followed up, ${reminded} notes, ${evening.built} lists, ${evening.told} bedtimes`,
+            );
+          }
         })().catch((err) => console.error("routines tick failed", err)),
       );
     }

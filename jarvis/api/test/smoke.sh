@@ -244,6 +244,19 @@ check "a due reminder fires once" "$(curl -s -X POST "${D[@]}" "$API/debug/agent
 check "and not again"             "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=routines" | j "d['notes']")" "0"
 
 echo
+echo "── tomorrow's list ────────────────────────────────"
+TOMORROW=$(node -e "const d=new Date(Date.now()+86400000);process.stdout.write(new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(d))")
+LIST=$(curl -s -X POST "${A[@]}" "$API/todos/build" -d "{\"date\":\"$TOMORROW\"}")
+check "a todo note makes the list" "$(echo "$LIST" | j "any(t['text']=='Buy a gift for Jake' for t in d['todos'])")" "True"
+check "a plain note doesn't"       "$(echo "$LIST" | j "any('Wi-Fi' in t['text'] for t in d['todos'])")" "False"
+TID=$(echo "$LIST" | j "[t['id'] for t in d['todos'] if t['text']=='Buy a gift for Jake'][0]")
+check "rebuilding doesn't duplicate"   "$(curl -s -X POST "${A[@]}" "$API/todos/build" -d "{\"date\":\"$TOMORROW\"}" | j "len([t for t in d['todos'] if t['text']=='Buy a gift for Jake'])")" "1"
+TID=$(curl -s "${A[@]}" "$API/todos?date=$TOMORROW" | j "[t['id'] for t in d['todos'] if t['text']=='Buy a gift for Jake'][0]")
+check "ticked off"                 "$(curl -s -X POST "${A[@]}" "$API/todos/$TID/done" | j "d['ok']")" "True"
+check "and the note with it"       "$(curl -s "${A[@]}" "$API/notes?tag=todo" | j "len(d['notes'])")" "0"
+check "not someone else's list"    "$(curl -s -H "authorization: Bearer $OTHER" "$API/todos?date=$TOMORROW" | j "len(d['todos'])")" "0"
+
+echo
 echo "── capture everything is dev-only ─────────────────"
 check "refused for an ordinary account"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":true}')" "403"
 check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['captureEverything']")" "False"

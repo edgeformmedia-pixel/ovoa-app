@@ -7,6 +7,7 @@ import { onPush } from "./background";
 import { buzzPattern } from "./buzz";
 import * as clip from "./clip";
 import { devlog } from "./devlog";
+import { copyTodosToReminders } from "./todos";
 import { createSpeaker } from "./voice";
 
 // The phone's half of routines and medications (server: api/src/routines.ts).
@@ -246,6 +247,8 @@ export function syncRoutines(token: string, { ask = false } = {}) {
         routines = (await api.routines(token)).routines;
       }
       await scheduleLocal(token, routines);
+      // The day's list rides along: same permission, same moment.
+      await copyTodosToReminders(token);
       lastSync = Date.now();
     } catch (err) {
       devlog("err", "routine sync failed", String(err));

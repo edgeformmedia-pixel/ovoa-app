@@ -54,6 +54,16 @@ export type RoutineSync = {
 
 type Occurrence = { dueAt?: number; eventId?: string };
 
+/** One line on a day's list. */
+export type Todo = {
+  id: string;
+  date: string;
+  text: string;
+  source: "commitment" | "note" | "routine" | "carried" | "user";
+  done: number;
+  synced_to: string | null;
+};
+
 /** Something the background agent asked the phone to do, in words. */
 export type QueuedCommand = { id: string; text: string; source: "agent" | "system"; reason: string | null; created_at: number };
 
@@ -484,6 +494,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ pattern }),
     }),
+
+  // ---------- To-do list ----------
+
+  todos: (token: string, date?: string) =>
+    request<{ date: string; todos: Todo[] }>(`/todos${date ? `?date=${date}` : ""}`, token),
+  todoDone: (token: string, id: string) => request(`/todos/${id}/done`, token, { method: "POST" }),
+  todosSynced: (token: string, items: { id: string; externalId: string }[]) =>
+    request("/todos/synced", token, { method: "POST", body: JSON.stringify({ items }) }),
 
   // ---------- Onboarding ----------
 
