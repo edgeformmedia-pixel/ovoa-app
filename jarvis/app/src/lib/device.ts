@@ -5,7 +5,7 @@ import { AppState, Platform } from "react-native";
 import { api } from "./api";
 import * as clip from "./clip";
 import { devlog } from "./devlog";
-import { healthAvailable } from "./health";
+import { healthAvailable, todayHealth } from "./health";
 
 // Telling the server what this phone has.
 //
@@ -31,6 +31,17 @@ async function locationLevel(): Promise<"none" | "when_in_use" | "always"> {
   }
 }
 
+let sleepRead = { at: 0, hours: undefined as number | undefined };
+
+/** Read from Health at most once an hour: the heartbeat is every five minutes, and sleep doesn't change that fast. */
+async function lastNightSleep() {
+  if (!healthAvailable) return undefined;
+  if (Date.now() - sleepRead.at > 3_600_000) {
+    sleepRead = { at: Date.now(), hours: (await todayHealth().catch(() => null))?.sleepHours ?? undefined };
+  }
+  return sleepRead.hours;
+}
+
 export async function reportDeviceState(token: string) {
   try {
     const notifications = (await Notifications.getPermissionsAsync().catch(() => null))?.status;
@@ -41,6 +52,8 @@ export async function reportDeviceState(token: string) {
       location: await locationLevel(),
       buzzOption: clip.getBuzzOption(),
       build,
+      // Last night's sleep, for the morning's readiness line. Only the phone can read it.
+      sleepHours: await lastNightSleep(),
     });
   } catch (err) {
     devlog("err", "couldn't report the phone's state", String(err));

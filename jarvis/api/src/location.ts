@@ -164,6 +164,7 @@ export async function ingestPoints(db: D1Database, userId: string, points: Point
     listPlaces(db, userId),
   ]);
   const changed = foldPoints(open, points, () => crypto.randomUUID());
+  await noticeParking(db, userId, points).catch((err) => console.error("location: parking check failed", err));
   await db.batch(
     changed.map((v) => {
       const place = placeFor(v, places);
@@ -177,6 +178,32 @@ export async function ingestPoints(db: D1Database, userId: string, points: Point
     }),
   );
   return changed.length;
+}
+
+/** Driving speed, in metres a second: about 25 km/h. */
+const DRIVING_MS = 7;
+
+/**
+ * Where the car is (F31): the first point where they came to a stop after
+ * driving, remembered as an object called "car" so "where did I park?" works.
+ * A stop within 150 m of home isn't worth remembering.
+ */
+async function noticeParking(db: D1Database, userId: string, points: Point[]) {
+  const sorted = [...points].sort((a, b) => a.ts - b.ts);
+  const drove = sorted.findIndex((p) => (p.speed ?? 0) >= DRIVING_MS);
+  if (drove < 0) return;
+  const stop = sorted.slice(drove).find((p, i, rest) => (p.speed ?? 0) < 1 && rest.slice(i).every((q) => q.ts - p.ts > 3 * 60_000 || (q.speed ?? 0) < 1.5));
+  if (!stop) return;
+  const home = await db.prepare("SELECT lat, lng FROM places WHERE user_id = ? AND kind = 'home'").bind(userId).first<{ lat: number; lng: number }>();
+  if (home && distanceM(home, stop) < 150) return;
+  const places = await listPlaces(db, userId);
+  const place = placeFor(stop, places);
+  const { saveObject } = await import("./people");
+  await saveObject(db, userId, "car", place?.name ? `at ${place.name}` : `parked near ${stop.lat.toFixed(5)}, ${stop.lng.toFixed(5)}`, {
+    lat: stop.lat,
+    lng: stop.lng,
+    placeId: place?.id ?? null,
+  });
 }
 
 /**

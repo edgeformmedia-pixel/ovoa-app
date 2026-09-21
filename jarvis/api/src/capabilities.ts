@@ -35,14 +35,16 @@ export const deviceStateSchema = z.object({
   location: z.enum(["none", "when_in_use", "always"]).optional(),
   buzzOption: z.number().int().min(1).max(3).optional(),
   build: z.string().max(64).optional(),
+  /** Last night's sleep from Health, for the readiness line. */
+  sleepHours: z.number().min(0).max(24).optional(),
 });
 
 export async function saveDeviceState(db: D1Database, userId: string, s: z.infer<typeof deviceStateSchema>) {
   const now = Date.now();
   await db
     .prepare(
-      `INSERT INTO device_state (user_id, band_linked, band_seen_at, notifications, health, watch_hr, location, buzz_option, app_build, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO device_state (user_id, band_linked, band_seen_at, notifications, health, watch_hr, location, buzz_option, app_build, updated_at, sleep_hours)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET
          band_linked = excluded.band_linked,
          band_seen_at = COALESCE(excluded.band_seen_at, device_state.band_seen_at),
@@ -52,6 +54,7 @@ export async function saveDeviceState(db: D1Database, userId: string, s: z.infer
          location = COALESCE(excluded.location, device_state.location),
          buzz_option = COALESCE(excluded.buzz_option, device_state.buzz_option),
          app_build = COALESCE(excluded.app_build, device_state.app_build),
+         sleep_hours = COALESCE(excluded.sleep_hours, device_state.sleep_hours),
          updated_at = excluded.updated_at`,
     )
     .bind(
@@ -65,6 +68,7 @@ export async function saveDeviceState(db: D1Database, userId: string, s: z.infer
       s.buzzOption ?? null,
       s.build ?? null,
       now,
+      s.sleepHours ?? null,
     )
     .run();
 }

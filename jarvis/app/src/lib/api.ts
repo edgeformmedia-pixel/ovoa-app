@@ -81,6 +81,7 @@ export type FeedCard =
   | { kind: "agent"; title: string; items: { at: string; text: string }[] }
   | { kind: "week"; title: string; body: string; minutesSaved: number }
   | { kind: "workout"; title: string; body: string; workoutId: string }
+  | { kind: "memory"; title: string; body: string; day: string }
   | { kind: "favor"; title: string; body: string; commitmentId: string; unsure: boolean }
   | { kind: "activity"; title: string; items: { at: string; text: string; source: string }[] };
 
@@ -116,6 +117,7 @@ export type DeviceState = {
   location?: "none" | "when_in_use" | "always";
   buzzOption?: number;
   build?: string;
+  sleepHours?: number;
 };
 
 /** suggest: it looks and tells you. act: it may also make reversible changes. */

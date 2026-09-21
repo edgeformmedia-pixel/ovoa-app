@@ -81,15 +81,23 @@ export async function listNotes(db: D1Database, userId: string, tag?: string, li
 export async function fireDueNotes(env: Env) {
   const now = Date.now();
   const { results } = await env.DB.prepare(
-    "SELECT id, user_id, text FROM notes WHERE remind_at IS NOT NULL AND reminded_at IS NULL AND remind_at <= ? LIMIT 50",
+    "SELECT id, user_id, text, tags FROM notes WHERE remind_at IS NOT NULL AND reminded_at IS NULL AND remind_at <= ? LIMIT 50",
   )
     .bind(now)
-    .all<{ id: string; user_id: string; text: string }>();
+    .all<{ id: string; user_id: string; text: string; tags: string }>();
   for (const n of results) {
     const claim = await env.DB.prepare("UPDATE notes SET reminded_at = ? WHERE id = ? AND reminded_at IS NULL").bind(now, n.id).run();
     if (!claim.meta.changes) continue;
     const caps = await capabilities(env.DB, n.user_id);
-    await push(env, n.user_id, { title: "Reminder", body: n.text.slice(0, 180), data: { type: "note", noteId: n.id } });
+    // "Remind Sarah at 6" (remind_other): the text arrives ready, one tap from being sent.
+    const other = /^Text (.+?): ([\s\S]+)$/.exec(n.text);
+    await push(
+      env,
+      n.user_id,
+      n.tags.includes('"remind_other"') && other
+        ? { title: `Text ${other[1]}?`, body: other[2].slice(0, 180), data: { type: "remind-other", who: other[1], text: other[2] } }
+        : { title: "Reminder", body: n.text.slice(0, 180), data: { type: "note", noteId: n.id } },
+    );
     if (caps.band) {
       await push(env, n.user_id, { silent: true, data: { type: "buzz", id: crypto.randomUUID(), pattern: "reminder", reason: n.text.slice(0, 180) } });
     }

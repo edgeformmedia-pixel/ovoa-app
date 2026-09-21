@@ -98,6 +98,22 @@ export async function registerBackgroundPush() {
   }
 }
 
+// "Remind Sarah at 6" (server: extras.ts remind_other): tapping the notification
+// opens Messages with the text filled in. iOS never sends a text on its own, so
+// this is as close to automatic as it gets.
+Notifications.addNotificationResponseReceivedListener(async (response) => {
+  const data = (response.notification.request.content.data ?? {}) as { type?: string; who?: string; text?: string };
+  if (data.type !== "remind-other" || !data.who || !data.text) return;
+  try {
+    const { resolveRecipient } = await import("./phoneContacts");
+    const SMS = await import("expo-sms");
+    const to = await resolveRecipient(data.who, "phone");
+    await SMS.sendSMSAsync(to.value ? [to.value] : [], data.text);
+  } catch (err) {
+    devlog("err", "couldn't open the text for a reminder", String(err));
+  }
+});
+
 // The foreground half: the same payloads while the app is open.
 Notifications.addNotificationReceivedListener((notification) => {
   const payload = pushPayload(notification.request.content.data);

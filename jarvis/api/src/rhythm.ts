@@ -4,6 +4,7 @@ import { validTimeZone } from "./google/assistant";
 import { googleAccessToken, listGoogleAccounts } from "./google/oauth";
 import { toolsByName } from "./google/tools";
 import { generateText } from "./llm";
+import { readiness, triageInbox } from "./extras";
 import { distanceM } from "./location";
 import { getProfile } from "./onboarding";
 import { push } from "./push";
@@ -106,7 +107,7 @@ export async function buildMorningBrief(env: Env, userId: string, timeZone: stri
   const today = buckets(Date.now(), timeZone).day;
   const [from, to] = dayRange(today, timeZone);
   const spot = await whereAbouts(db, userId);
-  const [weather, events, todos, meds, favors, user] = await Promise.all([
+  const [weather, events, todos, meds, favors, user, inbox, ready] = await Promise.all([
     spot ? weatherToday(spot.lat, spot.lng, timeZone) : null,
     upcomingEvents(env, userId, Date.now(), to, timeZone),
     listTodos(db, userId, today),
@@ -121,8 +122,12 @@ export async function buildMorningBrief(env: Env, userId: string, timeZone: stri
       .bind(userId)
       .all<{ text: string; who: string | null }>(),
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
+    triageInbox(env, userId).catch(() => []),
+    readiness(env, userId, timeZone).catch(() => null),
   ]);
   const facts = {
+    readiness: ready,
+    importantEmail: inbox,
     name: user?.name ?? null,
     weather: weather && { ...weather, highF: Math.round(weather.highC * 1.8 + 32), lowF: Math.round(weather.lowC * 1.8 + 32) },
     events: events.slice(0, 3).map((e) => `${e.start.includes("T") ? clock(Date.parse(e.start), timeZone) : "all day"} ${e.title}`),

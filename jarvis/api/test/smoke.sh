@@ -318,6 +318,12 @@ check "a brief can be built on demand" "$(curl -s -m 60 "${A[@]}" "$API/brief" |
 check "the rhythm tick runs" "$(curl -s -m 60 -X POST "${D[@]}" "$API/debug/agent/tick?what=rhythm" | j "'briefs' in d")" "True"
 
 echo
+echo "── extras ─────────────────────────────────────────"
+check "the extras tick runs" "$(curl -s -m 60 -X POST "${D[@]}" "$API/debug/agent/tick?what=extras" | j "'weekly' in d")" "True"
+check "sleep hours are accepted" "$(curl -s -X PUT "${A[@]}" "$API/device/state" -d '{"bandLinked":false,"sleepHours":7.5}' -o /dev/null -w '%{http_code}')" "200"
+check "the nightly job learns accounts too" "$(curl -s -m 60 -X POST "${D[@]}" "$API/debug/agent/tick?what=nightly" | j "'accounts' in d")" "True"
+
+echo
 echo "── capture everything is dev-only ─────────────────"
 check "refused for an ordinary account"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":true}')" "403"
 check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['captureEverything']")" "False"

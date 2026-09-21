@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { dailyRollup, getActions } from "./actionlog";
 import { validTimeZone } from "./google/assistant";
+import { onThisDay } from "./extras";
 import { listRoutines, streak } from "./routines";
 import { addDays, buckets, clock, dayRange } from "./time";
 import { listTodos } from "./todos";
@@ -26,6 +27,7 @@ type Card =
   | { kind: "agent"; title: string; items: { at: string; text: string }[] }
   | { kind: "week"; title: string; body: string; minutesSaved: number }
   | { kind: "workout"; title: string; body: string; workoutId: string }
+  | { kind: "memory"; title: string; body: string; day: string }
   | { kind: "favor"; title: string; body: string; commitmentId: string; unsure: boolean }
   | { kind: "activity"; title: string; items: { at: string; text: string; source: string }[] };
 
@@ -170,6 +172,10 @@ export async function buildFeed(db: D1Database, userId: string, timeZone: string
       body: `${week!.n} things done for you`,
       minutesSaved: minutes,
     });
+  }
+
+  for (const m of await onThisDay(db, userId, timeZone).catch(() => [])) {
+    cards.push({ kind: "memory", title: m.label, body: m.summary ? `${m.title} — ${m.summary}` : m.title, day: m.day });
   }
 
   const shown = recent.filter((a) => !["agent_run", "buzz", "routine_fired"].includes(a.kind));

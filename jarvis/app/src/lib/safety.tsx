@@ -6,7 +6,9 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { Alert, Linking, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { api, type Contact } from "./api";
 import { useSession } from "./auth";
+import { buzzPattern } from "./buzz";
 import { createFallDetector } from "./fallDetector";
+import { createSpeaker } from "./voice";
 import { colors } from "./theme";
 
 const FALL_COUNTDOWN_S = 30;
@@ -95,8 +97,13 @@ export function SafetyProvider({ children }: { children: ReactNode }) {
       }
       setSecondsLeft(FALL_COUNTDOWN_S);
       setPending("fall");
+      // The wrist and the speaker too (F33): a fall is exactly when the phone may be out of reach.
+      void buzzPattern("urgent", "Did you fall? Open OVOA and tap I'm OK.");
+      createSpeaker(token)
+        .speak(`Are you OK? If I don't hear from you in ${FALL_COUNTDOWN_S} seconds, I'll text your emergency contacts.`)
+        .catch(() => {});
     },
-    [alertContacts],
+    [alertContacts, token],
   );
 
   // Countdown with a buzz every second so it is noticed.

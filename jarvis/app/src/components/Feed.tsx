@@ -157,6 +157,13 @@ export function Feed() {
                 </View>
               </View>
             );
+          case "memory":
+            return (
+              <View key={i} style={styles.card}>
+                <Text style={styles.label}>{card.title.toUpperCase()}</Text>
+                <Text style={styles.body}>{card.body}</Text>
+              </View>
+            );
           case "workout":
             return (
               <View key={i} style={styles.card}>

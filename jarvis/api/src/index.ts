@@ -51,6 +51,8 @@ import { isLocationTool, location, locationAssistant, locationNightly } from "./
 import { heart, heartAssistant, HR_RETAIN_DAYS, isHeartTool } from "./heart";
 import { isPeopleTool, people, peopleAssistant } from "./people";
 import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "./rhythm";
+import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
+import { relearnAccounts } from "./google/routing";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
 
@@ -493,6 +495,7 @@ async function runTurn(
   const heartTools = heartAssistant(env, userId, timeZone);
   const transcriptTools = transcriptAssistant(env, userId, timeZone);
   const peopleTools = peopleAssistant(env, userId, timeZone);
+  const extraTools = extrasAssistant(env, userId, timeZone);
 
   const turns: Turn[] = history.results.reverse().map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -589,6 +592,7 @@ async function runTurn(
     ...heartTools.tools,
     ...peopleTools.tools,
     briefTool,
+    ...extraTools.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -632,7 +636,9 @@ async function runTurn(
                                 ? transcriptTools.callTool
                                 : isPeopleTool(name)
                                   ? peopleTools.callTool
-                                  : name === briefTool.name
+                                  : isExtrasTool(name)
+                                    ? extraTools.callTool
+                                    : name === briefTool.name
                                     ? async () => ({ brief: (await buildMorningBrief(env, userId, timeZone)).text })
                                     : google.callTool)(name, args);
         // Only what actually happened: a parked action is logged when it's approved.
@@ -1279,6 +1285,7 @@ app.post("/debug/agent/tick", async (c) => {
   const which = c.req.query("what");
   if (which === "maintenance") return c.json({ purgedBlocks: await maintenance(c.env), ms: Date.now() - started });
   if (which === "nightly") return c.json({ ...(await nightly(c.env)), ms: Date.now() - started });
+  if (which === "extras") return c.json({ ...(await extrasTick(c.env)), ms: Date.now() - started });
   if (which === "rhythm") return c.json({ ...(await rhythmTick(c.env)), ms: Date.now() - started });
   if (which === "transcripts") return c.json({ titled: await titleTranscripts(c.env), ms: Date.now() - started });
   if (which === "routines") {
@@ -1348,15 +1355,17 @@ async function nightly(env: Env) {
   const now = Date.now();
   const places = await locationNightly(env);
   const expectations = await learnAllExpectations(env).catch((err) => (console.error("rhythm: learning failed", err), 0));
+  const accounts = await relearnAccounts(env).catch((err) => (console.error("routing: relearning failed", err), 0));
   await env.DB.batch([
     env.DB.prepare("DELETE FROM hr_samples WHERE ts < ?").bind(now - HR_RETAIN_DAYS * 86_400_000),
     env.DB.prepare("DELETE FROM raw_captures WHERE ts < ?").bind(now - TRANSCRIPT_RETAIN_DAYS * 86_400_000),
-    env.DB.prepare("DELETE FROM transcript_titles WHERE start < ?").bind(now - TRANSCRIPT_RETAIN_DAYS * 86_400_000),
+    // Day titles are kept after the words expire: they're what "on this day" reads.
+    env.DB.prepare("DELETE FROM transcript_titles WHERE start < ? AND grain != 'day'").bind(now - TRANSCRIPT_RETAIN_DAYS * 86_400_000),
     env.DB.prepare("DELETE FROM action_log WHERE ts < ?").bind(now - 365 * 86_400_000),
     env.DB.prepare("DELETE FROM command_queue WHERE created_at < ?").bind(now - 30 * 86_400_000),
     env.DB.prepare("DELETE FROM daily_marks WHERE at < ?").bind(now - 30 * 86_400_000),
   ]);
-  return { places, expectations };
+  return { places, expectations, accounts };
 }
 
 /**
@@ -1380,6 +1389,8 @@ export default {
           const evening = await eveningTick(env);
           await titleTranscripts(env);
           const rhythm = await rhythmTick(env);
+          const extras = await extrasTick(env);
+          if (extras.followUps || extras.bills || extras.weekly || extras.preps) console.log("extras:", JSON.stringify(extras));
           if (rhythm.briefs || rhythm.windDowns || rhythm.commutes || rhythm.oddities) console.log("rhythm:", JSON.stringify(rhythm));
           if (fired || chased || reminded || evening.built || evening.told) {
             console.log(
