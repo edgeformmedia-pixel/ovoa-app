@@ -34,7 +34,7 @@ export default function Settings() {
   const [autoSendTexts, setAutoSendTexts] = useState(false);
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
-  const { listenMode, setListenMode, micSource, setMicSource } = useAssistant();
+  const { listenMode, setListenMode, micSource, setMicSource, alwaysListen, setAlwaysListen } = useAssistant();
   const { pushProblem } = useAgent();
   const [quiet, setQuiet] = useState({
     start: minutesToClock(user?.settings.quietStart ?? 1320),
@@ -235,6 +235,31 @@ export default function Settings() {
       </Section>
 
       <Section title="How to start talking">
+        <View style={styles.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.label}>Always listen</Text>
+            <Text style={styles.meta}>
+              The microphone stays on and answers when you say its name. Off: double-click the band's button to talk.
+              With it on, a double click turns it off.
+            </Text>
+          </View>
+          <Switch
+            value={alwaysListen}
+            onValueChange={(on) =>
+              on
+                ? Alert.alert(
+                    "Always listen?",
+                    "The microphone stays on, even in the background, and hears everything around you, including other people. Turn it off here, from the Assistant tab, or with a double click on the band.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      { text: "Turn on", style: "destructive", onPress: () => setAlwaysListen(true) },
+                    ],
+                  )
+                : setAlwaysListen(false)
+            }
+            trackColor={{ true: colors.danger, false: colors.border }}
+          />
+        </View>
         <View style={styles.segment}>
           {LISTEN_MODES.map((m) => (
             <Pressable
@@ -607,7 +632,7 @@ const LISTEN_MODES = [
   {
     mode: "twist",
     label: "Clip click",
-    hint: "Click the ES100's button: it buzzes and listens until you stop talking, answers, then stops listening. Click again while it listens to send right away; click while it answers to cut it off. Works from other apps too.",
+    hint: "Double-click the ES100's button: it buzzes and listens. Press once to send what you said; press once while it answers to cut it off. Works from other apps too.",
   },
 ] as const;
 

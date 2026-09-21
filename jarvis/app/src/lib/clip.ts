@@ -191,6 +191,12 @@ function ensureStarted() {
     set({
       recording: { sessionId: event.sessionId, startedAt: Date.now(), paused: false, byDevice: event.startedByDevice },
     });
+    // Gestures (single / double click) decide what a press means; see onClipGesture.
+    if (event.startedByDevice && gestureListeners.size) {
+      noteInput("Clip button", "pressed");
+      holdPress(event.sessionId);
+      return;
+    }
     if (event.startedByDevice) {
       noteInput("Clip button", "started recording");
       // In band mode that recording IS the question, so it's kept and fetched when it stops.
@@ -201,8 +207,22 @@ function ensureStarted() {
 
   ute.addListener("onRecordStop", (event) => {
     say(`recording stopped #${event.sessionId}, ${event.fileSize} bytes${event.saved ? "" : " (not saved)"}`);
+    const startedByApp = state.recording?.byDevice === false;
     set({ recording: null });
     if (appStopping) return;
+    if (gestureListeners.size) {
+      // The second press of a double click: the clip stopped the scrap it just started.
+      if (pendingPress?.sessionId === event.sessionId) {
+        clearTimeout(pendingPress.timer);
+        pendingPress = null;
+        void ute.deleteFile(event.sessionId, storedTypes.get(event.sessionId) ?? ute.RecordFileType.Opus).catch(() => {});
+        say("double click");
+        emitGesture("double");
+        return;
+      }
+      // A press stopped the recording the app started for a talk turn: that's "send".
+      if (startedByApp) emitGesture("stop");
+    }
     noteInput("Clip button", "stopped recording");
     // Stopped on the clip itself: bring it over like one the app stopped.
     if (event.saved !== false && event.fileSize > 0) {
@@ -1032,6 +1052,45 @@ export function onClipButton(listener: ButtonListener) {
 }
 
 const pressUsed = (source: "voiceButton" | "record") => [...buttonListeners].some((l) => l(source) === true);
+
+// --- Gestures: single and double click -------------------------------------
+//
+// The clip starts recording on every press and stops on the next, and that's
+// all it reports. So a double click is a start and then a stop within
+// DOUBLE_CLICK_MS; a start with nothing after it is a single click. Either
+// way the scrap it recorded is thrown away. A press while the app is recording
+// for a talk turn stops that recording, which is "send" (and the recording is
+// kept: it's the question).
+
+export type ClipGesture = "single" | "double" | "stop";
+const gestureListeners = new Set<(g: ClipGesture) => void>();
+/** How long after one press a second still makes it a double click. */
+const DOUBLE_CLICK_MS = 1200;
+let pendingPress: { sessionId: number; timer: ReturnType<typeof setTimeout> } | null = null;
+
+/** Listening turns single and double clicks into gestures. Returns an unsubscribe. */
+export function onClipGesture(listener: (g: ClipGesture) => void) {
+  gestureListeners.add(listener);
+  return () => void gestureListeners.delete(listener);
+}
+
+function emitGesture(g: ClipGesture) {
+  devlog("voice", `clip: ${g === "double" ? "double click" : g === "single" ? "single click" : "press (send)"}`);
+  gestureListeners.forEach((l) => l(g));
+}
+
+function holdPress(sessionId: number) {
+  if (pendingPress) clearTimeout(pendingPress.timer);
+  pendingPress = {
+    sessionId,
+    timer: setTimeout(() => {
+      pendingPress = null;
+      // Just one press: nothing to keep.
+      void discardButtonRecording(sessionId);
+      emitGesture("single");
+    }, DOUBLE_CLICK_MS),
+  };
+}
 
 /** The press only meant "listen to me": stop the recording it started and delete it from the clip. */
 async function discardButtonRecording(sessionId: number) {

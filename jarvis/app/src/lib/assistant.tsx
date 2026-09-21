@@ -272,6 +272,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   }, [token]);
 
   ambientRef.current = alwaysListen;
+  const alwaysListenRef = useRef(alwaysListen);
+  alwaysListenRef.current = alwaysListen;
   const twistOn = listenMode !== "wake";
   const clipPaired = clip.useClipPaired();
   // Twist mode without Always listen: keep the mic (and the app) running so a twist works from other apps.
@@ -496,14 +498,72 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const onClickRef = useRef(onClick);
   onClickRef.current = onClick;
 
-  useEffect(() => {
-    if (!twistOn) return;
-    // The press also starts a recording on the clip; that recording is thrown away.
-    return clip.onClipButton((source) => {
-      onClickRef.current(`clip button (${source})`);
-      return true;
-    });
-  }, [twistOn]);
+  // The clip's button (2026-09-21): a double click turns Always listen off when it's
+  // on, and otherwise starts a talk turn, like a single click used to. A single
+  // click cuts a reply short or, while listening, sends what's been said; on its
+  // own it does nothing, so a brushed button doesn't start a conversation.
+  const onGesture = useCallback(
+    (g: clip.ClipGesture) => {
+      if (g === "double") {
+        if (alwaysListenRef.current) {
+          setAlwaysListen(false);
+          clip.buzz(2);
+          devlog("voice", "double click: Always listen off");
+          return;
+        }
+        if (micSource === "band" && clipPaired) {
+          if (bandPhaseRef.current === "thinking" || bandPhaseRef.current === "speaking") bandSpeaker.current?.stop();
+          bandRecording.current = true;
+          setBandPhase("listening");
+          startTurn("band");
+          markTurn("you talk into the clip");
+          clip.buzz(1);
+          clip.startRecording().catch((err) => {
+            bandRecording.current = false;
+            setBandPhase(null);
+            devlog("err", "band mic: couldn't start recording", err instanceof Error ? err.message : String(err));
+            clip.buzz(2);
+          });
+          if (bandTimer.current) clearTimeout(bandTimer.current);
+          bandTimer.current = setTimeout(() => {
+            if (!bandRecording.current) return;
+            devlog("voice", "band mic: stopping after a minute");
+            bandRecording.current = false;
+            setBandPhase("thinking");
+            markStopTalking();
+            clip.stopRecording().catch(() => setBandPhase(null));
+          }, BAND_MAX_MS);
+          return;
+        }
+        onClickRef.current("clip double click");
+        return;
+      }
+      if (g === "stop") {
+        // The press stopped the recording: the question is on its way over.
+        if (!bandRecording.current) return;
+        bandRecording.current = false;
+        if (bandTimer.current) clearTimeout(bandTimer.current);
+        setBandPhase("thinking");
+        markStopTalking();
+        clip.buzz(1);
+        return;
+      }
+      // Single click: interrupt, or send what the phone mic has heard.
+      if (bandPhaseRef.current === "thinking" || bandPhaseRef.current === "speaking") {
+        bandSpeaker.current?.stop();
+        setBandPhase(null);
+        endTurn("cut short by a click");
+        return;
+      }
+      if (currentPhase() === "speaking") return conversation.interrupt();
+      if (currentPhase() === "listening" && summonedOpen.current) finishNow();
+    },
+    [micSource, clipPaired, currentPhase, finishNow],
+  );
+  const onGestureRef = useRef(onGesture);
+  onGestureRef.current = onGesture;
+
+  useEffect(() => clip.onClipGesture((g) => onGestureRef.current(g)), []);
 
   // Pick up actions waiting from Siri, an earlier session, or something the
   // agent proposed while the app was closed. Also on every return to the app:
