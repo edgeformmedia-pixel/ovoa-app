@@ -1,6 +1,5 @@
-Added Apple Health to the Activity tab (heart rate + 12 h graph, resting, sleep, energy,
-exercise, HRV, stand, today's workouts) via components/HealthCards.tsx + lib/health.ts.
-Added per-turn timing (lib/turnTimer.ts, Dev tools -> Turn timings, perf log kind), server
-per-tool and per-prompt-section logging, a buzz + spoken filler + spoken failures on band
-turns, and a more conversational voice prompt. API deployed. Measurements and the next
-optimizations are in docs/voice-latency.md. Still BLOCKED on: `eas init` in jarvis/app.
+OVOA/Jarvis: Expo iOS app (jarvis/app) + Cloudflare Worker (jarvis/api, D1 jarvis-db). Ships via Codemagic -> TestFlight.
+Last: commit 61f38f1, worker 8b3c2a4f. Double click on the band now counts any 2nd press (stop OR new start) within 2.5 s; every press logged as "clip press: ..." in device_logs.
+All silent .catch(() => {}) now logFail("<file>: <call>") -> "... failed" warnings in device_logs. Reminders sync (status null) and location upload (ts rounded) fixed.
+Pending: build #57 (Codemagic session signed out), DeepSeek credit, ANTHROPIC_API_KEY secret, device-test alarms/keep-alive/double click.
+If double click still fails: read "clip press" lines in device_logs for the ms gap between presses.
