@@ -7,6 +7,7 @@ import { useSession } from "./auth";
 import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type Approval } from "./phoneActions";
 import { devlog } from "./devlog";
 import { onPush } from "./background";
+import { FILLERS, pickFiller } from "./fillers";
 import * as clip from "./clip";
 import { showIsland } from "./island";
 import { deleteRecording, type Recording } from "./recordings";
@@ -332,15 +333,22 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         }
         const reply = speaker.open({ keepMic: false });
         let streamed = false;
-        // Thinking takes a few seconds on a good turn and much longer on a bad one, with
-        // nothing to hear either way. A short word goes out first so the silence isn't total;
-        // it queues ahead of the answer, which plays straight after it.
-        filler = setTimeout(() => {
-          if (streamed) return;
+        // Thinking takes a few seconds on a good turn and much longer on a bad one. A
+        // filler from the phone's own cache ("One second while I get that") plays at
+        // once; the answer queues straight after it. Only if none is ready yet does it
+        // fall back to voicing a short word after a pause.
+        const cached = pickFiller();
+        if (cached) {
           setBandPhase("speaking");
-          reply.say(FILLERS[Math.floor(Math.random() * FILLERS.length)]);
-          devlog("voice", "band mic: saying a word while it thinks");
-        }, FILLER_AFTER_MS);
+          reply.clip(cached);
+        } else {
+          filler = setTimeout(() => {
+            if (streamed) return;
+            setBandPhase("speaking");
+            reply.say(FILLERS[Math.floor(Math.random() * FILLERS.length)]);
+            devlog("voice", "band mic: saying a word while it thinks");
+          }, FILLER_AFTER_MS);
+        }
         const full = await ask(text, true, (sentence) => {
           if (!streamed) {
             setBandPhase("speaking");
@@ -648,8 +656,6 @@ const BAND_MAX_MS = 60_000;
 /** Thinking for longer than this on a band turn earns a word, so the wrist isn't silent. */
 const FILLER_AFTER_MS = 2200;
 
-/** Said while it thinks. Short on purpose: it delays the answer by however long it takes to say. */
-const FILLERS = ["One sec.", "Let me check.", "Okay, one moment.", "On it."];
 
 /** A failure, said out loud, in the words a person would use. */
 function excuse(message: string) {

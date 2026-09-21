@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { API_URL, ApiError } from "./api";
 import { devlog } from "./devlog";
+import { pickFiller } from "./fillers";
 import { openEar, stopStream, useLiveStream } from "./liveListen";
 import { storage } from "./storage";
 import { onlyStop, saidOverReply, TurnGate, type GateResult, type Turn } from "./turnGate";
@@ -36,13 +37,35 @@ export type VoiceId = (typeof VOICES)[number]["id"];
 
 const VOICE_KEY = "ovoa.voice";
 
+/**
+ * The chosen voice, kept in memory once known: a read that fails (the keychain
+ * locked, say) must never fall back to the default mid-conversation.
+ */
+let knownVoice: VoiceId | null = null;
+const voiceListeners = new Set<(id: VoiceId) => void>();
+
 export const voicePref = {
   get: async (): Promise<VoiceId> => {
     const id = await storage.get(VOICE_KEY).catch(() => null);
-    return VOICES.find((v) => v.id === id)?.id ?? VOICES[0].id;
+    const found = VOICES.find((v) => v.id === id)?.id;
+    if (found) knownVoice = found;
+    return found ?? knownVoice ?? VOICES[0].id;
   },
-  set: (id: VoiceId) => storage.set(VOICE_KEY, id),
+  set: (id: VoiceId) => {
+    knownVoice = id;
+    voiceListeners.forEach((l) => l(id));
+    return storage.set(VOICE_KEY, id);
+  },
+  onChange: (listener: (id: VoiceId) => void) => {
+    voiceListeners.add(listener);
+    return () => void voiceListeners.delete(listener);
+  },
 };
+
+/** One line voiced in the chosen voice, as a file (the caller keeps or deletes it). */
+export async function renderSpeech(token: string, text: string) {
+  return fetchClip(token, text, await voicePref.get());
+}
 
 // Mono AAC is plenty for speech and keeps uploads small.
 const RECORDING: RecordingOptions = {
@@ -74,11 +97,22 @@ async function applyAudioMode(allowsRecording: boolean) {
   appliedMode = key;
 }
 
+/**
+ * Something needs the app kept running with the screen off: an alarm armed for
+ * tonight, or one going off (nag.ts). Audio is the one background mode iOS lets
+ * run indefinitely, so while this is held, playback is allowed in the background.
+ */
+let awakeHolds = 0;
+export async function holdAwake(on: boolean) {
+  awakeHolds = Math.max(0, awakeHolds + (on ? 1 : -1));
+  await applyAudioMode(false).catch(() => {});
+}
+
 function audioMode(allowsRecording: boolean) {
   return {
     allowsRecording: allowsRecording || backgroundAudio,
     playsInSilentMode: true,
-    shouldPlayInBackground: backgroundAudio,
+    shouldPlayInBackground: backgroundAudio || awakeHolds > 0,
     allowsBackgroundRecording: backgroundAudio,
     // Mixable, like the live mic stream, so switching between them doesn't halt it.
     interruptionMode: "mixWithOthers" as const,
@@ -322,6 +356,17 @@ export function createSpeaker(token: string) {
       wake();
     };
 
+    /**
+     * Plays a clip already on the phone, ahead of everything else ("One second
+     * while I get that"): no network, so it starts at once. First thing only.
+     */
+    const clip = (file: File) => {
+      if (mine !== generation || pieces.length) return;
+      pieces.push("(filler)");
+      clips.push(Promise.resolve(file));
+      wake();
+    };
+
     let played = 0;
     // The turn's timer wants the moment the user first hears something, not every clip.
     let spoken = false;
@@ -362,7 +407,7 @@ export function createSpeaker(token: string) {
       );
     })();
 
-    return { say, end, done };
+    return { say, end, done, clip };
   };
 
   const speak = async (text: string, { keepMic = false } = {}) => {
@@ -661,6 +706,12 @@ export function useConversation(
       const asked = Date.now();
       devlog("voice", addressed ? "heard its name; asking the assistant" : "asking the assistant", text);
       const reply = speaker.current.open({ keepMic });
+      // Something heard straight away while the answer is worked out. Only when it
+      // was said to the assistant: overheard speech mostly gets no answer at all.
+      if (addressed) {
+        const filler = pickFiller();
+        if (filler) reply.clip(filler);
+      }
       let soFar = "";
       const onSentence = (sentence: string) => {
         if (cancelled()) return;

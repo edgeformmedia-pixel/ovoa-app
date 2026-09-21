@@ -317,8 +317,9 @@ async function geminiToolLoop(
         contents,
         // No tools on the last round, so the model has to answer.
         ...(round < MAX_TOOL_ROUNDS && tools.length && { tools: [{ functionDeclarations: tools }] }),
-        // Spoken replies are short: a little thinking is plenty, and much faster.
-        ...(voice && { generationConfig: { thinkingConfig: { thinkingLevel: "low" } } }),
+        // Spoken replies are short and someone is standing there waiting: the
+        // least thinking Gemini allows. "low" measured 5-11 s for "thanks".
+        ...(voice && { generationConfig: { thinkingConfig: { thinkingLevel: "minimal" } } }),
       },
       onText,
     );
