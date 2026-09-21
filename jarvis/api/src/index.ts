@@ -56,6 +56,25 @@ import { relearnAccounts } from "./google/routing";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
 
+/**
+ * Tools left out of spoken turns: reviewing and editing things people do while
+ * looking at a screen. Every tool is prompt the model reads before its first
+ * word, and on the wrist that wait is the whole experience.
+ */
+const NOT_SPOKEN = new Set([
+  "profile_update",
+  "routine_change",
+  "todo_done",
+  "place_list",
+  "place_rename",
+  "workout_list",
+  "workout_summary",
+  "workout_confirm",
+  "transcript_day",
+  "transcript_between",
+  "favor_done",
+]);
+
 const HISTORY_TURNS = 30;
 /**
  * Spoken turns send less history, each message shortened: reading the prompt is most
@@ -596,7 +615,7 @@ async function runTurn(
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
-    (t) => !fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name),
+    (t) => (!fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name)) && (!voice || !NOT_SPOKEN.has(t.name)),
   );
   // What each tool cost. A turn that felt slow is usually either the model thinking or one
   // slow lookup (a Google round trip, say), and the meta says which without guessing.
