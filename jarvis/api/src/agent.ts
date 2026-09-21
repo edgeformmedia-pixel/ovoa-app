@@ -1,5 +1,6 @@
 import { logAction } from "./actionlog";
 import { agentBuzz, agentBuzzTool } from "./buzz";
+import { agentCommandsLastHour, enqueueCommand } from "./commands";
 import { contextAssistant, isContextTool } from "./context";
 import { googleAssistant, validTimeZone } from "./google/assistant";
 import { chatWithTools, type CallTool, type ToolSpec } from "./llm";
@@ -75,6 +76,9 @@ const MEMORIES_SHOWN = 60;
 const RECENT_MESSAGES = 12;
 /** Each of those, trimmed: the gist is what matters, not the whole answer. */
 const MESSAGE_CHARS = 400;
+
+/** Commands the agent may queue for the phone, per rolling hour. */
+const AGENT_COMMANDS_PER_HOUR = 10;
 
 /** Outbound communication and deletion. Never available to an autonomous turn. */
 const FORBIDDEN_ALONE = new Set(["gmail_send", "gmail_trash", "drive_trash", "calendar_delete_event"]);
@@ -370,6 +374,18 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     },
     agentBuzzTool,
     {
+      name: "agent_run_command",
+      description: `Asks the phone to do something only the phone can: add or complete an Apple Reminder, look at or add to the phone's own calendar, read Apple Health. Write it as the user would say it ("add 'call the vet' to my reminders for 9am tomorrow"). It runs the next time the phone is reachable — maybe now, maybe when they next open the app — and can't send messages or delete anything. At most ${AGENT_COMMANDS_PER_HOUR} an hour.`,
+      parameters: {
+        type: "object",
+        properties: {
+          text: { type: "string", description: "The request, in plain words, complete on its own." },
+          reason: { type: "string", description: "One short line for the log: why." },
+        },
+        required: ["text", "reason"],
+      },
+    },
+    {
       name: "agent_schedule_followup",
       description:
         "Checks again later. Use when the answer isn't available yet but will be — a delivery that hasn't shipped, a flight that hasn't been updated, a reply that hasn't come.",
@@ -409,6 +425,23 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     if (name === "agent_stay_quiet") {
       stayedQuiet = true;
       return { ok: true, note: "Nothing sent. Stop now." };
+    }
+
+    if (name === "agent_run_command") {
+      const text = String(args.text ?? "").trim();
+      const reason = String(args.reason ?? "").trim();
+      if (!text) return { error: "text is required" };
+      if ((await agentCommandsLastHour(db, userId)) >= AGENT_COMMANDS_PER_HOUR) {
+        return { error: `Already queued ${AGENT_COMMANDS_PER_HOUR} commands this hour. Don't queue more; say what's needed with agent_say.` };
+      }
+      const queued = await enqueueCommand(env, userId, text, "agent", reason);
+      await logAction(db, userId, "command", `Asked the phone: ${text}`, "agent", queued.id);
+      return {
+        queued: true,
+        note: queued.rang
+          ? "The phone was told; it runs as soon as the app can."
+          : "The phone couldn't be reached right now; it runs when they next open the app.",
+      };
     }
 
     if (name === "agent_buzz") {
