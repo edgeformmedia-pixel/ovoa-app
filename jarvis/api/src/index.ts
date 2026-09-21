@@ -57,6 +57,7 @@ import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
 import { askClaude, askClaudeTool, claude } from "./claude";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
+import { isMoneyTool, moneyAssistant, moneyRoutes, moneyTick } from "./money";
 
 /**
  * Tools left out of spoken turns: reviewing and editing things people do while
@@ -539,6 +540,7 @@ async function runTurn(
   const peopleTools = peopleAssistant(env, userId, timeZone);
   const extraTools = extrasAssistant(env, userId, timeZone);
   const alarmTools = alarmAssistant(env, userId, timeZone);
+  const moneyTools = moneyAssistant(env, userId, timeZone);
 
   const turns: Turn[] = history.results.reverse().map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -591,6 +593,7 @@ async function runTurn(
     ["heart", heartTools.prompt],
     ["people", peopleTools.prompt],
     ["alarms", alarmTools.prompt],
+    ["money", moneyTools.prompt],
     ["transcripts", settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : ""],
     ["command", fromAgent
       ? [
@@ -640,6 +643,7 @@ async function runTurn(
     briefTool,
     ...extraTools.tools,
     ...alarmTools.tools,
+    ...moneyTools.tools,
     askClaudeTool,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
@@ -686,6 +690,8 @@ async function runTurn(
                                   ? peopleTools.callTool
                                   : isAlarmTool(name)
                                     ? alarmTools.callTool
+                                  : isMoneyTool(name)
+                                    ? moneyTools.callTool
                                   : name === askClaudeTool.name
                                     ? async () => askClaude(env, String(args.prompt ?? ""), { voice })
                                   : isExtrasTool(name)
@@ -1343,6 +1349,7 @@ app.post("/debug/agent/tick", async (c) => {
   if (which === "nightly") return c.json({ ...(await nightly(c.env)), ms: Date.now() - started });
   if (which === "alarms") return c.json({ ...(await nagTick(c.env)), ms: Date.now() - started });
   if (which === "extras") return c.json({ ...(await extrasTick(c.env)), ms: Date.now() - started });
+  if (which === "money") return c.json({ ...(await moneyTick(c.env)), ms: Date.now() - started });
   if (which === "rhythm") return c.json({ ...(await rhythmTick(c.env)), ms: Date.now() - started });
   if (which === "transcripts") return c.json({ titled: await titleTranscripts(c.env), ms: Date.now() - started });
   if (which === "routines") {
@@ -1392,6 +1399,7 @@ authed.route("/", routines);
 authed.route("/", onboarding);
 authed.route("/", notes);
 authed.route("/", todos);
+authed.route("/", moneyRoutes);
 authed.route("/", feed);
 authed.route("/", location);
 authed.route("/", heart);
@@ -1450,6 +1458,8 @@ export default {
           const rhythm = await rhythmTick(env);
           const extras = await extrasTick(env);
           const nags = await nagTick(env);
+          const cash = await moneyTick(env);
+          if (cash.rolled || cash.warned) console.log("money:", JSON.stringify(cash));
           if (nags.fired || nags.nagged) console.log("alarms:", JSON.stringify(nags));
           if (extras.followUps || extras.bills || extras.weekly || extras.preps) console.log("extras:", JSON.stringify(extras));
           if (rhythm.briefs || rhythm.windDowns || rhythm.commutes || rhythm.oddities) console.log("rhythm:", JSON.stringify(rhythm));

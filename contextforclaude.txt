@@ -1,5 +1,5 @@
 OVOA/Jarvis: Expo iOS app (jarvis/app) + Cloudflare Worker (jarvis/api, D1 jarvis-db). Ships via Codemagic -> TestFlight.
-Last: commit 1a1f1d7, worker 44a58738, migration 0027. Server deployed; app changes need a build to reach the phone.
-Fixed: mic never reopened in background ('!int' x4922) -> wait for foreground + backoff; requests cut in half mid-sentence -> UNFINISHED words wait; speech during "thinking" kept, not dropped; voice turns go to Workers AI first (VOICE_PRIMARY) and lost 17 desk-only tools; cached filler covers a slow first voice clip; push fail_count dead-lock (token was buried, now revived + retried after 6 h); overheard lines saved via POST /transcripts/heard.
-Next: build #58 on Codemagic, then read perf lines -- new marks are "audio session ready", "voice clip ready", "filler while the voice is fetched", and meta.cooling names any skipped engine.
-Untested on device: everything above. Still open: ogg-opus instead of 580 KB WAV (OpusWav.swift), ANTHROPIC_API_KEY unset, DeepSeek out of credit.
+Last: money feature added (src/money.ts, migration 0028) — balance/pay/bills/plans, "can I afford this" with the trade-off named.
+BLOCKED: `npm run db:migrate` fails — the wrangler OAuth token has no d1 scope. Run `npx wrangler login`, then migrate + deploy.
+Not deployed yet; worker still on the pre-money build. Tests and the 157-check smoke pass locally.
+Next: re-auth, migrate + deploy, then build #58 on Codemagic for the pending app-side voice fixes.

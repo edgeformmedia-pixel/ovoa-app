@@ -5,6 +5,7 @@ import { googleAccessToken, listGoogleAccounts, type GoogleAccount } from "./goo
 import { toolsByName } from "./google/tools";
 import { baselineFor } from "./heart";
 import { generateText, type CallTool, type ToolSpec } from "./llm";
+import { recordBillFromMail, toCents } from "./money";
 import { addNote } from "./notes";
 import { findPerson } from "./people";
 import { push } from "./push";
@@ -151,6 +152,9 @@ async function scanBills(env: Env, userId: string, timeZone: string) {
     if (!b.payee || !b.due || !/^\d{4}-\d{2}-\d{2}$/.test(b.due)) continue;
     const remindAt = atLocalTime(addDays(b.due, -2), 9 * 60, timeZone);
     if (remindAt < Date.now() || !(await mark(env.DB, userId, "bill", `${b.payee.toLowerCase()}|${b.due}`))) continue;
+    // Also a bill OVOA knows about, not just a reminder: this is what stops
+    // "can I afford these?" being answered as if nothing were due (money.ts).
+    await recordBillFromMail(env.DB, userId, b.payee, b.due, toCents(b.amount)).catch((err) => console.error("extras: bill not recorded", err));
     await addNote(env.DB, userId, {
       text: `Pay ${b.payee}${b.amount ? ` (${b.amount})` : ""} — due ${b.due}`,
       tags: ["todo", "bill"],

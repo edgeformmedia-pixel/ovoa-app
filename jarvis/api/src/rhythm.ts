@@ -9,6 +9,7 @@ import { distanceM } from "./location";
 import { getProfile } from "./onboarding";
 import { push } from "./push";
 import { addDays, atLocalTime, buckets, clock, clockFromMinutes, dayRange, localMinutes, localWeekday } from "./time";
+import { moneyBriefLine } from "./money";
 import { listTodos } from "./todos";
 import type { Env } from "./types";
 
@@ -107,7 +108,7 @@ export async function buildMorningBrief(env: Env, userId: string, timeZone: stri
   const today = buckets(Date.now(), timeZone).day;
   const [from, to] = dayRange(today, timeZone);
   const spot = await whereAbouts(db, userId);
-  const [weather, events, todos, meds, favors, user, inbox, ready] = await Promise.all([
+  const [weather, events, todos, meds, favors, user, inbox, ready, cash] = await Promise.all([
     spot ? weatherToday(spot.lat, spot.lng, timeZone) : null,
     upcomingEvents(env, userId, Date.now(), to, timeZone),
     listTodos(db, userId, today),
@@ -124,9 +125,13 @@ export async function buildMorningBrief(env: Env, userId: string, timeZone: stri
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
     triageInbox(env, userId).catch(() => []),
     readiness(env, userId, timeZone).catch(() => null),
+    // Only when it's actually tight: a daily reading of the bank balance would
+    // make the brief something people stop listening to.
+    moneyBriefLine(db, userId, timeZone).catch(() => null),
   ]);
   const facts = {
     readiness: ready,
+    money: cash,
     importantEmail: inbox,
     name: user?.name ?? null,
     weather: weather && { ...weather, highF: Math.round(weather.highC * 1.8 + 32), lowF: Math.round(weather.lowC * 1.8 + 32) },
@@ -152,6 +157,7 @@ export async function buildMorningBrief(env: Env, userId: string, timeZone: stri
       facts.events.length && `First up: ${facts.events.join(", ")}.`,
       facts.medsToday.length && `Meds: ${facts.medsToday.join("; ")}.`,
       facts.topOfList.length && `On your list: ${facts.topOfList.join(", ")}.`,
+      facts.money,
     ]
       .filter(Boolean)
       .join(" ");
