@@ -21,6 +21,7 @@ import {
   setDefaultAccount,
   type GoogleAccount,
 } from "./oauth";
+import { pickAccountFor } from "./routing";
 import { googleTools, toolsByName, type ToolContext } from "./tools";
 
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
@@ -58,6 +59,9 @@ function withPhone(
 ): PendingAction {
   return isPhoneTool(tool) ? { ...action, phone: { tool, args }, ...(auto && { auto }) } : action;
 }
+
+/** Tools that change something, and so get an account picked for them when none is named. */
+const WRITES = /(create|update|send|add|append|complete|draft|mark|trash|delete)/;
 
 const WAITING = {
   status: "waiting_for_user_approval",
@@ -205,24 +209,34 @@ export async function googleAssistant(env: Env, userId: string, timeZone: string
     const tool = toolsByName.get(name);
     if (!tool) return { error: `Unknown tool ${name}` };
 
-    const found = pickAccount(accounts, args.account);
-    if ("error" in found) return { error: found.error };
-    // The tools themselves only ever see their own arguments.
     const { account: _, ...toolArgs } = args;
+    // A change with no account named: pick the one it belongs to (routing.ts),
+    // rather than falling back to the default blindly.
+    const unnamed = multi && (args.account === undefined || args.account === null || args.account === "") && WRITES.test(name);
+    const routed = unnamed ? await pickAccountFor(env, userId, accounts, toolArgs, timeZone).catch(() => null) : null;
+    const found = routed?.account ?? pickAccount(accounts, args.account);
+    if ("error" in found) return { error: found.error };
+    const usedNote = routed
+      ? routed.confident
+        ? `Used ${describe(found)} because ${routed.why}. Say which account in a few words.`
+        : `Used the default, ${describe(found)}; nothing said which account. Mention it and offer to switch.`
+      : null;
 
     try {
       const ctx = await context(env, userId, found.id, timeZone);
-      // With "Approve for me" on, risky Google calls run immediately.
-      const summary = autoApprove ? null : await tool.confirm?.(ctx, toolArgs);
+      // With "Approve for me" on, risky Google calls run immediately — except
+      // sending or inviting from an account OVOA picked itself, which always asks.
+      const summary = autoApprove && !routed ? null : await tool.confirm?.(ctx, toolArgs);
       if (summary) {
         // The id, not the tag: approval happens later, and tags can change in between.
         const parked = { ...toolArgs, account: found.id };
         pending.push(
           await parkAction(env, userId, name, parked, multi ? `${summary}\nAccount: ${describe(found)}` : summary, false),
         );
-        return WAITING;
+        return usedNote ? { ...WAITING, account: usedNote } : WAITING;
       }
-      return await tool.run(ctx, toolArgs);
+      const result = await tool.run(ctx, toolArgs);
+      return usedNote && result && typeof result === "object" && !Array.isArray(result) ? { ...result, account: usedNote } : result;
     } catch (err) {
       if (err instanceof GoogleNotConnected) {
         return {
@@ -256,7 +270,7 @@ export async function googleAssistant(env: Env, userId: string, timeZone: string
             'Every Google tool takes an optional "account" argument: the tag or email above. Leave it out to use the default account.',
             'When the user names one ("my work calendar", "email it from my personal account"), pass that account.',
             "When they ask a question without naming one and the answer could come from either, check each account and say which account each result came from.",
-            "For an action that changes something, use the default unless the conversation makes another account the obvious one; ask which to use if it genuinely matters and you can't tell.",
+            "For an action that changes something you may leave account out: OVOA picks the account it belongs to (work or personal) from who it's with and what it's about, and tells you which it used. Pass account when the user named one.",
             "Untagged accounts: if the user says what one is for, tag it with google_tag_account so you can both refer to it by name from then on.",
           ].join("\n")
         : "If the user mentions a second Google account (a work or personal one), tell them they can add it in the Settings tab.",
