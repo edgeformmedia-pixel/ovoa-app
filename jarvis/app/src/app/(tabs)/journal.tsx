@@ -15,13 +15,14 @@ import { api, type AgentNote, type Commitment, type ContextDay, type ContextWeek
 import { useAgent } from "../../lib/agent";
 import { useSession } from "../../lib/auth";
 import { colors } from "../../lib/theme";
+import Transcripts from "../transcripts";
 
 // Two things that are both "what happened", from two directions: what OVOA went
 // and found out, and what the day was actually made of. They share a screen
 // because that is how they get read — you check what came in, then you look
 // back at the day it came from.
 
-type Tab = "notes" | "days";
+type Tab = "notes" | "days" | "transcripts";
 
 const NOTE_ICON: Record<AgentNote["kind"], { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
   brief: { icon: "sunny-outline", color: colors.accent },
@@ -53,6 +54,7 @@ export default function Journal() {
           [
             ["notes", `From ${user.settings.assistantName || "OVOA"}`],
             ["days", "Your days"],
+            ["transcripts", "Transcripts"],
           ] as const
         ).map(([key, label]) => (
           <Pressable key={key} onPress={() => setTab(key)} style={[styles.segmentItem, tab === key && styles.segmentOn]}>
@@ -60,7 +62,7 @@ export default function Journal() {
           </Pressable>
         ))}
       </View>
-      {tab === "notes" ? <Notes /> : <Days />}
+      {tab === "notes" ? <Notes /> : tab === "days" ? <Days /> : <Transcripts />}
     </View>
   );
 }

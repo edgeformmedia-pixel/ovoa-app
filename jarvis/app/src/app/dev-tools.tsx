@@ -455,6 +455,7 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
       </Card>
 
       <AlwaysListen />
+      <CaptureEverything />
 
       <Card title="Clip — buzz" available={state.phase === "unavailable" ? false : true}>
         <BuzzOptions connected={connected} />
@@ -556,6 +557,32 @@ function AlwaysListen() {
       <View style={{ flex: 1 }}>
         <Text style={styles.itemText}>Always listen</Text>
         <Text style={styles.dim}>Development only. Not in Settings any more.</Text>
+      </View>
+      <Switch value={on} onValueChange={toggle} trackColor={{ true: colors.danger, false: colors.border }} />
+    </View>
+  );
+}
+
+/**
+ * Keeps what Always listen overhears, instead of throwing it away, in the
+ * transcripts (Journal → Transcripts). The server refuses it for any account
+ * not listed as a development account.
+ */
+function CaptureEverything() {
+  const { token, user, setUser } = useSession();
+  const on = !!user?.settings.captureEverything;
+  const toggle = async (next: boolean) => {
+    try {
+      setUser((await api.updateMe(token, { captureEverything: next })).user);
+    } catch (err) {
+      Alert.alert("Capture everything", err instanceof Error ? err.message : String(err));
+    }
+  };
+  return (
+    <View style={styles.toggleRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.itemText}>Capture everything</Text>
+        <Text style={styles.dim}>Keep background speech in the transcripts (needs Always listen). Development accounts only.</Text>
       </View>
       <Switch value={on} onValueChange={toggle} trackColor={{ true: colors.danger, false: colors.border }} />
     </View>
