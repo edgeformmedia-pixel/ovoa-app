@@ -52,6 +52,13 @@ export function Feed() {
     void load();
   };
 
+  const settle = async (id: string, how: "keep" | "done" | "drop") => {
+    setCards((all) => all?.filter((c) => !(c.kind === "favor" && c.commitmentId === id)) ?? null);
+    if (how === "keep") await api.confirmFavor(token, id).catch(() => {});
+    else await api.setCommitment(token, id, how === "done" ? "done" : "dropped").catch(() => {});
+    void load();
+  };
+
   return (
     <View style={{ gap: 12 }}>
       {cards.map((card, i) => {
@@ -126,6 +133,29 @@ export function Feed() {
                   </View>
                 ))}
               </Pressable>
+            );
+          case "favor":
+            return (
+              <View key={i} style={styles.card}>
+                <Text style={styles.label}>{card.unsure ? "DID THEY ASK?" : "ASKED OF YOU"}</Text>
+                <Text style={styles.dim}>{card.title}</Text>
+                <Text style={styles.body}>{card.body}</Text>
+                <View style={[styles.row, { gap: 8 }]}>
+                  {card.unsure && (
+                    <Pressable style={styles.chip} onPress={() => settle(card.commitmentId, "keep")}>
+                      <Text style={styles.chipText}>Yes, keep it</Text>
+                    </Pressable>
+                  )}
+                  {!card.unsure && (
+                    <Pressable style={styles.chip} onPress={() => settle(card.commitmentId, "done")}>
+                      <Text style={styles.chipText}>Done</Text>
+                    </Pressable>
+                  )}
+                  <Pressable style={styles.chip} onPress={() => settle(card.commitmentId, "drop")}>
+                    <Text style={styles.chipText}>{card.unsure ? "No" : "Not needed"}</Text>
+                  </Pressable>
+                </View>
+              </View>
             );
           case "workout":
             return (

@@ -70,7 +70,10 @@ async function gather(db: D1Database, userId: string, day: string, timeZone: str
 
   const [promises, notes, carried, missed] = await Promise.all([
     db
-      .prepare("SELECT id, text, who, due_at, created_at FROM context_commitments WHERE user_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 40")
+      // Favors the model wasn't sure of wait for the user to say they're real.
+      .prepare(
+        "SELECT id, text, who, due_at, created_at FROM context_commitments WHERE user_id = ? AND status = 'open' AND (confidence IS NULL OR confidence >= 0.8) ORDER BY created_at DESC LIMIT 40",
+      )
       .bind(userId)
       .all<{ id: string; text: string; who: string | null; due_at: number | null; created_at: number }>(),
     db

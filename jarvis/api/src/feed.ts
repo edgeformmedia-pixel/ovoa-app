@@ -26,6 +26,7 @@ type Card =
   | { kind: "agent"; title: string; items: { at: string; text: string }[] }
   | { kind: "week"; title: string; body: string; minutesSaved: number }
   | { kind: "workout"; title: string; body: string; workoutId: string }
+  | { kind: "favor"; title: string; body: string; commitmentId: string; unsure: boolean }
   | { kind: "activity"; title: string; items: { at: string; text: string; source: string }[] };
 
 /** What a count means, in words, for the summary line. */
@@ -52,7 +53,7 @@ export async function buildFeed(db: D1Database, userId: string, timeZone: string
   const [todayStart, todayEnd] = dayRange(today, timeZone);
   const weekStart = dayRange(addDays(today, -6), timeZone)[0];
 
-  const [rollup, recent, todos, routines, events, week, workouts] = await Promise.all([
+  const [rollup, recent, todos, routines, events, week, workouts, favors] = await Promise.all([
     dailyRollup(db, userId, today, timeZone),
     getActions(db, userId, now - 86_400_000, now + 1, 60),
     listTodos(db, userId, today),
@@ -72,6 +73,13 @@ export async function buildFeed(db: D1Database, userId: string, timeZone: string
       .prepare("SELECT id, start_at, end_at, kind, confirmed_kind, summary FROM workouts WHERE user_id = ? AND start_at >= ? ORDER BY start_at DESC LIMIT 3")
       .bind(userId, now - 86_400_000)
       .all<{ id: string; start_at: number; end_at: number; kind: string; confirmed_kind: string | null; summary: string | null }>(),
+    db
+      .prepare(
+        `SELECT id, text, who, quote, confidence FROM context_commitments
+          WHERE user_id = ? AND origin = 'favor' AND status = 'open' AND created_at > ? ORDER BY created_at DESC LIMIT 5`,
+      )
+      .bind(userId, now - 3 * 86_400_000)
+      .all<{ id: string; text: string; who: string | null; quote: string | null; confidence: number | null }>(),
   ]);
 
   const cards: Card[] = [];
@@ -131,6 +139,17 @@ export async function buildFeed(db: D1Database, userId: string, timeZone: string
       title: `${w.confirmed_kind ?? WORKOUT_WORDS[w.kind] ?? w.kind} · ${minutes} min · ${clock(w.start_at, timeZone)}`,
       body: w.summary ?? "",
       workoutId: w.id,
+    });
+  }
+
+  for (const f of favors.results) {
+    const unsure = (f.confidence ?? 1) < 0.8;
+    cards.push({
+      kind: "favor",
+      title: unsure ? `Did ${f.who ?? "someone"} ask you to…` : `${f.who ?? "Someone"} asked you to…`,
+      body: f.quote ? `${f.text} — "${f.quote}"` : f.text,
+      commitmentId: f.id,
+      unsure,
     });
   }
 

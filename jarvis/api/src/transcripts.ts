@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { validTimeZone } from "./google/assistant";
+import { digestBlock, type Extracted } from "./people";
 import { generateText, type CallTool, type ToolSpec } from "./llm";
 import { atLocalTime, buckets, clock, dayRange } from "./time";
 import type { Env, Vars } from "./types";
@@ -55,16 +56,93 @@ const titleSchema = {
   required: ["title", "summary"],
 };
 
-async function writeTitle(env: Env, system: string, body: string) {
+/**
+ * A five-minute block's pass does more than title it: the same call says who
+ * came up and what was learned about them, anything someone asked the user to
+ * do, and any name the user was called by (people.ts files all of it).
+ */
+const blockSchema = {
+  type: "object",
+  properties: {
+    ...titleSchema.properties,
+    people: {
+      type: "array",
+      description: "People other than the user who were mentioned or spoke, with anything worth remembering about them.",
+      items: {
+        type: "object",
+        properties: { name: { type: "string" }, facts: { type: "array", items: { type: "string" } } },
+        required: ["name"],
+      },
+    },
+    favors: {
+      type: "array",
+      description: "Things someone asked THE USER to do (not things the user asked OVOA). Empty if none.",
+      items: {
+        type: "object",
+        properties: {
+          who: { type: "string" },
+          what: { type: "string", description: "What they asked, as a to-do: 'send Sarah the deck'." },
+          quote: { type: "string", description: "Their words." },
+          due: { type: "string", description: "YYYY-MM-DD or YYYY-MM-DDTHH:MM if a time was said." },
+          confidence: { type: "number", description: "0-1: how sure you are it was really asked of the user." },
+        },
+        required: ["what", "confidence"],
+      },
+    },
+    calledUser: {
+      type: "array",
+      items: { type: "string" },
+      description: "Names someone used to address the user, only when it's clear the user was the one addressed and answered.",
+    },
+  },
+  required: ["title", "summary"],
+};
+
+async function writeTitle(env: Env, system: string, body: string, schema: Record<string, unknown> = titleSchema) {
   const raw = await generateText(env, {
     model: env.MEMORY_MODEL,
     fast: true,
-    json: { schema: titleSchema },
+    json: { schema },
     system,
     turns: [{ role: "user", text: body.slice(0, MAX_PROMPT_CHARS) }],
   });
-  const parsed = JSON.parse(raw) as { title?: string; summary?: string };
-  return { title: String(parsed.title ?? "").slice(0, 100) || null, summary: String(parsed.summary ?? "").slice(0, 600) || null };
+  const parsed = JSON.parse(raw) as { title?: string; summary?: string } & Extracted;
+  return {
+    title: String(parsed.title ?? "").slice(0, 100) || null,
+    summary: String(parsed.summary ?? "").slice(0, 600) || null,
+    extracted: { people: parsed.people, favors: parsed.favors, calledUser: parsed.calledUser } as Extracted,
+  };
+}
+
+/**
+ * Files a titled block in the timeline (context_blocks), so "Your days" and the
+ * timeline tools see what was said, not only what was recorded on purpose.
+ * Re-titling a block updates the same row.
+ */
+async function fileInTimeline(
+  db: D1Database,
+  userId: string,
+  start: number,
+  existing: string | null,
+  t: { title: string | null; summary: string | null; extracted: Extracted },
+) {
+  const people = (t.extracted.people ?? []).map((p) => p.name).filter(Boolean);
+  if (existing) {
+    await db
+      .prepare("UPDATE context_blocks SET title = ?, summary = ?, people = ? WHERE id = ? AND user_id = ?")
+      .bind(t.title, t.summary, people.length ? JSON.stringify(people) : null, existing, userId)
+      .run();
+    return existing;
+  }
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      `INSERT INTO context_blocks (id, user_id, started_at, ended_at, source, title, summary, category, people, has_transcript, created_at)
+       VALUES (?, ?, ?, ?, 'voice', ?, ?, 'transcript', ?, 1, ?)`,
+    )
+    .bind(id, userId, start, start + BLOCK_MS, t.title, t.summary, people.length ? JSON.stringify(people) : null, Date.now())
+    .run();
+  return id;
 }
 
 const SOURCE_LABEL: Record<string, string> = { mic: "They said", assistant: "OVOA said", recording: "Recorded", background: "Overheard" };
@@ -89,8 +167,10 @@ export async function titleTranscripts(env: Env) {
   const now = Date.now();
   const { results: due } = await db
     .prepare(
-      `SELECT c.user_id, (c.ts / ${BLOCK_MS}) * ${BLOCK_MS} AS start, COUNT(*) AS n, s.time_zone
+      `SELECT c.user_id, (c.ts / ${BLOCK_MS}) * ${BLOCK_MS} AS start, COUNT(*) AS n, s.time_zone, s.context_enabled,
+              MAX(t.block_id) AS block_id, u.name AS user_name
          FROM raw_captures c
+         JOIN users u ON u.id = c.user_id
          JOIN settings s ON s.user_id = c.user_id
          LEFT JOIN transcript_titles t ON t.user_id = c.user_id AND t.grain = '5m' AND t.start = (c.ts / ${BLOCK_MS}) * ${BLOCK_MS}
         WHERE c.ts < ? AND c.ts > ?
@@ -100,7 +180,7 @@ export async function titleTranscripts(env: Env) {
     )
     // A block is titled once it's over, plus a minute for a slow upload.
     .bind(blockStart(now - 60_000), now - TRANSCRIPT_RETAIN_DAYS * 86_400_000, BLOCKS_PER_TICK)
-    .all<{ user_id: string; start: number; n: number; time_zone: string | null }>();
+    .all<{ user_id: string; start: number; n: number; time_zone: string | null; context_enabled: number; block_id: string | null; user_name: string }>();
 
   const hours = new Map<string, { userId: string; hour: string; timeZone: string }>();
   for (const b of due) {
@@ -113,10 +193,23 @@ export async function titleTranscripts(env: Env) {
     try {
       const t = await writeTitle(
         env,
-        "You title five minutes of someone's day from a transcript. Lines marked 'Overheard' were picked up in the background (TV, other people, the room) and may be noise; say so if that's all there is. Never invent what isn't there.",
+        [
+          `You title five minutes of ${b.user_name}'s day from a transcript. 'They said' is ${b.user_name}; 'OVOA said' is their assistant.`,
+          "Lines marked 'Overheard' were picked up in the background (TV, other people, the room) and may be noise; say so if that's all there is.",
+          "Never invent what isn't there. Only list a favor when someone really asked the user to do something, and be honest in the confidence.",
+        ].join(" "),
         lines.map((l) => `[${clock(l.ts, timeZone)}] ${SOURCE_LABEL[l.source] ?? l.source}: ${l.text}`).join("\n"),
+        blockSchema,
       );
       await upsert(db, b.user_id, "5m", new Date(b.start).toISOString(), b.start, t, sources, b.n);
+      if (b.context_enabled) {
+        const blockId = await fileInTimeline(db, b.user_id, b.start, b.block_id, t);
+        await db
+          .prepare("UPDATE transcript_titles SET block_id = ? WHERE user_id = ? AND grain = '5m' AND start = ?")
+          .bind(blockId, b.user_id, b.start)
+          .run();
+        await digestBlock(env, b.user_id, blockId, t.extracted, timeZone).catch((err) => console.error("transcripts: couldn't file what was said", err));
+      }
       const hour = buckets(b.start, timeZone).hour;
       hours.set(`${b.user_id}|${hour}`, { userId: b.user_id, hour, timeZone });
     } catch (err) {
@@ -281,6 +374,14 @@ transcripts.delete("/transcripts", async (c) => {
   if (!(from > 0 && to > from)) return c.json({ error: "from and to are required" }, 400);
   const db = c.env.DB;
   const { meta } = await db.prepare("DELETE FROM raw_captures WHERE user_id = ? AND ts >= ? AND ts < ?").bind(c.var.userId, from, to).run();
+  // The timeline entries written from those words go too.
+  await db
+    .prepare(
+      `DELETE FROM context_blocks WHERE user_id = ? AND id IN (
+         SELECT block_id FROM transcript_titles WHERE user_id = ? AND grain = '5m' AND start >= ? AND start < ? AND block_id IS NOT NULL)`,
+    )
+    .bind(c.var.userId, c.var.userId, blockStart(from), to)
+    .run();
   await db.prepare("DELETE FROM transcript_titles WHERE user_id = ? AND grain = '5m' AND start >= ? AND start < ?").bind(c.var.userId, blockStart(from), to).run();
   return c.json({ ok: true, forgot: meta.changes ?? 0 });
 });

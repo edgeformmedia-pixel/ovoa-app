@@ -305,6 +305,13 @@ check "background needs capture-everything" \
   "$(curl -s "${A[@]}" "$API/transcripts/search?q=dry" | j "len(d['lines'])")" "0"
 
 echo
+echo "── people and favors ──────────────────────────────"
+check "no people yet"  "$(curl -s "${A[@]}" "$API/people" | j "len(d['people'])")" "0"
+check "no favors yet"  "$(curl -s "${A[@]}" "$API/favors" | j "len(d['favors'])")" "0"
+check "an unknown favor can't be confirmed" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/favors/nope/confirm")" "404"
+check "the feed still builds" "$(curl -s "${A[@]}" "$API/feed" | j "d['cards'][0]['kind']")" "summary"
+
+echo
 echo "── capture everything is dev-only ─────────────────"
 check "refused for an ordinary account"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":true}')" "403"
 check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['captureEverything']")" "False"

@@ -49,6 +49,7 @@ import { eveningTick, isTodoTool, todos, todosAssistant } from "./todos";
 import { feed } from "./feed";
 import { isLocationTool, location, locationAssistant, locationNightly } from "./location";
 import { heart, heartAssistant, HR_RETAIN_DAYS, isHeartTool } from "./heart";
+import { isPeopleTool, people, peopleAssistant } from "./people";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
 
@@ -484,6 +485,7 @@ async function runTurn(
   const placeTools = locationAssistant(env, userId, timeZone);
   const heartTools = heartAssistant(env, userId, timeZone);
   const transcriptTools = transcriptAssistant(env, userId, timeZone);
+  const peopleTools = peopleAssistant(env, userId, timeZone);
 
   const turns: Turn[] = history.results.reverse().map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -532,6 +534,7 @@ async function runTurn(
     ["todos", todoTools.prompt],
     ["location", placeTools.prompt],
     ["heart", heartTools.prompt],
+    ["people", peopleTools.prompt],
     ["transcripts", settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : ""],
     ["command", fromAgent
       ? [
@@ -577,6 +580,7 @@ async function runTurn(
     ...todoTools.tools,
     ...placeTools.tools,
     ...heartTools.tools,
+    ...peopleTools.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -618,7 +622,9 @@ async function runTurn(
                               ? heartTools.callTool
                               : isTranscriptTool(name)
                                 ? transcriptTools.callTool
-                                : google.callTool)(name, args);
+                                : isPeopleTool(name)
+                                  ? peopleTools.callTool
+                                  : google.callTool)(name, args);
         // Only what actually happened: a parked action is logged when it's approved.
         const kind = kindForTool(name);
         if (kind && result !== DEFER && toolSucceeded(result)) {
@@ -1315,6 +1321,7 @@ authed.route("/", feed);
 authed.route("/", location);
 authed.route("/", heart);
 authed.route("/", transcripts);
+authed.route("/", people);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);

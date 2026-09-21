@@ -81,6 +81,7 @@ export type FeedCard =
   | { kind: "agent"; title: string; items: { at: string; text: string }[] }
   | { kind: "week"; title: string; body: string; minutesSaved: number }
   | { kind: "workout"; title: string; body: string; workoutId: string }
+  | { kind: "favor"; title: string; body: string; commitmentId: string; unsure: boolean }
   | { kind: "activity"; title: string; items: { at: string; text: string; source: string }[] };
 
 /** One line on a day's list. */
@@ -525,6 +526,9 @@ export const api = {
     }),
 
   feed: (token: string) => request<{ cards: FeedCard[] }>("/feed", token),
+  confirmFavor: (token: string, id: string) => request(`/favors/${id}/confirm`, token, { method: "POST" }),
+  setCommitment: (token: string, id: string, status: "open" | "done" | "dropped") =>
+    request(`/context/commitments/${id}`, token, { method: "PATCH", body: JSON.stringify({ status }) }),
 
   // ---------- Location timeline ----------
 
