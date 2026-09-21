@@ -8,6 +8,8 @@ import "../lib/background";
 import "../lib/routines";
 // And the location and geofence tasks, which iOS runs with the app closed.
 import "../lib/location";
+// And alarms and urgent reminders, which must go off with the app in the background.
+import "../lib/nag";
 import { devlog } from "../lib/devlog";
 import { startRemoteLog } from "../lib/remoteLog";
 import { colors } from "../lib/theme";
@@ -65,6 +67,8 @@ function RootStack() {
         <Stack.Screen name="motion-lab" options={{ headerShown: true, title: "Motion lab" }} />
         <Stack.Screen name="agent" options={{ headerShown: true, title: "Background work" }} />
         <Stack.Screen name="transcripts" options={{ headerShown: true, title: "Transcripts" }} />
+        <Stack.Screen name="live" options={{ headerShown: true, title: "Live" }} />
+        <Stack.Screen name="claude" options={{ headerShown: true, title: "Ask Claude" }} />
       </Stack.Protected>
       <Stack.Protected guard={!!user && onboarding}>
         <Stack.Screen name="connect-google" />

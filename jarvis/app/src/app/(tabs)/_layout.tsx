@@ -12,6 +12,9 @@ import { startDeviceReports } from "../../lib/device";
 import { startRoutineSync } from "../../lib/routines";
 import { startHeartRate } from "../../lib/heart";
 import { startLocationTimeline } from "../../lib/location";
+import { prepareFillers, watchVoiceForFillers } from "../../lib/fillers";
+import { startAlarmSync } from "../../lib/nag";
+import { NagOverlay } from "../../components/NagOverlay";
 import { SafetyProvider } from "../../lib/safety";
 import { NotesBadge } from "../../components/NotesBadge";
 import { colors } from "../../lib/theme";
@@ -35,6 +38,14 @@ export default function TabsLayout() {
   // Heart rate from the band every few minutes, and from Health; places, when the timeline is on.
   useEffect(() => (token ? startHeartRate(token) : undefined), [token]);
   useEffect(() => (token ? startLocationTimeline(token) : undefined), [token]);
+  // Tonight's alarms: kept awake for, and set to go off here even with no network.
+  useEffect(() => (token ? startAlarmSync(token) : undefined), [token]);
+  // "One second while I get that": voiced once, kept on the phone, played instantly.
+  useEffect(() => {
+    if (!token) return;
+    void prepareFillers(token);
+    return watchVoiceForFillers(token);
+  }, [token]);
   // Anything recorded but not yet in the timeline gets filed, while it's on.
   useAutoCapture();
 
@@ -87,6 +98,7 @@ export default function TabsLayout() {
             <Tabs.Screen name="safety" options={{ title: "Safety", tabBarIcon: icon("shield-checkmark") }} />
             <Tabs.Screen name="settings" options={{ title: "Settings", tabBarIcon: icon("settings") }} />
           </Tabs>
+          <NagOverlay />
         </AssistantProvider>
       </AgentProvider>
     </SafetyProvider>

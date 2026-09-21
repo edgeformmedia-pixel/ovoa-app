@@ -19,7 +19,14 @@ export type BuzzPattern = "ack" | "double" | "reminder" | "meds" | "urgent";
 const GAP_MS = 30_000;
 
 /** How many vibrations each pattern is. The clip's own count argument does the spacing between them. */
-const COUNTS: Record<BuzzPattern, number> = { ack: 1, double: 2, reminder: 2, meds: 3, urgent: 3 };
+const COUNTS: Record<BuzzPattern, number> = { ack: 1, double: 2, reminder: 1, meds: 1, urgent: 1 };
+
+/**
+ * Reminders use the clip's motor test (option 3), once: the one the user asked
+ * for (2026-09-21) — it's the strongest. Everything else uses whichever option
+ * the Dev tools buzz test settled on.
+ */
+const OPTIONS: Partial<Record<BuzzPattern, clip.BuzzOption>> = { reminder: 3, meds: 3, urgent: 3 };
 
 const TITLES: Record<BuzzPattern, string> = {
   ack: "OVOA",
@@ -75,7 +82,7 @@ function schedule() {
 }
 
 async function fire({ pattern, reason }: Waiting) {
-  const ok = await clip.buzz(COUNTS[pattern]);
+  const ok = await clip.buzz(COUNTS[pattern], OPTIONS[pattern] ?? clip.getBuzzOption());
   devlog("ble", `buzz ${pattern}: ${ok ? "sent" : "failed, notifying instead"}`, reason);
   if (!ok) await notifyInstead(pattern, reason);
 }

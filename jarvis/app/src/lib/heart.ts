@@ -31,6 +31,10 @@ const AFTER_BUZZ_MS = 15_000;
 const HEALTH_LAST_KEY = "ovoa.hrHealthLast";
 
 let resting = 65;
+/** The Live screen is streaming heart rate: don't ask the band as well, and keep one reading a minute. */
+let live = false;
+let lastLiveKept = 0;
+export const setLiveHeart = (on: boolean) => void (live = on);
 let lastReading = 0;
 let asking = false;
 let batch: { ts: number; bpm: number }[] = [];
@@ -50,7 +54,7 @@ async function flushBand(token: string, force = false) {
 }
 
 async function askBand() {
-  if (asking || !clip.clipIdle() || Date.now() - clip.lastBuzzAt() < AFTER_BUZZ_MS) return;
+  if (live || asking || !clip.clipIdle() || Date.now() - clip.lastBuzzAt() < AFTER_BUZZ_MS) return;
   asking = true;
   try {
     // The reading itself comes back as an input event (onHeartRate below).
@@ -82,6 +86,10 @@ export function startHeartRate(token: string) {
 
   const offReading = clip.onHeartRate((bpm) => {
     if (bpm < 30 || bpm > 230) return;
+    if (live) {
+      if (Date.now() - lastLiveKept < 60_000) return;
+      lastLiveKept = Date.now();
+    }
     lastReading = bpm;
     batch.push({ ts: Date.now(), bpm });
     void flushBand(token, bpm >= resting + RAISED_BY);

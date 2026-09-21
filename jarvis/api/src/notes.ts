@@ -81,10 +81,10 @@ export async function listNotes(db: D1Database, userId: string, tag?: string, li
 export async function fireDueNotes(env: Env) {
   const now = Date.now();
   const { results } = await env.DB.prepare(
-    "SELECT id, user_id, text, tags FROM notes WHERE remind_at IS NOT NULL AND reminded_at IS NULL AND remind_at <= ? LIMIT 50",
+    "SELECT id, user_id, text, tags, urgent FROM notes WHERE remind_at IS NOT NULL AND reminded_at IS NULL AND remind_at <= ? LIMIT 50",
   )
     .bind(now)
-    .all<{ id: string; user_id: string; text: string; tags: string }>();
+    .all<{ id: string; user_id: string; text: string; tags: string; urgent: number }>();
   for (const n of results) {
     const claim = await env.DB.prepare("UPDATE notes SET reminded_at = ? WHERE id = ? AND reminded_at IS NULL").bind(now, n.id).run();
     if (!claim.meta.changes) continue;
@@ -98,7 +98,10 @@ export async function fireDueNotes(env: Env) {
         ? { title: `Text ${other[1]}?`, body: other[2].slice(0, 180), data: { type: "remind-other", who: other[1], text: other[2] } }
         : { title: "Reminder", body: n.text.slice(0, 180), data: { type: "note", noteId: n.id } },
     );
-    if (caps.band) {
+    if (n.urgent) {
+      // The phone buzzes every 30 s until it hears "I did it" (alarms.ts keeps pushing too).
+      await push(env, n.user_id, { silent: true, data: { type: "nag", id: crypto.randomUUID(), key: `note:${n.id}`, label: n.text.slice(0, 120) } });
+    } else if (caps.band) {
       await push(env, n.user_id, { silent: true, data: { type: "buzz", id: crypto.randomUUID(), pattern: "reminder", reason: n.text.slice(0, 180) } });
     }
     await logAction(env.DB, n.user_id, "reminder_fired", `Reminded: ${n.text.slice(0, 120)}`, "system", n.id);

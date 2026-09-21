@@ -528,6 +528,21 @@ export const api = {
     }),
 
   feed: (token: string) => request<{ cards: FeedCard[] }>("/feed", token),
+
+  // ---------- Alarms, urgent reminders, Claude ----------
+
+  alarms: (token: string) =>
+    request<{
+      alarms: { id: string; at: string; minutes: number; days: number[]; label: string | null; hard: boolean; nextAt: number | null; next: string | null; ringing: boolean }[];
+    }>("/alarms", token),
+  addAlarm: (token: string, a: { time: string; days?: number[]; label?: string; hard?: boolean }) =>
+    request<{ id: string; nextAt: number | null }>("/alarms", token, { method: "POST", body: JSON.stringify(a) }),
+  deleteAlarm: (token: string, id: string) => request(`/alarms/${id}`, token, { method: "DELETE" }),
+  stopAlarm: (token: string, id: string, steps: number) =>
+    request(`/alarms/${id}/stop`, token, { method: "POST", body: JSON.stringify({ steps }) }),
+  nagDone: (token: string, key: string) => request("/nags/done", token, { method: "POST", body: JSON.stringify({ key }) }),
+  askClaude: (token: string, prompt: string) =>
+    request<{ answer: string; model: string }>("/claude", token, { method: "POST", body: JSON.stringify({ prompt }) }),
   confirmFavor: (token: string, id: string) => request(`/favors/${id}/confirm`, token, { method: "POST" }),
   setCommitment: (token: string, id: string, status: "open" | "done" | "dropped") =>
     request(`/context/commitments/${id}`, token, { method: "PATCH", body: JSON.stringify({ status }) }),

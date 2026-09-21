@@ -53,6 +53,8 @@ import { isPeopleTool, people, peopleAssistant } from "./people";
 import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "./rhythm";
 import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { relearnAccounts } from "./google/routing";
+import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
+import { askClaude, askClaudeTool, claude } from "./claude";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
 
@@ -515,6 +517,7 @@ async function runTurn(
   const transcriptTools = transcriptAssistant(env, userId, timeZone);
   const peopleTools = peopleAssistant(env, userId, timeZone);
   const extraTools = extrasAssistant(env, userId, timeZone);
+  const alarmTools = alarmAssistant(env, userId, timeZone);
 
   const turns: Turn[] = history.results.reverse().map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -564,6 +567,7 @@ async function runTurn(
     ["location", placeTools.prompt],
     ["heart", heartTools.prompt],
     ["people", peopleTools.prompt],
+    ["alarms", alarmTools.prompt],
     ["transcripts", settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : ""],
     ["command", fromAgent
       ? [
@@ -612,6 +616,8 @@ async function runTurn(
     ...peopleTools.tools,
     briefTool,
     ...extraTools.tools,
+    ...alarmTools.tools,
+    askClaudeTool,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -655,6 +661,10 @@ async function runTurn(
                                 ? transcriptTools.callTool
                                 : isPeopleTool(name)
                                   ? peopleTools.callTool
+                                  : isAlarmTool(name)
+                                    ? alarmTools.callTool
+                                  : name === askClaudeTool.name
+                                    ? async () => askClaude(env, String(args.prompt ?? ""), { voice })
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name
@@ -1304,6 +1314,7 @@ app.post("/debug/agent/tick", async (c) => {
   const which = c.req.query("what");
   if (which === "maintenance") return c.json({ purgedBlocks: await maintenance(c.env), ms: Date.now() - started });
   if (which === "nightly") return c.json({ ...(await nightly(c.env)), ms: Date.now() - started });
+  if (which === "alarms") return c.json({ ...(await nagTick(c.env)), ms: Date.now() - started });
   if (which === "extras") return c.json({ ...(await extrasTick(c.env)), ms: Date.now() - started });
   if (which === "rhythm") return c.json({ ...(await rhythmTick(c.env)), ms: Date.now() - started });
   if (which === "transcripts") return c.json({ titled: await titleTranscripts(c.env), ms: Date.now() - started });
@@ -1359,6 +1370,8 @@ authed.route("/", location);
 authed.route("/", heart);
 authed.route("/", transcripts);
 authed.route("/", people);
+authed.route("/", alarms);
+authed.route("/", claude);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);
@@ -1409,6 +1422,8 @@ export default {
           await titleTranscripts(env);
           const rhythm = await rhythmTick(env);
           const extras = await extrasTick(env);
+          const nags = await nagTick(env);
+          if (nags.fired || nags.nagged) console.log("alarms:", JSON.stringify(nags));
           if (extras.followUps || extras.bills || extras.weekly || extras.preps) console.log("extras:", JSON.stringify(extras));
           if (rhythm.briefs || rhythm.windDowns || rhythm.commutes || rhythm.oddities) console.log("rhythm:", JSON.stringify(rhythm));
           if (fired || chased || reminded || evening.built || evening.told) {

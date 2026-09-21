@@ -2,6 +2,8 @@ import { useFocusEffect } from "expo-router";
 import { Pedometer } from "expo-sensors";
 import { useCallback, useEffect, useState } from "react";
 import { Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { useRouter, type Href } from "expo-router";
 import { Feed } from "../../components/Feed";
 import { HealthCards } from "../../components/HealthCards";
 import { api, type StepDay } from "../../lib/api";
@@ -11,6 +13,23 @@ import { colors } from "../../lib/theme";
 
 const GOALS = [5000, 8000, 10000, 12000, 15000];
 const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Live metrics and Ask Claude, one tap from the home screen. */
+function Shortcuts() {
+  const router = useRouter();
+  return (
+    <View style={{ flexDirection: "row", gap: 12 }}>
+      <Pressable style={[styles.card, styles.shortcut]} onPress={() => router.push("/live" as Href)}>
+        <Ionicons name="pulse" size={22} color={colors.danger} />
+        <Text style={styles.shortcutText}>Live</Text>
+      </Pressable>
+      <Pressable style={[styles.card, styles.shortcut]} onPress={() => router.push("/claude" as Href)}>
+        <Ionicons name="sparkles" size={22} color={colors.accent} />
+        <Text style={styles.shortcutText}>Ask Claude</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 export default function Activity() {
   const { token, user, setUser } = useSession();
@@ -64,6 +83,7 @@ export default function Activity() {
   if (status === "denied" || status === "unavailable") {
     return (
       <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+        <Shortcuts />
         <Feed />
         <View style={[styles.card, { alignItems: "center", gap: 10 }]}>
           <Text style={styles.title}>Step tracking is off</Text>
@@ -85,6 +105,7 @@ export default function Activity() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+      <Shortcuts />
       <Feed />
       <View style={[styles.card, styles.todayCard]}>
         <Text style={styles.label}>TODAY</Text>
@@ -213,4 +234,6 @@ const styles = StyleSheet.create({
   button: { backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 20 },
   buttonText: { color: colors.bg, fontWeight: "700" },
   footnote: { color: colors.textDim, fontSize: 12, textAlign: "center" },
+  shortcut: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14 },
+  shortcutText: { color: colors.text, fontSize: 16, fontWeight: "700" },
 });

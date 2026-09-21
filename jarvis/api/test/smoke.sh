@@ -206,9 +206,10 @@ check "confirming ahead of the tick" "$(curl -s -X POST "${A[@]}" "$API/routines
 curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/routines/due?id=$RID&agoMinutes=0"
 curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/agent/tick?what=routines"
 curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/routines/due?id=$RID&agoMinutes=20"
-check "15 minutes on, it follows up" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=routines" | j "d['followedUp'] >= 1")" "True"
+# Medication is urgent: it's chased every two minutes by the alarm tick, not at 15 and 60.
+check "an urgent med is chased" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=alarms" | j "d['nagged'] >= 1")" "True"
 curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/routines/due?id=$RID&agoMinutes=50"
-check "an hour on, it follows up again" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=routines" | j "d['followedUp'] >= 1")" "True"
+check "but not twice inside two minutes" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=alarms" | j "d['nagged']")" "0"
 curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/routines/due?id=$RID&agoMinutes=120"
 curl -s -o /dev/null -X POST "${D[@]}" "$API/debug/agent/tick?what=routines"
 check "past its window it's missed"   "$(curl -s "${A[@]}" "$API/debug/agent/tick" -o /dev/null; curl -s -X POST "${A[@]}" "$API/routines/$RID/confirm" -d '{}' -o /dev/null -w '%{http_code}')" "404"
@@ -322,6 +323,21 @@ echo "── extras ────────────────────
 check "the extras tick runs" "$(curl -s -m 60 -X POST "${D[@]}" "$API/debug/agent/tick?what=extras" | j "'weekly' in d")" "True"
 check "sleep hours are accepted" "$(curl -s -X PUT "${A[@]}" "$API/device/state" -d '{"bandLinked":false,"sleepHours":7.5}' -o /dev/null -w '%{http_code}')" "200"
 check "the nightly job learns accounts too" "$(curl -s -m 60 -X POST "${D[@]}" "$API/debug/agent/tick?what=nightly" | j "'accounts' in d")" "True"
+
+echo
+echo "── alarms and urgent reminders ────────────────────"
+AL=$(curl -s -X POST "${A[@]}" "$API/alarms" -d '{"time":"07:00","hard":true,"label":"Gym"}')
+AID=$(echo "$AL" | j "d['id']")
+check "an alarm is set" "$([ -n "$AID" ] && echo yes)" "yes"
+check "it's listed as hard" "$(curl -s "${A[@]}" "$API/alarms" | j "d['alarms'][0]['hard']")" "True"
+check "at 7:00 AM" "$(curl -s "${A[@]}" "$API/alarms" | j "d['alarms'][0]['at']")" "7:00 AM"
+check "a bad time is refused" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/alarms" -d '{"time":"7am"}')" "400"
+check "nothing to stop when it isn't ringing" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/alarms/$AID/stop" -d '{"steps":0}')" "409"
+check "the alarm tick runs" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=alarms" | j "'fired' in d")" "True"
+check "not someone else's alarms" "$(curl -s -H "authorization: Bearer $OTHER" "$API/alarms" | j "len(d['alarms'])")" "0"
+check "cancelled" "$(curl -s -X DELETE "${A[@]}" "$API/alarms/$AID" | j "d['ok']")" "True"
+check "a nag can be answered" "$(curl -s -X POST "${A[@]}" "$API/nags/done" -d '{"key":"note:nope"}' | j "d['ok']")" "True"
+check "Claude without a key says so" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/claude" -d '{"prompt":"hi"}')" "503"
 
 echo
 echo "── capture everything is dev-only ─────────────────"

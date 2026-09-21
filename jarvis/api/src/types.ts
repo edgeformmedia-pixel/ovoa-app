@@ -21,6 +21,8 @@ export type Env = {
   DEEPGRAM_API_KEY?: string;
   /** Comma-separated account emails allowed the dev-only capture-everything flag. */
   DEV_EMAILS?: string;
+  /** For "ask Claude" (claude.ts). Without it that tool says it isn't set up. */
+  ANTHROPIC_API_KEY?: string;
 };
 
 export type Vars = { userId: string; token: string };

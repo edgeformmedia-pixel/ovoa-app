@@ -29,6 +29,13 @@ export function onPush(type: string, handler: Handler) {
   handlers.set(type, handler);
 }
 
+// An alarm's own local notification firing while the app is alive: go off here too (nag.ts).
+onPush("alarm-local", async (p) => {
+  const { startNag } = await import("./nag");
+  const alarmId = typeof p.alarmId === "string" ? p.alarmId : "";
+  startNag({ key: `alarm:${alarmId}`, kind: "alarm", label: "Alarm", hard: false, alarmId });
+});
+
 onPush("buzz", async (p, shown) => {
   // The server sent a visible notification because it thought there was no band.
   // If there really isn't one, that notification was the buzz; don't add a second.

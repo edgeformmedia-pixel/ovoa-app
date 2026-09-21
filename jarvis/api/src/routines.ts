@@ -47,6 +47,7 @@ export type RoutineRow = {
   external_source: string | null;
   external_id: string | null;
   next_due_at: number | null;
+  urgent: number;
   created_at: number;
   updated_at: number;
 };
@@ -129,6 +130,8 @@ export type NewRoutine = {
   externalSource?: RoutineRow["external_source"];
   externalId?: string | null;
   meta?: Record<string, unknown>;
+  /** Keeps buzzing until confirmed. Medication is urgent unless said otherwise. */
+  urgent?: boolean;
 };
 
 export async function createRoutine(db: D1Database, userId: string, r: NewRoutine) {
@@ -142,8 +145,8 @@ export async function createRoutine(db: D1Database, userId: string, r: NewRoutin
   await db
     .prepare(
       `INSERT INTO routines (id, user_id, kind, title, times, days, buzz_pattern, meta_json, context, window_minutes,
-                             external_source, external_id, next_due_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                             external_source, external_id, next_due_at, created_at, updated_at, urgent)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -161,6 +164,7 @@ export async function createRoutine(db: D1Database, userId: string, r: NewRoutin
       nextOccurrence(times, days, now, timeZone),
       now,
       now,
+      Number(r.urgent ?? r.kind === "med"),
     )
     .run();
   return id;
@@ -226,6 +230,14 @@ async function announce(env: Env, r: DueRow, eventId: string, dueAt: number, lin
   const timeZone = validTimeZone(r.time_zone);
   if (r.kind !== "med" && inQuietHours(Date.now(), timeZone, r.quiet_start, r.quiet_end)) return "quiet";
   const caps = await capabilities(env.DB, r.user_id);
+  // Urgent (pills): the phone buzzes every 30 s until it hears "I took it"; the
+  // two-minute backstop pushes are alarms.ts's nagTick.
+  if (r.urgent && !again) {
+    await push(env, r.user_id, {
+      silent: true,
+      data: { type: "nag", id: crypto.randomUUID(), key: `routine:${r.id}:${dueAt}`, label: r.title, routineId: r.id, dueAt },
+    });
+  }
   const pattern = (BUZZ_PATTERNS as string[]).includes(r.buzz_pattern) ? (r.buzz_pattern as BuzzPattern) : "reminder";
   if (caps.band) await sendBuzz(env, r.user_id, pattern, line, "system", r.id);
   // The phone's local notification covers the first announcement when it knows
@@ -333,6 +345,7 @@ export async function escalate(env: Env) {
       continue;
     }
 
+    if (e.urgent) continue;
     if (e.escalation === 0 && age >= ESCALATE_BUZZ_MIN * 60_000) {
       await db.prepare("UPDATE routine_events SET escalation = 1 WHERE id = ? AND escalation = 0").bind(e.event_id).run();
       await announce(env, e, e.event_id, e.due_at, `Still waiting: ${e.title}`, true);
@@ -365,7 +378,7 @@ type Confirm = { routineId?: string; eventId?: string; dueAt?: number; via: "not
  * Marks an occurrence done. Without a specific one, it's the most recent that
  * is still waiting — which is what "took it" means.
  */
-export async function confirmRoutine(db: D1Database, userId: string, c: Confirm, source: ActionSource = "chat") {
+export async function confirmRoutine(db: D1Database, userId: string, c: Confirm, source: ActionSource = "chat", env?: Env) {
   const now = Date.now();
   let event: { id: string; routine_id: string; due_at: number } | null = null;
 
@@ -411,6 +424,10 @@ export async function confirmRoutine(db: D1Database, userId: string, c: Confirm,
     .run();
   const routine = await db.prepare("SELECT title FROM routines WHERE id = ?").bind(event.routine_id).first<{ title: string }>();
   await logAction(db, userId, "routine_done", `Done: ${routine?.title ?? "routine"}`, source, event.routine_id);
+  if (env) {
+    // An urgent one is buzzing on the phone: tell it to stop (alarms.ts nags).
+    await push(env, userId, { silent: true, data: { type: "nag-stop", id: crypto.randomUUID(), key: `routine:${event.routine_id}:${event.due_at}` } }).catch(() => 0);
+  }
   return { eventId: event.id, routineId: event.routine_id, title: routine?.title ?? null, dueAt: event.due_at };
 }
 
@@ -614,12 +631,13 @@ const occurrenceSchema = z.object({
 routines.post("/routines/:id/confirm", async (c) => {
   const parsed = occurrenceSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: "Invalid confirmation" }, 400);
-  const done = await confirmRoutine(c.env.DB, c.var.userId, {
-    routineId: c.req.param("id"),
-    eventId: parsed.data.eventId,
-    dueAt: parsed.data.dueAt,
-    via: parsed.data.via ?? "app",
-  });
+  const done = await confirmRoutine(
+    c.env.DB,
+    c.var.userId,
+    { routineId: c.req.param("id"), eventId: parsed.data.eventId, dueAt: parsed.data.dueAt, via: parsed.data.via ?? "app" },
+    "chat",
+    c.env,
+  );
   return done ? c.json(done) : c.json({ error: "Nothing waiting for that routine" }, 404);
 });
 
@@ -647,6 +665,10 @@ const TOOLS: ToolSpec[] = [
       properties: {
         title: { type: "string", description: "Short, in their words: 'Vitamin D', 'Walk Rex', 'Water'." },
         kind: { type: "string", enum: KINDS, description: "med for any medication or supplement; pet; habit; custom." },
+        urgent: {
+          type: "boolean",
+          description: "Keep buzzing until they confirm. Medication is urgent unless they say otherwise; anything else only if they ask.",
+        },
         times: { type: "array", items: { type: "string" }, description: "Local times as HH:MM, 24-hour." },
         days: {
           type: "array",
@@ -724,6 +746,7 @@ export function routinesAssistant(env: Env, userId: string, timeZone: string, op
           title,
           times,
           days: toDays(args.days),
+          urgent: args.urgent === undefined ? kind === "med" : !!args.urgent,
           // Medication goes into Apple Reminders as well; the phone creates it there on its next sync.
           externalSource: kind === "med" ? "apple_reminders" : null,
         });
@@ -798,7 +821,7 @@ export function routinesAssistant(env: Env, userId: string, timeZone: string, op
         const s = await snoozeRoutine(db, userId, { eventId: pending.id, minutes: Number(args.snoozeMinutes) });
         return s ? { snoozed: true, minutes: s.minutes } : { error: "Couldn't snooze it." };
       }
-      const done = await confirmRoutine(db, userId, { routineId, via: "voice" }, source);
+      const done = await confirmRoutine(db, userId, { routineId, via: "voice" }, source, env);
       return done ? { confirmed: done.title } : { error: "Nothing is waiting to be confirmed right now." };
     }
 
