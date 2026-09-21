@@ -72,6 +72,13 @@ NS_SWIFT_NAME(UteBleBridge)
 /// Whether the ES100 honours either is unknown.
 - (void)setLight:(BOOL)on colors:(NSInteger)colors completion:(UteBleResultCallback)completion
     NS_SWIFT_NAME(setLight(on:colors:completion:));
+/// Asks the clip for heart rate (or blood oxygen). method "factory": the factory heart-rate test, which
+/// answers again with each reading while on (open, worn 1/0, bpm; 0 until it has one). "spo2": the
+/// factory blood-oxygen test, same shape. "measure": a one-off measurement (clickMeasurementType HRM);
+/// its result comes later. Readings also arrive as onInput kind "heartRate" / "spo2". Firmware claims
+/// the factory tests (isSupportHeartRateTest); whether the ES100 has the optical sensor is untested.
+- (void)setHeartRate:(NSString *)method on:(BOOL)on completion:(UteBleResultCallback)completion
+    NS_SWIFT_NAME(setHeartRate(_:on:completion:));
 /// Turns one motion source on or off (see MotionSource in UteBle.types.ts). Polled sources ask every
 /// `intervalMs`. 408: the clip didn't answer; -600: unknown source.
 - (void)setMotionSource:(NSString *)source

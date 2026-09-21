@@ -108,12 +108,16 @@ export enum StartRecordResult {
 }
 
 /** Something the clip reported on its own. */
+/** How setHeartRate asks: the factory heart-rate test, the blood-oxygen test, or a one-off measurement. */
+export type HeartRateMethod = "factory" | "spo2" | "measure";
+
 export type InputEvent = {
   /**
    * battery: percent; voiceButton: AI/voice button state 1-7; voiceData: bytes of opus the button
-   * captured; offWrist: the wear state the clip reported (watches send it when taken off).
+   * captured; offWrist: the wear state the clip reported (watches send it when taken off);
+   * heartRate / spo2: a reading (0 while it has none yet), detail says which method and whether it's worn.
    */
-  kind: "battery" | "voiceButton" | "voiceData" | "offWrist";
+  kind: "battery" | "voiceButton" | "voiceData" | "offWrist" | "heartRate" | "spo2";
   value: number;
   detail?: string;
 };

@@ -10,6 +10,7 @@ import type {
   DeviceStatus,
   EncodingFormat,
   GyroReading,
+  HeartRateMethod,
   MotionSource,
   SensorSupport,
   RecordFile,
@@ -47,6 +48,7 @@ type UteBleNativeModule = {
   setMotionStream(on: boolean): Promise<void>;
   buzz(count: number, option: number): Promise<{ option: number }>;
   setLight(on: boolean, colors: number): Promise<{ on: boolean; colors: number }>;
+  setHeartRate(method: HeartRateMethod, on: boolean): Promise<{ open?: number; worn?: number; value?: number }>;
   setMotionSource(source: MotionSource, on: boolean, intervalMs: number): Promise<void>;
   readActivity(): Promise<{ totals: string; calories: number }>;
   setSdkLogging(on: boolean): Promise<void>;
@@ -149,6 +151,12 @@ export const setMotionStream = (on: boolean) => native().setMotionStream(on);
 export const buzz = (count = 1, option = 1) => native().buzz(count, option);
 /** Turns the clip's light on or off. colors: 1 red, 2 green, 4 blue (add them to mix); 0 = the three-color LED test (no color choice). Untested on the ES100. iOS only. */
 export const setLight = (on: boolean, colors = 2) => native().setLight(on, colors);
+/**
+ * Asks the clip for heart rate. "factory": the factory heart-rate test (repeats while on); "spo2": the
+ * blood-oxygen test; "measure": a one-off measurement. Readings arrive as onInput kind "heartRate"/"spo2".
+ * Whether the ES100 has the sensor is untested. iOS only.
+ */
+export const setHeartRate = (method: HeartRateMethod, on: boolean) => native().setHeartRate(method, on);
 /**
  * Turns one of the SDK's motion sources on or off; samples arrive as onMotion events. Polled
  * sources ask the clip again every `intervalMs`. iOS only.

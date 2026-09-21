@@ -255,6 +255,8 @@ function ensureStarted() {
       if (input.value === 1 || input.value === 2) pressUsed("voiceButton");
     } else if (input.kind === "offWrist") {
       noteInput("Wear state", `${input.value} (${input.detail ?? ""})`);
+    } else if (input.kind === "heartRate" || input.kind === "spo2") {
+      noteInput(input.kind === "spo2" ? "Blood oxygen" : "Heart rate", `${input.value} (${input.detail ?? ""})`);
     } else {
       noteInput("Voice audio", `${input.value} bytes (${input.detail ?? ""})`);
     }
@@ -544,7 +546,7 @@ export type ProbeTap = {
 let probe: ProbeTap | null = null;
 
 /** Hands the clip to the probe: twist motion and status polling pause, and every SDK line goes to `tap`. */
-export async function beginProbe(tap: ProbeTap) {
+export async function beginProbe(tap: ProbeTap, name = "motion probe") {
   if (state.phase !== "connected") throw new Error("Connect the clip first.");
   if (probe) throw new Error("The probe is already running.");
   probe = tap;
@@ -552,15 +554,17 @@ export async function beginProbe(tap: ProbeTap) {
   for (let waited = 0; motionStarting && waited < 10_000; waited += 100) await sleep(100);
   if (activeSource || state.motion.on) await stopMotion();
   await ute.setSdkLogging(true);
-  say("motion probe started");
+  probeName = name;
+  say(`${name} started`);
 }
+let probeName = "motion probe";
 
 /** Gives the clip back: twist motion starts again (trying the probe's winner first, if one was saved). */
 export async function endProbe() {
   if (!probe) return;
   probe = null;
   await ute.setSdkLogging(false).catch(() => {});
-  say("motion probe finished");
+  say(`${probeName} finished`);
   retryMotion();
 }
 

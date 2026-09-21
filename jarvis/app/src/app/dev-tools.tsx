@@ -19,6 +19,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "../lib/api";
 import { useSession } from "../lib/auth";
 import * as clip from "../lib/clip";
+import * as ute from "../../modules/ute-ble";
 import { devlog } from "../lib/devlog";
 import { createFallDetector } from "../lib/fallDetector";
 import {
@@ -460,6 +461,10 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
         <ServerBuzz />
       </Card>
 
+      <Card title="Clip — heart rate" available={state.phase === "unavailable" ? false : true}>
+        <HeartRateTest connected={connected} capabilities={state.capabilities} />
+      </Card>
+
       <Card title="Shake to listen — calibrate" available={state.phase === "unavailable" ? false : true}>
         <TwistCalibration connected={connected} problem={state.motionProblem} />
       </Card>
@@ -692,6 +697,121 @@ function BuzzTest({ connected, onChosen }: { connected: boolean; onChosen: (opti
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Each method gets this long to produce a reading; optical sensors take 10-20 s to settle. */
+const HEART_LISTEN_S = 30;
+/** Quiet time between commands, so the clip isn't sent them back to back. */
+const HEART_GAP_MS = 3000;
+const HEART_STEPS: { method: ute.HeartRateMethod; label: string }[] = [
+  { method: "factory", label: "factory heart-rate test" },
+  { method: "measure", label: "one-off measurement" },
+];
+
+type HeartVerdict = { method: ute.HeartRateMethod; answered: boolean; readings: number[]; worn: number | null };
+
+/**
+ * Does the ES100 have a heart-rate sensor? Its firmware claims the factory heart-rate and
+ * blood-oxygen tests (isSupportHeartRateTest), but it also claimed an LED test the clip ignored,
+ * so the claim proves nothing. This tries the factory test, then a one-off measurement, and logs
+ * every raw packet (device_logs, "heart probe") so a silent clip can be told from a zero reading.
+ */
+function HeartRateTest({ connected, capabilities }: { connected: boolean; capabilities: Record<string, boolean> | null }) {
+  const [running, setRunning] = useState(false);
+  const [step, setStep] = useState<string | null>(null);
+  const [latest, setLatest] = useState<string | null>(null);
+  const [verdicts, setVerdicts] = useState<HeartVerdict[]>([]);
+  const cancelled = useRef(false);
+
+  useEffect(() => () => void (cancelled.current = true), []);
+
+  const run = async () => {
+    cancelled.current = false;
+    setRunning(true);
+    setVerdicts([]);
+    setLatest(null);
+    const flags = Object.fromEntries(
+      Object.entries(capabilities ?? {}).filter(([name]) => /hrm|heart|health|blood|oxygen|spo2/i.test(name)),
+    );
+    devlog("ble", "heart probe: flags", JSON.stringify(flags));
+    let current: HeartVerdict | null = null;
+    const found: HeartVerdict[] = [];
+    try {
+      await clip.beginProbe(
+        {
+          onMotion: () => {},
+          onLog: (line) => {
+            if (/App (receive|send)/.test(line)) devlog("ble", "heart probe: packet", line);
+          },
+          onInput: (input) => {
+            if (input.kind !== "heartRate" && input.kind !== "spo2") return;
+            setLatest(`${input.value} (${input.detail ?? ""})`);
+            if (current && input.value > 0) current.readings.push(input.value);
+          },
+        },
+        "heart probe",
+      );
+      for (const { method, label } of HEART_STEPS) {
+        if (cancelled.current) break;
+        current = { method, answered: false, readings: [], worn: null };
+        setStep(`Starting the ${label}…`);
+        try {
+          const reply = await ute.setHeartRate(method, true);
+          current.answered = true;
+          current.worn = reply.worn ?? null;
+          devlog("ble", `heart probe: ${method} on answered`, JSON.stringify(reply));
+        } catch (err) {
+          devlog("err", `heart probe: ${method} on failed`, err instanceof Error ? err.message : String(err));
+        }
+        for (let s = HEART_LISTEN_S; s > 0 && !cancelled.current; s--) {
+          setStep(`${label}: listening ${s} s — keep the clip against your skin and stay still`);
+          await wait(1000);
+        }
+        if (method !== "measure") await ute.setHeartRate(method, false).catch(() => {});
+        devlog("ble", `heart probe: ${method} done`, JSON.stringify(current));
+        found.push(current);
+        setVerdicts([...found]);
+        await wait(HEART_GAP_MS);
+      }
+    } catch (err) {
+      Alert.alert("Heart rate test", err instanceof Error ? err.message : String(err));
+    } finally {
+      await clip.endProbe();
+      setStep(null);
+      setRunning(false);
+    }
+    const got = found.filter((v) => v.readings.length);
+    devlog(
+      got.length ? "ble" : "err",
+      got.length
+        ? `heart probe: readings from ${got.map((v) => `${v.method} (${v.readings.join(", ")})`).join("; ")}`
+        : "heart probe: no heart-rate reading from any method",
+    );
+  };
+
+  return (
+    <>
+      <View style={styles.row}>
+        <Pressable
+          style={styles.button}
+          disabled={!connected && !running}
+          onPress={running ? () => void (cancelled.current = true) : run}
+        >
+          <Text style={styles.buttonText}>{running ? "Stop heart rate test" : "Test heart rate (≈70 s)"}</Text>
+        </Pressable>
+      </View>
+      {step && <Text style={styles.hint}>{step}</Text>}
+      {latest && <Text style={styles.hint}>Last from the clip: {latest}</Text>}
+      {verdicts.map((v) => (
+        <Row
+          key={v.method}
+          label={v.method}
+          value={`${v.answered ? "answered" : "no answer"} · ${v.readings.length ? `${v.readings.at(-1)} bpm` : "no reading"}${v.worn != null ? ` · worn ${v.worn}` : ""}`}
+          good={v.readings.length > 0}
+        />
+      ))}
+    </>
+  );
+}
 
 // The ES100's gyroscope sends about one reading a second, so each phase is long enough for a few.
 /** Before resting: time to put the phone down (or in the other hand) and let the arm settle. */

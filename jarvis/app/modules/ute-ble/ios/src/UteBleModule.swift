@@ -226,6 +226,13 @@ public class UteBleModule: Module {
     }
     .runOnQueue(.main)
 
+    AsyncFunction("setHeartRate") { (method: String, on: Bool, promise: Promise) in
+      self.bridge.setHeartRate(method, on: on) { errorCode, result in
+        Self.settle(promise, errorCode, result, "heart rate \(method)")
+      }
+    }
+    .runOnQueue(.main)
+
     AsyncFunction("buzz") { (count: Int, option: Int, promise: Promise) in
       self.bridge.buzz(count: count, option: option) { errorCode, result in
         Self.settle(promise, errorCode, result, "buzz option \(option)")

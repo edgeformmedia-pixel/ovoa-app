@@ -688,6 +688,49 @@ static NSInteger UteSignedByte(NSInteger value) {
   }];
 }
 
+- (void)setHeartRate:(NSString *)method on:(BOOL)on completion:(UteBleResultCallback)completion {
+  UTEDeviceMgr *dev = [UTEDeviceMgr sharedInstance];
+  __weak UteBleBridge *weakSelf = self;
+  UteBleResultCallback reply = UteOnce(completion, 5);
+  BOOL spo2 = [method isEqualToString:@"spo2"];
+  if (spo2 || [method isEqualToString:@"factory"]) {
+    // The block fires for the "on" answer and then again with each reading until "off".
+    void (^reading)(NSInteger, NSInteger, NSInteger) = ^(NSInteger open, NSInteger state, NSInteger result) {
+      reply(0, @{@"open" : @(open), @"worn" : @(state), @"value" : @(result)});
+      if (!on) return;
+      [weakSelf reportInput:@{
+        @"kind" : spo2 ? @"spo2" : @"heartRate",
+        @"value" : @(result),
+        @"detail" : [NSString stringWithFormat:@"factory open %ld worn %ld", (long)open, (long)state],
+      }];
+    };
+    if (spo2) {
+      [dev factoryBloodOxygenTestCMD:on ? 1 : 0 Block:reading];
+    } else {
+      [dev factoryHeartRateTestCMD:on ? 1 : 0 Block:reading];
+    }
+    return;
+  }
+  if ([method isEqualToString:@"measure"]) {
+    if (!on) {
+      reply(0, @{});
+      return;
+    }
+    [dev onNotifyMeasurementBlock:^(NSInteger timestamp, UTEMeasurementType type, NSInteger value) {
+      [weakSelf reportInput:@{
+        @"kind" : type == UTEMeasurementTypeOXY ? @"spo2" : @"heartRate",
+        @"value" : @(value),
+        @"detail" : [NSString stringWithFormat:@"measure type %ld at %ld", (long)type, (long)timestamp],
+      }];
+    }];
+    [dev clickMeasurementType:UTEMeasurementTypeHRM Block:^(NSInteger errorCode) {
+      reply(UteNormalize(errorCode), @{});
+    }];
+    return;
+  }
+  reply(-600, nil);
+}
+
 - (void)buzz:(NSInteger)count option:(NSInteger)option completion:(UteBleResultCallback)completion {
   UTEDeviceMgr *dev = [UTEDeviceMgr sharedInstance];
   NSInteger pulses = MAX(1, count);
