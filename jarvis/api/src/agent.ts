@@ -795,6 +795,11 @@ export async function seedSystemJobs(env: Env, userId: string) {
     notify: "always",
     source: "system",
   });
+  // Seeded paused: the brief that waits until they're actually up (rhythm.ts)
+  // does this now. Kept, because it's theirs to turn back on.
+  await env.DB.prepare("UPDATE agent_jobs SET status = 'paused' WHERE user_id = ? AND source = 'system' AND title = 'Morning brief'")
+    .bind(userId)
+    .run();
 
   await createJob(env, userId, {
     title: "What you said you'd do",

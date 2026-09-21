@@ -312,6 +312,12 @@ check "an unknown favor can't be confirmed" "$(curl -s -o /dev/null -w '%{http_c
 check "the feed still builds" "$(curl -s "${A[@]}" "$API/feed" | j "d['cards'][0]['kind']")" "summary"
 
 echo
+echo "── daily rhythm ───────────────────────────────────"
+check "the old 7am brief is paused" "$(curl -s "${A[@]}" "$API/agent/jobs" | j "[x['status'] for x in d['jobs'] if x['title']=='Morning brief'][0]")" "paused"
+check "a brief can be built on demand" "$(curl -s -m 60 "${A[@]}" "$API/brief" | j "len(d['text']) > 0")" "True"
+check "the rhythm tick runs" "$(curl -s -m 60 -X POST "${D[@]}" "$API/debug/agent/tick?what=rhythm" | j "'briefs' in d")" "True"
+
+echo
 echo "── capture everything is dev-only ─────────────────"
 check "refused for an ordinary account"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":true}')" "403"
 check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['captureEverything']")" "False"

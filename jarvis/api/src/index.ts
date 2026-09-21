@@ -50,6 +50,7 @@ import { feed } from "./feed";
 import { isLocationTool, location, locationAssistant, locationNightly } from "./location";
 import { heart, heartAssistant, HR_RETAIN_DAYS, isHeartTool } from "./heart";
 import { isPeopleTool, people, peopleAssistant } from "./people";
+import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "./rhythm";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
 
@@ -340,6 +341,12 @@ authed.put("/device/state", async (c) => {
   return c.json({ capabilities: await capabilities(c.env.DB, c.var.userId) });
 });
 
+/** The morning brief, now, for the app's "Brief me" and for testing. */
+authed.get("/brief", async (c) => {
+  const settings = await getSettings(c.env.DB, c.var.userId);
+  return c.json(await buildMorningBrief(c.env, c.var.userId, validTimeZone(settings.time_zone)));
+});
+
 authed.get("/capabilities", async (c) => c.json({ capabilities: await capabilities(c.env.DB, c.var.userId) }));
 
 /** Sends a buzz the long way round, through the server and a push, so the whole path can be tested from the app. */
@@ -581,6 +588,7 @@ async function runTurn(
     ...placeTools.tools,
     ...heartTools.tools,
     ...peopleTools.tools,
+    briefTool,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -624,7 +632,9 @@ async function runTurn(
                                 ? transcriptTools.callTool
                                 : isPeopleTool(name)
                                   ? peopleTools.callTool
-                                  : google.callTool)(name, args);
+                                  : name === briefTool.name
+                                    ? async () => ({ brief: (await buildMorningBrief(env, userId, timeZone)).text })
+                                    : google.callTool)(name, args);
         // Only what actually happened: a parked action is logged when it's approved.
         const kind = kindForTool(name);
         if (kind && result !== DEFER && toolSucceeded(result)) {
@@ -1269,6 +1279,7 @@ app.post("/debug/agent/tick", async (c) => {
   const which = c.req.query("what");
   if (which === "maintenance") return c.json({ purgedBlocks: await maintenance(c.env), ms: Date.now() - started });
   if (which === "nightly") return c.json({ ...(await nightly(c.env)), ms: Date.now() - started });
+  if (which === "rhythm") return c.json({ ...(await rhythmTick(c.env)), ms: Date.now() - started });
   if (which === "transcripts") return c.json({ titled: await titleTranscripts(c.env), ms: Date.now() - started });
   if (which === "routines") {
     return c.json({
@@ -1336,6 +1347,7 @@ app.route("/", authed);
 async function nightly(env: Env) {
   const now = Date.now();
   const places = await locationNightly(env);
+  const expectations = await learnAllExpectations(env).catch((err) => (console.error("rhythm: learning failed", err), 0));
   await env.DB.batch([
     env.DB.prepare("DELETE FROM hr_samples WHERE ts < ?").bind(now - HR_RETAIN_DAYS * 86_400_000),
     env.DB.prepare("DELETE FROM raw_captures WHERE ts < ?").bind(now - TRANSCRIPT_RETAIN_DAYS * 86_400_000),
@@ -1344,7 +1356,7 @@ async function nightly(env: Env) {
     env.DB.prepare("DELETE FROM command_queue WHERE created_at < ?").bind(now - 30 * 86_400_000),
     env.DB.prepare("DELETE FROM daily_marks WHERE at < ?").bind(now - 30 * 86_400_000),
   ]);
-  return { places };
+  return { places, expectations };
 }
 
 /**
@@ -1367,6 +1379,8 @@ export default {
           const reminded = await fireDueNotes(env);
           const evening = await eveningTick(env);
           await titleTranscripts(env);
+          const rhythm = await rhythmTick(env);
+          if (rhythm.briefs || rhythm.windDowns || rhythm.commutes || rhythm.oddities) console.log("rhythm:", JSON.stringify(rhythm));
           if (fired || chased || reminded || evening.built || evening.told) {
             console.log(
               `routines: ${fired} fired, ${chased} followed up, ${reminded} notes, ${evening.built} lists, ${evening.told} bedtimes`,

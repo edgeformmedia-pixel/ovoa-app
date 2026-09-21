@@ -299,6 +299,11 @@ export async function placeEvent(env: Env, userId: string, placeId: string, kind
       reminded++;
     }
   }
+  // Leaving home: the checklist (rhythm.ts). Imported here on use, as rhythm.ts imports this file.
+  if (kind === "exit" && place.kind === "home") {
+    const { leavingHome } = await import("./rhythm");
+    await leavingHome(env, userId).catch((err) => console.error("rhythm: checklist failed", err));
+  }
   return { place: place.name, kind: place.kind, reminded };
 }
 
