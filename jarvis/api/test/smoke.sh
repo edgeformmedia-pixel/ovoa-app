@@ -232,6 +232,18 @@ check "finish later"           "$(curl -s -X POST "${A[@]}" "$API/onboarding/fin
 check "the other account is untouched" "$(curl -s -H "authorization: Bearer $OTHER" "$API/me" | j "d['user']['onboarded']")" "False"
 
 echo
+echo "── notes ──────────────────────────────────────────"
+check "a note is kept" "$(curl -s -X POST "${A[@]}" "$API/notes" -d '{"text":"Wi-Fi password is on the fridge","tags":["house"]}' -o /dev/null -w '%{http_code}')" "201"
+curl -s -o /dev/null -X POST "${A[@]}" "$API/notes" -d '{"text":"Buy a gift for Jake","tags":["todo"]}'
+check "found by a word"      "$(curl -s "${A[@]}" "$API/notes?q=wifi%20fridge" | j "len(d['notes'])")" "0"
+check "found by its words"   "$(curl -s "${A[@]}" "$API/notes?q=password%20fridge" | j "d['notes'][0]['text']")" "Wi-Fi password is on the fridge"
+check "listed by tag"        "$(curl -s "${A[@]}" "$API/notes?tag=todo" | j "d['notes'][0]['text']")" "Buy a gift for Jake"
+check "not someone else's"   "$(curl -s -H "authorization: Bearer $OTHER" "$API/notes?q=password" | j "len(d['notes'])")" "0"
+curl -s -o /dev/null -X POST "${A[@]}" "$API/notes" -d '{"text":"Call the vet","remindAt":"2020-01-01T09:00"}'
+check "a due reminder fires once" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=routines" | j "d['notes']")" "1"
+check "and not again"             "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?what=routines" | j "d['notes']")" "0"
+
+echo
 echo "── capture everything is dev-only ─────────────────"
 check "refused for an ordinary account"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":true}')" "403"
 check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['captureEverything']")" "False"

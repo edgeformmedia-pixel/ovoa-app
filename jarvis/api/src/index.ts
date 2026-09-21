@@ -44,6 +44,7 @@ import { capabilities, deviceStateSchema, saveDeviceState } from "./capabilities
 import { commands, enqueueCommand, FORBIDDEN_FOR_COMMANDS } from "./commands";
 import { escalate, fireDueRoutines, isRoutineTool, routines, routinesAssistant } from "./routines";
 import { getProfile, isProfileTool, onboarding, profileAssistant, profilePrompt } from "./onboarding";
+import { fireDueNotes, isNoteTool, notes, notesAssistant } from "./notes";
 import { isWebTool, webAssistant } from "./web";
 
 const HISTORY_TURNS = 30;
@@ -473,6 +474,7 @@ async function runTurn(
   const agent = agentAssistant(env, userId, timeZone, settings as AgentSettings, voice);
   const routine = routinesAssistant(env, userId, timeZone, { voice, fromAgent });
   const profileTools = profileAssistant(env, userId);
+  const noteTools = notesAssistant(env, userId, timeZone, { voice });
 
   const turns: Turn[] = history.results.reverse().map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -517,6 +519,7 @@ async function runTurn(
     ["agent", agent.prompt],
     ["routines", routine.prompt],
     ["profile", profilePrompt(profile)],
+    ["notes", noteTools.prompt],
     ["command", fromAgent
       ? [
           "This request was not typed by the user. Your own background agent queued it for the phone to run, because it needs something only the phone has (Reminders, the phone's calendar, Health).",
@@ -557,6 +560,7 @@ async function runTurn(
     ...agent.tools,
     ...routine.tools,
     ...profileTools.tools,
+    ...noteTools.tools,
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
     (t) => !fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name),
@@ -587,7 +591,9 @@ async function runTurn(
                     ? routine.callTool
                     : isProfileTool(name)
                       ? profileTools.callTool
-                      : google.callTool)(name, args);
+                      : isNoteTool(name)
+                        ? noteTools.callTool
+                        : google.callTool)(name, args);
         // Only what actually happened: a parked action is logged when it's approved.
         const kind = kindForTool(name);
         if (kind && result !== DEFER && toolSucceeded(result)) {
@@ -1225,7 +1231,12 @@ app.post("/debug/agent/tick", async (c) => {
   const which = c.req.query("what");
   if (which === "maintenance") return c.json({ purgedBlocks: await maintenance(c.env), ms: Date.now() - started });
   if (which === "routines") {
-    return c.json({ fired: await fireDueRoutines(c.env), followedUp: await escalate(c.env), ms: Date.now() - started });
+    return c.json({
+      fired: await fireDueRoutines(c.env),
+      followedUp: await escalate(c.env),
+      notes: await fireDueNotes(c.env),
+      ms: Date.now() - started,
+    });
   }
   const jobs = await runDueJobs(c.env);
   const pushed = await drainNotes(c.env);
@@ -1263,6 +1274,7 @@ authed.post("/debug/commands", async (c) => {
 authed.route("/", commands);
 authed.route("/", routines);
 authed.route("/", onboarding);
+authed.route("/", notes);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);
@@ -1286,7 +1298,8 @@ export default {
         (async () => {
           const fired = await fireDueRoutines(env);
           const chased = await escalate(env);
-          if (fired || chased) console.log(`routines: ${fired} fired, ${chased} followed up`);
+          const reminded = await fireDueNotes(env);
+          if (fired || chased || reminded) console.log(`routines: ${fired} fired, ${chased} followed up, ${reminded} notes`);
         })().catch((err) => console.error("routines tick failed", err)),
       );
     }
