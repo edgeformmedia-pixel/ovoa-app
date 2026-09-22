@@ -29,7 +29,25 @@
     // once a keyed engine is funded and actually faster.
     "VOICE_PRIMARY": "workers",
     // Cloudflare Workers AI: the last resort when the keyed models fail or aren't set.
+    // @cf/zai-org/glm-5.3-flash works here too (needs the Workers Paid plan), and
+    // the table can override this without a deploy (server_settings.workers_model).
     "FALLBACK_MODEL": "@cf/openai/gpt-oss-120b",
+    // GLM 5.3 Flash from the user's own provider (llm.ts). The key is a secret
+    // (GLM_API_KEY); without it the engine does not exist. The base URL is any
+    // OpenAI-compatible endpoint, Z.ai's by default, and the model id is the
+    // provider's own (OpenRouter calls it z-ai/glm-5.3-flash). Its price comes
+    // from pricing.ts unless GLM_PRICE_IN_PER_M / GLM_PRICE_OUT_PER_M /
+    // GLM_PRICE_CACHED_PER_M say otherwise (dollars per million tokens).
+    "GLM_BASE_URL": "https://api.z.ai/api/paas/v4",
+    "GLM_MODEL": "glm-5.3-flash",
+    // How much the thinking models think on a typed turn: "off", "low" or "on".
+    // Spoken turns never think; the wait before the first word is the whole
+    // experience there. Thinking is billed as output tokens, at the output price.
+    "GLM_THINKING": "low",
+    "DEEPSEEK_THINKING": "low",
+    // ENGINE_ORDER, e.g. "glm,deepseek,gemini,workers", would replace PRIMARY_ENGINE
+    // above. Left unset: the order is set at run time instead (Dev tools, or
+    // PUT /debug/engines), which needs no deploy.
     "PUBLIC_URL": "https://jarvis-api.edgeformmedia.workers.dev",
     // The only accounts allowed the dev-only capture-everything flag (always-listening
     // experiments, ruled out for the product on 2026-09-20). Comma-separated.
@@ -60,6 +78,7 @@
       "migrations_dir": "migrations"
     }
   ]
-  // Secrets (set with `npx wrangler secret put NAME`): GEMINI_API_KEY, DEEPSEEK_API_KEY, GOOGLE_CLIENT_SECRET, TOKEN_ENC_KEY, DEEPGRAM_API_KEY,
-  // and SHORTCUT_SIGNING_URL (+ optional SHORTCUT_SIGNING_TOKEN) to turn on shortcut writing (see README).
+  // Secrets (set with `npx wrangler secret put NAME`): GEMINI_API_KEY, DEEPSEEK_API_KEY, GLM_API_KEY, GOOGLE_CLIENT_SECRET,
+  // TOKEN_ENC_KEY, DEEPGRAM_API_KEY, DEBUG_KEY, and SHORTCUT_SIGNING_URL (+ optional SHORTCUT_SIGNING_TOKEN) to turn on
+  // shortcut writing (see README).
 }

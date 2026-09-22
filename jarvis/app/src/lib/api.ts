@@ -225,8 +225,33 @@ export type ContextWeek =
 
 export type Commitment = { said: string; text: string; theirWords: string | null; who: string | null; when: string | null };
 
-/** onboarded: false until the setup conversation is finished or put off. */
-export type User = { id: string; email: string; name: string; created_at: number; settings: Settings; onboarded?: boolean };
+/**
+ * onboarded: false until the setup conversation is finished or put off.
+ * devTools: a development account, so Dev tools shows the switches only those may use.
+ */
+export type User = { id: string; email: string; name: string; created_at: number; settings: Settings; onboarded?: boolean; devTools?: boolean };
+
+/** One reply engine as the server sees it right now (api/src/llm.ts engineStatus). */
+export type EngineInfo = {
+  engine: string;
+  name: string;
+  key: "set" | "missing" | "not needed";
+  model: string | null;
+  coolingForS: number;
+  lastError: string | null;
+};
+
+/** What the server's own settings say: the order typed turns try, who answers spoken turns, which Workers AI model, which voice. */
+export type ServerSettings = { engine_order?: string; voice_engine?: string; workers_model?: string; tts_engine?: string };
+
+export type EngineStatus = {
+  engines: EngineInfo[];
+  /** What a typed and a spoken turn would try right now, for this person. */
+  typedOrder: string[];
+  voiceOrder: string[];
+  everyone: ServerSettings;
+  mine?: ServerSettings;
+};
 
 export type OnboardingStep = { done: false; step: string; index: number; total: number; question: string };
 export type OnboardingNext = OnboardingStep | { done: true };
@@ -820,4 +845,11 @@ export const api = {
 
   /** This person's own usage today and this month, for Dev tools. */
   usage: (token: string) => request<UsageSummary>("/usage/me", token),
+
+  // ---------- Which engine answers (development accounts only) ----------
+
+  engines: (token: string) => request<EngineStatus>("/engines", token),
+  /** Sets (or with "" clears) any of the settings, for this person or for everyone. */
+  setEngines: (token: string, patch: ServerSettings, scope: "me" | "everyone") =>
+    request<EngineStatus>("/engines", token, { method: "PUT", body: JSON.stringify({ ...patch, scope }) }),
 };

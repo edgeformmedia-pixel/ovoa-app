@@ -461,6 +461,34 @@ check "and no email addresses"     "$(echo "$EVERYONE" | j "'@' not in json.dump
 check "the usage reader needs the key" "$(curl -s -o /dev/null -w '%{http_code}' "$API/debug/usage")" "404"
 
 echo
+echo "── switching engines ──────────────────────────────"
+# The switchboard: no key means an engine doesn't exist, Workers AI is always
+# the net, a bad name is refused with a reason, one person can differ from
+# everyone, and a plain account can't touch any of it.
+UID=$(curl -s "${A[@]}" "$API/me" | j "d['user']['id']")
+ENG=$(curl -s "${D[@]}" "$API/debug/engines")
+check "GLM has no key here"        "$(echo "$ENG" | j "[e['key'] for e in d['engines'] if e['engine']=='glm'][0]")" "missing"
+check "Workers AI needs none"      "$(echo "$ENG" | j "[e['key'] for e in d['engines'] if e['engine']=='workers'][0]")" "not needed"
+check "a typed turn ends on Workers AI" "$(echo "$ENG" | j "d['typedOrder'][-1]")" "workers"
+check "an unknown engine is refused with a reason" \
+  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":"claude,workers"}' | j "'claude' in d['error']")" "True"
+check "a bad model id is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"workers_model":"gpt-4"}')" "400"
+check "the order can be set for everyone" \
+  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":"glm,deepseek,workers"}' | j "d['everyone']['engine_order']")" "glm,deepseek,workers"
+check "without a key GLM is left out of it" "$(curl -s "${D[@]}" "$API/debug/engines" | j "'glm' not in d['typedOrder']")" "True"
+check "one person can be given their own" \
+  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"keyed\",\"userId\":\"$UID\"}" | j "d['mine']['voice_engine']")" "keyed"
+check "and everyone else is untouched" "$(curl -s "${D[@]}" "$API/debug/engines" | j "'voice_engine' not in d['everyone']")" "True"
+check "a plain account can't see the switchboard" "$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" "$API/engines")" "403"
+check "nor flip it" "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${A[@]}" "$API/engines" -d '{"voice_engine":"keyed"}')" "403"
+check "and isn't told it's a developer" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['devTools']")" "False"
+curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":""}'
+curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"\",\"userId\":\"$UID\"}"
+check "clearing it restores the default" "$(curl -s "${D[@]}" "$API/debug/engines" | j "'engine_order' not in d['everyone']")" "True"
+check "the switchboard needs the key" "$(curl -s -o /dev/null -w '%{http_code}' "$API/debug/engines")" "404"
+
+echo
 echo "───────────────────────────────────────────────────"
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ] || exit 1

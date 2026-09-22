@@ -77,8 +77,9 @@ import { MORE_TOOLS, toolbelt } from "./toolbelt";
 import { mightBeAboutThem } from "./remember";
 import { allowed, clientIp, limitByUser, tooMany } from "./limits";
 import { sliceFor } from "./sweep";
-import { setUsageSink, type LlmUsage } from "./llm";
+import { engineStatus, ENGINES, isEngine, setRuntimeEngines, setUsageSink, type EnginePrefs, type LlmUsage } from "./llm";
 import { glmPriceFrom, usd } from "./pricing";
+import { globalSettings, setServerSetting, settingsFor, type ServerSettings, type SettingKey } from "./settings";
 import { dayOf, llmRow, pruneUsage, recordUsage, searchRow, sttStreamRow, ttsRow, turnRow, usageByPerson, usageForPerson } from "./usage";
 
 // Every model call that has no usage callback of its own lands here, priced
@@ -86,6 +87,20 @@ import { dayOf, llmRow, pruneUsage, recordUsage, searchRow, sttStreamRow, ttsRow
 // isolate. The write is not awaited: this runs inside whatever request or
 // tick made the call, and a count must never hold up an answer.
 setUsageSink((env, u: LlmUsage) => void recordUsage(env as Env, [llmRow(u.userId, u, glmPriceFrom(env as Env))]));
+
+/** The runtime settings (server_settings) as the engine choices llm.ts understands. */
+function prefsFrom(s: ServerSettings): EnginePrefs {
+  return { order: s.engine_order, voice: s.voice_engine, workersModel: s.workers_model };
+}
+
+/**
+ * Hands the runtime settings to llm.ts for this isolate, so an engine switched
+ * in the table takes effect without a deploy. Cached for a minute (settings.ts),
+ * so this costs nothing on the request it runs in.
+ */
+async function applyRuntime(env: Env) {
+  setRuntimeEngines(prefsFrom(await globalSettings(env)));
+}
 
 /**
  * Tools left out of spoken turns: reviewing and editing things people do while
@@ -276,7 +291,8 @@ function logAuth(route: "signup" | "login", outcome: string, email: string | nul
   });
 }
 
-async function publicUser(db: D1Database, userId: string) {
+async function publicUser(env: Env, userId: string) {
+  const db = env.DB;
   const user = await db
     .prepare("SELECT id, email, name, created_at FROM users WHERE id = ?")
     .bind(userId)
@@ -284,7 +300,9 @@ async function publicUser(db: D1Database, userId: string) {
   if (!user) return null;
   const [settings, profile] = await Promise.all([getSettings(db, userId), getProfile(db, userId)]);
   // onboarded: the app shows the setup conversation until this is true.
-  return { ...user, settings: formatSettings(settings), onboarded: !!profile.onboardedAt };
+  // devTools: a development account (DEV_EMAILS), so Dev tools shows the
+  // switches only those accounts may use. The server checks again on every use.
+  return { ...user, settings: formatSettings(settings), onboarded: !!profile.onboardedAt, devTools: isDevEmail(env, user.email) };
 }
 
 const SETTINGS_QUERY = `SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone,
@@ -371,7 +389,7 @@ app.post("/auth/signup", async (c) => {
 
   const token = await createSession(c.env.DB, id);
   logAuth("signup", "created", email, { user: id });
-  return c.json({ token, user: await publicUser(c.env.DB, id) }, 201);
+  return c.json({ token, user: await publicUser(c.env, id) }, 201);
 });
 
 /**
@@ -416,7 +434,7 @@ app.post("/auth/login", async (c) => {
 
   const token = await createSession(c.env.DB, user.id);
   logAuth("login", "ok", email, { user: user.id });
-  return c.json({ token, user: await publicUser(c.env.DB, user.id) });
+  return c.json({ token, user: await publicUser(c.env, user.id) });
 });
 
 // Everything below requires a bearer token.
@@ -438,6 +456,8 @@ authed.use("*", async (c, next) => {
   await touchSession(c.env.DB, session).catch((err) => console.error("auth: couldn't extend the session", err));
   c.set("userId", session.userId);
   c.set("token", token);
+  // Which engine answers may have been switched in the table since this isolate last looked.
+  await applyRuntime(c.env);
   await next();
 });
 
@@ -452,7 +472,7 @@ authed.post("/auth/logout", async (c) => {
 // ---------- Account & settings ----------
 
 authed.get("/me", async (c) => {
-  const user = await publicUser(c.env.DB, c.var.userId);
+  const user = await publicUser(c.env, c.var.userId);
   // No user behind a live session: the account was deleted. A 200 with a null
   // user leaves the app signed out but still holding the token, on every launch,
   // for ever — it only clears the token on a 401. So give it one.
@@ -555,21 +575,24 @@ authed.patch("/me", async (c) => {
   // Turning background work on for the first time gives them the two jobs
   // everyone starts with, rather than an agent that is on and does nothing.
   if (agentEnabled) await seedSystemJobs(c.env, id);
-  return c.json({ user: await publicUser(db, id) });
+  return c.json({ user: await publicUser(c.env, id) });
 });
 
 /**
  * The accounts allowed the always-listening experiments. Named in wrangler.jsonc
  * rather than in the database, so no request can grant it.
  */
-async function isDevAccount(env: Env, userId: string) {
+function isDevEmail(env: Env, email: string) {
   const allowed = (env.DEV_EMAILS ?? "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  if (!allowed.length) return false;
+  return allowed.length > 0 && allowed.includes(email.toLowerCase());
+}
+
+async function isDevAccount(env: Env, userId: string) {
   const user = await env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(userId).first<{ email: string }>();
-  return !!user && allowed.includes(user.email.toLowerCase());
+  return !!user && isDevEmail(env, user.email);
 }
 
 // ---------- The phone, and what it has ----------
@@ -735,7 +758,7 @@ async function runTurn(
   // googleAssistant needs auto-approve from the settings, but only once a tool
   // runs, so its own read goes out at the same time.
   const settingsRead = getSettings(db, userId);
-  const [settings, user, history, memories, activity, google, profile] = await Promise.all([
+  const [settings, user, history, memories, activity, google, profile, mine] = await Promise.all([
     settingsRead,
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
     db
@@ -747,6 +770,8 @@ async function runTurn(
     // The agent's commands never skip the approval card, whatever the setting says.
     googleAssistant(env, userId, timeZone, settingsRead.then((s) => !!s.auto_approve && !fromAgent)),
     getProfile(db, userId),
+    // This person's own engine choices, if a developer set any (settings.ts). Cached, so free.
+    settingsFor(env, userId),
   ]);
   const autoApprove = !!settings.auto_approve && !fromAgent;
   const contextMs = Date.now() - started;
@@ -922,6 +947,7 @@ async function runTurn(
     onAttempt: (a) => attempts.push(a),
     usage: { userId, purpose: voice ? "voice" : "chat" },
     onUsage: (u) => usages.push(u),
+    prefer: prefsFrom(mine),
     callTool: async (name, args) => {
       const call = Date.now();
       if (fromAgent && FORBIDDEN_FOR_COMMANDS.has(name)) return { error: "Not available to the agent's commands." };
@@ -1859,6 +1885,105 @@ authed.post("/usage/stream", async (c) => {
 /** The signed-in person's own numbers: today and the month so far. Shown in Dev tools. */
 authed.get("/usage/me", async (c) => c.json(await usageForPerson(c.env.DB, c.var.userId)));
 
+// ---------- Which engine answers ----------
+//
+// The switchboard: which reply engine typed and spoken turns try first, which
+// Workers AI model stands behind them, and (Phase 4) which voice speaks. Two
+// doors to the same room: /debug/engines with the debug key, for scripts, and
+// /engines for a signed-in development account, for the Dev tools picker.
+// Changes go to server_settings (settings.ts) and take effect within a minute
+// on every isolate, with no deploy.
+
+/** The voice engines the server knows (voice.ts, Phase 4). Checked here so a typo can't silence everyone. */
+const TTS_ENGINES = ["deepgram-aura-2", "workers-aura-2", "workers-aura-1", "workers-melotts", "device"];
+
+/**
+ * Whether a value may go in the table under this key. Returns a sentence saying
+ * what is wrong, or null. Names are checked against what llm.ts knows: an
+ * unknown engine in the order would be ignored at run time, but the person
+ * setting it deserves to hear that now rather than wonder later why nothing changed.
+ */
+function settingProblem(key: SettingKey, value: string): string | null {
+  const names = `The engines are ${ENGINES.join(", ")}.`;
+  switch (key) {
+    case "engine_order": {
+      const bad = value.split(",").map((s) => s.trim().toLowerCase()).filter((s) => s && !isEngine(s));
+      return bad.length ? `"${bad[0]}" isn't an engine. ${names}` : null;
+    }
+    case "voice_engine": {
+      const v = value.trim().toLowerCase();
+      return v === "workers" || v === "keyed" || isEngine(v) ? null : `"${value}" isn't a choice for spoken turns. Use workers, keyed, or an engine name. ${names}`;
+    }
+    case "workers_model":
+      return /^@cf\/[\w.-]+\/[\w.-]+$/.test(value.trim()) ? null : `"${value}" doesn't look like a Workers AI model id (they start with @cf/).`;
+    case "tts_engine":
+      return TTS_ENGINES.includes(value.trim()) ? null : `"${value}" isn't a voice engine. The choices are ${TTS_ENGINES.join(", ")}.`;
+  }
+}
+
+const settingsPatchSchema = z.object({
+  engine_order: z.string().max(200).optional(),
+  voice_engine: z.string().max(40).optional(),
+  workers_model: z.string().max(80).optional(),
+  tts_engine: z.string().max(40).optional(),
+});
+
+/** Everything the switchboard shows: each engine's state, the orders, and what is set for everyone and for `userId`. */
+async function readEngines(env: Env, userId: string | null) {
+  const [everyone, mine] = await Promise.all([globalSettings(env), userId ? settingsFor(env, userId) : Promise.resolve({})]);
+  return { ...engineStatus(env, prefsFrom(mine)), everyone, mine: userId ? mine : undefined };
+}
+
+/**
+ * Applies a patch: each key given is set, or cleared when empty. For one person
+ * when `userId` is given, otherwise for everyone. Answers 400 with the reason
+ * when a value is not something the server understands.
+ */
+async function writeEngines(c: Context<{ Bindings: Env; Variables: Vars }>, body: unknown, userId: string | null) {
+  const parsed = settingsPatchSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: "Send engine_order, voice_engine, workers_model or tts_engine as strings." }, 400);
+  const entries = Object.entries(parsed.data).filter(([, v]) => v !== undefined) as [SettingKey, string][];
+  if (!entries.length) return c.json({ error: "Nothing to change." }, 400);
+  for (const [key, value] of entries) {
+    const problem = value.trim() ? settingProblem(key, value) : null;
+    if (problem) return c.json({ error: problem }, 400);
+  }
+  for (const [key, value] of entries) await setServerSetting(c.env, key, value.trim().toLowerCase() === "" ? null : value.trim(), userId);
+  await applyRuntime(c.env);
+  say("engines", { by: userId ? "person" : "everyone", changed: entries.map(([k, v]) => `${k}=${v || "(cleared)"}`).join(",") });
+  return c.json(await readEngines(c.env, userId));
+}
+
+/** For a development account: the switchboard, and this person's own choices layered on. */
+authed.get("/engines", async (c) => {
+  if (!(await isDevAccount(c.env, c.var.userId))) return c.json({ error: "Engine settings are for development accounts." }, 403);
+  return c.json(await readEngines(c.env, c.var.userId));
+});
+
+/**
+ * For a development account: change the switchboard. `scope` "me" (the default)
+ * changes it for this person only; "everyone" changes it for every account.
+ */
+authed.put("/engines", async (c) => {
+  if (!(await isDevAccount(c.env, c.var.userId))) return c.json({ error: "Engine settings are for development accounts." }, 403);
+  const body = (await c.req.json().catch(() => null)) as { scope?: unknown } | null;
+  const forEveryone = body?.scope === "everyone";
+  return writeEngines(c, body, forEveryone ? null : c.var.userId);
+});
+
+/** With the debug key: the same, from a script. `?userId=` or a `userId` in the body scopes it to one person. */
+app.get("/debug/engines", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  return c.json(await readEngines(c.env, c.req.query("userId")?.slice(0, 64) || null));
+});
+
+app.put("/debug/engines", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const body = (await c.req.json().catch(() => null)) as { userId?: unknown } | null;
+  const userId = typeof body?.userId === "string" ? body.userId.slice(0, 64) : null;
+  return writeEngines(c, body, userId);
+});
+
 /**
  * Everyone's usage, per person per day, with the estimated cost.
  *
@@ -1985,6 +2110,8 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
   const started = Date.now();
   const decided: Record<string, number> = {};
   let errors = 0;
+  // The agent's own model calls follow the switchboard too.
+  await applyRuntime(env);
 
   const part = async (name: string, work: Promise<unknown>) => {
     const at = Date.now();

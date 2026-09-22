@@ -16,7 +16,7 @@ import type { EventSubscription } from "expo-modules-core";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { api, type UsageSummary } from "../lib/api";
+import { api, type EngineStatus, type ServerSettings, type UsageSummary } from "../lib/api";
 import { useSession } from "../lib/auth";
 import * as clip from "../lib/clip";
 import * as ute from "../../modules/ute-ble";
@@ -216,6 +216,8 @@ export default function DevTools() {
         <LogUploads />
 
         <UsageToday />
+
+        <EnginePicker />
 
         <ClipInputs state={clipState} />
 
@@ -428,6 +430,137 @@ function UsageToday() {
         <Text style={styles.hint}>
           List prices, counted on the server. The target for a typical day is $0.17; a membership pays about $0.31 a day.
         </Text>
+      </Card>
+    </>
+  );
+}
+
+/**
+ * Which engine answers. Development accounts only: the server refuses everyone
+ * else, and the block is hidden for them. "Just me" tries an engine on this
+ * account alone; "Everyone" flips it for every phone, within a minute, with no
+ * deploy. An engine with no key on the server is shown but can't be picked.
+ */
+function EnginePicker() {
+  const { token, user } = useSession();
+  const [status, setStatus] = useState<EngineStatus | null>(null);
+  const [everyone, setEveryone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      setStatus(await api.engines(token!));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [token]);
+  useEffect(() => {
+    if (user?.devTools && token) void load();
+  }, [user?.devTools, token, load]);
+  if (!user?.devTools) return null;
+
+  const set = async (patch: ServerSettings) => {
+    setBusy(true);
+    try {
+      setStatus(await api.setEngines(token!, patch, everyone ? "everyone" : "me"));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const current = everyone ? status?.everyone : status?.mine;
+  const usable = (status?.engines ?? []).filter((e) => e.key !== "missing");
+  // The chosen engine first, the rest in their usual order, Workers AI last as the net.
+  const orderStarting = (engine: string) => [engine, ...usable.map((e) => e.engine).filter((e) => e !== engine && e !== "workers"), "workers"].join(",");
+  const firstOf = (order: string | undefined) => order?.split(",")[0]?.trim() ?? "";
+
+  return (
+    <>
+      <Text style={styles.section}>Which engine answers</Text>
+      <Card title="Reply engines" available={true}>
+        {!status && !error && <Text style={styles.dim}>Loading…</Text>}
+        {status?.engines.map((e) => (
+          <Row
+            key={e.engine}
+            label={e.name}
+            value={
+              e.key === "missing"
+                ? "no key on the server"
+                : `${e.model ?? ""}${e.coolingForS ? ` · resting ${e.coolingForS} s` : ""}${e.lastError && !e.coolingForS ? " · last try failed" : ""}`
+            }
+            good={e.key !== "missing" && !e.coolingForS}
+          />
+        ))}
+        {status && (
+          <>
+            <Row label="typed turns try" value={status.typedOrder.join(" → ")} mono />
+            <Row label="spoken turns try" value={status.voiceOrder.join(" → ")} mono />
+          </>
+        )}
+        <View style={styles.toggleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.itemText}>{everyone ? "Changing it for everyone" : "Changing it just for me"}</Text>
+            <Text style={styles.dim}>{everyone ? "Every phone follows this within a minute." : "Only this account. Everyone else keeps the usual order."}</Text>
+          </View>
+          <Switch value={everyone} onValueChange={setEveryone} trackColor={{ true: colors.late, false: colors.line }} />
+        </View>
+        <Text style={styles.hint}>Typed replies: which engine to try first.</Text>
+        <View style={styles.row}>
+          {usable
+            .filter((e) => e.engine !== "workers")
+            .map((e) => (
+              <Pressable
+                key={e.engine}
+                style={[styles.button, firstOf(current?.engine_order) === e.engine && { borderColor: colors.blue, borderWidth: 1 }]}
+                disabled={busy}
+                onPress={() => set({ engine_order: orderStarting(e.engine) })}
+              >
+                <Text style={styles.buttonText}>{e.name}</Text>
+              </Pressable>
+            ))}
+          <Pressable style={[styles.button, !current?.engine_order && { borderColor: colors.blue, borderWidth: 1 }]} disabled={busy} onPress={() => set({ engine_order: "" })}>
+            <Text style={styles.buttonText}>Usual order</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.hint}>Spoken replies: who answers first.</Text>
+        <View style={styles.row}>
+          {[{ engine: "workers", name: "Workers AI" }, { engine: "keyed", name: "Same as typed" }, ...usable.filter((e) => e.engine !== "workers")].map((e) => (
+            <Pressable
+              key={e.engine}
+              style={[styles.button, (current?.voice_engine ?? "") === e.engine && { borderColor: colors.blue, borderWidth: 1 }]}
+              disabled={busy}
+              onPress={() => set({ voice_engine: e.engine })}
+            >
+              <Text style={styles.buttonText}>{e.name}</Text>
+            </Pressable>
+          ))}
+          <Pressable style={[styles.button, !current?.voice_engine && { borderColor: colors.blue, borderWidth: 1 }]} disabled={busy} onPress={() => set({ voice_engine: "" })}>
+            <Text style={styles.buttonText}>Usual</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.hint}>Workers AI model: the last resort, and the first for spoken replies unless changed above.</Text>
+        <View style={styles.row}>
+          {["@cf/openai/gpt-oss-120b", "@cf/zai-org/glm-5.3-flash"].map((model) => (
+            <Pressable
+              key={model}
+              style={[styles.button, (current?.workers_model ?? "") === model && { borderColor: colors.blue, borderWidth: 1 }]}
+              disabled={busy}
+              onPress={() => set({ workers_model: model })}
+            >
+              <Text style={styles.buttonText}>{model.replace(/^@cf\/[^/]+\//, "")}</Text>
+            </Pressable>
+          ))}
+          <Pressable style={[styles.button, !current?.workers_model && { borderColor: colors.blue, borderWidth: 1 }]} disabled={busy} onPress={() => set({ workers_model: "" })}>
+            <Text style={styles.buttonText}>Usual</Text>
+          </Pressable>
+        </View>
+        {error && <Text style={styles.error}>{error}</Text>}
+        <Pressable style={styles.button} onPress={load}>
+          <Text style={styles.buttonText}>Refresh</Text>
+        </Pressable>
       </Card>
     </>
   );
