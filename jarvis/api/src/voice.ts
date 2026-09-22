@@ -1,9 +1,18 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env, Vars } from "./types";
+import { recordUsage, sttClipRow, ttsRow } from "./usage";
 
 // Speech to text and text to speech through Deepgram. The key stays on the
 // server; the app only ever talks to these routes.
+//
+// Every clip transcribed and every sentence voiced is written to the usage
+// table (usage.ts) against the person it was for: seconds of audio for
+// transcription, characters for speech, which is how each is billed.
+
+/** The names the usage table files these under. Phase 4 makes the voice one switchable. */
+const STT_CLIP_ENGINE = "deepgram-nova-3-clip";
+export const TTS_ENGINE = "deepgram-aura-2";
 
 const DEEPGRAM = "https://api.deepgram.com/v1";
 const STT_MODEL = "nova-3";
@@ -48,9 +57,13 @@ voice.post("/voice/transcribe", async (c) => {
     return c.json({ error: "Couldn't transcribe that" }, 502);
   }
   const body = await res.json<{
+    metadata?: { duration?: number };
     results?: { channels?: { alternatives?: { transcript?: string }[] }[] };
   }>();
   const text = body.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() ?? "";
+  // Deepgram says how long the audio was; that is what it bills, not the bytes.
+  const seconds = Number(body.metadata?.duration) || 0;
+  c.executionCtx.waitUntil(recordUsage(c.env, [sttClipRow(c.var.userId, STT_CLIP_ENGINE, seconds)]));
   return c.json({ text });
 });
 
@@ -105,6 +118,8 @@ voice.post("/voice/speak", async (c) => {
   // Long replies go out in pieces; MP3 frames can simply be joined.
   const chunks = splitText(text, MAX_SPEAK_CHARS);
   const audioHeaders = { "content-type": "audio/mpeg", "cache-control": "no-store" };
+  // Counted whether or not Deepgram answers: a failed request is still a request.
+  c.executionCtx.waitUntil(recordUsage(c.env, [ttsRow(c.var.userId, TTS_ENGINE, model, text.length)]));
 
   // A sentence is almost always one chunk: hand Deepgram's body straight to the
   // phone rather than holding the whole clip here first.
@@ -171,6 +186,8 @@ function base64(bytes: Uint8Array) {
 export function speechStream(apiKey: string, voice: VoiceId, write: (line: AudioLine) => Promise<void>) {
   let pending = "";
   let pieces = 0;
+  /** Characters handed to the voice so far: what this reply's speech is billed on. */
+  let chars = 0;
   let stopped = false;
   let running = 0;
   const waiting: (() => void)[] = [];
@@ -204,6 +221,7 @@ export function speechStream(apiKey: string, voice: VoiceId, write: (line: Audio
     const text = speakable(raw).slice(0, MAX_SPEAK_CHARS);
     if (!/[\p{L}\p{N}]/u.test(text)) return;
     const seq = pieces++;
+    chars += text.length;
     // Started now; written out after every piece before it.
     const audio = voiceOne(text).then(
       (bytes) => ({ bytes, error: null }),
@@ -249,6 +267,8 @@ export function speechStream(apiKey: string, voice: VoiceId, write: (line: Audio
       stopped = true;
       pending = "";
     },
+    /** How many characters were voiced, and how many pieces, for the usage table. */
+    spent: () => ({ chars, pieces, engine: TTS_ENGINE, voice }),
   };
 }
 

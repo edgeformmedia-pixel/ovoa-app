@@ -1,6 +1,6 @@
 import { AudioModule, type AudioStream } from "expo-audio";
 import { useEffect, useState } from "react";
-import { request } from "./api";
+import { API_URL, request } from "./api";
 import { devlog, devlogRepeat, devlogSettled } from "./devlog";
 import { audioWhy, onScreen } from "./foreground";
 
@@ -43,6 +43,59 @@ const MAX_PENDING_BUFFERS = 100; // ~10 s of audio kept while (re)connecting
 const OFF_SCREEN_GIVE_UP_MS = 60_000;
 /** No PCM buffer for this long means the engine isn't really running, whatever isStreaming says. */
 const MIC_ALIVE_MS = 2000;
+
+// ---------- Counting what was sent ----------
+//
+// Deepgram bills the audio it receives, by the minute, and it was 70% of what
+// OVOA cost to run on its heaviest day (380 minutes, of which the assistant was
+// being addressed in 62). Nothing on the server sees that audio, so only this
+// file can say how much went. It counts the bytes actually written to the
+// socket (16-bit samples, so two bytes per sample per second of the sample
+// rate) and reports the seconds to the server about once a minute, and when a
+// connection closes. The count survives a failed report and is capped, so a
+// phone that is offline all day cannot claim a week when it comes back.
+
+/** How often the seconds go to the server. */
+const REPORT_EVERY_MS = 60_000;
+/** The most a single report may claim, matching the server's own clamp (api/src/index.ts). */
+const MAX_UNREPORTED_S = 3600;
+
+let unreported = { bytes: 0, connections: 0 };
+let lastReportAt = 0;
+let reporting = false;
+
+const bytesPerSecond = (sampleRate: number) => sampleRate * 2;
+
+/**
+ * Sends what has been counted since the last report. A plain fetch rather than
+ * request(): request() writes a log line per call, and one a minute all day is
+ * a thousand rows nobody will read.
+ */
+async function reportStreamUsage(apiToken: string, sampleRate: number, force = false) {
+  const now = Date.now();
+  if (reporting || (!force && now - lastReportAt < REPORT_EVERY_MS)) return;
+  const perSecond = bytesPerSecond(sampleRate);
+  if (unreported.bytes < perSecond && !unreported.connections) return;
+  const take = unreported;
+  unreported = { bytes: 0, connections: 0 };
+  reporting = true;
+  lastReportAt = now;
+  const seconds = Math.min(MAX_UNREPORTED_S, Math.round((take.bytes / perSecond) * 10) / 10);
+  try {
+    const res = await fetch(`${API_URL}/usage/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiToken}` },
+      body: JSON.stringify({ seconds, connections: Math.min(100, take.connections) }),
+    });
+    if (!res.ok && res.status !== 400) throw new Error(`HTTP ${res.status}`);
+  } catch {
+    // Offline, or the server was busy: keep the count for the next report, capped.
+    unreported.bytes = Math.min(unreported.bytes + take.bytes, MAX_UNREPORTED_S * perSecond);
+    unreported.connections = Math.min(unreported.connections + take.connections, 100);
+  } finally {
+    reporting = false;
+  }
+}
 
 /** Stops and starts the stream, so a mic engine iOS quietly halted comes back. */
 async function restart(stream: AudioStream) {
@@ -165,11 +218,20 @@ export async function openEar(
   let restartFailures = 0;
   /** When the mic went quiet with the app off screen. 0 while it's on screen. */
   let offScreenAt = 0;
+  /** Audio written to the socket by this ear, for the log line when it closes. */
+  let sentBytes = 0;
+  const sampleRate = stream.sampleRate || SAMPLE_RATE;
+  /** Counts audio the moment it goes out: the only honest measure of what Deepgram will bill. */
+  const send = (socket: WebSocket, data: ArrayBuffer) => {
+    socket.send(data);
+    sentBytes += data.byteLength;
+    unreported.bytes += data.byteLength;
+  };
 
   const sub = stream.addListener("audioStreamBuffer", (buffer) => {
     events.onLevel(levelOf(buffer.data));
     lastAudioAt = Date.now();
-    if (ws?.readyState === WebSocket.OPEN) ws.send(buffer.data);
+    if (ws?.readyState === WebSocket.OPEN) send(ws, buffer.data);
     else {
       pending.push(buffer.data);
       if (pending.length > MAX_PENDING_BUFFERS) pending.shift();
@@ -210,7 +272,8 @@ export async function openEar(
           if (ws === socket) failures = 0;
         }, 10_000);
         devlog("res", `live transcription connected · ${Date.now() - started} ms`, `${stream.sampleRate} Hz`);
-        pending.splice(0).forEach((b) => socket.send(b));
+        unreported.connections++;
+        pending.splice(0).forEach((b) => send(socket, b));
         resolve();
       };
       socket.onmessage = (event) => {
@@ -229,6 +292,12 @@ export async function openEar(
           } else events.onInterim(text);
         }
         if (msg.type === "UtteranceEnd") events.onQuiet();
+        // Deepgram's own count of the audio it processed, sent once as the
+        // connection closes. It is the number on the bill; the byte count above
+        // is our estimate of it, and the two should agree.
+        if (msg.type === "Metadata" && typeof msg.duration === "number" && msg.duration > 0) {
+          devlog("voice", `live transcription billed ${Math.round(msg.duration)} s of audio`, `we counted ${Math.round(sentBytes / bytesPerSecond(sampleRate))} s`);
+        }
       };
       socket.onerror = () => {
         if (!open) reject(new Error("Couldn't connect to live transcription"));
@@ -346,6 +415,8 @@ export async function openEar(
       ws.send(JSON.stringify({ type: "KeepAlive" }));
       lastKeepAlive = now;
     }
+    // About once a minute, the seconds sent so far go to the usage table.
+    void reportStreamUsage(apiToken, sampleRate);
   }, 250);
 
   function teardown() {
@@ -360,6 +431,11 @@ export async function openEar(
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "CloseStream" }));
       socket.close();
     }
+    // The number the cost pass is judged by: seconds of audio this ear sent.
+    // No words in it, ever.
+    const seconds = Math.round(sentBytes / bytesPerSecond(sampleRate));
+    if (sentBytes) devlog("voice", `live transcription closed · ${seconds} s of audio sent`);
+    void reportStreamUsage(apiToken, sampleRate, true);
   }
 
   try {

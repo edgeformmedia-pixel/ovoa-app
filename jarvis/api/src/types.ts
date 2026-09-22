@@ -20,6 +20,19 @@ export type Env = {
   CHAT_MODEL: string;
   /** Secret for the /debug routes; unset turns them off. */
   DEBUG_KEY?: string;
+  /**
+   * GLM 5.3 Flash from the user's own provider (llm.ts, Phase 2 of the cost
+   * pass). Without GLM_API_KEY the engine does not exist. The prices are dollars
+   * per million tokens and override the defaults in pricing.ts, because the
+   * provider, and so the price, is the user's choice.
+   */
+  GLM_API_KEY?: string;
+  GLM_BASE_URL?: string;
+  GLM_MODEL?: string;
+  GLM_THINKING?: string;
+  GLM_PRICE_IN_PER_M?: string;
+  GLM_PRICE_OUT_PER_M?: string;
+  GLM_PRICE_CACHED_PER_M?: string;
   MEMORY_MODEL: string;
   FALLBACK_MODEL: string;
   GOOGLE_CLIENT_ID: string;

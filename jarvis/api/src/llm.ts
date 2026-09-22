@@ -40,9 +40,124 @@ type Options = {
   fast?: boolean;
   /** Called once per engine tried or skipped. See EngineAttempt. */
   onAttempt?: OnAttempt;
+  /** Whose call this is and what for, so the tokens land against the right person. See LlmUsage. */
+  usage?: UsageTag;
+  /** Receives every model call's token counts. When set, the default sink is not called. */
+  onUsage?: OnUsage;
 };
 
 export type ToolSpec = { name: string; description: string; parameters: Record<string, unknown> };
+
+// ---------- Usage ----------
+//
+// Every engine says, in its own words, how many tokens a call read and wrote.
+// Those numbers are the only honest measure of what a reply cost, and until
+// now they were thrown away with the response. Each call reports them through
+// a callback, the same way onAttempt reports engine attempts; this file stays
+// free of the database, and the caller (usage.ts) prices and stores them.
+//
+// A call site that has no callback of its own is still counted: index.ts
+// registers one sink for the whole isolate, and a call is tagged with the
+// person and purpose it was for so the sink knows where to file it.
+
+/** Who a call is for, and why. Filed against user_id in usage_daily. */
+export type UsageTag = { userId: string | null; purpose: string };
+
+/** One model call's token counts, as the engine reported them. */
+export type LlmUsage = {
+  engine: Engine;
+  model: string;
+  /** Every prompt token, including the cached ones. */
+  inputTokens: number;
+  /** How many of inputTokens the provider had already and charged less for. */
+  cachedTokens: number;
+  /** Everything written, thinking included: that is how every provider bills it. */
+  outputTokens: number;
+  /** The part of outputTokens that was thinking, where the engine says. */
+  reasoningTokens: number;
+  ms: number;
+  userId: string | null;
+  purpose: string;
+};
+
+export type OnUsage = (usage: LlmUsage) => void;
+
+type UsageSink = (env: LlmEnv, usage: LlmUsage) => void;
+let usageSink: UsageSink | null = null;
+
+/** Where calls without their own onUsage are reported. Set once by index.ts. */
+export function setUsageSink(sink: UsageSink | null) {
+  usageSink = sink;
+}
+
+/** The counts a provider sent, in whichever field names it uses. Zero when it sent none. */
+export type TokenUsage = { input: number; cached: number; output: number; reasoning: number };
+
+const NO_USAGE: TokenUsage = { input: 0, cached: 0, output: 0, reasoning: 0 };
+
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/**
+ * OpenAI-style usage. DeepSeek splits the prompt into cache hits and misses;
+ * OpenAI, OpenRouter and Z.ai put the hits under prompt_tokens_details;
+ * Workers AI sends the plain three. All of them count thinking in
+ * completion_tokens, and some say how much of it was thinking.
+ */
+export function readOpenAiUsage(usage: any): TokenUsage | null {
+  if (!usage || typeof usage !== "object") return null;
+  const hit = num(usage.prompt_cache_hit_tokens);
+  const miss = num(usage.prompt_cache_miss_tokens);
+  const input = num(usage.prompt_tokens) || hit + miss;
+  const cached = hit || num(usage.prompt_tokens_details?.cached_tokens);
+  return {
+    input,
+    cached: Math.min(cached, input),
+    output: num(usage.completion_tokens),
+    reasoning: num(usage.completion_tokens_details?.reasoning_tokens),
+  };
+}
+
+/** Gemini's usageMetadata. promptTokenCount includes the cached part; thoughts are billed as output. */
+export function readGeminiUsage(meta: any): TokenUsage | null {
+  if (!meta || typeof meta !== "object") return null;
+  const input = num(meta.promptTokenCount);
+  const thoughts = num(meta.thoughtsTokenCount);
+  return {
+    input,
+    cached: Math.min(num(meta.cachedContentTokenCount), input),
+    output: num(meta.candidatesTokenCount) + thoughts,
+    reasoning: thoughts,
+  };
+}
+
+function reportUsage(
+  env: LlmEnv,
+  opts: { usage?: UsageTag; onUsage?: OnUsage },
+  engine: Engine,
+  model: string,
+  counts: TokenUsage | null,
+  ms: number,
+) {
+  const c = counts ?? NO_USAGE;
+  const usage: LlmUsage = {
+    engine,
+    model,
+    inputTokens: c.input,
+    cachedTokens: c.cached,
+    outputTokens: c.output,
+    reasoningTokens: c.reasoning,
+    ms,
+    userId: opts.usage?.userId ?? null,
+    purpose: opts.usage?.purpose ?? "other",
+  };
+  try {
+    if (opts.onUsage) opts.onUsage(usage);
+    else usageSink?.(env, usage);
+  } catch (err) {
+    // Counting must never fail the call it counts.
+    console.error("ovoa.err usage report failed", err);
+  }
+}
 export type CallTool = (name: string, args: Record<string, unknown>) => Promise<unknown>;
 
 /** A CallTool returns this to pause the turn until the app supplies the result (see `resume`). */
@@ -86,6 +201,10 @@ type ToolLoopOptions = {
   onText?: OnText;
   /** Called once per engine tried or skipped, so the day's engine health is recordable. */
   onAttempt?: OnAttempt;
+  /** Whose turn this is and what for, for the usage table. See LlmUsage. */
+  usage?: UsageTag;
+  /** Every model round's token counts. When set, the default sink is not called. */
+  onUsage?: OnUsage;
   /**
    * Whose turn this is. Workers AI keeps a prompt it has just read on the model
    * server that read it, and routes requests carrying the same x-session-affinity
@@ -298,10 +417,14 @@ export async function generateText(env: LlmEnv, opts: Options): Promise<string> 
     const at = Date.now();
     const model = modelFor(env, engine, opts.model);
     try {
-      const text =
-        engine === "gemini"
-          ? await geminiGenerate({ apiKey: env.GEMINI_API_KEY!, ...opts })
-          : await openAiGenerate(env, engine, opts);
+      let text: string;
+      if (engine === "gemini") {
+        const got = await geminiGenerate({ apiKey: env.GEMINI_API_KEY!, ...opts });
+        reportUsage(env, opts, engine, model, readGeminiUsage(got.usage), Date.now() - at);
+        text = got.text;
+      } else {
+        text = await openAiGenerate(env, engine, opts);
+      }
       opts.onAttempt?.({ engine, model, outcome: "ok", ms: Date.now() - at });
       return text;
     } catch (err) {
@@ -345,7 +468,7 @@ export async function chatWithTools(
         : undefined;
       try {
         if ((cooldownUntil.get("gemini") ?? 0) > Date.now()) throw new Error("Gemini is cooling down");
-        return await geminiToolLoop(env.GEMINI_API_KEY!, { ...opts, onText }, state);
+        return await geminiToolLoop(env, { ...opts, onText }, state);
       } catch (err) {
         // Out of quota halfway through: finish the turn on Workers AI with what's been looked up.
         if (streamed || (cooldownUntil.get("workers") ?? 0) > Date.now()) {
@@ -380,8 +503,7 @@ export async function chatWithTools(
     const model = modelFor(env, engine, opts.model);
     try {
       const run = { ...opts, callTool: tracked, onText };
-      const outcome =
-        engine === "gemini" ? await geminiToolLoop(env.GEMINI_API_KEY!, run) : await openAiToolLoop(env, engine, run);
+      const outcome = engine === "gemini" ? await geminiToolLoop(env, run) : await openAiToolLoop(env, engine, run);
       opts.onAttempt?.({ engine, model, outcome: outcome.kind === "paused" ? "paused" : "ok", ms: Date.now() - at });
       return outcome;
     } catch (err) {
@@ -499,8 +621,17 @@ function geminiResponse(result: unknown) {
   return { result: text.length > MAX_TOOL_RESULT_CHARS ? text : (result ?? null) };
 }
 
-/** One model turn. Streamed when `onText` is set; either way returns the full turn. */
-async function geminiRound(apiKey: string, model: string, body: unknown, onText?: OnText): Promise<{ role: string; parts: any[] }> {
+/**
+ * One model turn. Streamed when `onText` is set; either way returns the full
+ * turn, with the token counts Gemini attached to it (usageMetadata: sent whole
+ * on a plain call, and on every streamed chunk with the last one being the total).
+ */
+async function geminiRound(
+  apiKey: string,
+  model: string,
+  body: unknown,
+  onText?: OnText,
+): Promise<{ content: { role: string; parts: any[] }; usage: TokenUsage | null }> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:${onText ? "streamGenerateContent?alt=sse" : "generateContent"}`;
   const res = await fetchWithDeadline(url, {
     method: "POST",
@@ -510,12 +641,14 @@ async function geminiRound(apiKey: string, model: string, body: unknown, onText?
   if (!res.ok) throw new Error(`Gemini ${model} ${res.status}: ${(await res.text()).slice(0, 500)}`);
   if (!onText) {
     const data = (await res.json()) as any;
-    return data.candidates?.[0]?.content ?? { role: "model", parts: [] };
+    return { content: data.candidates?.[0]?.content ?? { role: "model", parts: [] }, usage: readGeminiUsage(data.usageMetadata) };
   }
   // Keep every part as it arrived: function calls carry thought signatures Gemini wants back.
   const parts: any[] = [];
+  let usage: TokenUsage | null = null;
   for await (const data of sseData(res.body!)) {
     const chunk = JSON.parse(data);
+    usage = readGeminiUsage(chunk.usageMetadata) ?? usage;
     let stop = false;
     for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
       parts.push(part);
@@ -523,19 +656,21 @@ async function geminiRound(apiKey: string, model: string, body: unknown, onText?
     }
     if (stop) break;
   }
-  return { role: "model", parts };
+  return { content: { role: "model", parts }, usage };
 }
 
 async function geminiToolLoop(
-  apiKey: string,
-  { model, system, turns, tools, callTool, voice, onText }: ToolLoopOptions,
+  env: LlmEnv,
+  opts: ToolLoopOptions,
   paused?: Extract<LoopState, { engine: "gemini" }>,
 ): Promise<ChatOutcome> {
+  const { model, system, turns, tools, callTool, voice, onText } = opts;
   const contents: any[] = paused?.contents ?? turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] }));
 
   for (let round = paused?.round ?? 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const content = await geminiRound(
-      apiKey,
+    const at = Date.now();
+    const { content, usage } = await geminiRound(
+      env.GEMINI_API_KEY!,
       model,
       {
         systemInstruction: { parts: [{ text: system }] },
@@ -549,6 +684,7 @@ async function geminiToolLoop(
       },
       onText,
     );
+    reportUsage(env, opts, "gemini", model, usage, Date.now() - at);
     const parts: any[] = content.parts ?? [];
     const calls = parts.filter((p) => p.functionCall);
 
@@ -626,12 +762,20 @@ type OpenAiEngine = "deepseek" | "workers";
 type OpenAiOut = {
   response?: string | object;
   choices?: { message?: { content?: string | null; reasoning_content?: string; tool_calls?: any[] } }[];
+  usage?: unknown;
 };
 
-type OpenAiBody = { messages: any[]; tools?: any[]; max_tokens: number; reasoning_effort?: "low" | "medium" | "high" };
+type OpenAiBody = {
+  messages: any[];
+  tools?: any[];
+  max_tokens: number;
+  reasoning_effort?: "low" | "medium" | "high";
+  /** Asks a streaming provider to end with a usage chunk. Not every provider takes it. */
+  stream_options?: { include_usage: boolean };
+};
 
-/** One assistant message, however it arrived. */
-type OpenAiMessage = { content: string; reasoning_content?: string; tool_calls: any[] };
+/** One assistant message, however it arrived, with the counts the provider attached. */
+type OpenAiMessage = { content: string; reasoning_content?: string; tool_calls: any[]; usage: TokenUsage | null };
 
 /** Workers AI's gpt-oss takes `reasoning_effort`; DeepSeek gets only standard fields. */
 function openAiBody(engine: OpenAiEngine, body: OpenAiBody): OpenAiBody {
@@ -647,7 +791,9 @@ async function openAiCall(env: LlmEnv, engine: OpenAiEngine, body: OpenAiBody, s
     // phone's own 60 s abort.
     return env.AI.run(
       env.FALLBACK_MODEL as keyof AiModels,
-      { ...openAiBody(engine, body), ...(stream && { stream: true }) } as never,
+      // include_usage: the token counts ride on a last chunk, and Workers AI's
+      // chat-completions input types the option the same way OpenAI does.
+      { ...openAiBody(engine, body), ...(stream && { stream: true, stream_options: { include_usage: true } }) } as never,
       {
         signal: AbortSignal.timeout(connectMs),
         // Documented for the binding as extraHeaders (Workers AI "prompt caching").
@@ -658,7 +804,12 @@ async function openAiCall(env: LlmEnv, engine: OpenAiEngine, body: OpenAiBody, s
   const res = await fetchWithDeadline("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${env.DEEPSEEK_API_KEY}` },
-    body: JSON.stringify({ model: env.DEEPSEEK_MODEL, ...openAiBody(engine, body), ...(stream && { stream: true }) }),
+    body: JSON.stringify({
+      model: env.DEEPSEEK_MODEL,
+      ...openAiBody(engine, body),
+      // A stream ends with the token counts only when asked (OpenAI's stream_options).
+      ...(stream && { stream: true, stream_options: { include_usage: true } }),
+    }),
   });
   if (!res.ok) throw new Error(`DeepSeek ${env.DEEPSEEK_MODEL} ${res.status}: ${(await res.text()).slice(0, 500)}`);
   return stream ? res.body : res.json();
@@ -685,14 +836,23 @@ async function openAiRound(
   if (!onText) {
     const out = (await openAiCall(env, engine, body, false, affinity)) as OpenAiOut;
     const message = out.choices?.[0]?.message;
-    return { content: openAiText(out), reasoning_content: message?.reasoning_content, tool_calls: message?.tool_calls ?? [] };
+    return {
+      content: openAiText(out),
+      reasoning_content: message?.reasoning_content,
+      tool_calls: message?.tool_calls ?? [],
+      usage: readOpenAiUsage(out.usage),
+    };
   }
   const stream = (await openAiCall(env, engine, body, true, affinity)) as ReadableStream<Uint8Array>;
   let content = "";
   let reasoning = "";
+  let usage: TokenUsage | null = null;
   const calls: any[] = [];
   for await (const data of sseData(stream)) {
     const chunk = JSON.parse(data);
+    // The counts ride on the last chunk (Workers AI always; DeepSeek when asked
+    // with stream_options). Stopping a reply early gives up the counts too.
+    usage = readOpenAiUsage(chunk.usage) ?? usage;
     const delta = chunk.choices?.[0]?.delta;
     // Workers AI ends with {"response": "", usage}; older models stream only `response`.
     const text: string = delta?.content ?? (typeof chunk.response === "string" ? chunk.response : "");
@@ -708,15 +868,17 @@ async function openAiRound(
       if (onText(text) === false) break;
     }
   }
-  return { content: stripThinking(content), reasoning_content: reasoning || undefined, tool_calls: calls.filter(Boolean) };
+  return { content: stripThinking(content), reasoning_content: reasoning || undefined, tool_calls: calls.filter(Boolean), usage };
 }
 
-async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, { system, turns, json, fast }: Options): Promise<string> {
+async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, opts: Options): Promise<string> {
+  const { system, turns, json, fast } = opts;
   const systemText = json
     ? `${system}\n\nRespond with only a JSON object matching this JSON schema, no other text:\n${JSON.stringify(json.schema)}`
     : system;
 
-  const { content } = await openAiRound(env, engine, {
+  const at = Date.now();
+  const { content, usage } = await openAiRound(env, engine, {
     messages: [
       { role: "system", content: systemText },
       ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
@@ -724,6 +886,7 @@ async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, { system, turns
     max_tokens: 2048,
     ...(fast && { reasoning_effort: "low" as const }),
   });
+  reportUsage(env, opts, engine, modelFor(env, engine, opts.model), usage, Date.now() - at);
 
   let text = content;
   if (json) {
@@ -738,9 +901,10 @@ async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, { system, turns
 async function openAiToolLoop(
   env: LlmEnv,
   engine: OpenAiEngine,
-  { system, turns, tools, callTool, voice, onText, affinity }: ToolLoopOptions,
+  opts: ToolLoopOptions,
   paused?: Extract<LoopState, { engine: OpenAiEngine }>,
 ): Promise<ChatOutcome> {
+  const { system, turns, tools, callTool, voice, onText, affinity } = opts;
   const messages: any[] = paused?.messages ?? [
     { role: "system", content: system },
     ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
@@ -751,6 +915,7 @@ async function openAiToolLoop(
     // front of the model on the step after it asked for them. Gemini's loop
     // already re-read the array; this one used to freeze it.
     const toolDefs = tools.map((t) => ({ type: "function", function: t }));
+    const at = Date.now();
     const message = await openAiRound(
       env,
       engine,
@@ -764,6 +929,7 @@ async function openAiToolLoop(
       onText,
       affinity,
     );
+    reportUsage(env, opts, engine, modelFor(env, engine, opts.model), message.usage, Date.now() - at);
 
     const calls = message.tool_calls;
     if (!calls.length) {

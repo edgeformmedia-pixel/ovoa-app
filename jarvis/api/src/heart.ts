@@ -207,7 +207,7 @@ export async function detectWorkouts(env: Env, userId: string) {
     const kind = place?.kind === "gym" && s.kind === "cardio" ? "strength" : s.kind;
     const id = crypto.randomUUID();
     const minutes = Math.round((s.end - s.start) / 60_000);
-    const summary = await summarize(env, { ...s, kind, baseline, minutes, place: place?.name ?? null, timeZone }).catch(
+    const summary = await summarize(env, userId, { ...s, kind, baseline, minutes, place: place?.name ?? null, timeZone }).catch(
       () => `${minutes} minute ${KIND_WORDS[kind]}, average ${s.avg} bpm, peak ${s.peak}.`,
     );
     await db
@@ -229,11 +229,13 @@ export async function detectWorkouts(env: Env, userId: string) {
 
 async function summarize(
   env: Env,
+  userId: string,
   w: Session & { baseline: number; minutes: number; place: string | null; timeZone: string },
 ) {
   const text = await generateText(env, {
     model: env.MEMORY_MODEL,
     fast: true,
+    usage: { userId, purpose: "workout" },
     system:
       "Write one or two short, plain sentences summarising a workout for the person who did it, from heart-rate numbers. No emoji, no praise inflation, no medical claims. Say when and how long, how hard (from the zones), and one useful observation.",
     turns: [

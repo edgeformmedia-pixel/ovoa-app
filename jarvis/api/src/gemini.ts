@@ -12,7 +12,11 @@ type GenerateOptions = {
   fast?: boolean;
 };
 
-export async function generate({ apiKey, model, system, turns, json, fast }: GenerateOptions): Promise<string> {
+/**
+ * One plain call. Returns the text and, beside it, Gemini's own token counts
+ * (usageMetadata) so the caller can write down what the call cost.
+ */
+export async function generate({ apiKey, model, system, turns, json, fast }: GenerateOptions): Promise<{ text: string; usage: unknown }> {
   const res = await fetch(`${BASE}/${model}:generateContent`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
@@ -32,11 +36,12 @@ export async function generate({ apiKey, model, system, turns, json, fast }: Gen
 
   const data = (await res.json()) as {
     candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
+    usageMetadata?: unknown;
   };
   const text = (data.candidates?.[0]?.content?.parts ?? [])
     .filter((p) => !p.thought && p.text)
     .map((p) => p.text)
     .join("");
   if (!text) throw new Error(`Gemini ${model} returned no text`);
-  return text;
+  return { text, usage: data.usageMetadata };
 }

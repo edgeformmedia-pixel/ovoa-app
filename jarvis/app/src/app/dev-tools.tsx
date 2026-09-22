@@ -16,7 +16,7 @@ import type { EventSubscription } from "expo-modules-core";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { api } from "../lib/api";
+import { api, type UsageSummary } from "../lib/api";
 import { useSession } from "../lib/auth";
 import * as clip from "../lib/clip";
 import * as ute from "../../modules/ute-ble";
@@ -215,6 +215,8 @@ export default function DevTools() {
 
         <LogUploads />
 
+        <UsageToday />
+
         <ClipInputs state={clipState} />
 
         <TurnTimings />
@@ -370,6 +372,62 @@ function LogUploads() {
             trackColor={{ true: colors.late, false: colors.line }}
           />
         </View>
+      </Card>
+    </>
+  );
+}
+
+/**
+ * What this account has cost to serve today and this month, as the server
+ * counted it (api/src/usage.ts): model tokens, voiced characters, microphone
+ * seconds streamed, at list price. The mic figure is what this phone reported,
+ * about once a minute, so it can trail the truth by that much.
+ */
+function UsageToday() {
+  const { token } = useSession();
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      setUsage(await api.usage(token!));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [token]);
+  useEffect(() => {
+    if (token) void load();
+  }, [token, load]);
+  const today = usage?.today;
+  const k = (n: number) => (n >= 10_000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+  return (
+    <>
+      <Text style={styles.section}>Usage today</Text>
+      <Card title="What today has cost" available={true}>
+        {!today && !error && <Text style={styles.dim}>Loading…</Text>}
+        {error && <Text style={styles.error}>{error}</Text>}
+        {today && (
+          <>
+            <Row label="turns answered" value={String(today.turns)} />
+            <Row label="model calls" value={String(today.llmCalls)} />
+            <Row label="tokens in · cached · out" value={`${k(today.inputTokens)} · ${k(today.cachedTokens)} · ${k(today.outputTokens)}`} mono />
+            <Row label="voice" value={`${k(today.ttsChars)} characters`} />
+            <Row label="mic streamed" value={`${Math.round(today.streamSeconds / 60)} min`} good={today.streamSeconds < 600} />
+            <Row label="clips transcribed" value={`${today.clipSeconds} s`} />
+            <Row label="web searches" value={String(today.searches)} />
+            <Row label="estimated cost" value={today.estUsd} mono good={today.microUsd < 170_000} />
+            {Object.entries(today.by).map(([what, cost]) => (
+              <Row key={what} label={`  ${what}`} value={cost} mono />
+            ))}
+            <Row label="this month" value={usage!.month.estUsd} mono />
+          </>
+        )}
+        <Pressable style={styles.button} onPress={load}>
+          <Text style={styles.buttonText}>Refresh</Text>
+        </Pressable>
+        <Text style={styles.hint}>
+          List prices, counted on the server. The target for a typical day is $0.17; a membership pays about $0.31 a day.
+        </Text>
       </Card>
     </>
   );

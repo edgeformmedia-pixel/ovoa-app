@@ -26,6 +26,8 @@ export type SearchResult = {
   sources?: { title: string; url: string }[];
   snippets?: { title: string; text: string }[];
   note?: string;
+  /** Which route answered, so the usage table can count searches by what they cost. */
+  via?: "gemini" | "duckduckgo";
 };
 
 /** Gemini answers with search turned on, and says where it got it. */
@@ -76,7 +78,7 @@ async function grounded(apiKey: string, model: string, query: string, today: str
     sources.push({ title: chunk.web?.title ?? url, url });
     if (sources.length >= MAX_SOURCES) break;
   }
-  return { answer, ...(sources.length && { sources }) };
+  return { answer, ...(sources.length && { sources }), via: "gemini" };
 }
 
 const unescapeHtml = (s: string) =>
@@ -115,6 +117,7 @@ async function duckDuckGo(query: string): Promise<SearchResult> {
   return {
     snippets,
     note: "Search result snippets, not a checked answer. Say what they say, and say it came from a search.",
+    via: "duckduckgo",
   };
 }
 

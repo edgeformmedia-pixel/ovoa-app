@@ -567,6 +567,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
         turns: [{ role: "user", text: instruction }],
         tools,
         callTool,
+        usage: { userId, purpose: "agent" },
       }),
       new Promise<never>((_, reject) => {
         expire = setTimeout(() => reject(new Error("Run took too long")), RUN_TIMEOUT_MS);

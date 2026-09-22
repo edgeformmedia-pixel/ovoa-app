@@ -149,6 +149,7 @@ export async function buildMorningBrief(env: Env, userId: string, timeZone: stri
       await generateText(env, {
         model: env.MEMORY_MODEL,
         fast: true,
+        usage: { userId, purpose: "brief" },
         system:
           "Write a morning brief to be read aloud: under 30 seconds, plain spoken sentences, no lists or symbols. Lead with what's most likely to catch them out. Skip anything empty. Temperatures in Fahrenheit.",
         turns: [{ role: "user", text: JSON.stringify(facts) }],

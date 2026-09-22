@@ -291,6 +291,28 @@ export type GoogleStatus =
   | { connected: false; accounts: GoogleAccount[] }
   | { connected: true; email: string; name: string | null; scopes: string[]; connectedAt: number; accounts: GoogleAccount[] };
 
+/**
+ * What one day (or the month so far) cost to serve, as the server counted it
+ * (api/src/usage.ts). `estUsd` is at list price; `by` splits it by what it was
+ * spent on ("mic", "voice (deepgram-aura-2)", "ai (workers)").
+ */
+export type UsageTotals = {
+  day: string;
+  turns: number;
+  llmCalls: number;
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+  ttsChars: number;
+  streamSeconds: number;
+  clipSeconds: number;
+  searches: number;
+  microUsd: number;
+  estUsd: string;
+  by: Record<string, string>;
+};
+export type UsageSummary = { today: UsageTotals; month: UsageTotals };
+
 export const timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 export class ApiError extends Error {
@@ -793,4 +815,9 @@ export const api = {
 
   createSiriKey: (token: string) => request<{ key: string; url: string }>("/siri/key", token, { method: "POST" }),
   deleteSiriKey: (token: string) => request("/siri/key", token, { method: "DELETE" }),
+
+  // ---------- What it costs ----------
+
+  /** This person's own usage today and this month, for Dev tools. */
+  usage: (token: string) => request<UsageSummary>("/usage/me", token),
 };

@@ -30,6 +30,9 @@ const ROUTE_LIMITS: [RegExp, Limiter, string][] = [
   // Talking over a reply without live transcription uploads a 1.8 s piece at a
   // time (app voice.ts speakInterruptible): over 30 a minute, legitimately.
   [/^\/voice\/transcribe$/, "RL_SPEAK", "transcribe"],
+  // The phone's count of microphone seconds it streamed, sent every minute or
+  // so (app liveListen.ts). Counted with the log uploads: same shape, same pace.
+  [/^\/usage\/stream$/, "RL_LOGS", "usage"],
 ];
 
 /** The caller's address, for routes where nobody is signed in yet. */

@@ -108,6 +108,7 @@ export async function isMeantForAssistant(env: Env, userId: string | null, text:
       model: env.CHAT_MODEL,
       json: { schema: verdictSchema },
       fast: true,
+      usage: { userId, purpose: "ambient" },
       system: [
         `You are the gatekeeper for ${assistantName}, a voice assistant whose microphone is always on.`,
         "You get one sentence the microphone just overheard. Decide whether the user said it TO the assistant.",

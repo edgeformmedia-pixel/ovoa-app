@@ -72,7 +72,7 @@ type Indexed = {
  * Reads a block once and writes down what is worth keeping. The quote on a
  * commitment matters: it is the only part of the words that outlives them.
  */
-async function summarize(env: Env, text: string, at: number, timeZone: string): Promise<Indexed | null> {
+async function summarize(env: Env, userId: string, text: string, at: number, timeZone: string): Promise<Indexed | null> {
   const spoken = new Intl.DateTimeFormat("en-US", {
     timeZone,
     dateStyle: "full",
@@ -80,6 +80,7 @@ async function summarize(env: Env, text: string, at: number, timeZone: string): 
   }).format(new Date(at));
   const raw = await generateText(env, {
     model: env.MEMORY_MODEL,
+    usage: { userId, purpose: "context" },
     system: [
       "You are reading one short stretch of someone's day and writing down what is worth keeping.",
       "title: at most six words, what this was. Name the actual subject, not the activity type.",
@@ -145,7 +146,7 @@ export async function recordBlock(env: Env, userId: string, block: NewBlock, tim
   const body = block.transcript?.trim() || block.note?.trim();
   if (!body) return null;
 
-  const indexed = await summarize(env, body, block.startedAt, timeZone);
+  const indexed = await summarize(env, userId, body, block.startedAt, timeZone);
   if (!indexed) return null;
 
   const id = crypto.randomUUID();
@@ -240,6 +241,7 @@ async function dayTitle(env: Env, userId: string, day: string, timeZone: string,
 
   const raw = await generateText(env, {
     model: env.MEMORY_MODEL,
+    usage: { userId, purpose: "context" },
     system: [
       "Below is one person's day, as a list of things that happened.",
       "title: at most six words naming the day. Say what actually made it this day, not 'A busy day'.",
@@ -335,6 +337,7 @@ async function weekTitle(env: Env, userId: string, week: string, timeZone: strin
 
   const raw = await generateText(env, {
     model: env.MEMORY_MODEL,
+    usage: { userId, purpose: "context" },
     system: [
       "Below is one person's week, one line per day.",
       "title: at most six words naming the week. Say what actually made it this week, not 'A productive week'.",

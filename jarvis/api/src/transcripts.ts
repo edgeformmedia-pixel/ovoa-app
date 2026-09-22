@@ -130,10 +130,11 @@ const blockSchema = {
   required: ["title", "summary"],
 };
 
-async function writeTitle(env: Env, system: string, body: string, schema: Record<string, unknown> = titleSchema) {
+async function writeTitle(env: Env, userId: string, system: string, body: string, schema: Record<string, unknown> = titleSchema) {
   const raw = await generateText(env, {
     model: env.MEMORY_MODEL,
     fast: true,
+    usage: { userId, purpose: "transcripts" },
     json: { schema },
     system,
     turns: [{ role: "user", text: body.slice(0, MAX_PROMPT_CHARS) }],
@@ -225,6 +226,7 @@ export async function titleTranscripts(env: Env) {
     try {
       const t = await writeTitle(
         env,
+        b.user_id,
         [
           `You title five minutes of ${b.user_name}'s day from a transcript. 'They said' is ${b.user_name}; 'OVOA said' is their assistant.`,
           "Lines marked 'Overheard' were picked up in the background (TV, other people, the room) and may be noise; say so if that's all there is.",
@@ -260,6 +262,7 @@ export async function titleTranscripts(env: Env) {
     try {
       const t = await writeTitle(
         env,
+        userId,
         "You title one hour of someone's day from the titles of its five-minute stretches. Lead with what mattered; skip background noise unless it's all there was.",
         blocks.map((b) => `${clock(b.start, timeZone)} ${b.title ?? "(untitled)"} [${b.sources}]`).join("\n"),
       );
@@ -287,6 +290,7 @@ export async function titleTranscripts(env: Env) {
     try {
       const t = await writeTitle(
         env,
+        userId,
         "You title a whole day from its hours. The title says what the day was; the summary gives the two or three things worth remembering from it.",
         hoursOfDay.map((h) => `${clock(h.start, timeZone)} ${h.title ?? ""} — ${h.summary ?? ""}`).join("\n"),
       );

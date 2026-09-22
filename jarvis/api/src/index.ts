@@ -77,6 +77,15 @@ import { MORE_TOOLS, toolbelt } from "./toolbelt";
 import { mightBeAboutThem } from "./remember";
 import { allowed, clientIp, limitByUser, tooMany } from "./limits";
 import { sliceFor } from "./sweep";
+import { setUsageSink, type LlmUsage } from "./llm";
+import { glmPriceFrom, usd } from "./pricing";
+import { dayOf, llmRow, pruneUsage, recordUsage, searchRow, sttStreamRow, ttsRow, turnRow, usageByPerson, usageForPerson } from "./usage";
+
+// Every model call that has no usage callback of its own lands here, priced
+// and filed against the person it was tagged with (usage.ts). Once per
+// isolate. The write is not awaited: this runs inside whatever request or
+// tick made the call, and a count must never hold up an answer.
+setUsageSink((env, u: LlmUsage) => void recordUsage(env as Env, [llmRow(u.userId, u, glmPriceFrom(env as Env))]));
 
 /**
  * Tools left out of spoken turns: reviewing and editing things people do while
@@ -898,6 +907,10 @@ async function runTurn(
   // meta only ever carried the one that won; this is the rest of the story, and
   // it is what makes "all three were down at 14:00" a query instead of a guess.
   const attempts: EngineAttempt[] = [];
+  // What the turn cost: every model round's tokens, and every web search. Written
+  // to usage_daily once the turn is over, whether it worked or not.
+  const usages: LlmUsage[] = [];
+  const searches: string[] = [];
   const modelRun = chatWithTools(env, {
     model: env.CHAT_MODEL,
     system,
@@ -907,6 +920,8 @@ async function runTurn(
     // the prompt it read for them last time (see `moment` above).
     affinity: userId,
     onAttempt: (a) => attempts.push(a),
+    usage: { userId, purpose: voice ? "voice" : "chat" },
+    onUsage: (u) => usages.push(u),
     callTool: async (name, args) => {
       const call = Date.now();
       if (fromAgent && FORBIDDEN_FOR_COMMANDS.has(name)) return { error: "Not available to the agent's commands." };
@@ -917,6 +932,11 @@ async function runTurn(
           toolTimings.push({ name, ms: Date.now() - call });
           console.log(`more_tools: "${asked}" -> ${got.loaded.join(", ") || "nothing"}`);
           return got;
+        }
+        if (isWebTool(name)) {
+          const found = (await web.callTool(name, args)) as { via?: string };
+          if (found?.via) searches.push(found.via);
+          return found;
         }
         const result = await (isPhoneTool(name)
           ? phone.callTool
@@ -972,10 +992,31 @@ async function runTurn(
   // Written down whether the turn worked or not. A turn where every engine
   // failed is the one this table exists for, and recording only after a
   // successful await wrote down nothing at all on exactly that day.
-  const outcome = await modelRun.finally(() => ctx.waitUntil(noteEngines(env, attempts)));
+  const glmPrice = glmPriceFrom(env);
+  const spend = () => [...usages.map((u) => llmRow(userId, u, glmPrice)), ...searches.map((via) => searchRow(userId, via))];
+  const outcome = await modelRun
+    .then(
+      // The turn row rides with the calls: one batch, one write. A turn that
+      // failed still spent its model calls, but it was not a turn answered, so
+      // it gets no turn row and never counts against anyone's monthly cap.
+      (done) => {
+        ctx.waitUntil(recordUsage(env, [...spend(), turnRow(userId, done.engine, !!voice)]));
+        return done;
+      },
+      (err: unknown) => {
+        ctx.waitUntil(recordUsage(env, spend()));
+        throw err;
+      },
+    )
+    .finally(() => ctx.waitUntil(noteEngines(env, attempts)));
   spoken?.end();
   const pendingActions = [...phone.pending, ...shortcuts.pending, ...google.pending];
   const cooling = coolingEngines();
+  // What this reply cost, for the phone's turn log and the latency table.
+  const tokens = usages.reduce(
+    (t, u) => ({ input: t.input + u.inputTokens, cached: t.cached + u.cachedTokens, output: t.output + u.outputTokens, calls: t.calls + 1 }),
+    { input: 0, cached: 0, output: 0, calls: 0 },
+  );
   const meta = {
     engine: outcome.engine,
     ms: Date.now() - started,
@@ -987,6 +1028,9 @@ async function runTurn(
     toolCount: carriedTools,
     ...(belt?.loaded.length && { toolsLoaded: belt.loaded }),
     tools: toolTimings,
+    // As the engine counted them. Zero when the engine sent no counts (a reply
+    // stopped early gives none), so a 0 here is "unknown", not "free".
+    usage: { ...tokens, microUsd: usages.reduce((n, u) => n + (llmRow(userId, u, glmPrice).microUsd ?? 0), 0) },
     // Only when something is being skipped: a slow turn usually means a faster
     // engine is in cooldown, and from the phone there's no other way to see it.
     ...(cooling.length && { cooling }),
@@ -1009,6 +1053,10 @@ async function runTurn(
     chars: meta.promptChars,
     tried: attempts.map((a) => `${a.engine}:${a.outcome}`).join(",") || undefined,
     cooling: cooling.length || undefined,
+    calls: tokens.calls || undefined,
+    tokensIn: tokens.input || undefined,
+    tokensCached: tokens.cached || undefined,
+    tokensOut: tokens.output || undefined,
   });
   if (toolTimings.length) say("tools", { rid: requestId, ran: toolTimings.map((t) => `${t.name}:${t.ms}`).join(",") });
   console.log(`ovoa.prompt rid=${requestId ?? "-"} ${promptShape}`);
@@ -1144,7 +1192,11 @@ function streamTurn(
           voicer?.say(text);
         });
         // Every piece of audio before "done": the phone stops reading at "done".
-        if (voicer) await voicer.end();
+        if (voicer) {
+          await voicer.end();
+          const { chars, engine, voice } = voicer.spent();
+          if (chars) c.executionCtx.waitUntil(recordUsage(c.env, [ttsRow(userId ?? null, engine, voice, chars)]));
+        }
         await send("ignored" in result ? { type: "done", ...IGNORED } : { type: "done", ...turnResponse(result) });
       } catch (err) {
         voicer?.stop();
@@ -1366,6 +1418,7 @@ async function updateMemories(
     json: { schema: memoryUpdateSchema },
     // Runs after every reply: Workers AI first, so it doesn't use up the free Gemini quota chat needs.
     fast: true,
+    usage: { userId, purpose: "memory" },
     system: [
       "You maintain a personal assistant's long-term memory about its user.",
       "Given the existing memories and the latest exchange, decide what to change.",
@@ -1779,6 +1832,50 @@ authed.get("/agent/runs", async (c) => {
   });
 });
 
+// ---------- What it costs ----------
+//
+// The phone streams its microphone straight to Deepgram, so only the phone
+// knows how many seconds went. It counts the audio it actually sent
+// (app/src/lib/liveListen.ts) and reports it here in batches. Clamped, because
+// a phone with a wrong clock or a bug could otherwise claim a day per minute.
+
+const streamUsageSchema = z.object({
+  /** Seconds of audio sent since the last report. */
+  seconds: z.number().min(0).max(3600),
+  /** Connections opened in that time. */
+  connections: z.number().int().min(0).max(100).optional(),
+});
+
+authed.post("/usage/stream", async (c) => {
+  const parsed = streamUsageSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "seconds is required" }, 400);
+  const { seconds, connections = 0 } = parsed.data;
+  if (seconds > 0 || connections > 0) {
+    c.executionCtx.waitUntil(recordUsage(c.env, [sttStreamRow(c.var.userId, "deepgram-nova-3-live", seconds, connections)]));
+  }
+  return c.json({ ok: true });
+});
+
+/** The signed-in person's own numbers: today and the month so far. Shown in Dev tools. */
+authed.get("/usage/me", async (c) => c.json(await usageForPerson(c.env.DB, c.var.userId)));
+
+/**
+ * Everyone's usage, per person per day, with the estimated cost.
+ *
+ *   GET /debug/usage?days=7   (header: x-debug-key)
+ *
+ * This is the number every phase of the cost pass is judged by. Names come
+ * from the users table; there are no emails and no words in it.
+ */
+app.get("/debug/usage", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const days = Math.min(Math.max(Number(c.req.query("days") ?? 7) || 7, 1), 90);
+  const from = dayOf(Date.now() - (days - 1) * 86_400_000);
+  const people = await usageByPerson(c.env.DB, from);
+  const microUsd = people.reduce((n, p) => n + p.total.microUsd, 0);
+  return c.json({ from, days, people, total: { microUsd, estUsd: usd(microUsd), people: people.length } });
+});
+
 /** Queues a command as if the agent had, so the channel can be tested without a model. Needs DEBUG_KEY. */
 authed.post("/debug/commands", async (c) => {
   if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
@@ -1818,6 +1915,7 @@ async function nightly(env: Env) {
   const accounts = await relearnAccounts(env).catch((err) => (console.error("routing: relearning failed", err), 0));
   await env.DB.batch([
     ...pruneStatements(env.DB, now),
+    pruneUsage(env.DB, now),
     // Also pruned on a 1-in-50 roll inside a phone upload (logs.ts). That roll
     // never comes up on the days the phone has stopped uploading, which are the
     // days the table grows fastest, so the nightly job owns it too.

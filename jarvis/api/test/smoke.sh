@@ -440,6 +440,27 @@ check "the reader writes nothing" \
   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${D[@]}" "$API/debug/logs")" "401"
 
 echo
+echo "── what it costs ──────────────────────────────────"
+# The phone counts the microphone seconds it streamed and reports them; the
+# server files them against the person, priced, and the operator reads everyone.
+check "the phone can report mic seconds" \
+  "$(curl -s -X POST "${A[@]}" "$API/usage/stream" -d '{"seconds":42.5,"connections":1}' | j "d['ok']")" "True"
+check "an absurd report is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/usage/stream" -d '{"seconds":99999}')" "400"
+sleep 1
+MINE=$(curl -s "${A[@]}" "$API/usage/me")
+check "the seconds show up for the person" "$(echo "$MINE" | j "d['today']['streamSeconds']")" "43"
+check "and are priced"                     "$(echo "$MINE" | j "d['today']['microUsd'] > 0")" "True"
+check "the mic line is named"              "$(echo "$MINE" | j "'mic' in d['today']['by']")" "True"
+check "the month includes today"           "$(echo "$MINE" | j "d['month']['streamSeconds']")" "43"
+check "someone else's usage is theirs"     "$(curl -s -H "authorization: Bearer $OTHER" "$API/usage/me" | j "d['today']['streamSeconds']")" "0"
+EVERYONE=$(curl -s "${D[@]}" "$API/debug/usage?days=2")
+check "the operator sees everyone" "$(echo "$EVERYONE" | j "d['total']['people'] >= 1")" "True"
+check "with a total in dollars"    "$(echo "$EVERYONE" | j "d['total']['estUsd'].startswith('\$')")" "True"
+check "and no email addresses"     "$(echo "$EVERYONE" | j "'@' not in json.dumps(d)")" "True"
+check "the usage reader needs the key" "$(curl -s -o /dev/null -w '%{http_code}' "$API/debug/usage")" "404"
+
+echo
 echo "───────────────────────────────────────────────────"
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ] || exit 1

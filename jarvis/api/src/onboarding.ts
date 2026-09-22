@@ -330,6 +330,7 @@ export async function onboardingAnswer(env: Env, userId: string, step: Step, tex
     model: env.MEMORY_MODEL,
     json: { schema: spec.schema },
     fast: true,
+    usage: { userId, purpose: "onboarding" },
     system: [
       "You read one answer from a new user setting up their personal assistant, and pull out only what they actually said.",
       "Times are 24-hour HH:MM in their own time zone" + (tz?.time_zone ? ` (${tz.time_zone})` : "") + ". 'Eight' in the morning is 08:00; 'ten at night' is 22:00.",

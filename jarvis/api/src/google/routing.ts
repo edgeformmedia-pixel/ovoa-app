@@ -75,6 +75,7 @@ export async function learnAccountProfile(env: Env, userId: string, account: Goo
       const raw = await generateText(env, {
         model: env.MEMORY_MODEL,
         fast: true,
+        usage: { userId, purpose: "routing" },
         json: { schema: { type: "object", properties: { topics: { type: "array", items: { type: "string" } } }, required: ["topics"] } },
         system: "Give up to ten single lowercase words that say what this account's calendar and mail are about (e.g. standup, client, sprint, gym, dinner). No names of people.",
         turns: [{ role: "user", text: JSON.stringify(titles) }],
