@@ -189,28 +189,28 @@ export default function DevTools() {
 
         <Pressable style={styles.link} onPress={() => router.push("/es100")}>
           <View style={styles.linkLeft}>
-            <Ionicons name="bluetooth" size={18} color={colors.accent} />
+            <Ionicons name="bluetooth" size={18} color={colors.blue} />
             <Text style={styles.itemText}>ES100 recorder</Text>
           </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+          <Ionicons name="chevron-forward" size={16} color={colors.inkMute} />
         </Pressable>
 
         <Pressable style={styles.link} onPress={() => router.push("/motion-lab")}>
           <View style={styles.linkLeft}>
-            <Ionicons name="pulse" size={18} color={colors.accent} />
+            <Ionicons name="pulse" size={18} color={colors.blue} />
             <Text style={styles.itemText}>Motion lab — find the clip's motion sensor</Text>
           </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+          <Ionicons name="chevron-forward" size={16} color={colors.inkMute} />
         </Pressable>
 
         {/* Cast because .expo/types is generated from the routes that existed at the
             last build; it catches up on the next expo start. */}
         <Pressable style={styles.link} onPress={() => router.push("/report-bug" as Href)}>
           <View style={styles.linkLeft}>
-            <Ionicons name="bug" size={18} color={colors.accent} />
+            <Ionicons name="bug" size={18} color={colors.blue} />
             <Text style={styles.itemText}>Report a problem — send the log now</Text>
           </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+          <Ionicons name="chevron-forward" size={16} color={colors.inkMute} />
         </Pressable>
 
         <LogUploads />
@@ -226,8 +226,8 @@ export default function DevTools() {
           <Switch
             value={motionOn}
             onValueChange={setMotionOn}
-            trackColor={{ true: colors.accentDim, false: colors.surfaceHigh }}
-            thumbColor={motionOn ? colors.accent : colors.textDim}
+            trackColor={{ true: colors.nowWash, false: colors.wash2 }}
+            thumbColor={motionOn ? colors.blue : colors.inkMute}
           />
         </View>
 
@@ -367,7 +367,7 @@ function LogUploads() {
               setTrace(on);
               setUploadLevel(on ? "trace" : "info");
             }}
-            trackColor={{ true: colors.warning, false: colors.border }}
+            trackColor={{ true: colors.late, false: colors.line }}
           />
         </View>
       </Card>
@@ -410,7 +410,7 @@ function Turn({ turn }: { turn: TurnRecord }) {
   const answer = latencyTo(turn, "first word out loud");
   return (
     <View style={styles.turn}>
-      <Text style={[styles.turnHead, turn.error ? { color: colors.danger } : null]}>
+      <Text style={[styles.turnHead, turn.error ? { color: colors.stop } : null]}>
         {new Date(turn.startedAt).toLocaleTimeString()} · {summary(turn)}
         {answer !== null ? ` · answer ${(answer / 1000).toFixed(1)} s` : ""}
       </Text>
@@ -569,7 +569,7 @@ function BuzzOptions({ connected }: { connected: boolean }) {
         {BUZZ_OPTIONS.map(({ option, label }) => (
           <Pressable
             key={option}
-            style={[styles.button, chosen === option && { borderColor: colors.accent, borderWidth: 1 }]}
+            style={[styles.button, chosen === option && { borderColor: colors.blue, borderWidth: 1 }]}
             disabled={!connected}
             onPress={async () => {
               clip.setBuzzOption(option);
@@ -616,7 +616,7 @@ function AlwaysListen() {
         <Text style={styles.itemText}>Always listen</Text>
         <Text style={styles.dim}>Development only. Not in Settings any more.</Text>
       </View>
-      <Switch value={on} onValueChange={toggle} trackColor={{ true: colors.danger, false: colors.border }} />
+      <Switch value={on} onValueChange={toggle} trackColor={{ true: colors.stop, false: colors.line }} />
     </View>
   );
 }
@@ -642,7 +642,7 @@ function CaptureEverything() {
         <Text style={styles.itemText}>Capture everything</Text>
         <Text style={styles.dim}>Keep background speech in the transcripts (needs Always listen). Development accounts only.</Text>
       </View>
-      <Switch value={on} onValueChange={toggle} trackColor={{ true: colors.danger, false: colors.border }} />
+      <Switch value={on} onValueChange={toggle} trackColor={{ true: colors.stop, false: colors.line }} />
     </View>
   );
 }
@@ -1125,18 +1125,18 @@ function Row({ label, value, mono, good }: { label: string; value: string; mono?
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: colors.paper },
   body: { padding: 20, gap: 10, paddingBottom: 48 },
-  title: { color: colors.text, fontSize: 26, fontWeight: "600" },
-  section: { color: colors.text, fontSize: 17, fontWeight: "600", marginTop: 16 },
-  turn: { paddingVertical: 6, borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth, gap: 2 },
-  turnHead: { color: colors.text, fontSize: 13, fontWeight: "600" },
-  dim: { color: colors.textDim, fontSize: 13 },
-  hint: { color: colors.textDim, fontSize: 12, marginTop: 6, lineHeight: 17 },
-  error: { color: colors.danger, fontSize: 12, marginTop: 6 },
+  title: { color: colors.ink, fontSize: 26, fontWeight: "600" },
+  section: { color: colors.ink, fontSize: 17, fontWeight: "600", marginTop: 16 },
+  turn: { paddingVertical: 6, borderTopColor: colors.line, borderTopWidth: StyleSheet.hairlineWidth, gap: 2 },
+  turnHead: { color: colors.ink, fontSize: 13, fontWeight: "600" },
+  dim: { color: colors.inkMute, fontSize: 13 },
+  hint: { color: colors.inkMute, fontSize: 12, marginTop: 6, lineHeight: 17 },
+  error: { color: colors.stop, fontSize: 12, marginTop: 6 },
   card: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 12,
     padding: 14,
@@ -1144,18 +1144,18 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   cardHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
-  cardTitle: { color: colors.text, fontSize: 15, fontWeight: "600" },
+  cardTitle: { color: colors.ink, fontSize: 15, fontWeight: "600" },
   dataRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 2 },
-  value: { color: colors.text, fontSize: 14 },
+  value: { color: colors.ink, fontSize: 14 },
   mono: { fontFamily: "Menlo", fontSize: 13 },
-  good: { color: colors.success },
+  good: { color: colors.done },
   row: { flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 8 },
   toggleRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 12,
     padding: 14,
@@ -1165,22 +1165,22 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 12,
     padding: 14,
     marginTop: 12,
   },
   linkLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-  itemText: { color: colors.text, fontSize: 15 },
+  itemText: { color: colors.ink, fontSize: 15 },
   button: {
-    backgroundColor: colors.accentDim,
+    backgroundColor: colors.nowWash,
     borderRadius: 10,
     paddingVertical: 9,
     paddingHorizontal: 14,
     alignSelf: "flex-start",
     marginTop: 8,
   },
-  buttonText: { color: colors.accent, fontWeight: "600", fontSize: 13 },
+  buttonText: { color: colors.blue, fontWeight: "600", fontSize: 13 },
 });

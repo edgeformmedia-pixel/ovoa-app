@@ -30,7 +30,7 @@ export default function ConnectGoogle() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.body}>
-        <Ionicons name="logo-google" size={48} color={colors.text} />
+        <Ionicons name="logo-google" size={48} color={colors.ink} />
         <Text style={styles.title}>Connect your Google account</Text>
         <Text style={styles.text}>
           Let {assistant} work with your Google apps: read and send email, manage your calendar, and edit your
@@ -52,7 +52,7 @@ export default function ConnectGoogle() {
       {error && <Text style={styles.error}>{error}</Text>}
 
       <Pressable style={[styles.primary, busy && { opacity: 0.6 }]} onPress={connect} disabled={busy}>
-        {busy ? <ActivityIndicator color={colors.bg} /> : <Text style={styles.primaryText}>Continue with Google</Text>}
+        {busy ? <ActivityIndicator color={colors.paper} /> : <Text style={styles.primaryText}>Continue with Google</Text>}
       </Pressable>
       <Pressable style={styles.skip} onPress={finishOnboarding} disabled={busy}>
         <Text style={styles.skipText}>Skip for now</Text>
@@ -62,24 +62,24 @@ export default function ConnectGoogle() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg, padding: 24 },
+  safe: { flex: 1, backgroundColor: colors.paper, padding: 24 },
   body: { flex: 1, justifyContent: "center", alignItems: "center", gap: 16 },
-  title: { color: colors.text, fontSize: 26, fontWeight: "700", textAlign: "center" },
-  text: { color: colors.textDim, fontSize: 16, lineHeight: 23, textAlign: "center" },
+  title: { color: colors.ink, fontSize: 26, fontWeight: "700", textAlign: "center" },
+  text: { color: colors.inkMute, fontSize: 16, lineHeight: 23, textAlign: "center" },
   apps: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 8, marginVertical: 4 },
   chip: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  chipText: { color: colors.text, fontSize: 13 },
-  note: { color: colors.textDim, fontSize: 13, lineHeight: 19, textAlign: "center" },
-  error: { color: colors.danger, textAlign: "center", marginBottom: 12 },
-  primary: { backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 16, alignItems: "center" },
-  primaryText: { color: colors.bg, fontSize: 16, fontWeight: "700" },
+  chipText: { color: colors.ink, fontSize: 13 },
+  note: { color: colors.inkMute, fontSize: 13, lineHeight: 19, textAlign: "center" },
+  error: { color: colors.stop, textAlign: "center", marginBottom: 12 },
+  primary: { backgroundColor: colors.now, borderRadius: 12, paddingVertical: 16, alignItems: "center" },
+  primaryText: { color: colors.paper, fontSize: 16, fontWeight: "700" },
   skip: { alignItems: "center", paddingVertical: 16 },
-  skipText: { color: colors.textDim, fontSize: 15 },
+  skipText: { color: colors.inkMute, fontSize: 15 },
 });

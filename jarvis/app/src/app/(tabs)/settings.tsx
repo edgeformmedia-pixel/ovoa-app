@@ -6,9 +6,7 @@ import {
   Alert,
   Linking,
   Pressable,
-  ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -16,13 +14,14 @@ import {
 import { GoogleConnection } from "../../components/GoogleConnection";
 import { SiriSetup } from "../../components/SiriSetup";
 import { VoicePicker } from "../../components/VoicePicker";
+import { Btn, GroupLabel, Screen, Toggle, TopBar } from "../../components/ui";
 import { api, type Autonomy, type Memory } from "../../lib/api";
 import { disableTimeline, enableTimeline, timelinePref } from "../../lib/location";
 import { useAgent } from "../../lib/agent";
 import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
 import { autoSendTextsPref, SEND_TEXT_SHORTCUT } from "../../lib/storage";
-import { colors } from "../../lib/theme";
+import { colors, space, type } from "../../lib/theme";
 
 export default function Settings() {
   const router = useRouter();
@@ -214,7 +213,9 @@ export default function Settings() {
   };
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <View style={styles.page}>
+      <TopBar title="Settings" />
+      <Screen keyboardShouldPersistTaps="handled">
       <Section title="Account">
         <Text style={styles.meta}>{user.email}</Text>
         <Field label="Your name" value={name} onChangeText={setName} />
@@ -245,7 +246,7 @@ export default function Settings() {
               With it on, a double click turns it off.
             </Text>
           </View>
-          <Switch
+          <Toggle
             value={alwaysListen}
             onValueChange={(on) =>
               on
@@ -259,7 +260,6 @@ export default function Settings() {
                   )
                 : setAlwaysListen(false)
             }
-            trackColor={{ true: colors.danger, false: colors.border }}
           />
         </View>
         <View style={styles.segment}>
@@ -303,15 +303,11 @@ export default function Settings() {
             <Text style={styles.label}>Remember things about me</Text>
             <Text style={styles.meta}>{assistantName || "Your assistant"} learns facts from your chats.</Text>
           </View>
-          <Switch
-            value={user.settings.memoryEnabled}
-            onValueChange={toggleMemory}
-            trackColor={{ true: colors.accent, false: colors.border }}
-          />
+          <Toggle value={user.settings.memoryEnabled} onValueChange={toggleMemory} />
         </View>
 
         {memories === null ? (
-          <ActivityIndicator color={colors.accent} />
+          <ActivityIndicator color={colors.now} />
         ) : memories.length === 0 ? (
           <Text style={styles.meta}>Nothing remembered yet.</Text>
         ) : (
@@ -410,7 +406,7 @@ export default function Settings() {
               without tapping Send. Your phone switches to Shortcuts for a moment and comes back.
             </Text>
           </View>
-          <Switch value={autoSendTexts} onValueChange={toggleAutoSendTexts} trackColor={{ true: colors.accent, false: colors.border }} />
+          <Toggle value={autoSendTexts} onValueChange={toggleAutoSendTexts} />
         </View>
         {autoSendTexts && (
           <Button label="Open Shortcuts" onPress={() => Linking.openURL("shortcuts://create-shortcut")} />
@@ -426,16 +422,12 @@ export default function Settings() {
               only when it's worth interrupting you. Everything it does is logged.
             </Text>
           </View>
-          <Switch
-            value={user.settings.agentEnabled}
-            onValueChange={toggleAgent}
-            trackColor={{ true: colors.accent, false: colors.border }}
-          />
+          <Toggle value={user.settings.agentEnabled} onValueChange={toggleAgent} />
         </View>
 
         {user.settings.agentEnabled && (
           <>
-            {!!pushProblem && <Text style={[styles.meta, { color: colors.warning }]}>{pushProblem}</Text>}
+            {!!pushProblem && <Text style={[styles.meta, { color: colors.late }]}>{pushProblem}</Text>}
 
             <Text style={styles.label}>How far it can go</Text>
             <View style={styles.segment}>
@@ -467,7 +459,7 @@ export default function Settings() {
                 onChangeText={(v) => setQuiet((q) => ({ ...q, start: v }))}
                 onBlur={saveQuiet}
                 placeholder="22:00"
-                placeholderTextColor={colors.textDim}
+                placeholderTextColor={colors.inkMute}
                 keyboardType="numbers-and-punctuation"
               />
               <Text style={styles.meta}>and</Text>
@@ -477,7 +469,7 @@ export default function Settings() {
                 onChangeText={(v) => setQuiet((q) => ({ ...q, end: v }))}
                 onBlur={saveQuiet}
                 placeholder="07:00"
-                placeholderTextColor={colors.textDim}
+                placeholderTextColor={colors.inkMute}
                 keyboardType="numbers-and-punctuation"
               />
             </View>
@@ -501,11 +493,7 @@ export default function Settings() {
               background.
             </Text>
           </View>
-          <Switch
-            value={user.settings.contextEnabled}
-            onValueChange={toggleContext}
-            trackColor={{ true: colors.accent, false: colors.border }}
-          />
+          <Toggle value={user.settings.contextEnabled} onValueChange={toggleContext} />
         </View>
         {user.settings.contextEnabled && (
           <>
@@ -557,11 +545,7 @@ export default function Settings() {
               contacts, calendar, and reminders right away. iOS still asks you to tap Send for emails, and for texts unless "Send texts automatically" is on.
             </Text>
           </View>
-          <Switch
-            value={user.settings.autoApprove}
-            onValueChange={toggleAutoApprove}
-            trackColor={{ true: colors.danger, false: colors.border }}
-          />
+          <Toggle value={user.settings.autoApprove} onValueChange={toggleAutoApprove} />
         </View>
         <Button
           label="Delete account"
@@ -579,16 +563,17 @@ export default function Settings() {
           }
         />
       </Section>
-    </ScrollView>
+      </Screen>
+    </View>
   );
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
-      <View style={styles.card}>{children}</View>
-    </View>
+    <>
+      <GroupLabel>{title}</GroupLabel>
+      <View style={styles.section}>{children}</View>
+    </>
   );
 }
 
@@ -598,7 +583,7 @@ function Field({ label, ...props }: { label: string } & React.ComponentProps<typ
       <Text style={styles.label}>{label}</Text>
       <TextInput
         style={[styles.input, props.multiline && { minHeight: 80, textAlignVertical: "top" }]}
-        placeholderTextColor={colors.textDim}
+        placeholderTextColor={colors.inkMute}
         autoCorrect={!props.secureTextEntry}
         autoCapitalize={props.secureTextEntry ? "none" : "sentences"}
         {...props}
@@ -687,9 +672,9 @@ function LocationTimeline() {
             days; named places until you remove them.
           </Text>
         </View>
-        <Switch value={on} onValueChange={toggle} trackColor={{ true: colors.accent, false: colors.border }} />
+        <Toggle value={on} onValueChange={toggle} />
       </View>
-      {problem && <Text style={[styles.meta, { color: colors.danger }]}>{problem}</Text>}
+      {problem && <Text style={[styles.meta, { color: colors.stop }]}>{problem}</Text>}
     </>
   );
 }
@@ -706,50 +691,40 @@ function Button({
   danger?: boolean;
 }) {
   return (
-    <Pressable
+    <Btn
+      label={label}
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => [styles.button, (pressed || disabled) && { opacity: disabled ? 0.4 : 0.7 }]}
-    >
-      <Text style={[styles.buttonText, danger && { color: colors.danger }]}>{label}</Text>
-    </Pressable>
+      kind={danger ? "danger" : "plain"}
+      style={{ alignSelf: "flex-start" }}
+    />
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: 16, paddingBottom: 48, gap: 24 },
-  section: { gap: 8 },
-  sectionTitle: { color: colors.textDim, fontSize: 12, fontWeight: "600", letterSpacing: 1, marginLeft: 4 },
-  card: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 14,
-    gap: 14,
-  },
-  row: { flexDirection: "row", alignItems: "center", gap: 12 },
-  label: { color: colors.text, fontSize: 15 },
-  meta: { color: colors.textDim, fontSize: 13 },
+  page: { flex: 1, backgroundColor: colors.paper },
+  // A group of settings is a run of rows, not a box. Nothing here is a card.
+  section: { gap: space.s3 },
+  row: { flexDirection: "row", alignItems: "center", gap: space.s3 },
+  label: { ...type.body, color: colors.ink },
+  meta: { ...type.meta, color: colors.inkMute },
   input: {
-    backgroundColor: colors.surfaceHigh,
-    borderRadius: 10,
-    color: colors.text,
-    fontSize: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    backgroundColor: colors.wash,
+    borderRadius: 14,
+    color: colors.ink,
+    ...type.body,
+    paddingHorizontal: space.s3,
+    paddingVertical: space.s3,
   },
-  disclosure: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 6 },
-  chevron: { color: colors.textDim, fontSize: 14 },
-  memory: { flexDirection: "row", alignItems: "center", gap: 12 },
-  memoryText: { flex: 1, color: colors.text, fontSize: 14, lineHeight: 20 },
-  forget: { color: colors.danger, fontSize: 13 },
-  button: { backgroundColor: colors.surfaceHigh, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
-  buttonText: { color: colors.accent, fontSize: 15, fontWeight: "600" },
-  segment: { flexDirection: "row", backgroundColor: colors.surfaceHigh, borderRadius: 10, padding: 3, gap: 3 },
-  segmentItem: { flex: 1, borderRadius: 8, paddingVertical: 8, alignItems: "center" },
-  segmentOn: { backgroundColor: colors.surface },
-  segmentText: { color: colors.textDim, fontSize: 14, fontWeight: "600" },
-  segmentTextOn: { color: colors.text },
+  disclosure: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: space.s1 },
+  chevron: { ...type.meta, color: colors.inkMute },
+  memory: { flexDirection: "row", alignItems: "center", gap: space.s3 },
+  memoryText: { flex: 1, ...type.sub, color: colors.ink },
+  forget: { ...type.meta, fontWeight: "600", color: colors.stop },
+  // Selection is ink, never teal: which option is picked is not urgency.
+  segment: { flexDirection: "row", backgroundColor: colors.wash, borderRadius: 14, padding: 3, gap: 3 },
+  segmentItem: { flex: 1, borderRadius: 11, paddingVertical: 9, alignItems: "center" },
+  segmentOn: { backgroundColor: colors.paper },
+  segmentText: { ...type.meta, fontWeight: "600", color: colors.inkMute },
+  segmentTextOn: { color: colors.ink },
 });

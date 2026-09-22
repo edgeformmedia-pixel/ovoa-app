@@ -17,7 +17,7 @@ import { api, type OnboardingStep } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { devlog, logFail } from "../lib/devlog";
 import { syncRoutines } from "../lib/routines";
-import { colors, shadow } from "../lib/theme";
+import { colors, lift } from "../lib/theme";
 import { createSpeaker, useConversation } from "../lib/voice";
 
 // Setup, as a phone call.
@@ -209,7 +209,7 @@ export default function Onboarding() {
               <View
                 style={[
                   styles.halo,
-                  phase === "speaking" && { backgroundColor: colors.success },
+                  phase === "speaking" && { backgroundColor: colors.done },
                   { transform: [{ scale: 1 + loudness * 0.35 }], opacity: 0.12 + loudness * 0.35 },
                 ]}
               />
@@ -217,12 +217,12 @@ export default function Onboarding() {
             <View style={[styles.orb, !calling && styles.orbOff]}>
               <Image source={require("../../assets/orb-ring.png")} style={styles.ring} resizeMode="cover" />
               {phase === "thinking" ? (
-                <ActivityIndicator size="large" color={colors.accent} />
+                <ActivityIndicator size="large" color={colors.now} />
               ) : (
                 <Ionicons
                   name={!calling ? "call-outline" : phase === "speaking" ? "volume-high" : "mic"}
                   size={30}
-                  color={!calling ? colors.textDim : phase === "speaking" ? colors.success : colors.accent}
+                  color={!calling ? colors.inkMute : phase === "speaking" ? colors.done : colors.now}
                 />
               )}
             </View>
@@ -241,7 +241,7 @@ export default function Onboarding() {
         <ScrollView ref={scroll} style={styles.transcript} contentContainerStyle={styles.lines}>
           {lines.map((line, i) => (
             <View key={i} style={[styles.bubble, line.from === "you" ? styles.you : styles.ovoa]}>
-              <Text style={[styles.bubbleText, line.from === "you" && { color: colors.bg }]}>{line.text}</Text>
+              <Text style={[styles.bubbleText, line.from === "you" && { color: colors.paper }]}>{line.text}</Text>
             </View>
           ))}
         </ScrollView>
@@ -253,7 +253,7 @@ export default function Onboarding() {
               value={text}
               onChangeText={setText}
               placeholder="Type your answer…"
-              placeholderTextColor={colors.textDim}
+              placeholderTextColor={colors.inkMute}
               onSubmitEditing={sendTyped}
               returnKeyType="send"
               editable={!busy && !!step}
@@ -261,7 +261,7 @@ export default function Onboarding() {
               multiline
             />
             <Pressable style={styles.send} onPress={sendTyped} disabled={busy || !text.trim()} accessibilityLabel="Send">
-              <Ionicons name="arrow-up" size={20} color={colors.bg} />
+              <Ionicons name="arrow-up" size={20} color={colors.paper} />
             </Pressable>
           </View>
         )}
@@ -311,7 +311,7 @@ function CallButton({
         <Ionicons
           name={icon}
           size={22}
-          color={tone === "danger" ? colors.bg : colors.text}
+          color={tone === "danger" ? colors.paper : colors.ink}
           // A hang-up icon is the call icon, turned over.
           style={tone === "danger" ? { transform: [{ rotate: "135deg" }] } : undefined}
         />
@@ -330,54 +330,54 @@ function statusLine(calling: boolean, phase: string, busy: boolean) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: 16 },
+  safe: { flex: 1, backgroundColor: colors.paper, paddingHorizontal: 16 },
   head: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingTop: 8, paddingBottom: 10 },
-  who: { color: colors.text, fontSize: 24, fontWeight: "700" },
-  status: { color: colors.accent, fontSize: 14, marginTop: 2 },
-  count: { color: colors.textDim, fontSize: 14, fontVariant: ["tabular-nums"] },
-  track: { height: 3, borderRadius: 2, backgroundColor: colors.surface, overflow: "hidden" },
-  trackFill: { height: 3, backgroundColor: colors.accent },
+  who: { color: colors.ink, fontSize: 24, fontWeight: "700" },
+  status: { color: colors.now, fontSize: 14, marginTop: 2 },
+  count: { color: colors.inkMute, fontSize: 14, fontVariant: ["tabular-nums"] },
+  track: { height: 3, borderRadius: 2, backgroundColor: colors.wash, overflow: "hidden" },
+  trackFill: { height: 3, backgroundColor: colors.now },
 
   stage: { alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 18 },
   orbWrap: { width: 160, height: 160, alignItems: "center", justifyContent: "center" },
-  halo: { position: "absolute", width: 150, height: 150, borderRadius: 75, backgroundColor: colors.accent },
+  halo: { position: "absolute", width: 150, height: 150, borderRadius: 75, backgroundColor: colors.now },
   orb: {
     width: 130,
     height: 130,
     borderRadius: 65,
-    backgroundColor: colors.bg,
+    backgroundColor: colors.paper,
     alignItems: "center",
     justifyContent: "center",
-    ...shadow,
+    ...lift,
   },
   orbOff: { opacity: 0.55 },
   ring: { position: "absolute", width: 130, height: 130, borderRadius: 65 },
-  question: { color: colors.text, fontSize: 21, lineHeight: 28, textAlign: "center", paddingHorizontal: 8 },
-  heard: { color: colors.accent, fontSize: 16, lineHeight: 22, textAlign: "center", opacity: 0.9 },
-  error: { color: colors.danger, textAlign: "center" },
+  question: { color: colors.ink, fontSize: 21, lineHeight: 28, textAlign: "center", paddingHorizontal: 8 },
+  heard: { color: colors.now, fontSize: 16, lineHeight: 22, textAlign: "center", opacity: 0.9 },
+  error: { color: colors.stop, textAlign: "center" },
 
   transcript: { flex: 1 },
   lines: { gap: 8, paddingVertical: 8 },
   bubble: { maxWidth: "85%", borderRadius: 16, paddingHorizontal: 14, paddingVertical: 9 },
-  ovoa: { alignSelf: "flex-start", backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1 },
-  you: { alignSelf: "flex-end", backgroundColor: colors.accent },
-  bubbleText: { color: colors.text, fontSize: 15, lineHeight: 21 },
+  ovoa: { alignSelf: "flex-start", backgroundColor: colors.wash, borderColor: colors.line, borderWidth: 1 },
+  you: { alignSelf: "flex-end", backgroundColor: colors.now },
+  bubbleText: { color: colors.ink, fontSize: 15, lineHeight: 21 },
 
   inputRow: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingTop: 8 },
   input: {
     flex: 1,
     minHeight: 44,
     maxHeight: 120,
-    color: colors.text,
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    color: colors.ink,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
   },
-  send: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center" },
+  send: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.now, alignItems: "center", justifyContent: "center" },
 
   controls: { flexDirection: "row", justifyContent: "space-evenly", alignItems: "flex-start", paddingTop: 12, paddingBottom: 8 },
   control: { alignItems: "center", gap: 6, width: 78 },
@@ -385,12 +385,12 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: colors.surfaceHigh,
-    borderColor: colors.border,
+    backgroundColor: colors.wash2,
+    borderColor: colors.line,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-  controlDanger: { backgroundColor: colors.danger, borderColor: colors.danger },
-  controlLabel: { color: colors.textDim, fontSize: 13 },
+  controlDanger: { backgroundColor: colors.stop, borderColor: colors.stop },
+  controlLabel: { color: colors.inkMute, fontSize: 13 },
 });

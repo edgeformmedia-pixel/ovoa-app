@@ -61,7 +61,7 @@ export function GoogleConnection({ token }: { token: string }) {
       },
     ]);
 
-  if (!accounts) return <ActivityIndicator color={colors.accent} />;
+  if (!accounts) return <ActivityIndicator color={colors.now} />;
 
   return (
     <View style={styles.wrap}>
@@ -92,7 +92,7 @@ export function GoogleConnection({ token }: { token: string }) {
       )}
 
       <Pressable style={[styles.button, !accounts.length && styles.primary]} onPress={() => connect()} disabled={busy}>
-        <Text style={[styles.buttonText, !accounts.length && { color: colors.bg }]}>
+        <Text style={[styles.buttonText, !accounts.length && { color: colors.paper }]}>
           {busy ? "Opening Google…" : accounts.length ? "Add another Google account" : "Connect Google account"}
         </Text>
       </Pressable>
@@ -149,7 +149,7 @@ function AccountCard({
             value={draft}
             onChangeText={setDraft}
             placeholder="e.g. Work"
-            placeholderTextColor={colors.textDim}
+            placeholderTextColor={colors.inkMute}
             maxLength={TAG_MAX}
             autoFocus
             autoCapitalize="words"
@@ -169,11 +169,11 @@ function AccountCard({
             </Pressable>
             {!!account.label && (
               <Pressable onPress={() => save("")} hitSlop={8}>
-                <Text style={[styles.action, { color: colors.danger }]}>Remove tag</Text>
+                <Text style={[styles.action, { color: colors.stop }]}>Remove tag</Text>
               </Pressable>
             )}
             <Pressable onPress={() => setEditing(false)} hitSlop={8}>
-              <Text style={[styles.action, { color: colors.textDim }]}>Cancel</Text>
+              <Text style={[styles.action, { color: colors.inkMute }]}>Cancel</Text>
             </Pressable>
           </View>
         </View>
@@ -189,7 +189,7 @@ function AccountCard({
           <Text style={styles.action}>Reconnect</Text>
         </Pressable>
         <Pressable onPress={onRemove} hitSlop={8}>
-          <Text style={[styles.action, { color: colors.danger }]}>Disconnect</Text>
+          <Text style={[styles.action, { color: colors.stop }]}>Disconnect</Text>
         </Pressable>
       </View>
     </View>
@@ -199,55 +199,55 @@ function AccountCard({
 const styles = StyleSheet.create({
   wrap: { gap: 10 },
   card: {
-    backgroundColor: colors.surfaceHigh,
+    backgroundColor: colors.wash2,
     borderRadius: 12,
     padding: 14,
     gap: 6,
   },
   cardTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   tag: {
-    backgroundColor: colors.accentDim,
+    backgroundColor: colors.nowWash,
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  tagText: { color: colors.accent, fontSize: 13, fontWeight: "600" },
+  tagText: { color: colors.now, fontSize: 13, fontWeight: "600" },
   tagEmpty: {
-    borderColor: colors.border,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  tagEmptyText: { color: colors.textDim, fontSize: 13 },
-  default: { color: colors.success, fontSize: 12, fontWeight: "600" },
-  label: { color: colors.text, fontSize: 15 },
-  meta: { color: colors.textDim, fontSize: 13, lineHeight: 18 },
+  tagEmptyText: { color: colors.inkMute, fontSize: 13 },
+  default: { color: colors.done, fontSize: 12, fontWeight: "600" },
+  label: { color: colors.ink, fontSize: 15 },
+  meta: { color: colors.inkMute, fontSize: 13, lineHeight: 18 },
   editor: { gap: 8, marginTop: 4 },
   input: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 10,
-    color: colors.text,
+    color: colors.ink,
     fontSize: 15,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   suggestions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   suggestion: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  suggestionText: { color: colors.text, fontSize: 13 },
+  suggestionText: { color: colors.ink, fontSize: 13 },
   editorRow: { flexDirection: "row", gap: 18, flexWrap: "wrap" },
   actions: { flexDirection: "row", gap: 18, flexWrap: "wrap", marginTop: 4 },
-  action: { color: colors.accent, fontSize: 14, fontWeight: "600" },
-  button: { backgroundColor: colors.surfaceHigh, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
-  primary: { backgroundColor: colors.accent },
-  buttonText: { color: colors.accent, fontSize: 15, fontWeight: "600" },
+  action: { color: colors.now, fontSize: 14, fontWeight: "600" },
+  button: { backgroundColor: colors.wash2, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
+  primary: { backgroundColor: colors.now },
+  buttonText: { color: colors.now, fontSize: 15, fontWeight: "600" },
 });

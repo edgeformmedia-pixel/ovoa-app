@@ -14,10 +14,10 @@ import { colors } from "../lib/theme";
 const BLOCK_MS = 5 * 60_000;
 
 const SOURCE: Record<LineSource, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
-  mic: { label: "You", color: colors.accent, icon: "mic" },
-  assistant: { label: "OVOA", color: colors.success, icon: "sparkles" },
-  recording: { label: "Recording", color: colors.warning, icon: "radio-button-on" },
-  background: { label: "Background", color: colors.textDim, icon: "ear-outline" },
+  mic: { label: "You", color: colors.now, icon: "mic" },
+  assistant: { label: "OVOA", color: colors.done, icon: "sparkles" },
+  recording: { label: "Recording", color: colors.late, icon: "radio-button-on" },
+  background: { label: "Background", color: colors.inkMute, icon: "ear-outline" },
 };
 
 const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -106,7 +106,7 @@ export default function Transcripts() {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <View style={styles.searchRow}>
-        <Ionicons name="search" size={16} color={colors.textDim} />
+        <Ionicons name="search" size={16} color={colors.inkMute} />
         <TextInput
           style={styles.search}
           value={query}
@@ -116,7 +116,7 @@ export default function Transcripts() {
           }}
           onSubmitEditing={search}
           placeholder="Search everything said"
-          placeholderTextColor={colors.textDim}
+          placeholderTextColor={colors.inkMute}
           returnKeyType="search"
         />
       </View>
@@ -132,17 +132,17 @@ export default function Transcripts() {
         <>
           <View style={styles.dateRow}>
             <Pressable onPress={() => shift(-1)} hitSlop={12}>
-              <Ionicons name="chevron-back" size={22} color={colors.text} />
+              <Ionicons name="chevron-back" size={22} color={colors.ink} />
             </Pressable>
             <Text style={styles.date}>
               {isToday ? "Today" : date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}
             </Text>
             <Pressable onPress={() => shift(1)} hitSlop={12} disabled={isToday}>
-              <Ionicons name="chevron-forward" size={22} color={isToday ? colors.border : colors.text} />
+              <Ionicons name="chevron-forward" size={22} color={isToday ? colors.line : colors.ink} />
             </Pressable>
           </View>
 
-          {loading && <ActivityIndicator color={colors.accent} />}
+          {loading && <ActivityIndicator color={colors.now} />}
           {error && <Text style={styles.error}>{error}</Text>}
 
           {day && (day.title || day.summary) && (
@@ -182,7 +182,7 @@ export default function Transcripts() {
                     <Text style={[styles.body, { flex: 1 }]} numberOfLines={open ? undefined : 1}>
                       {h.title ?? "Not titled yet"}
                     </Text>
-                    <Ionicons name={open ? "chevron-up" : "chevron-down"} size={16} color={colors.textDim} />
+                    <Ionicons name={open ? "chevron-up" : "chevron-down"} size={16} color={colors.inkMute} />
                   </Pressable>
                   {open && h.summary && <Text style={styles.dim}>{h.summary}</Text>}
                   {open &&
@@ -194,8 +194,8 @@ export default function Transcripts() {
                             <Text style={styles.body}>{b.title ?? "Titling…"}</Text>
                             <View style={styles.badges}>
                               {b.sources.map((s) => (
-                                <View key={s} style={[styles.badge, { borderColor: SOURCE[s]?.color ?? colors.border }]}>
-                                  <Text style={[styles.badgeText, { color: SOURCE[s]?.color ?? colors.textDim }]}>
+                                <View key={s} style={[styles.badge, { borderColor: SOURCE[s]?.color ?? colors.line }]}>
+                                  <Text style={[styles.badgeText, { color: SOURCE[s]?.color ?? colors.inkMute }]}>
                                     {SOURCE[s]?.label ?? s}
                                   </Text>
                                 </View>
@@ -212,7 +212,7 @@ export default function Transcripts() {
                             {(lines[b.start] ?? []).map((l) => (
                               <Line key={l.id} line={l} />
                             ))}
-                            {!lines[b.start] && <ActivityIndicator color={colors.accent} />}
+                            {!lines[b.start] && <ActivityIndicator color={colors.now} />}
                             <Text style={styles.hint}>Hold a block to forget it.</Text>
                           </View>
                         )}
@@ -237,7 +237,7 @@ function Line({ line, showDate }: { line: TranscriptLine; showDate?: boolean }) 
           {showDate ? `${new Date(line.ts).toLocaleDateString([], { month: "short", day: "numeric" })} ` : ""}
           {time(line.ts)} · {s.label}
         </Text>
-        <Text style={[styles.body, line.source === "background" && { color: colors.textDim }]} selectable>
+        <Text style={[styles.body, line.source === "background" && { color: colors.inkMute }]} selectable>
           {line.text}
         </Text>
       </View>
@@ -246,37 +246,37 @@ function Line({ line, showDate }: { line: TranscriptLine; showDate?: boolean }) 
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: colors.paper },
   content: { padding: 16, gap: 12, paddingBottom: 48 },
   searchRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 12,
     paddingHorizontal: 12,
   },
-  search: { flex: 1, color: colors.text, fontSize: 15, paddingVertical: 10 },
+  search: { flex: 1, color: colors.ink, fontSize: 15, paddingVertical: 10 },
   dateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4 },
-  date: { color: colors.text, fontSize: 18, fontWeight: "700" },
-  card: { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 },
-  label: { color: colors.textDim, fontSize: 12, fontWeight: "600", letterSpacing: 1 },
-  title: { color: colors.text, fontSize: 18, fontWeight: "700" },
-  body: { color: colors.text, fontSize: 15, lineHeight: 21 },
-  dim: { color: colors.textDim, fontSize: 13, lineHeight: 18 },
-  hint: { color: colors.textDim, fontSize: 11, marginTop: 4 },
-  error: { color: colors.danger },
+  date: { color: colors.ink, fontSize: 18, fontWeight: "700" },
+  card: { backgroundColor: colors.wash, borderColor: colors.line, borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 },
+  label: { color: colors.inkMute, fontSize: 12, fontWeight: "600", letterSpacing: 1 },
+  title: { color: colors.ink, fontSize: 18, fontWeight: "700" },
+  body: { color: colors.ink, fontSize: 15, lineHeight: 21 },
+  dim: { color: colors.inkMute, fontSize: 13, lineHeight: 18 },
+  hint: { color: colors.inkMute, fontSize: 11, marginTop: 4 },
+  error: { color: colors.stop },
   hourHead: { flexDirection: "row", alignItems: "center", gap: 10 },
-  hourLabel: { color: colors.accent, fontSize: 14, fontWeight: "700", width: 64 },
-  block: { borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8 },
+  hourLabel: { color: colors.now, fontSize: 14, fontWeight: "700", width: 64 },
+  block: { borderTopColor: colors.line, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8 },
   blockHead: { flexDirection: "row", gap: 10 },
-  blockTime: { color: colors.textDim, fontSize: 13, width: 64, marginTop: 2 },
+  blockTime: { color: colors.inkMute, fontSize: 13, width: 64, marginTop: 2 },
   badges: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
   badge: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 1 },
   badgeText: { fontSize: 11, fontWeight: "600" },
   lines: { marginLeft: 74, marginTop: 8, gap: 8 },
   line: { flexDirection: "row", gap: 8 },
-  lineMeta: { color: colors.textDim, fontSize: 11 },
+  lineMeta: { color: colors.inkMute, fontSize: 11 },
 });

@@ -36,7 +36,7 @@ export function VoicePicker({ token }: { token: string }) {
             <Text style={styles.label}>{v.label}</Text>
             <Text style={styles.meta}>{v.note}</Text>
           </View>
-          {selected === v.id && <Ionicons name="checkmark" size={20} color={colors.accent} />}
+          {selected === v.id && <Ionicons name="checkmark" size={20} color={colors.now} />}
         </Pressable>
       ))}
       {error && <Text style={styles.error}>{error}</Text>}
@@ -46,7 +46,7 @@ export function VoicePicker({ token }: { token: string }) {
 
 const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", paddingVertical: 8 },
-  label: { color: colors.text, fontSize: 15 },
-  meta: { color: colors.textDim, fontSize: 13 },
-  error: { color: colors.danger, fontSize: 13 },
+  label: { color: colors.ink, fontSize: 15 },
+  meta: { color: colors.inkMute, fontSize: 13 },
+  error: { color: colors.stop, fontSize: 13 },
 });

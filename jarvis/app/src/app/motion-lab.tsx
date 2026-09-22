@@ -8,12 +8,12 @@ import { colors } from "../lib/theme";
 // (device_logs, kind "probe"). See lib/motionProbe.ts.
 
 const VERDICT_COLORS: Record<Verdict, string> = {
-  WIN: colors.success,
-  FLAT: colors.warning,
-  SLOW: colors.warning,
-  "ONE-SHOT": colors.danger,
-  SILENT: colors.textDim,
-  SKIPPED: colors.textDim,
+  WIN: colors.done,
+  FLAT: colors.late,
+  SLOW: colors.late,
+  "ONE-SHOT": colors.stop,
+  SILENT: colors.inkMute,
+  SKIPPED: colors.inkMute,
 };
 
 export default function MotionLab() {
@@ -39,12 +39,12 @@ export default function MotionLab() {
               {probe.step + 1} of {probe.total}
             </Text>
             <Text style={styles.what}>{probe.what}</Text>
-            <Text style={[styles.instruction, twisting && { color: colors.accent }]}>{probe.instruction}</Text>
+            <Text style={[styles.instruction, twisting && { color: colors.blue }]}>{probe.instruction}</Text>
             <Text style={styles.mono}>
               {probe.samples} samples · {probe.raw} raw packets
             </Text>
             <Pressable style={[styles.button, styles.stop]} onPress={stopProbe}>
-              <Text style={[styles.buttonText, { color: colors.danger }]}>Stop</Text>
+              <Text style={[styles.buttonText, { color: colors.stop }]}>Stop</Text>
             </Pressable>
           </View>
         ) : (
@@ -106,36 +106,36 @@ function ResultRow({ result: r }: { result: StepResult }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: colors.paper },
   body: { padding: 20, gap: 10, paddingBottom: 48 },
-  section: { color: colors.text, fontSize: 17, fontWeight: "600", marginTop: 12 },
-  dim: { color: colors.textDim, fontSize: 13, lineHeight: 18 },
-  error: { color: colors.danger, fontSize: 13 },
+  section: { color: colors.ink, fontSize: 17, fontWeight: "600", marginTop: 12 },
+  dim: { color: colors.inkMute, fontSize: 13, lineHeight: 18 },
+  error: { color: colors.stop, fontSize: 13 },
   card: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 12,
     padding: 14,
     gap: 4,
   },
-  cardTwist: { borderColor: colors.accent, backgroundColor: colors.accentDim },
-  cardTitle: { color: colors.text, fontSize: 15, fontWeight: "600" },
+  cardTwist: { borderColor: colors.blue, backgroundColor: colors.nowWash },
+  cardTitle: { color: colors.ink, fontSize: 15, fontWeight: "600" },
   rowHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   badge: { fontSize: 13, fontWeight: "700" },
-  what: { color: colors.text, fontSize: 15, fontWeight: "600", marginTop: 2 },
-  instruction: { color: colors.text, fontSize: 24, fontWeight: "700", marginVertical: 10 },
-  value: { color: colors.text, fontSize: 14, lineHeight: 20 },
-  mono: { color: colors.text, fontFamily: "Menlo", fontSize: 12 },
+  what: { color: colors.ink, fontSize: 15, fontWeight: "600", marginTop: 2 },
+  instruction: { color: colors.ink, fontSize: 24, fontWeight: "700", marginVertical: 10 },
+  value: { color: colors.ink, fontSize: 14, lineHeight: 20 },
+  mono: { color: colors.ink, fontFamily: "Menlo", fontSize: 12 },
   button: {
-    backgroundColor: colors.accentDim,
+    backgroundColor: colors.nowWash,
     borderRadius: 10,
     paddingVertical: 12,
     paddingHorizontal: 16,
     alignSelf: "flex-start",
     marginTop: 4,
   },
-  stop: { backgroundColor: colors.bg, borderColor: colors.danger, borderWidth: 1 },
+  stop: { backgroundColor: colors.paper, borderColor: colors.stop, borderWidth: 1 },
   disabled: { opacity: 0.5 },
-  buttonText: { color: colors.accent, fontWeight: "600", fontSize: 15 },
+  buttonText: { color: colors.blue, fontWeight: "600", fontSize: 15 },
 });

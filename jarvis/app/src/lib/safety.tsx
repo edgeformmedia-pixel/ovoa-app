@@ -216,7 +216,7 @@ const styles = StyleSheet.create({
   btn: { alignSelf: "stretch", borderRadius: 16, paddingVertical: 18, alignItems: "center" },
   okBtn: { backgroundColor: "#fff" },
   okText: { color: "#2a0509", fontSize: 20, fontWeight: "800" },
-  helpBtn: { backgroundColor: colors.danger },
-  callBtn: { backgroundColor: "transparent", borderWidth: 2, borderColor: colors.danger },
+  helpBtn: { backgroundColor: colors.stop },
+  callBtn: { backgroundColor: "transparent", borderWidth: 2, borderColor: colors.stop },
   helpText: { color: "#fff", fontSize: 17, fontWeight: "700" },
 });

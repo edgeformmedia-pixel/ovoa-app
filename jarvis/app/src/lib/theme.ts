@@ -41,21 +41,6 @@ export const colors = {
   pink: "#C7488F",
   pinkWash: "#FBE8F3",
 
-  // ---- the old near-black palette, pointed at the white one ----
-  // Only so the screens that have not been rebuilt yet stay legible on white
-  // instead of going dark-on-dark halfway through. Nothing new may use these;
-  // each screen drops them as it is rebuilt, and they go when the last one has.
-  bg: "#FFFFFF",
-  surface: "#F4F5F7",
-  surfaceHigh: "#EAECF0",
-  border: "#E4E7EC",
-  text: "#0C0E12",
-  textDim: "#8B93A1",
-  accent: "#0E8CA8",
-  accentDim: "#E1F3F8",
-  danger: "#D24540",
-  success: "#1C8C5E",
-  warning: "#B0761A",
 };
 
 export const space = { s1: 4, s2: 8, s3: 12, s4: 16, s5: 20, s6: 24, s8: 32, s10: 40 } as const;
@@ -106,9 +91,3 @@ export const lift = {
   shadowOffset: { width: 0, height: 10 },
   elevation: 6,
 };
-
-/** The old card shadow, softened for white. Goes with the old colour keys. */
-export const shadow = lift;
-
-/** The second accent, for the orb's ring. */
-export const accentTo = "#7E5AFF";

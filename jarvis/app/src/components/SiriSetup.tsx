@@ -51,7 +51,7 @@ export function SiriSetup({ token }: { token: string }) {
           phone actions for you to approve in the app.
         </Text>
         <Pressable style={styles.button} onPress={create} disabled={busy}>
-          {busy ? <ActivityIndicator color={colors.accent} /> : <Text style={styles.buttonText}>Set up Siri</Text>}
+          {busy ? <ActivityIndicator color={colors.now} /> : <Text style={styles.buttonText}>Set up Siri</Text>}
         </Pressable>
         <Pressable onPress={revoke} hitSlop={8}>
           <Text style={styles.link}>Turn off an existing shortcut</Text>
@@ -82,7 +82,7 @@ export function SiriSetup({ token }: { token: string }) {
         <Text style={styles.buttonText}>Open Shortcuts</Text>
       </Pressable>
       <Pressable onPress={revoke} hitSlop={8}>
-        <Text style={[styles.link, { color: colors.danger }]}>Turn off Siri</Text>
+        <Text style={[styles.link, { color: colors.stop }]}>Turn off Siri</Text>
       </Pressable>
     </View>
   );
@@ -114,20 +114,20 @@ function CopyRow({ label, value, onCopy }: { label: string; value: string; onCop
 }
 
 const styles = StyleSheet.create({
-  meta: { color: colors.textDim, fontSize: 13, lineHeight: 18 },
+  meta: { color: colors.inkMute, fontSize: 13, lineHeight: 18 },
   step: { flexDirection: "row", gap: 10 },
-  stepNumber: { color: colors.accent, fontWeight: "700", width: 14 },
-  stepText: { color: colors.text, fontSize: 14, lineHeight: 20, flex: 1 },
+  stepNumber: { color: colors.now, fontWeight: "700", width: 14 },
+  stepText: { color: colors.ink, fontSize: 14, lineHeight: 20, flex: 1 },
   copyRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: colors.surfaceHigh,
+    backgroundColor: colors.wash2,
     borderRadius: 10,
     padding: 10,
   },
-  value: { color: colors.text, fontSize: 14, marginTop: 2 },
-  link: { color: colors.accent, fontWeight: "600" },
-  button: { backgroundColor: colors.surfaceHigh, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
-  buttonText: { color: colors.accent, fontWeight: "600", fontSize: 15 },
+  value: { color: colors.ink, fontSize: 14, marginTop: 2 },
+  link: { color: colors.now, fontWeight: "600" },
+  button: { backgroundColor: colors.wash2, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
+  buttonText: { color: colors.now, fontWeight: "600", fontSize: 15 },
 });

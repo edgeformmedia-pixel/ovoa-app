@@ -61,11 +61,11 @@ export default function ReportBug() {
           multiline
           autoFocus
           placeholder="What you did, and what it did instead"
-          placeholderTextColor={colors.textDim}
+          placeholderTextColor={colors.inkMute}
         />
 
         <Pressable style={[styles.send, sending && { opacity: 0.6 }]} disabled={sending} onPress={send}>
-          {sending ? <ActivityIndicator color={colors.bg} /> : <Text style={styles.sendText}>Send report</Text>}
+          {sending ? <ActivityIndicator color={colors.paper} /> : <Text style={styles.sendText}>Send report</Text>}
         </Pressable>
         {!!result && <Text style={styles.result}>{result}</Text>}
 
@@ -118,29 +118,29 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: colors.paper },
   body: { padding: 16, paddingBottom: 48, gap: 12 },
-  lead: { color: colors.text, fontSize: 15, lineHeight: 21 },
+  lead: { color: colors.ink, fontSize: 15, lineHeight: 21 },
   input: {
-    backgroundColor: colors.surfaceHigh,
+    backgroundColor: colors.wash2,
     borderRadius: 10,
-    color: colors.text,
+    color: colors.ink,
     fontSize: 16,
     minHeight: 110,
     padding: 12,
     textAlignVertical: "top",
   },
-  send: { backgroundColor: colors.accent, borderRadius: 10, paddingVertical: 14, alignItems: "center" },
-  sendText: { color: colors.bg, fontSize: 15, fontWeight: "700" },
-  result: { color: colors.success, fontSize: 13 },
+  send: { backgroundColor: colors.now, borderRadius: 10, paddingVertical: 14, alignItems: "center" },
+  sendText: { color: colors.paper, fontSize: 15, fontWeight: "700" },
+  result: { color: colors.done, fontSize: 13 },
   row: { flexDirection: "row", gap: 8 },
-  button: { flex: 1, backgroundColor: colors.surfaceHigh, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
-  buttonText: { color: colors.accent, fontSize: 14, fontWeight: "600" },
-  section: { color: colors.textDim, fontSize: 12, fontWeight: "600", letterSpacing: 1, marginTop: 14 },
-  card: { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 12, padding: 14, gap: 4 },
+  button: { flex: 1, backgroundColor: colors.wash2, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
+  buttonText: { color: colors.now, fontSize: 14, fontWeight: "600" },
+  section: { color: colors.inkMute, fontSize: 12, fontWeight: "600", letterSpacing: 1, marginTop: 14 },
+  card: { backgroundColor: colors.wash, borderColor: colors.line, borderWidth: 1, borderRadius: 12, padding: 14, gap: 4 },
   dataRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12, paddingVertical: 2 },
-  dim: { color: colors.textDim, fontSize: 13 },
-  value: { color: colors.text, fontSize: 13, flexShrink: 1 },
-  hint: { color: colors.textDim, fontSize: 12, marginTop: 8, lineHeight: 17 },
-  log: { color: colors.textDim, fontFamily: "Menlo", fontSize: 10, lineHeight: 14 },
+  dim: { color: colors.inkMute, fontSize: 13 },
+  value: { color: colors.ink, fontSize: 13, flexShrink: 1 },
+  hint: { color: colors.inkMute, fontSize: 12, marginTop: 8, lineHeight: 17 },
+  log: { color: colors.inkMute, fontFamily: "Menlo", fontSize: 10, lineHeight: 14 },
 });

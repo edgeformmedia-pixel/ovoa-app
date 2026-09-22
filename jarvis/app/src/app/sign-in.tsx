@@ -124,7 +124,7 @@ export default function SignIn() {
             <TextInput
               style={[styles.input, !!fields.name && styles.inputBad]}
               placeholder="Your name"
-              placeholderTextColor={colors.textDim}
+              placeholderTextColor={colors.inkMute}
               value={name}
               onChangeText={onEdit("name", setName)}
               textContentType="name"
@@ -137,7 +137,7 @@ export default function SignIn() {
           <TextInput
             style={[styles.input, !!fields.email && styles.inputBad]}
             placeholder="Email"
-            placeholderTextColor={colors.textDim}
+            placeholderTextColor={colors.inkMute}
             value={email}
             onChangeText={onEdit("email", setEmail)}
             autoCapitalize="none"
@@ -152,7 +152,7 @@ export default function SignIn() {
           <TextInput
             style={[styles.input, !!fields.password && styles.inputBad]}
             placeholder={isSignup ? "Password (8+ characters)" : "Password"}
-            placeholderTextColor={colors.textDim}
+            placeholderTextColor={colors.inkMute}
             value={password}
             onChangeText={onEdit("password", setPassword)}
             secureTextEntry
@@ -171,7 +171,7 @@ export default function SignIn() {
           disabled={busy}
         >
           {busy ? (
-            <ActivityIndicator color={colors.bg} />
+            <ActivityIndicator color={colors.paper} />
           ) : (
             <Text style={styles.buttonText}>{isSignup ? "Create account" : "Sign in"}</Text>
           )}
@@ -186,7 +186,7 @@ export default function SignIn() {
         <Pressable onPress={() => switchTo(isSignup ? "signin" : "signup")} style={styles.switch}>
           <Text style={styles.switchText}>
             {isSignup ? "Already have an account? " : "New here? "}
-            <Text style={{ color: colors.accent }}>{isSignup ? "Sign in" : "Create an account"}</Text>
+            <Text style={{ color: colors.now }}>{isSignup ? "Sign in" : "Create an account"}</Text>
           </Text>
         </Pressable>
       </KeyboardAvoidingView>
@@ -205,40 +205,40 @@ function Field({ error, children }: { error?: string; children: ReactNode }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: colors.paper },
   container: { flex: 1, justifyContent: "center", paddingHorizontal: 28, gap: 12 },
   logo: { width: "86%", height: 110, alignSelf: "center", marginBottom: 8 },
-  subtitle: { color: colors.textDim, fontSize: 16, textAlign: "center", marginBottom: 20 },
+  subtitle: { color: colors.inkMute, fontSize: 16, textAlign: "center", marginBottom: 20 },
   field: { gap: 6 },
   input: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 12,
-    color: colors.text,
+    color: colors.ink,
     fontSize: 16,
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
-  inputBad: { borderColor: colors.danger },
-  fieldError: { color: colors.danger, fontSize: 13, paddingHorizontal: 4 },
-  error: { color: colors.danger, textAlign: "center" },
+  inputBad: { borderColor: colors.stop },
+  fieldError: { color: colors.stop, fontSize: 13, paddingHorizontal: 4 },
+  error: { color: colors.stop, textAlign: "center" },
   button: {
-    backgroundColor: colors.accent,
+    backgroundColor: colors.now,
     borderRadius: 12,
     paddingVertical: 15,
     alignItems: "center",
     marginTop: 8,
   },
-  buttonText: { color: colors.bg, fontSize: 16, fontWeight: "700" },
+  buttonText: { color: colors.paper, fontSize: 16, fontWeight: "700" },
   secondary: {
-    borderColor: colors.accent,
+    borderColor: colors.now,
     borderWidth: 1,
     borderRadius: 12,
     paddingVertical: 13,
     alignItems: "center",
   },
-  secondaryText: { color: colors.accent, fontSize: 16, fontWeight: "600" },
+  secondaryText: { color: colors.now, fontSize: 16, fontWeight: "600" },
   switch: { alignItems: "center", paddingVertical: 12 },
-  switchText: { color: colors.textDim, fontSize: 15 },
+  switchText: { color: colors.inkMute, fontSize: 15 },
 });

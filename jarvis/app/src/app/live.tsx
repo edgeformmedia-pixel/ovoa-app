@@ -190,14 +190,14 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: colors.paper },
   content: { padding: 16, gap: 12, paddingBottom: 40 },
-  card: { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 16, padding: 16, gap: 6 },
-  label: { color: colors.textDim, fontSize: 12, fontWeight: "600", letterSpacing: 1, marginBottom: 4 },
-  big: { color: colors.danger, fontSize: 64, fontWeight: "800", fontVariant: ["tabular-nums"] },
-  dim: { color: colors.textDim, fontSize: 13 },
-  value: { color: colors.text, fontSize: 15, flexShrink: 1, textAlign: "right" },
+  card: { backgroundColor: colors.wash, borderColor: colors.line, borderWidth: 1, borderRadius: 16, padding: 16, gap: 6 },
+  label: { color: colors.inkMute, fontSize: 12, fontWeight: "600", letterSpacing: 1, marginBottom: 4 },
+  big: { color: colors.stop, fontSize: 64, fontWeight: "800", fontVariant: ["tabular-nums"] },
+  dim: { color: colors.inkMute, fontSize: 13 },
+  value: { color: colors.ink, fontSize: 15, flexShrink: 1, textAlign: "right" },
   mono: { fontFamily: "Menlo", fontSize: 14 },
   row: { flexDirection: "row", justifyContent: "space-between", gap: 12, paddingVertical: 3 },
-  error: { color: colors.danger },
+  error: { color: colors.stop },
 });

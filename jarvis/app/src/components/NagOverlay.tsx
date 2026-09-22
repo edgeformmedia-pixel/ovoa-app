@@ -17,7 +17,7 @@ export function NagOverlay() {
   return (
     <Modal visible animationType="fade" transparent={false} onRequestClose={() => {}}>
       <View style={styles.screen}>
-        <Ionicons name={alarm ? "alarm" : "medkit"} size={72} color={colors.accent} />
+        <Ionicons name={alarm ? "alarm" : "medkit"} size={72} color={colors.now} />
         <Text style={styles.title}>{alarm ? `Morning${top.name ? `, ${top.name}` : ""}` : "Don't forget"}</Text>
         <Text style={styles.label}>{top.label}</Text>
 
@@ -46,13 +46,13 @@ export function NagOverlay() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
-  title: { color: colors.text, fontSize: 34, fontWeight: "800", textAlign: "center" },
-  label: { color: colors.textDim, fontSize: 18, textAlign: "center" },
-  steps: { color: colors.accent, fontSize: 64, fontWeight: "800", fontVariant: ["tabular-nums"] },
-  hint: { color: colors.textDim, fontSize: 14, textAlign: "center" },
-  track: { alignSelf: "stretch", height: 12, borderRadius: 6, backgroundColor: colors.surfaceHigh, overflow: "hidden" },
-  fill: { height: "100%", backgroundColor: colors.success },
-  button: { backgroundColor: colors.accent, borderRadius: 16, paddingVertical: 18, paddingHorizontal: 48, marginTop: 12 },
-  buttonText: { color: colors.bg, fontSize: 20, fontWeight: "800" },
+  screen: { flex: 1, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
+  title: { color: colors.ink, fontSize: 34, fontWeight: "800", textAlign: "center" },
+  label: { color: colors.inkMute, fontSize: 18, textAlign: "center" },
+  steps: { color: colors.now, fontSize: 64, fontWeight: "800", fontVariant: ["tabular-nums"] },
+  hint: { color: colors.inkMute, fontSize: 14, textAlign: "center" },
+  track: { alignSelf: "stretch", height: 12, borderRadius: 6, backgroundColor: colors.wash2, overflow: "hidden" },
+  fill: { height: "100%", backgroundColor: colors.done },
+  button: { backgroundColor: colors.now, borderRadius: 16, paddingVertical: 18, paddingHorizontal: 48, marginTop: 12 },
+  buttonText: { color: colors.paper, fontSize: 20, fontWeight: "800" },
 });

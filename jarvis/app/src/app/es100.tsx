@@ -23,7 +23,7 @@ export default function ES100() {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.empty}>
-          <Ionicons name="bluetooth" size={44} color={colors.textDim} />
+          <Ionicons name="bluetooth" size={44} color={colors.inkMute} />
           <Text style={styles.title}>Not available here</Text>
           <Text style={styles.dim}>
             The ES100 needs the installed OVOA app — a development build with the UTE SDK compiled in. Expo Go
@@ -126,7 +126,7 @@ export default function ES100() {
                     {new Date(file.sessionId * 1000).toLocaleString()} · {Math.round(file.size / 1024)} KB · type {file.type}
                   </Text>
                 </View>
-                <Ionicons name="download-outline" size={18} color={colors.accent} />
+                <Ionicons name="download-outline" size={18} color={colors.blue} />
               </Pressable>
             ))}
           </>
@@ -152,20 +152,20 @@ function Button({ label, onPress, disabled }: { label: string; onPress: () => vo
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: colors.paper },
   body: { padding: 20, gap: 10 },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 12 },
-  title: { color: colors.text, fontSize: 26, fontWeight: "600" },
-  heading: { color: colors.text, fontSize: 15, fontWeight: "600", marginTop: 18 },
-  dim: { color: colors.textDim, fontSize: 13 },
-  problem: { color: colors.warning, fontSize: 13, lineHeight: 18 },
+  title: { color: colors.ink, fontSize: 26, fontWeight: "600" },
+  heading: { color: colors.ink, fontSize: 15, fontWeight: "600", marginTop: 18 },
+  dim: { color: colors.inkMute, fontSize: 13 },
+  problem: { color: colors.late, fontSize: 13, lineHeight: 18 },
   row: { flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 8 },
-  button: { backgroundColor: colors.accentDim, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14 },
-  buttonOff: { backgroundColor: colors.surface },
-  buttonText: { color: colors.accent, fontWeight: "600", fontSize: 14 },
+  button: { backgroundColor: colors.nowWash, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14 },
+  buttonOff: { backgroundColor: colors.wash },
+  buttonText: { color: colors.blue, fontWeight: "600", fontSize: 14 },
   item: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 12,
     padding: 14,
@@ -173,7 +173,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  itemText: { color: colors.text, fontSize: 15 },
-  good: { color: colors.success },
-  logLine: { color: colors.textDim, fontSize: 11, fontFamily: "Menlo" },
+  itemText: { color: colors.ink, fontSize: 15 },
+  good: { color: colors.done },
+  logLine: { color: colors.inkMute, fontSize: 11, fontFamily: "Menlo" },
 });

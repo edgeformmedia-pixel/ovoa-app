@@ -37,18 +37,18 @@ export default function AskClaude() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.paper }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={styles.inputRow}>
         <TextInput
           style={styles.input}
           value={prompt}
           onChangeText={setPrompt}
           placeholder="Ask Claude anything"
-          placeholderTextColor={colors.textDim}
+          placeholderTextColor={colors.inkMute}
           multiline
         />
         <Pressable style={[styles.send, (!prompt.trim() || busy) && { opacity: 0.5 }]} onPress={send} disabled={!prompt.trim() || busy}>
-          {busy ? <ActivityIndicator color={colors.bg} /> : <Ionicons name="arrow-up" size={20} color={colors.bg} />}
+          {busy ? <ActivityIndicator color={colors.paper} /> : <Ionicons name="arrow-up" size={20} color={colors.paper} />}
         </Pressable>
       </View>
       <ScrollView contentContainerStyle={styles.list} keyboardShouldPersistTaps="handled">
@@ -62,14 +62,14 @@ export default function AskClaude() {
                   {x.answer}
                 </Text>
                 <Pressable style={styles.speak} onPress={() => createSpeaker(token).speak(x.answer!).catch(logFail("claude: speak"))}>
-                  <Ionicons name="volume-high" size={16} color={colors.accent} />
+                  <Ionicons name="volume-high" size={16} color={colors.now} />
                   <Text style={styles.speakText}>Read it out</Text>
                 </Pressable>
               </>
             ) : x.error ? (
               <Text style={styles.error}>{x.error}</Text>
             ) : (
-              <ActivityIndicator color={colors.accent} style={{ alignSelf: "flex-start" }} />
+              <ActivityIndicator color={colors.now} style={{ alignSelf: "flex-start" }} />
             )}
           </View>
         ))}
@@ -84,9 +84,9 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 48,
     maxHeight: 160,
-    color: colors.text,
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    color: colors.ink,
+    backgroundColor: colors.wash,
+    borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 14,
@@ -94,13 +94,13 @@ const styles = StyleSheet.create({
     paddingBottom: 13,
     fontSize: 16,
   },
-  send: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center" },
+  send: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.now, alignItems: "center", justifyContent: "center" },
   list: { padding: 16, paddingTop: 0, gap: 12, paddingBottom: 40 },
-  card: { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 },
-  prompt: { color: colors.accent, fontSize: 15, fontWeight: "600" },
-  answer: { color: colors.text, fontSize: 15, lineHeight: 22 },
-  dim: { color: colors.textDim, fontSize: 14, textAlign: "center", marginTop: 24 },
-  error: { color: colors.danger },
+  card: { backgroundColor: colors.wash, borderColor: colors.line, borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 },
+  prompt: { color: colors.now, fontSize: 15, fontWeight: "600" },
+  answer: { color: colors.ink, fontSize: 15, lineHeight: 22 },
+  dim: { color: colors.inkMute, fontSize: 14, textAlign: "center", marginTop: 24 },
+  error: { color: colors.stop },
   speak: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start" },
-  speakText: { color: colors.accent, fontWeight: "600" },
+  speakText: { color: colors.now, fontWeight: "600" },
 });
