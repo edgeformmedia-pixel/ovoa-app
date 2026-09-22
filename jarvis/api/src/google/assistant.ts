@@ -185,9 +185,19 @@ function accountTools(env: Env, userId: string, accounts: GoogleAccount[]) {
   return { specs, names: new Set(specs.map((s) => s.name)), run };
 }
 
-/** Google tools for one chat request. Risky calls are parked in `pending` for approval unless `autoApprove`. */
-export async function googleAssistant(env: Env, userId: string, timeZone: string, autoApprove: boolean) {
-  const accounts = await listGoogleAccounts(env.DB, userId);
+/**
+ * Google tools for one chat request. Risky calls are parked in `pending` for approval unless `autoApprove`.
+ * `autoApprove` may still be on its way from the settings read: the account list is
+ * fetched alongside it rather than after, which is one database round trip fewer
+ * before a turn's first word.
+ */
+export async function googleAssistant(
+  env: Env,
+  userId: string,
+  timeZone: string,
+  autoApproveSetting: boolean | Promise<boolean>,
+) {
+  const [accounts, autoApprove] = await Promise.all([listGoogleAccounts(env.DB, userId), autoApproveSetting]);
   const pending: PendingAction[] = [];
 
   if (!accounts.length || !env.GOOGLE_CLIENT_SECRET) {

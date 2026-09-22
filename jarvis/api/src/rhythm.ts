@@ -12,6 +12,7 @@ import { addDays, atLocalTime, buckets, clock, clockFromMinutes, dayRange, local
 import { moneyBriefLine } from "./money";
 import { listTodos } from "./todos";
 import type { Env } from "./types";
+import { inSlice, type Slice } from "./sweep";
 
 // The daily rhythm (F18-F22). See migrations/0024_rhythm.sql.
 //
@@ -27,6 +28,8 @@ const BRIEF_LATEST_MIN = 60;
 const WIND_DOWN_LEAD_MIN = 30;
 /** How early to say "leave now" on top of the travel time. */
 const LEAVE_BUFFER_MIN = 10;
+/** How often a person's calendar is looked at for new places to get to. */
+const COMMUTE_LOOK_MS = 30 * 60_000;
 /** Leaving home twice in this long gets one checklist, not two. */
 const CHECKLIST_GAP_MS = 30 * 60_000;
 /** A usual thing counts as usual at this share of the days it could have happened. */
@@ -279,11 +282,10 @@ async function commuteTick(env: Env, u: TickUser) {
     .all<{ event_id: string; leave_at: number | null; notified: number; title: string; travel_s: number | null; starts_at: number }>();
 
   // New events are looked at every half hour at most per user; the rest of the time only the known ones are checked.
-  const lastLook = await db
-    .prepare("SELECT MAX(checked_at) AS at FROM commute_checks WHERE user_id = ?")
-    .bind(u.userId)
-    .first<{ at: number | null }>();
-  if (!lastLook?.at || now - lastLook.at > 30 * 60_000) {
+  // Claimed per half hour rather than read off commute_checks: that table only
+  // gets a row when an upcoming event has a place, so for everyone else "when did
+  // we last look" was always "never", and their calendar was fetched every tick.
+  if (await mark(db, u.userId, "commute-look", String(Math.floor(now / COMMUTE_LOOK_MS)))) {
     const events = (await upcomingEvents(env, u.userId, now, now + 4 * 3_600_000, u.timeZone)).filter((e) => e.location && e.start.includes("T"));
     const from = await whereAbouts(db, u.userId);
     for (const e of events.slice(0, 3)) {
@@ -309,10 +311,17 @@ async function commuteTick(env: Env, u: TickUser) {
   let sent = 0;
   for (const k of known) {
     if (k.notified || !k.leave_at || !k.travel_s) continue;
-    if (now < k.leave_at - LEAVE_BUFFER_MIN * 60_000 || now > k.starts_at) continue;
-    await db.prepare("UPDATE commute_checks SET notified = 1 WHERE user_id = ? AND event_id = ?").bind(u.userId, k.event_id).run();
+    // Each person is looked at every ten minutes now (sweep.ts), so the window opens
+    // a little earlier and the line says how long there really is.
+    if (now < k.leave_at - (LEAVE_BUFFER_MIN + 5) * 60_000 || now > k.starts_at) continue;
+    const { meta } = await db
+      .prepare("UPDATE commute_checks SET notified = 1 WHERE user_id = ? AND event_id = ? AND notified = 0")
+      .bind(u.userId, k.event_id)
+      .run();
+    if (!meta.changes) continue;
     const minutes = Math.round(k.travel_s / 60);
-    const line = `Leave in ${LEAVE_BUFFER_MIN} minutes for ${k.title} at ${clock(k.starts_at, u.timeZone)} — about ${minutes} min drive.`;
+    const left = Math.max(1, Math.round((k.leave_at - now) / 60_000));
+    const line = `Leave in ${left} minute${left === 1 ? "" : "s"} for ${k.title} at ${clock(k.starts_at, u.timeZone)} — about ${minutes} min drive.`;
     await sendBuzz(env, u.userId, "double", line, "system");
     await push(env, u.userId, { title: "Time to go soon", body: line, urgent: true, data: { type: "commute" } });
     await logAction(db, u.userId, "commute", line, "system");
@@ -470,7 +479,7 @@ type TickUser = {
 };
 
 /** Every two minutes, for everyone the phone can reach. */
-export async function rhythmTick(env: Env) {
+export async function rhythmTick(env: Env, slice?: Slice) {
   const { results } = await env.DB.prepare(
     `SELECT s.user_id, s.time_zone, p.wake_time, p.sleep_time, d.updated_at AS device_seen,
             EXISTS (SELECT 1 FROM google_accounts g WHERE g.user_id = s.user_id) AS google
@@ -481,6 +490,7 @@ export async function rhythmTick(env: Env) {
   ).all<{ user_id: string; time_zone: string | null; wake_time: number | null; sleep_time: number | null; device_seen: number | null; google: number }>();
   const counts = { briefs: 0, windDowns: 0, commutes: 0, oddities: 0 };
   for (const r of results) {
+    if (!inSlice(r.user_id, slice)) continue;
     const u: TickUser = {
       userId: r.user_id,
       timeZone: validTimeZone(r.time_zone),

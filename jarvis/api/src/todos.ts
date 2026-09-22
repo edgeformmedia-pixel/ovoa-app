@@ -9,6 +9,7 @@ import type { CallTool, ToolSpec } from "./llm";
 import { push } from "./push";
 import { addDays, atLocalTime, buckets, dayRange } from "./time";
 import type { Env, Vars } from "./types";
+import { inSlice, type Slice } from "./sweep";
 
 // Tomorrow's list, and the nudge to go to bed. See migrations/0019_todos.sql.
 //
@@ -251,7 +252,7 @@ export function bedtimeFor(day: string, sleep: number, timeZone: string) {
  * built; anyone whose bedtime has come gets told. Each happens once per
  * evening (daily_marks), however many ticks land in the window.
  */
-export async function eveningTick(env: Env) {
+export async function eveningTick(env: Env, slice?: Slice) {
   const db = env.DB;
   const now = Date.now();
   // Only people the phone can reach; everyone else gets their list when they open the app.
@@ -266,6 +267,7 @@ export async function eveningTick(env: Env) {
   let built = 0;
   let told = 0;
   for (const u of results) {
+    if (!inSlice(u.user_id, slice)) continue;
     const timeZone = validTimeZone(u.time_zone);
     const sleep = u.sleep_time ?? DEFAULT_SLEEP;
     const today = buckets(now, timeZone).day;

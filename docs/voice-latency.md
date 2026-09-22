@@ -61,6 +61,37 @@ phone 3900, google 9100, agent 7300, tools 11000, history 2400`).
   answer in the first sentence, contractions, no "Certainly", and a short
   confirmation rather than a recital of every field.
 
+## Done on 2026-09-22 (not yet measured on a phone)
+
+- **A prompt the engines can reuse.** The clock and today's step counts sat
+  ~200 characters into the system prompt and changed every minute, so no
+  engine's prompt cache (DeepSeek's context cache, Gemini's implicit cache,
+  Workers AI's prefix cache) could reuse the ~5.8k of instructions and ~7.5k of
+  tool JSON behind them. They now ride on the latest message instead, and the
+  system prompt is ordered from what never changes to what changes most.
+- **Same model server for the same person.** Workers AI calls carry
+  `x-session-affinity: ovoa-<user>`, which routes a person's turns to the
+  server still holding their prompt.
+- **The server voices the reply.** With `speak: { voice }` on a streamed
+  `/chat`, each piece is sent to Deepgram the moment the model writes it and
+  the mp3 comes down the same stream (`{"type":"audio"}` lines after a
+  `{"type":"voice","on":true}` acknowledgement). That removes a phone→server
+  round trip and a sign-in check from the first word, and one request per
+  sentence. Builds that don't ask are untouched; a piece the server can't voice
+  arrives as words and the phone voices it itself.
+- **The first clause goes early.** A long opening sentence is sent at its
+  first pause ("Your dentist is tomorrow afternoon,") instead of after its full
+  stop.
+- **Less before the model starts.** Sessions are cached in memory for a
+  minute (no database read per `/voice/speak` or `/logs`), and the Google
+  account list is read alongside the settings instead of after them.
+- **Half the model calls.** The memory pass after each reply only runs when
+  the message is about the person (first person, "remember", "forget"), so it
+  no longer spends the Workers AI allowance voice turns answer on first.
+
+To check these on the phone: `first voiced piece after N ms` in device_logs
+is the new number to watch, next to `first sentence after`.
+
 ## Worth trying next, in the order the numbers justify
 
 1. **The model is the biggest and the most variable leg** (0.8–12.4 s). The

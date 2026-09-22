@@ -86,6 +86,13 @@ type ToolLoopOptions = {
   onText?: OnText;
   /** Called once per engine tried or skipped, so the day's engine health is recordable. */
   onAttempt?: OnAttempt;
+  /**
+   * Whose turn this is. Workers AI keeps a prompt it has just read on the model
+   * server that read it, and routes requests carrying the same x-session-affinity
+   * there, so one person's next turn skips re-reading everything it has in common
+   * with their last. Without it, turns land on any server and the cache is luck.
+   */
+  affinity?: string;
 };
 
 export type Engine = "gemini" | OpenAiEngine;
@@ -633,7 +640,7 @@ function openAiBody(engine: OpenAiEngine, body: OpenAiBody): OpenAiBody {
   return rest;
 }
 
-async function openAiCall(env: LlmEnv, engine: OpenAiEngine, body: OpenAiBody, stream: boolean): Promise<any> {
+async function openAiCall(env: LlmEnv, engine: OpenAiEngine, body: OpenAiBody, stream: boolean, affinity?: string): Promise<any> {
   if (engine === "workers") {
     // AiOptions carries a signal, so the binding gets the same deadline the two
     // raw fetches have. Without it a hung Workers AI call is invisible until the
@@ -641,7 +648,11 @@ async function openAiCall(env: LlmEnv, engine: OpenAiEngine, body: OpenAiBody, s
     return env.AI.run(
       env.FALLBACK_MODEL as keyof AiModels,
       { ...openAiBody(engine, body), ...(stream && { stream: true }) } as never,
-      { signal: AbortSignal.timeout(connectMs) },
+      {
+        signal: AbortSignal.timeout(connectMs),
+        // Documented for the binding as extraHeaders (Workers AI "prompt caching").
+        ...(affinity && { extraHeaders: { "x-session-affinity": `ovoa-${affinity}` } }),
+      },
     );
   }
   const res = await fetchWithDeadline("https://api.deepseek.com/chat/completions", {
@@ -664,13 +675,19 @@ function openAiText(out: OpenAiOut) {
 }
 
 /** One model turn. Streamed when `onText` is set; either way returns the whole message. */
-async function openAiRound(env: LlmEnv, engine: OpenAiEngine, body: OpenAiBody, onText?: OnText): Promise<OpenAiMessage> {
+async function openAiRound(
+  env: LlmEnv,
+  engine: OpenAiEngine,
+  body: OpenAiBody,
+  onText?: OnText,
+  affinity?: string,
+): Promise<OpenAiMessage> {
   if (!onText) {
-    const out = (await openAiCall(env, engine, body, false)) as OpenAiOut;
+    const out = (await openAiCall(env, engine, body, false, affinity)) as OpenAiOut;
     const message = out.choices?.[0]?.message;
     return { content: openAiText(out), reasoning_content: message?.reasoning_content, tool_calls: message?.tool_calls ?? [] };
   }
-  const stream = (await openAiCall(env, engine, body, true)) as ReadableStream<Uint8Array>;
+  const stream = (await openAiCall(env, engine, body, true, affinity)) as ReadableStream<Uint8Array>;
   let content = "";
   let reasoning = "";
   const calls: any[] = [];
@@ -721,7 +738,7 @@ async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, { system, turns
 async function openAiToolLoop(
   env: LlmEnv,
   engine: OpenAiEngine,
-  { system, turns, tools, callTool, voice, onText }: ToolLoopOptions,
+  { system, turns, tools, callTool, voice, onText, affinity }: ToolLoopOptions,
   paused?: Extract<LoopState, { engine: OpenAiEngine }>,
 ): Promise<ChatOutcome> {
   const messages: any[] = paused?.messages ?? [
@@ -745,6 +762,7 @@ async function openAiToolLoop(
         ...(voice && { reasoning_effort: "low" as const }),
       },
       onText,
+      affinity,
     );
 
     const calls = message.tool_calls;

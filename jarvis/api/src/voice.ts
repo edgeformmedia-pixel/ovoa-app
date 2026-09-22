@@ -132,6 +132,126 @@ voice.post("/voice/speak", async (c) => {
   return new Response(new Blob(parts, { type: "audio/mpeg" }), { headers: audioHeaders });
 });
 
+// ---------- Voicing a reply as it's written ----------
+//
+// The phone used to get each sentence of a spoken reply, then ask /voice/speak
+// for its audio: a second round trip across the phone's network, and a second
+// sign-in check, between the words existing and the voice starting. When the
+// phone asks for it (`speak` on /chat), the server voices each piece the moment
+// the model writes it and sends the audio down the same stream. One request per
+// reply instead of one per sentence, too, which matters with many phones.
+
+/** Voiced ahead of the one being written out, per reply. The phone's own FETCH_AHEAD. */
+const SPEAK_AHEAD = 3;
+/** A first sentence longer than this goes out in two pieces (app/src/lib/voice.ts SPLIT_FIRST_OVER). */
+const SPLIT_FIRST_OVER = 60;
+/** ...looking this far into it for a pause (FIRST_PIECE_MAX). */
+const FIRST_PIECE_MAX = 120;
+/** After the first piece, sentences shorter than this ride along with the next. */
+const JOIN_UNDER = 40;
+
+export type VoiceId = (typeof VOICES)[number];
+
+/** One line of the /chat stream carrying a voiced piece, or saying it couldn't be voiced. */
+export type AudioLine = { type: "audio"; seq: number; text: string; mp3?: string; error?: string };
+
+function base64(bytes: Uint8Array) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+/**
+ * Voices a reply sentence by sentence and hands each piece to `write`, in order.
+ * The grouping is the phone's (createSpeaker's `say`), so a reply sounds the same
+ * whichever end voiced it: a long first sentence split at its first pause so the
+ * voice starts sooner, and very short sentences joined to the next so it doesn't
+ * stop and start.
+ */
+export function speechStream(apiKey: string, voice: VoiceId, write: (line: AudioLine) => Promise<void>) {
+  let pending = "";
+  let pieces = 0;
+  let stopped = false;
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  let written: Promise<void> = Promise.resolve();
+
+  /** At most SPEAK_AHEAD requests to Deepgram at once per reply, started in order. */
+  const slot = () =>
+    running < SPEAK_AHEAD ? (running++, Promise.resolve()) : new Promise<void>((r) => waiting.push(() => (running++, r())));
+  const release = () => {
+    running--;
+    waiting.shift()?.();
+  };
+
+  const voiceOne = async (text: string): Promise<Uint8Array> => {
+    await slot();
+    try {
+      if (stopped) throw new Error("stopped");
+      const res = await fetch(`${DEEPGRAM}/speak?model=${voice}&encoding=mp3`, {
+        method: "POST",
+        headers: { authorization: `Token ${apiKey}`, "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) throw new Error(`Deepgram ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      return new Uint8Array(await res.arrayBuffer());
+    } finally {
+      release();
+    }
+  };
+
+  const add = (raw: string) => {
+    const text = speakable(raw).slice(0, MAX_SPEAK_CHARS);
+    if (!/[\p{L}\p{N}]/u.test(text)) return;
+    const seq = pieces++;
+    // Started now; written out after every piece before it.
+    const audio = voiceOne(text).then(
+      (bytes) => ({ bytes, error: null }),
+      (err: unknown) => ({ bytes: null, error: err instanceof Error ? err.message : String(err) }),
+    );
+    written = written.then(async () => {
+      const { bytes, error } = await audio;
+      if (stopped) return;
+      if (error) console.error(`speak: piece ${seq} couldn't be voiced; the phone will`, error);
+      // Without the audio the phone still gets the words, and voices them itself.
+      await write(bytes ? { type: "audio", seq, text, mp3: base64(bytes) } : { type: "audio", seq, text, error: error ?? "no audio" });
+    });
+  };
+
+  return {
+    /** The next sentence of the reply. */
+    say(sentence: string) {
+      if (stopped) return;
+      const text = pending ? `${pending} ${sentence}` : sentence;
+      pending = "";
+      if (pieces === 0 && text.length > SPLIT_FIRST_OVER) {
+        const cut = text.slice(20, FIRST_PIECE_MAX).search(/[,;:—–]\s/);
+        if (cut >= 0) {
+          add(text.slice(0, 20 + cut + 1));
+          add(text.slice(20 + cut + 1).trim());
+          return;
+        }
+      }
+      if (pieces > 0 && text.length < JOIN_UNDER) {
+        pending = text;
+        return;
+      }
+      add(text);
+    },
+    /** The reply is finished. Resolves once every piece has been written out. */
+    end() {
+      if (pending && !stopped) add(pending);
+      pending = "";
+      return written;
+    },
+    /** Nobody is listening any more: voice nothing else. */
+    stop() {
+      stopped = true;
+      pending = "";
+    },
+  };
+}
+
 /** Strips markdown and links so the voice doesn't read out symbols. */
 export function speakable(text: string) {
   return text

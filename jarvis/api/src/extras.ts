@@ -11,6 +11,7 @@ import { findPerson } from "./people";
 import { push } from "./push";
 import { addDays, atLocalTime, buckets, clock, dayRange, localMinutes, localWeekday } from "./time";
 import type { Env } from "./types";
+import { inSlice, type Slice } from "./sweep";
 
 // Phase 5 (F23-F33): the extras. Each is small and each stands on its own;
 // they share a file because they share a tick and a handful of helpers.
@@ -269,7 +270,9 @@ async function meetingPrep(env: Env, userId: string, timeZone: string) {
     if (!ctx.token) continue;
     const events = (await toolsByName
       .get("calendar_list_events")!
-      .run(ctx, { start: new Date(Date.now() + 5 * 60_000).toISOString(), end: new Date(Date.now() + 15 * 60_000).toISOString(), maxResults: 5 })
+      // Each person is looked at every ten minutes (sweep.ts): a twelve-minute window
+      // overlaps the next look by two, and mark() below keeps an overlap to one prep.
+      .run(ctx, { start: new Date(Date.now() + 4 * 60_000).toISOString(), end: new Date(Date.now() + 16 * 60_000).toISOString(), maxResults: 5 })
       .catch(() => [])) as { id: string; title: string; start: string; attendees?: string[] }[];
     for (const e of events) {
       const others = (e.attendees ?? []).filter((x) => x.toLowerCase() !== a.email.toLowerCase());
@@ -289,7 +292,8 @@ async function meetingPrep(env: Env, userId: string, timeZone: string) {
       const when = clock(Date.parse(e.start), timeZone);
       const text = notes.length ? `${e.title} at ${when}. ${notes.join(". ")}.` : `${e.title} at ${when}, with ${others.length} other${others.length === 1 ? "" : "s"}.`;
       await sendBuzz(env, userId, "double", `Meeting soon: ${e.title}`, "system");
-      await push(env, userId, { title: `In 10 min: ${e.title}`.slice(0, 80), body: text.slice(0, 180), data: { type: "prep" } });
+      const mins = Math.max(1, Math.round((Date.parse(e.start) - Date.now()) / 60_000));
+      await push(env, userId, { title: `In ${mins} min: ${e.title}`.slice(0, 80), body: text.slice(0, 180), data: { type: "prep" } });
       if (notes.length) await push(env, userId, { silent: true, data: { type: "speak", id: crypto.randomUUID(), text } });
       await logAction(db, userId, "prep", `Meeting prep: ${e.title}`, "system");
       sent++;
@@ -304,13 +308,14 @@ async function meetingPrep(env: Env, userId: string, timeZone: string) {
  * Every two minutes; each part decides for itself whether it's time. Only for
  * users the phone can reach, and the mail ones only with Google connected.
  */
-export async function extrasTick(env: Env) {
+export async function extrasTick(env: Env, slice?: Slice) {
   const { results } = await env.DB.prepare(
     `SELECT s.user_id, s.time_zone, EXISTS (SELECT 1 FROM google_accounts g WHERE g.user_id = s.user_id) AS google
        FROM settings s WHERE EXISTS (SELECT 1 FROM push_tokens t WHERE t.user_id = s.user_id)`,
   ).all<{ user_id: string; time_zone: string | null; google: number }>();
   const done = { followUps: 0, bills: 0, weekly: 0, preps: 0 };
   for (const r of results) {
+    if (!inSlice(r.user_id, slice)) continue;
     const timeZone = validTimeZone(r.time_zone);
     const now = Date.now();
     const minute = localMinutes(now, timeZone);

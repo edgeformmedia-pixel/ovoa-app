@@ -12,7 +12,36 @@ const BOUNDARY = /^([\s\S]*?(?:[.!?…]+["'”’)\]]*(?=\s)|\n))\s*/;
 
 const ABBREVIATION = /\b(mr|mrs|ms|dr|st|jr|sr|vs|approx|e\.g|i\.e)\.$/i;
 
-export function sentenceStream(emit: (sentence: string) => void, maxChars = SPOKEN_MAX_CHARS) {
+/**
+ * A pause inside a sentence, followed by a space: "3,000" and "tomorrow—at three"
+ * are not pauses. Only one this far in counts, so "Sure, it's at three." stays whole.
+ */
+const CLAUSE = /[,;:–—](?=\s)/g;
+const CLAUSE_MIN = 20;
+const CLAUSE_MAX = 120;
+
+/** Where the first clause of `buffer` ends (just past its pause mark), or -1. */
+export function clauseEnd(buffer: string) {
+  CLAUSE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CLAUSE.exec(buffer))) {
+    if (m.index >= CLAUSE_MAX) break;
+    if (m.index >= CLAUSE_MIN) return m.index + 1;
+  }
+  return -1;
+}
+
+/**
+ * `firstClause`: send the reply's first clause the moment it is written, before the
+ * rest of its sentence. For a reply read aloud: the phone voices each piece as it
+ * arrives, and a 110-character opening sentence is a second or so of the model
+ * writing before the phone could even ask for the audio.
+ */
+export function sentenceStream(
+  emit: (sentence: string) => void,
+  maxChars = SPOKEN_MAX_CHARS,
+  { firstClause = false }: { firstClause?: boolean } = {},
+) {
   let buffer = "";
   let text = "";
   let stopped = false;
@@ -56,6 +85,15 @@ export function sentenceStream(emit: (sentence: string) => void, maxChars = SPOK
           continue;
         }
         flush(piece);
+      }
+      // Nothing said yet, and the first sentence is still being written.
+      if (firstClause && !stopped && !text && !held) {
+        const cut = clauseEnd(buffer);
+        if (cut > 0) {
+          const piece = buffer.slice(0, cut);
+          buffer = buffer.slice(cut).replace(/^\s+/, "");
+          flush(piece);
+        }
       }
       return !stopped;
     },

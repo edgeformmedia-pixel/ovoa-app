@@ -35,6 +35,11 @@ export type Env = {
   DEV_EMAILS?: string;
   /** For "ask Claude" (claude.ts). Without it that tool says it isn't set up. */
   ANTHROPIC_API_KEY?: string;
+  /** Rate limits (wrangler.jsonc "ratelimits", limits.ts). Optional: a missing one allows everything. */
+  RL_AUTH?: RateLimit;
+  RL_TURN?: RateLimit;
+  RL_SPEAK?: RateLimit;
+  RL_LOGS?: RateLimit;
 };
 
 /**

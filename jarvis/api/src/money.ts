@@ -6,6 +6,7 @@ import type { CallTool, ToolSpec } from "./llm";
 import { push } from "./push";
 import { addDays, buckets } from "./time";
 import type { Env, Vars } from "./types";
+import { inSlice, type Slice } from "./sweep";
 
 // Money. See migrations/0028_money.sql.
 //
@@ -467,7 +468,7 @@ export async function recordBillFromMail(db: D1Database, userId: string, name: s
  * month's calendar, and a pay cycle that genuinely doesn't cover what's due
  * gets said out loud once — before the payment bounces, not after.
  */
-export async function moneyTick(env: Env) {
+export async function moneyTick(env: Env, slice?: Slice) {
   const db = env.DB;
   const now = Date.now();
   const { results } = await db
@@ -480,6 +481,7 @@ export async function moneyTick(env: Env) {
   let rolled = 0;
   let warned = 0;
   for (const u of results) {
+    if (!inSlice(u.user_id, slice)) continue;
     const timeZone = validTimeZone(u.time_zone);
     const today = buckets(now, timeZone).day;
     const { results: stale } = await db

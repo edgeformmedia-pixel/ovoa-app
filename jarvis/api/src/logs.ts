@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { isMeantForAssistant } from "./ambient";
 import { sessionForToken } from "./auth";
+import { allowed, clientIp } from "./limits";
 import { scrub, sinceFrom, withholdsDetail } from "./obs";
 import type { Env } from "./types";
 
@@ -61,15 +62,36 @@ const uploadSchema = z.object({
 export const logs = new Hono<{ Bindings: Env }>();
 
 /**
+ * What this isolate knows of a device's last hour: the count the database gave
+ * at `countedAt`, plus what this isolate has stored for it since. The count
+ * itself reads one index entry per row, up to 600, and a phone uploads every
+ * few seconds — so counting on every upload was the single largest source of
+ * database reads, growing with every phone. Recounted every few minutes instead.
+ */
+const RECOUNT_MS = 5 * 60_000;
+const hourSoFar = new Map<string, { n: number; countedAt: number }>();
+
+/** Counts rows this isolate just stored for a device, so the next check sees them without asking. */
+function noteStored(deviceId: string, rows: number) {
+  const known = hourSoFar.get(deviceId);
+  if (known) known.n += rows;
+}
+
+/**
  * How many rows this device has stored in the last hour, and whether that is
- * already too many. Indexed by device_logs_device (device_id, time).
+ * already too many. Indexed by device_logs_device_received (device_id, received_at).
  */
 async function overTheLimit(env: Env, deviceId: string, now: number) {
   const until = throttledUntil.get(deviceId);
   if (until && until > now) return true;
+  const known = hourSoFar.get(deviceId);
+  if (known && now - known.countedAt < RECOUNT_MS && known.n < MAX_ROWS_PER_HOUR) return false;
   const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM device_logs WHERE device_id = ? AND received_at > ?")
     .bind(deviceId, now - 3_600_000)
     .first<{ n: number }>();
+  hourSoFar.delete(deviceId);
+  hourSoFar.set(deviceId, { n: row?.n ?? 0, countedAt: now });
+  if (hourSoFar.size > 5000) hourSoFar.delete(hourSoFar.keys().next().value!);
   if ((row?.n ?? 0) < MAX_ROWS_PER_HOUR) return false;
   // Held off for ten minutes, then counted again: the hour is a rolling window,
   // so a device that stops flooding gets back in without waiting the full hour.
@@ -79,6 +101,12 @@ async function overTheLimit(env: Env, deviceId: string, now: number) {
 }
 
 logs.post("/logs", async (c) => {
+  // Before anything is parsed or counted: the per-device cap below trusts a
+  // device id the phone makes up, so one address sending a new id each time
+  // would otherwise never meet it. Same polite 200 as a throttled device.
+  if (!(await allowed(c.env, "RL_LOGS", `ip:${clientIp(c)}`))) {
+    return c.json({ ok: true, stored: 0, throttled: true, cap: MAX_ROWS_PER_HOUR });
+  }
   const parsed = uploadSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Invalid logs" }, 400);
   const token = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
@@ -122,6 +150,7 @@ logs.post("/logs", async (c) => {
     // Roughly 1 upload in 50 also clears out old rows.
     ...(Math.random() < 0.02 ? [db.prepare("DELETE FROM device_logs WHERE received_at < ?").bind(now - KEEP_MS)] : []),
   ]);
+  noteStored(deviceId, entries.length);
   return c.json({ ok: true, stored: entries.length });
 });
 

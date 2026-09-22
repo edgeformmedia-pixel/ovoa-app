@@ -65,6 +65,8 @@ export const MIN_INTERVAL_MINUTES = 15;
 const JOBS_PER_TICK = 20;
 /** Notes pushed per tick. */
 const NOTES_PER_TICK = 40;
+/** A note held for someone's quiet hours steps out of the push queue for this long. */
+const HOLD_MS = 15 * 60_000;
 /** Consecutive failures before a job is paused rather than retried forever. */
 const MAX_FAILS = 3;
 /** A single autonomous turn gets this long before it is abandoned. */
@@ -224,10 +226,10 @@ export async function drainNotes(env: Env) {
             s.time_zone, s.quiet_start, s.quiet_end
        FROM agent_notes n
        JOIN settings s ON s.user_id = n.user_id
-      WHERE n.pushed_at IS NULL AND n.dismissed_at IS NULL
+      WHERE n.pushed_at IS NULL AND n.dismissed_at IS NULL AND (n.hold_until IS NULL OR n.hold_until <= ?)
       ORDER BY n.created_at LIMIT ?`,
   )
-    .bind(NOTES_PER_TICK)
+    .bind(Date.now(), NOTES_PER_TICK)
     .all<{
       id: string;
       user_id: string;
@@ -243,9 +245,13 @@ export async function drainNotes(env: Env) {
 
   const now = Date.now();
   const sent: string[] = [];
+  const held: string[] = [];
   for (const note of results) {
     const timeZone = validTimeZone(note.time_zone);
-    if (note.urgency !== "high" && inQuietHours(now, timeZone, note.quiet_start, note.quiet_end)) continue;
+    if (note.urgency !== "high" && inQuietHours(now, timeZone, note.quiet_start, note.quiet_end)) {
+      held.push(note.id);
+      continue;
+    }
     if (note.urgency === "low") {
       // Never pushed; it waits in the app. Marked so the queue doesn't re-read it.
       sent.push(note.id);
@@ -264,6 +270,13 @@ export async function drainNotes(env: Env) {
   if (sent.length) {
     await env.DB.prepare(`UPDATE agent_notes SET pushed_at = ? WHERE id IN (${sent.map(() => "?").join(",")})`)
       .bind(now, ...sent)
+      .run();
+  }
+  // Held for quiet hours: out of the queue for a while, so they stop taking the
+  // places of other people's notes. Looked at again after HOLD_MS.
+  if (held.length) {
+    await env.DB.prepare(`UPDATE agent_notes SET hold_until = ? WHERE id IN (${held.map(() => "?").join(",")})`)
+      .bind(now + HOLD_MS, ...held)
       .run();
   }
   return sent.length;
@@ -915,6 +928,11 @@ export async function runJobNow(env: Env, userId: string, jobId: string) {
   if (!job) return { error: "No such job" };
   const settings = await settingsFor(env.DB, userId);
   if (!settings) return { error: "No settings" };
+  // The same daily budget as a scheduled run. "Run it now" used to skip it, so a
+  // button held down spent the shared model allowance with nothing to stop it.
+  if (!(await claimBudget(env, userId, settings.agent_daily_runs))) {
+    return { error: "Background work has used today's runs. It starts again tomorrow.", limited: true as const };
+  }
   const result = await autonomousTurn(env, { userId, settings, trigger: "manual", job, instruction: job.instruction });
   await env.DB.prepare("UPDATE agent_jobs SET last_run_at = ?, run_count = run_count + 1 WHERE id = ?")
     .bind(Date.now(), jobId)

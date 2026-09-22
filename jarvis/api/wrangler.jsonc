@@ -38,6 +38,20 @@
     "GOOGLE_CLIENT_ID": "736336639952-r4qknf5arp9e6m0tj8hvecsjjhauhouq.apps.googleusercontent.com"
   },
   "ai": { "binding": "AI" },
+  // Per-person and per-address limits on the routes that spend shared quota
+  // (src/limits.ts). Counted per Cloudflare location, no database writes, and set
+  // well above what a person can reach by talking: they exist for runaways and
+  // scripts. Period is 10 or 60 seconds; namespace_id is any number unique here.
+  "ratelimits": [
+    // Sign-in and sign-up, per address and per account being signed into.
+    { "name": "RL_AUTH", "namespace_id": "1101", "simple": { "limit": 10, "period": 60 } },
+    // Chat turns, live-listening tokens, ask-Claude: per person.
+    { "name": "RL_TURN", "namespace_id": "1102", "simple": { "limit": 20, "period": 60 } },
+    // Voicing and transcribing, a sentence or a short clip at a time: per person.
+    { "name": "RL_SPEAK", "namespace_id": "1103", "simple": { "limit": 120, "period": 60 } },
+    // Log uploads, per address. A phone sends at most one every 3 s.
+    { "name": "RL_LOGS", "namespace_id": "1104", "simple": { "limit": 60, "period": 60 } }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

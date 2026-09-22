@@ -381,7 +381,9 @@ can schedule its own reminder. See [docs/agent.md](../docs/agent.md).
 ## How memory works
 
 - **Short-term:** the last 30 messages are sent with every request.
-- **Long-term:** after each reply, a model reads the exchange and adds or
+- **Long-term:** after a reply to anything the user says about themselves
+  (first person, "remember…", "forget…"; see `api/src/remember.ts`), a model
+  reads the exchange and adds or
   removes short facts in `memories`. Those facts go into the system prompt.
   Users can view and delete them in Settings, or turn memory off.
 
