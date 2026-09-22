@@ -99,6 +99,10 @@ function MomentRow({ moment }: { moment: Moment }) {
             // Bubble phase, not capture: a vertical scroll belongs to the list,
             // and the drawer only claims drags that start at the screen edge.
             onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+            // The list would otherwise ask for the gesture back mid-swipe and
+            // get it, leaving the row stranded half-open.
+            onPanResponderTerminationRequest: () => false,
+            onShouldBlockNativeResponder: () => true,
             onPanResponderMove: (_e, g) => {
               const from = openRef.current ? -REVEAL : 0;
               slide.setValue(Math.max(-REVEAL, Math.min(0, from + g.dx)));

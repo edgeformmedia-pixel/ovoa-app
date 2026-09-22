@@ -207,7 +207,10 @@ function Field({ error, children }: { error?: string; children: ReactNode }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.paper },
   container: { flex: 1, justifyContent: "center", paddingHorizontal: 28, gap: 12 },
-  logo: { width: "86%", height: 110, alignSelf: "center", marginBottom: 8 },
+  // The wordmark is a white silhouette on transparency, drawn back when the
+  // app was near-black. tintColor recolours it for the white base without
+  // needing new artwork — it is pure alpha, so the letterforms are unchanged.
+  logo: { width: "86%", height: 110, alignSelf: "center", marginBottom: 8, tintColor: colors.ink },
   subtitle: { color: colors.inkMute, fontSize: 16, textAlign: "center", marginBottom: 20 },
   field: { gap: 6 },
   input: {

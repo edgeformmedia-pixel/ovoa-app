@@ -122,8 +122,6 @@ function RootStack() {
       </Stack.Protected>
       {/* Outside every guard: a crash before sign-in is the one most worth hearing about. */}
       <Stack.Screen name="report-bug" options={{ ...pushed, title: "Report a problem" }} />
-      {/* TEMPORARY verification scaffold — removed before hand-over. */}
-      <Stack.Screen name="ui-check" options={{ ...pushed, title: "UI check" }} />
     </Stack>
   );
 

@@ -1,23 +1,26 @@
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { ActivityIndicator, RefreshControl, StyleSheet, Text, View } from "react-native";
-import { Screen, TopBar, text } from "../../components/ui";
+import { Btn, Screen, TopBar, text } from "../../components/ui";
 import { api, type MorningBrief } from "../../lib/api";
 import { useSession } from "../../lib/auth";
 import { colors, space, type } from "../../lib/theme";
 
 // What OVOA would say to you this morning, exactly as it would say it. The
-// server builds it (api/src/rhythm.ts, buildMorningBrief); this screen only
-// reads it out onto the page.
+// server builds it — api/src/rhythm.ts, buildMorningBrief — and this screen
+// only reads it onto the page. It composes nothing of its own: if the brief is
+// wrong here, it is wrong out loud too, which is the point of having a screen
+// for it at all.
 
 export default function Brief() {
-  const { token } = useSession();
+  const { token, user } = useSession();
   const [brief, setBrief] = useState<MorningBrief | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(
     async (alive: () => boolean = () => true) => {
+      setState((s) => (s === "ok" ? s : "loading"));
       try {
         const r = await api.brief(token);
         if (!alive()) return;
@@ -42,6 +45,9 @@ export default function Brief() {
     }, [load]),
   );
 
+  // How long it has had to learn anything, which is the honest framing for the
+  // empty state below.
+  const mornings = Math.max(1, Math.round((Date.now() - user.created_at) / 86_400_000));
   const when = new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
 
   return (
@@ -49,12 +55,43 @@ export default function Brief() {
       <TopBar title="Brief" when={when} />
       <Screen
         refreshControl={
-          <RefreshControl refreshing={state === "loading"} onRefresh={() => void load()} tintColor={colors.now} />
+          <RefreshControl refreshing={state === "loading" && !!brief} onRefresh={() => void load()} tintColor={colors.now} />
         }
       >
         {state === "loading" && !brief && <ActivityIndicator color={colors.now} style={{ marginTop: space.s8 }} />}
-        {state === "error" && <Text style={text.sub}>{error}</Text>}
+
+        {state === "error" && !brief && (
+          <>
+            <Text style={text.sub}>{error}</Text>
+            <Btn label="Try again" onPress={() => void load()} style={{ alignSelf: "flex-start" }} />
+          </>
+        )}
+
         {!!brief && <Text style={styles.spoken}>{brief.text}</Text>}
+
+        {!!brief && (
+          <>
+            <View style={styles.age}>
+              <Text style={styles.ageText}>What it has learned</Text>
+              <View style={styles.rule} />
+            </View>
+            {/*
+              TODO(brief-learning): nothing writes to this yet. The brief is
+              assembled fresh from the calendar, the list, the weather and the
+              rest every morning, and nothing records what you talked over,
+              asked about twice, or never once needed — so there is nothing to
+              show. It is left as an empty state on purpose rather than filled
+              with examples: a list of things it has "learned" that it has not
+              actually learned would be a lie told in the app's own voice. The
+              loop that feeds it is a separate piece of work with its own
+              design.
+            */}
+            <Text style={text.sub}>
+              Nothing yet — {mornings === 1 ? "one morning" : `${mornings} mornings`} in. It reads your calendar, your
+              list and the weather, and says all of it in the order it found it.
+            </Text>
+          </>
+        )}
       </Screen>
     </View>
   );
@@ -62,5 +99,9 @@ export default function Brief() {
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.paper },
-  spoken: { ...type.lead, color: colors.ink, lineHeight: 29, letterSpacing: -0.2 },
+  // The one paragraph on the screen, set to be read rather than scanned.
+  spoken: { ...type.lead, color: colors.ink, lineHeight: 29, letterSpacing: -0.2, paddingTop: space.s2 },
+  age: { flexDirection: "row", alignItems: "center", gap: space.s2, marginTop: space.s5, marginBottom: space.s2 },
+  ageText: { ...type.meta, fontWeight: "600", color: colors.inkMute },
+  rule: { flex: 1, height: 1, backgroundColor: colors.line },
 });

@@ -61,7 +61,7 @@ export const MORE: NavItem[] = [
 // negative, so they get their own group. Motion lab and the ES100 screen stay
 // where they are, inside dev tools.
 export const DEV: NavItem[] = [
-  { label: "Sensors, inputs & ES100", href: "/dev-tools", icon: "hardware-chip-outline", tone: "amber" },
+  { label: "Sensors & ES100", href: "/dev-tools", icon: "hardware-chip-outline", tone: "amber" },
   { label: "Live listen", href: "/live" as Href, icon: "radio-outline", tone: "coral" },
   { label: "Ask Claude", href: "/claude" as Href, icon: "sparkles-outline", tone: "violet" },
 ];
@@ -259,6 +259,18 @@ export function DrawerHost({
           if (!sideways) return false;
           return openRef.current ? g.dx < 0 : startX.current <= EDGE && g.dx > 0;
         },
+        // Once the drawer has the drag, nothing else may take it. The default
+        // answer is yes, which lets the ScrollView underneath ask for the
+        // responder part-way through and strand the panel wherever the finger
+        // was, because Release then never fires — only Terminate does.
+        //
+        // The same symptom is reproducible in a browser, where it is the
+        // browser's own drag-and-drop that cancels the pointer stream rather
+        // than another responder; that one cannot be refused from here and is
+        // web-only, so it does not affect the phone.
+        onPanResponderTerminationRequest: () => false,
+        // And on iOS, stop the scroll view scrolling underneath the gesture.
+        onShouldBlockNativeResponder: () => true,
         onPanResponderMove: (_e, g) => {
           const from = openRef.current ? panelWidth : 0;
           progress.setValue(clamp((from + g.dx) / panelWidth, 0, 1));
@@ -299,7 +311,18 @@ export function DrawerHost({
 }
 
 const styles = StyleSheet.create({
-  host: { flex: 1, backgroundColor: colors.paper },
+  host: {
+    flex: 1,
+    backgroundColor: colors.paper,
+    // An app shell is not a document, and the study's own phone frame says the
+    // same. On iOS this changes nothing. On web it reduces, but does not
+    // remove, the browser starting its own text-selection drag part-way
+    // through an edge drag and cancelling the pointer stream — see the note on
+    // onPanResponderTerminationRequest below. Anything that wants to be
+    // selectable (the crash screen, the log panel, an approval summary) still
+    // sets it on itself and wins.
+    userSelect: "none",
+  },
   fill: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
 
   scrim: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 9, backgroundColor: "rgba(12,14,18,0.30)" },
