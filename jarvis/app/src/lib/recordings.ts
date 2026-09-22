@@ -48,6 +48,8 @@ export type Recording = {
   lost?: string;
   /** Being transcribed and filed right now. Not worth persisting. */
   capturing?: boolean;
+  /** The account it was recorded under. Only they see it, and only theirs is filed into their timeline. */
+  owner?: string;
 };
 
 const INDEX_NAME = "index.json";
@@ -69,6 +71,51 @@ const listeners = new Set<() => void>();
 
 function emit() {
   listeners.forEach((l) => l());
+}
+
+// ---------- Whose they are ----------
+//
+// The list lives in one file for the whole phone. With a second account signed
+// in on it, the Record tab showed the first person's recordings, and the
+// timeline's auto-capture transcribed their unfiled ones into the second
+// person's day. Each recording now carries the account it was made under, and
+// everything outside this file sees only the signed-in person's.
+
+let owner: string | null = null;
+/** `list` as the signed-in person sees it, rebuilt only when either changes (useSyncExternalStore needs the same array back). */
+let visible: Recording[] = [];
+let visibleOf: Recording[] | null = null;
+let visibleFor: string | null = null;
+
+function mine() {
+  if (visibleOf !== list || visibleFor !== owner) {
+    visible = owner ? list.filter((r) => r.owner === owner) : [];
+    visibleOf = list;
+    visibleFor = owner;
+  }
+  return visible;
+}
+
+/**
+ * The signed-in account, or null. Recordings from before anyone was named here
+ * (every build before this one, and any made while signed out) go to the first
+ * person to sign in, which on a phone with one person is simply them.
+ */
+export function setRecordingsOwner(id: string | null) {
+  owner = id;
+  // Called from the session provider on every sign-in: a file system that isn't
+  // there (the web preview) or won't open must never take signing in down with it.
+  try {
+    load();
+    if (id && list.some((r) => !r.owner)) {
+      list = list.map((r) => (r.owner ? r : { ...r, owner: id }));
+      save();
+      return;
+    }
+  } catch (err) {
+    devlog("err", "recordings: couldn't read the list to name its owner", String(err));
+  }
+  emit();
 }
 
 /** The last segment of a path or file:// uri, undoing whatever iOS percent-encoded. */
@@ -191,7 +238,7 @@ function save() {
 
 export function getRecordings() {
   load();
-  return list;
+  return mine();
 }
 
 export function useRecordings() {
@@ -210,7 +257,11 @@ export function useRecordings() {
  * answers "up to date" about a recording the phone cannot play.
  */
 export function hasClipSession(sessionId: number) {
-  return getRecordings().some((r) => r.sessionId === sessionId && !r.lost);
+  // Everyone's, not just the signed-in person's: whether the phone already has a
+  // clip's recording is about the phone, and a filtered list (or one read before
+  // anyone is signed in) would download the same session again.
+  load();
+  return list.some((r) => r.sessionId === sessionId && !r.lost);
 }
 
 /** Adds a recording, replacing an earlier copy of the same clip session. */
@@ -226,6 +277,7 @@ export function addRecording(recording: Omit<Recording, "id" | "title"> & { titl
       recording.title ??
       `Recording ${when.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`,
     ...rest,
+    ...(owner && { owner }),
     ...(rest.wavName || wavUri ? { wavName: rest.wavName ?? fileNameOf(wavUri!) } : {}),
     ...(rest.rawName || rawUri ? { rawName: rest.rawName ?? fileNameOf(rawUri!) } : {}),
   };

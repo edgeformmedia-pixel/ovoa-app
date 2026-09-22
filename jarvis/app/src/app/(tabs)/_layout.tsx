@@ -13,7 +13,7 @@ import { startAlarmSync } from "../../lib/nag";
 import { colors } from "../../lib/theme";
 
 export default function TabsLayout() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
 
   // Reconnect to the ES100 as soon as the app is open, not only once Record is visited.
   useEffect(() => startClip(), []);
@@ -26,7 +26,7 @@ export default function TabsLayout() {
   useEffect(() => (token ? startHeartRate(token) : undefined), [token]);
   useEffect(() => (token ? startLocationTimeline(token) : undefined), [token]);
   // Tonight's alarms: kept awake for, and set to go off here even with no network.
-  useEffect(() => (token ? startAlarmSync(token) : undefined), [token]);
+  useEffect(() => (token ? startAlarmSync(token, user?.name ?? "") : undefined), [token, user?.name]);
   // "One second while I get that": voiced once, kept on the phone, played instantly.
   useEffect(() => {
     if (!token) return;

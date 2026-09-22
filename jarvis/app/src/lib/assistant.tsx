@@ -2,7 +2,7 @@ import { usePathname, useRouter } from "expo-router";
 import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as Notifications from "expo-notifications";
 import { AppState } from "react-native";
-import { api, type ChatResponse, type PendingAction, type PhoneResult } from "./api";
+import { api, type ChatResponse, type PendingAction, type PhoneResult, type ServerSpeech } from "./api";
 import { useSession } from "./auth";
 import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type Approval } from "./phoneActions";
 import { useOptionalContext, useProviderLog } from "./context";
@@ -19,6 +19,7 @@ import {
   alwaysListenPref,
   createSpeaker,
   listeningPref,
+  serverSpeech,
   listenModePref,
   transcribe,
   useConversation,
@@ -187,7 +188,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     addressed: boolean,
     onSentence?: (sentence: string) => void,
     signal?: AbortSignal,
-    source?: "agent",
+    { source, speech }: { source?: "agent"; speech?: ServerSpeech } = {},
   ): Promise<string | null> => {
     if (busy.current) return null;
     busy.current = true;
@@ -210,7 +211,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
           }
         : undefined;
       let res: ChatResponse = timed
-        ? await api.sendStreamed(token, text, caps, ambient, timed, signal)
+        ? await api.sendStreamed(token, text, caps, ambient, timed, signal, speech)
         : await api.send(token, text, caps, !source, ambient, source);
       if (res.meta) noteServer(res.meta);
       if (res.ignored) {
@@ -229,7 +230,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         devlog("perf", `phone lookup took ${Date.now() - lookupStarted} ms`, calls.map((c) => c.name).join(", "));
         setStatus(null);
         res = timed
-          ? await api.resumeStreamed(token, turnId, results, timed, signal)
+          ? await api.resumeStreamed(token, turnId, results, timed, signal, speech)
           : await api.resume(token, turnId, results);
         if (res.meta) noteServer(res.meta);
       }
@@ -266,7 +267,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         // to say or do about this person, and device_logs is read back over HTTP.
         devlog("agent", `running a command from the agent (${command.text.length} chars)`);
         try {
-          const reply = await ask(command.text, true, undefined, undefined, "agent");
+          const reply = await ask(command.text, true, undefined, undefined, { source: "agent" });
           await api.commandDone(token, command.id, true, reply ?? "");
           if (reply) await showAgentReply(reply);
         } catch (err) {
@@ -352,6 +353,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       const speaker = (bandSpeaker.current ??= createSpeaker(token));
       let spoke = false;
       let filler: ReturnType<typeof setTimeout> | null = null;
+      let server: ReturnType<typeof serverSpeech> | null = null;
       try {
         // Resolved against Documents now, not from a uri stored when it was written:
         // the container's UUID changes on every app update (device_logs 2026-09-20 23:18).
@@ -370,6 +372,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
           return;
         }
         const reply = speaker.open({ keepMic: false });
+        // The server voices the reply in the same stream when it can (voice.ts serverSpeech).
+        server = serverSpeech(reply);
+        const voicing = server;
         let streamed = false;
         // Thinking takes a few seconds on a good turn and much longer on a bad one. A
         // filler from the phone's own cache ("One second while I get that") plays at
@@ -387,16 +392,24 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
             devlog("voice", "band mic: saying a word while it thinks");
           }, FILLER_AFTER_MS);
         }
-        const full = await ask(text, true, (sentence) => {
-          if (!streamed) {
-            setBandPhase("speaking");
-            if (filler) clearTimeout(filler);
-            filler = null;
-          }
-          streamed = true;
-          spoke = true;
-          reply.say(sentence);
-        });
+        const full = await ask(
+          text,
+          true,
+          (sentence) => {
+            if (!streamed) {
+              setBandPhase("speaking");
+              if (filler) clearTimeout(filler);
+              filler = null;
+              voicing.firstSentence();
+            }
+            streamed = true;
+            spoke = true;
+            if (!voicing.on()) reply.say(sentence);
+          },
+          undefined,
+          { speech: await voicing.request() },
+        );
+        voicing.done();
         if (filler) clearTimeout(filler);
         filler = null;
         // An older server sends no sentences as it writes: read the whole reply.
@@ -410,6 +423,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         endTurn();
       } catch (err) {
         if (filler) clearTimeout(filler);
+        server?.done();
         const message = err instanceof Error ? err.message : String(err);
         devlog("err", "band mic: the turn failed", message);
         failTurn(message);

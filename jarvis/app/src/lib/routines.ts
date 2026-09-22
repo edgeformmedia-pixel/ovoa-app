@@ -7,6 +7,7 @@ import { onPush } from "./background";
 import { buzzPattern } from "./buzz";
 import * as clip from "./clip";
 import { devlog, logFail } from "./devlog";
+import { onSignOut } from "./signOut";
 import { yearAgo, yearAhead } from "./phoneCalendar";
 import { copyTodosToReminders } from "./todos";
 import { createSpeaker } from "./voice";
@@ -212,6 +213,18 @@ async function scheduleLocal(token: string, routines: Routine[]) {
 
 let lastSync = 0;
 let syncing: Promise<void> | null = null;
+
+// One person's medication names on the lock screen, and a Done button that would
+// post as whoever signs in next: both go with the session.
+onSignOut("routine notifications", async () => {
+  lastSync = 0;
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
+  await Promise.all(
+    scheduled
+      .filter((n) => (n.content.data as { type?: string } | undefined)?.type === "routine")
+      .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier).catch(logFail("routines: cancel on sign-out"))),
+  );
+});
 
 /**
  * Reads Reminders, tells the server, does what it asks back, and reschedules

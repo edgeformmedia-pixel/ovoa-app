@@ -4,6 +4,7 @@ import * as Notifications from "expo-notifications";
 import { Pedometer } from "expo-sensors";
 import { useSyncExternalStore } from "react";
 import { AppState } from "react-native";
+import { onSignOut } from "./signOut";
 import { api } from "./api";
 import { savedToken } from "./auth";
 import { onPush } from "./background";
@@ -215,7 +216,12 @@ function countSteps() {
 /** The "I'm awake" / "Done" buttons. A hard alarm has none. */
 export async function answerNag(n: Nag) {
   const token = await savedToken();
-  if (!token) return;
+  // Signed out with it still going (or the session gone): it stops here, at least.
+  // Returning first left an alarm buzzing every 30 s with nothing able to stop it.
+  if (!token) {
+    if (!(n.kind === "alarm" && n.hard)) stopNag(n.key, "answered while signed out");
+    return;
+  }
   if (n.kind === "alarm") {
     if (n.hard || !n.alarmId) return;
     await api.stopAlarm(token, n.alarmId, 0).catch(logFail("nag: api.stopAlarm"));
@@ -230,6 +236,27 @@ export async function answerNag(n: Nag) {
 // ---------- Arming: keeping the phone awake for tonight's alarm ----------
 
 let armed: { id: string; at: number; hard: boolean; label: string | null }[] = [];
+/** When syncAlarms last started, so a flurry of app-state changes syncs once. */
+let lastSync = 0;
+const SYNC_DEBOUNCE_MS = 15_000;
+
+// Nothing of one person's alarms outlives their session on this phone.
+onSignOut("alarms", async () => {
+  fireTimers.forEach(clearTimeout);
+  fireTimers = [];
+  armed = [];
+  for (const n of [...nags]) stopNag(n.key, "signed out");
+  userName = "";
+  phrase = null;
+  lastSync = 0;
+  await setQuietAudio(false);
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
+  await Promise.all(
+    scheduled
+      .filter((n) => n.identifier.startsWith("alarm:"))
+      .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier).catch(logFail("nag: cancel on sign-out"))),
+  );
+});
 let fireTimers: ReturnType<typeof setTimeout>[] = [];
 let quiet: AudioPlayer | null = null;
 let holdingForArm = false;
@@ -315,9 +342,12 @@ async function cancelFallbacks(key: string) {
 
 /** Reads the alarms, keeps the phone awake if one is coming, and sets it to go off on time here. */
 export async function syncAlarms(token: string) {
+  lastSync = Date.now();
   try {
-    const [{ alarms }, me] = await Promise.all([api.alarms(token), api.me(token).catch(() => null)]);
-    userName = (me?.user.name ?? "").split(" ")[0];
+    // The name comes from the signed-in user (startAlarmSync), not a /me request
+    // on every sync: that was a second request each time, every five minutes and
+    // on every trip in and out of the app, for a first name that never changes.
+    const { alarms } = await api.alarms(token);
     fireTimers.forEach(clearTimeout);
     fireTimers = [];
     const scheduled = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
@@ -361,10 +391,16 @@ export async function syncAlarms(token: string) {
  * and every five minutes while it's open. After a voice turn that set one, the
  * assistant calls syncAlarms itself (assistant.tsx).
  */
-export function startAlarmSync(token: string) {
+export function startAlarmSync(token: string, name: string) {
+  userName = name.split(" ")[0] ?? "";
   void syncAlarms(token);
   const app = AppState.addEventListener("change", (s) => {
-    if (s === "active" || s === "inactive" || s === "background") void syncAlarms(token);
+    // "inactive" comes first on the way out, which is why it's here; it also comes
+    // for Control Center and every permission prompt, and each came back through
+    // "active" for a second sync. One sync covers the whole of a transition.
+    if ((s === "active" || s === "inactive" || s === "background") && Date.now() - lastSync > SYNC_DEBOUNCE_MS) {
+      void syncAlarms(token);
+    }
   });
   const every = setInterval(() => {
     if (AppState.currentState === "active") void syncAlarms(token);

@@ -1,9 +1,22 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { AppState } from "react-native";
 import { devlog, logFail } from "./devlog";
-import { api, ApiError, type User } from "./api";
+import { api, ApiError, whenSessionDies, type User } from "./api";
 import { unregisterPush } from "./push";
 import { setLogToken } from "./remoteLog";
+import { setRecordingsOwner } from "./recordings";
+import { resetForSignOut } from "./signOut";
 import { storage } from "./storage";
+
+/**
+ * Signing out tells the server twice (push, then the session), each with the
+ * usual one-minute timeout. Offline that was two minutes of a button that did
+ * nothing. The phone forgets the session regardless after this long.
+ */
+const SIGN_OUT_WAIT_MS = 5000;
+
+/** Launched with no network: how long to wait before each retry of the saved session. */
+const RESTORE_RETRY_MS = [3000, 10_000, 30_000, 60_000, 120_000];
 
 // Storage key kept from the original app name so existing sign-ins survive.
 const TOKEN_KEY = "jarvis.session";
@@ -44,28 +57,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [onboarding, setOnboarding] = useState(false);
   const [hasAccountHere, setHasAccountHere] = useState(false);
 
-  // Server-side logs get tagged with whoever is signed in.
+  // Server-side logs get tagged with whoever is signed in, and recordings are theirs.
   useEffect(() => setLogToken(token), [token]);
+  useEffect(() => setRecordingsOwner(user?.id ?? null), [user?.id]);
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
 
   const clear = useCallback(async () => {
+    // Everything this phone keeps for one person goes with their session (signOut.ts).
+    await resetForSignOut();
     await storage.remove(TOKEN_KEY);
     setOnboarding(false);
     setToken(null);
     setUser(null);
   }, []);
 
+  // The server said the session is gone (expired, revoked, the account deleted
+  // elsewhere): sign out here too, once, rather than failing every request.
   useEffect(() => {
-    (async () => {
-      // Before setLoading(false), so the sign-in screen never renders the wrong form first.
-      const seen = await storage.get(HAS_ACCOUNT_KEY).catch(logFail("auth: reading hasAccount"));
-      setHasAccountHere(seen === "1");
+    whenSessionDies((dead) => {
+      if (dead !== tokenRef.current) return; // a request from an earlier session
+      devlog("warn", "auth: the server no longer knows this session; signing out");
+      tokenRef.current = null;
+      void clear();
+    });
+    return () => whenSessionDies(null);
+  }, [clear]);
+
+  useEffect(() => {
+    let stopped = false;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+    let saved: string | null = null;
+    let seen: string | null | void = null;
+
+    /** Tries the saved session. False when it's worth trying again later (no network). */
+    const restore = async () => {
+      if (!saved || stopped || tokenRef.current) return true;
       try {
-        const saved = await storage.get(TOKEN_KEY);
-        if (!saved) {
-          devlog("log", `auth: no saved session (this phone has ${seen === "1" ? "" : "never "}signed in before)`);
-          return;
-        }
         const { user } = await api.me(saved);
+        if (stopped || tokenRef.current) return true;
         setToken(saved);
         setUser(user);
         // A restored session never goes through start(), so without this every
@@ -75,7 +106,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setHasAccountHere(true);
           await storage.set(HAS_ACCOUNT_KEY, "1").catch(logFail("auth: remembering this phone has an account"));
         }
-        devlog("log", "auth: session restored");
+        devlog("log", attempt ? `auth: session restored on try ${attempt + 1}` : "auth: session restored");
+        return true;
       } catch (err) {
         // Expired or revoked session: start signed out. Keep the token on network errors.
         const status = err instanceof ApiError ? err.status : 0;
@@ -84,11 +116,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           `auth: couldn't use the saved session (${status || "no reply"})`,
           err instanceof Error ? err.message : String(err),
         );
-        if (status === 401) await storage.remove(TOKEN_KEY).catch(logFail("auth: clearing a dead token"));
+        if (status === 401) {
+          saved = null;
+          await storage.remove(TOKEN_KEY).catch(logFail("auth: clearing a dead token"));
+          return true;
+        }
+        // Opened with no signal, or the server having a bad minute: the session is
+        // probably fine. Keep trying for a while, rather than leave someone who was
+        // signed in on the sign-in screen until they quit and reopen the app.
+        return false;
+      }
+    };
+    const scheduleRetry = () => {
+      if (stopped || attempt >= RESTORE_RETRY_MS.length) return;
+      retry = setTimeout(async () => {
+        retry = null;
+        attempt++;
+        if (!(await restore())) scheduleRetry();
+      }, RESTORE_RETRY_MS[attempt]);
+    };
+    // Back in the app while a retry is waiting: try now rather than at the next step.
+    const app = AppState.addEventListener("change", (state) => {
+      if (state !== "active" || !saved || tokenRef.current || retry === null) return;
+      clearTimeout(retry);
+      retry = null;
+      void restore().then((done) => !done && scheduleRetry());
+    });
+
+    (async () => {
+      // Before setLoading(false), so the sign-in screen never renders the wrong form first.
+      seen = await storage.get(HAS_ACCOUNT_KEY).catch(logFail("auth: reading hasAccount"));
+      setHasAccountHere(seen === "1");
+      try {
+        saved = await storage.get(TOKEN_KEY);
+        if (!saved) {
+          devlog("log", `auth: no saved session (this phone has ${seen === "1" ? "" : "never "}signed in before)`);
+          return;
+        }
+        if (!(await restore())) scheduleRetry();
+      } catch (err) {
+        devlog("warn", "auth: couldn't read the saved session", err instanceof Error ? err.message : String(err));
       } finally {
         setLoading(false);
       }
     })();
+    return () => {
+      stopped = true;
+      if (retry) clearTimeout(retry);
+      app.remove();
+    };
   }, []);
 
   const start = async ({ token, user }: { token: string; user: User }) => {
@@ -115,11 +191,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut: async () => {
       devlog("log", "auth: signing out");
       // Before the token goes: otherwise the next person to sign in on this
-      // phone gets the last one's notifications.
+      // phone gets the last one's notifications. Best effort and bounded: offline,
+      // the phone signs out anyway (the server's session expires on its own).
       if (token) {
-        await unregisterPush(token);
-        await api.logout(token).catch(logFail("auth: api.logout"));
+        const tellServer = (async () => {
+          await unregisterPush(token);
+          await api.logout(token).catch(logFail("auth: api.logout"));
+        })();
+        await Promise.race([tellServer, new Promise((r) => setTimeout(r, SIGN_OUT_WAIT_MS))]);
       }
+      tokenRef.current = null;
       await clear();
     },
     setUser,

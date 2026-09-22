@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
-import { useRouter, type Href } from "expo-router";
-import { useEffect, useState } from "react";
+import { useFocusEffect, useRouter, type Href } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { Btn, GroupLabel, Row, Screen, TopBar, text } from "../../components/ui";
 import { useSession } from "../../lib/auth";
@@ -43,12 +43,17 @@ export default function RecordScreen() {
   const recordings = useRecordings();
   const router = useRouter();
 
-  // Keep battery, signal and the button state fresh while this screen is open.
-  useEffect(() => {
-    if (state.phase !== "connected") return;
-    const timer = setInterval(() => clip.pollLive().catch(logFail("record: clip.pollLive")), 5000);
-    return () => clearInterval(timer);
-  }, [state.phase]);
+  // Keep battery, signal and the button state fresh while this screen is open —
+  // focused, not merely mounted: tab screens stay mounted after you leave them,
+  // and this kept asking the band every five seconds from behind every other
+  // screen, queueing ahead of the band's own one-command-at-a-time traffic.
+  useFocusEffect(
+    useCallback(() => {
+      if (state.phase !== "connected") return;
+      const timer = setInterval(() => clip.pollLive().catch(logFail("record: clip.pollLive")), 5000);
+      return () => clearInterval(timer);
+    }, [state.phase]),
+  );
 
   const connected = state.phase === "connected";
   const working = state.phase === "connecting" || state.phase === "pairing" || state.phase === "scanning";

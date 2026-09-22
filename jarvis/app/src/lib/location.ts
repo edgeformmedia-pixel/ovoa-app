@@ -4,6 +4,7 @@ import { AppState, Platform } from "react-native";
 import { api } from "./api";
 import { savedToken } from "./auth";
 import { devlog, devlogRepeat, logFail } from "./devlog";
+import { onSignOut } from "./signOut";
 import { storage } from "./storage";
 
 // The location timeline, the phone's half (server: api/src/location.ts).
@@ -71,6 +72,13 @@ TaskManager.defineTask<{ eventType: Location.GeofencingEventType; region: Locati
     devlog("agent", `place ${kind}: ${data.region.identifier}`);
   },
 );
+
+// Consent to being tracked is one person's, and so are their unsent points. Left
+// running, the next account on this phone was tracked without ever turning it on.
+onSignOut("location timeline", async () => {
+  pending = [];
+  await disableTimeline();
+});
 
 export const timelinePref = {
   get: async () => (await storage.get(PREF).catch(() => null)) === "1",

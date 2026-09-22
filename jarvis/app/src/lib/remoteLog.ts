@@ -43,6 +43,13 @@ const MAX_QUEUE = 2000;
 const TRIM_TO = 1500;
 /** Waits after a failure, then two minutes forever. */
 const BACKOFF_MS = [3_000, 8_000, 20_000, 45_000, 120_000];
+/**
+ * The server holds a throttled device off for ten minutes (api/src/logs.ts) and
+ * drops what it sends meanwhile. Sending every three seconds anyway was a request
+ * a phone could have kept, times every phone; the rows wait here instead.
+ */
+const THROTTLE_PAUSE_MS = 10 * 60_000;
+let throttledUntil = 0;
 /** How many rows a crash is allowed to write to disk. A synchronous write during a crash must be small. */
 const SPILL_ROWS = 300;
 /**
@@ -164,6 +171,7 @@ function fit(rows: LogEntry[]) {
 
 export async function flush() {
   if (flushing || !deviceId) return;
+  if (Date.now() < throttledUntil) return schedule(throttledUntil - Date.now());
   sweepLog();
   const fromSpill = !!carried;
   const sending = carried ?? { sessionId, rows: queue };
@@ -226,6 +234,7 @@ export async function flush() {
         // A throttled batch is accepted and dropped on purpose (api/src/logs.ts).
         const body = (await res.json().catch(() => null)) as { throttled?: boolean; cap?: number } | null;
         if (body?.throttled) {
+          throttledUntil = Date.now() + THROTTLE_PAUSE_MS;
           devlog("warn", `the server is throttling this device's logs (${body.cap ?? "?"}/hour); ${batch.length} rows were dropped`, undefined, {
             key: "log throttled",
           });
@@ -241,7 +250,7 @@ export async function flush() {
   } finally {
     flushing = false;
     const left = (carried?.rows.length ?? 0) + queue.length;
-    if (left) schedule(failures ? backoff() : 0);
+    if (left) schedule(Date.now() < throttledUntil ? throttledUntil - Date.now() : failures ? backoff() : 0);
   }
 }
 

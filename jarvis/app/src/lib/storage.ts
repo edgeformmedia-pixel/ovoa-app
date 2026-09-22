@@ -1,5 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
+import { onSignOut } from "./signOut";
 
 // SecureStore has no web implementation; the web build is only for previews.
 const web = Platform.OS === "web";
@@ -48,6 +49,10 @@ export const storage = {
 export const SEND_TEXT_SHORTCUT = "OVOA Send Text";
 
 const AUTO_SEND_TEXTS_KEY = "ovoa.autoSendTexts";
+
+// A texts-go-out-with-no-tap switch is one person's consent, not the phone's:
+// the next account signs in with it off, and the model is told as much.
+onSignOut("auto-send texts", () => storage.remove(AUTO_SEND_TEXTS_KEY));
 
 /** Send texts through the Shortcuts app instead of the Messages sheet. Off until the user builds it. */
 export const autoSendTextsPref = {

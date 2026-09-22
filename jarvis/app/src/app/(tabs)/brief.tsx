@@ -18,11 +18,14 @@ export default function Brief() {
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
 
+  // `fresh`: a pull to refresh builds a new brief. Coming back to the screen
+  // takes the one the server built in the last quarter of an hour, which is
+  // weather, calendar, mail and a model call saved on every glance.
   const load = useCallback(
-    async (alive: () => boolean = () => true) => {
+    async (alive: () => boolean = () => true, fresh = false) => {
       setState((s) => (s === "ok" ? s : "loading"));
       try {
-        const r = await api.brief(token);
+        const r = await api.brief(token, fresh);
         if (!alive()) return;
         setBrief(r);
         setState("ok");
@@ -55,7 +58,7 @@ export default function Brief() {
       <TopBar title="Brief" when={when} />
       <Screen
         refreshControl={
-          <RefreshControl refreshing={state === "loading" && !!brief} onRefresh={() => void load()} tintColor={colors.now} />
+          <RefreshControl refreshing={state === "loading" && !!brief} onRefresh={() => void load(undefined, true)} tintColor={colors.now} />
         }
       >
         {state === "loading" && !brief && <ActivityIndicator color={colors.now} style={{ marginTop: space.s8 }} />}

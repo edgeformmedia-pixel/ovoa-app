@@ -81,7 +81,10 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       return;
     }
     refresh();
-    const timer = setInterval(refresh, POLL_MS);
+    // Only while it's on screen. Kept awake in the background (an alarm armed for
+    // the night keeps audio running), this asked every three minutes all night, for
+    // notes the push already brings and the "active" refresh below picks up.
+    const timer = setInterval(() => AppState.currentState === "active" && refresh(), POLL_MS);
     // Coming back to the app is the moment a new note is most likely waiting.
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") refresh();

@@ -4,6 +4,7 @@ import { api } from "./api";
 import * as clip from "./clip";
 import { devlog, logFail } from "./devlog";
 import { healthAvailable, healthPermission, heartRateSince, watchHeartRate } from "./health";
+import { onSignOut } from "./signOut";
 import { storage } from "./storage";
 
 // Heart rate, all day (server: api/src/heart.ts).
@@ -39,6 +40,12 @@ let lastReading = 0;
 let asking = false;
 let batch: { ts: number; bpm: number }[] = [];
 let lastSent = Date.now();
+
+// Readings not sent yet were measured on the last person's wrist. Kept, a failed
+// flush at sign-out (the session already gone) sent them in under the next account.
+onSignOut("heart rate queue", () => {
+  batch = [];
+});
 
 async function flushBand(token: string, force = false) {
   if (!batch.length || (!force && batch.length < BATCH && Date.now() - lastSent < BATCH_MS)) return;

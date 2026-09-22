@@ -3,6 +3,7 @@ import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { api } from "./api";
 import { devlog, logFail } from "./devlog";
+import { onSignOut } from "./signOut";
 import { storage } from "./storage";
 
 // Letting the agent reach the phone.
@@ -24,6 +25,30 @@ import { storage } from "./storage";
 //   reported plainly instead of being swallowed.
 
 const TOKEN_KEY = "ovoa.pushToken";
+
+/**
+ * Registered in this launch already. Once a launch, whatever is saved: the server
+ * forgets a token Expo reports dead (api/src/push.ts), and a phone that only
+ * registered when its token changed never came back from that.
+ */
+let registeredThisLaunch = false;
+
+/** A short tag for a session, so "registered for this sign-in" can be remembered without keeping the session twice. */
+function sessionTag(apiToken: string) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < apiToken.length; i++) {
+    h ^= apiToken.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+// The saved registration names the push token only; this phone's next account
+// must register it again under their own name.
+onSignOut("push registration", () => {
+  registeredThisLaunch = false;
+  return storage.remove(TOKEN_KEY);
+});
 
 /** Notifications arriving while the app is open still show. */
 Notifications.setNotificationHandler({
@@ -85,11 +110,15 @@ export async function registerForPush(token: string): Promise<PushSetup> {
     }
 
     const { data: pushToken } = await Notifications.getExpoPushTokenAsync({ projectId: id });
-    // Only tell the server when it's new: this runs on every launch.
+    // Told to the server when the token or the account is new, and once a launch.
+    // Keyed on the token alone, a second account on this phone never registered,
+    // and the first account's notifications kept arriving here.
+    const saved = `${pushToken}|${sessionTag(token)}`;
     const known = await storage.get(TOKEN_KEY).catch(() => null);
-    if (known !== pushToken) {
+    if (known !== saved || !registeredThisLaunch) {
       await api.registerPush(token, pushToken, Platform.OS);
-      await storage.set(TOKEN_KEY, pushToken).catch(logFail("push: storage.set"));
+      await storage.set(TOKEN_KEY, saved).catch(logFail("push: storage.set"));
+      registeredThisLaunch = true;
       devlog("push", "registered with the server");
     }
     return { ok: true, token: pushToken };
@@ -107,7 +136,8 @@ export async function registerForPush(token: string): Promise<PushSetup> {
 export async function unregisterPush(token: string) {
   const known = await storage.get(TOKEN_KEY).catch(() => null);
   if (!known) return;
-  await api.unregisterPush(token, known).catch(logFail("push: api.unregisterPush"));
+  // Saved as "token|session" since multi-account; plain token before.
+  await api.unregisterPush(token, known.split("|")[0]).catch(logFail("push: api.unregisterPush"));
   await storage.remove(TOKEN_KEY).catch(logFail("push: storage.remove"));
 }
 

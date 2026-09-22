@@ -302,6 +302,25 @@ export class ApiError extends Error {
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
+/**
+ * Who to tell when the server says a session is dead (auth.tsx signs out).
+ * Without it an expired or revoked session left every screen failing with 401
+ * for good, and nothing ever sent the person back to sign in.
+ */
+let deadSession: ((token: string) => void) | null = null;
+export function whenSessionDies(handler: ((token: string) => void) | null) {
+  deadSession = handler;
+}
+
+/**
+ * The server's own words for a session it doesn't recognise (api/src/index.ts).
+ * Matched exactly: a wrong current password on the change-password form is a
+ * 401 too, and must not sign anyone out.
+ */
+export function noteDeadSession(status: number, token: string | null, error: unknown) {
+  if (status === 401 && token && error === "Not signed in") deadSession?.(token);
+}
+
 export async function request<T>(path: string, token: string | null, init: RequestInit = {}): Promise<T> {
   const method = init.method ?? "GET";
   // Auth request bodies hold passwords, and a successful reply holds a token:
@@ -339,14 +358,33 @@ export async function request<T>(path: string, token: string | null, init: Reque
     `${res.status} ${method} ${path} · ${Date.now() - started} ms`,
     secret && res.ok ? undefined : body,
   );
-  if (!res.ok) throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status, body.fields ?? {});
+  if (!res.ok) {
+    noteDeadSession(res.status, token, body.error);
+    throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status, body.fields ?? {});
+  }
   return body as T;
 }
 
 type StreamLine =
   | { type: "sentence"; text: string }
+  | { type: "voice"; on: boolean }
+  | { type: "audio"; seq: number; text: string; mp3?: string; error?: string }
   | ({ type: "done" } & ChatResponse)
   | { type: "error"; error: string };
+
+/**
+ * Asks the server to voice the reply itself and send the audio down the same
+ * stream (api/src/voice.ts speechStream), instead of this phone asking
+ * /voice/speak for each sentence once it has it. That second round trip was
+ * between the words existing and the first one being heard.
+ */
+export type ServerSpeech = {
+  voice: string;
+  /** Arrives before any sentence: whether the audio is coming. False: voice the sentences here. */
+  onVoicing: (on: boolean) => void;
+  /** A piece of the reply, in order: mp3 as base64, or null when the server couldn't voice it. */
+  onVoiced: (text: string, mp3: string | null) => void;
+};
 
 /**
  * A chat turn with the reply streamed: `onSentence` gets each sentence as soon as
@@ -359,7 +397,9 @@ async function streamedTurn(
   body: Record<string, unknown>,
   onSentence: (sentence: string) => void,
   signal?: AbortSignal,
+  speech?: ServerSpeech,
 ): Promise<ChatResponse> {
+  if (speech) body = { ...body, speak: { voice: speech.voice } };
   devlog("req", `POST ${path} (streamed)`, JSON.stringify(body));
   const started = Date.now();
   // No progress for this long means the connection is dead (the whole reply can take longer).
@@ -387,6 +427,7 @@ async function streamedTurn(
     if (!res.ok) {
       const err = (await res.json().catch(() => ({}))) as { error?: string };
       devlog("err", `${res.status} POST ${path} · ${Date.now() - started} ms`, err);
+      noteDeadSession(res.status, token, err.error);
       throw new ApiError(err.error ?? `Request failed (${res.status})`, res.status);
     }
     // A server without streaming answers plain JSON.
@@ -399,6 +440,7 @@ async function streamedTurn(
     const decoder = new TextDecoder();
     let buffer = "";
     let sentences = 0;
+    let voiced = 0;
     let final: ChatResponse | null = null;
     const handle = (line: string) => {
       if (!line.trim()) return;
@@ -408,6 +450,11 @@ async function streamedTurn(
         // and it used to ride up to device_logs with it whenever trace was on.
         if (!sentences++) devlog("res", `first sentence after ${Date.now() - started} ms`, `${msg.text.length} chars`);
         onSentence(msg.text);
+      } else if (msg.type === "voice") {
+        speech?.onVoicing(msg.on);
+      } else if (msg.type === "audio") {
+        if (!voiced++) devlog("res", `first voiced piece after ${Date.now() - started} ms`, msg.error ?? `${msg.mp3?.length ?? 0} b64 chars`);
+        speech?.onVoiced(msg.text, msg.mp3 ?? null);
       } else if (msg.type === "error") {
         throw new ApiError(msg.error, 500);
       } else {
@@ -497,14 +544,16 @@ export const api = {
     ambient: boolean,
     onSentence: (sentence: string) => void,
     signal?: AbortSignal,
-  ) => streamedTurn("/chat", token, { message, timeZone: timeZone(), phone, voice: true, ambient }, onSentence, signal),
+    speech?: ServerSpeech,
+  ) => streamedTurn("/chat", token, { message, timeZone: timeZone(), phone, voice: true, ambient }, onSentence, signal, speech),
   resumeStreamed: (
     token: string,
     turnId: string,
     results: Record<string, unknown>,
     onSentence: (sentence: string) => void,
     signal?: AbortSignal,
-  ) => streamedTurn("/chat/resume", token, { turnId, results }, onSentence, signal),
+    speech?: ServerSpeech,
+  ) => streamedTurn("/chat/resume", token, { turnId, results }, onSentence, signal, speech),
   clearMessages: (token: string) => request("/chat/messages", token, { method: "DELETE" }),
 
   memories: (token: string) => request<{ memories: Memory[] }>("/memories", token),
@@ -568,7 +617,7 @@ export const api = {
    * This morning's brief, built fresh. The same thing the server reads aloud —
    * the screen shows it, it does not compose its own.
    */
-  brief: (token: string) => request<MorningBrief>("/brief", token),
+  brief: (token: string, fresh = false) => request<MorningBrief>(fresh ? "/brief?fresh=1" : "/brief", token),
 
   // ---------- Alarms, urgent reminders, Claude ----------
 

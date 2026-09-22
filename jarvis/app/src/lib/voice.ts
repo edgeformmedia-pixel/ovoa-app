@@ -12,12 +12,13 @@ import { fetch } from "expo/fetch";
 import { File, Paths } from "expo-file-system";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
-import { API_URL, ApiError } from "./api";
+import { API_URL, ApiError, noteDeadSession, type ServerSpeech } from "./api";
 import { devlog, devlogRepeat, devlogSettled, logFail } from "./devlog";
 import { pickFiller } from "./fillers";
 import { audioWhy, onScreen, whenOnScreen } from "./foreground";
 import { flushHeard, keepHeard } from "./heard";
 import { micAlive, openEar, stopStream, useLiveStream, wasOffScreen } from "./liveListen";
+import { onSignOut } from "./signOut";
 import { storage } from "./storage";
 import { onlyStop, saidOverReply, TurnGate, type GateResult, type Turn } from "./turnGate";
 import { readProfiles, type TwistProfile, type TwistProfiles } from "./twist";
@@ -159,6 +160,7 @@ async function authedFetch(
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     devlog("err", `${res.status} ${init.method} ${path} · ${Date.now() - started} ms`, body);
+    noteDeadSession(res.status, token, body.error);
     throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status);
   }
   devlog("res", `${res.status} ${init.method} ${path} · ${Date.now() - started} ms`);
@@ -241,6 +243,13 @@ async function fetchClip(token: string, text: string, voice: VoiceId) {
     `${firstByte} ms to first byte · ${whole - firstByte} ms for the rest · ` +
       `${Math.round(bytes.byteLength / 1024)} KB · ${Date.now() - asked} ms to disk`,
   );
+  return file;
+}
+
+/** Audio the server voiced (base64 mp3), written where fetchClip writes its own. */
+function saveClip(mp3: string) {
+  const file = new File(Paths.cache, `ovoa-speech-${Date.now()}-${clipCount++}.mp3`);
+  file.write(mp3, { encoding: "base64" });
   return file;
 }
 
@@ -505,6 +514,40 @@ export function createSpeaker(token: string) {
     };
 
     /**
+     * A piece the server has already voiced (mp3 as base64, see ServerSpeech in
+     * api.ts), queued straight after what's there. The server has already done
+     * the grouping `say` does. Null audio, or audio that can't be saved, is
+     * voiced here instead, the old way, so the words are never lost.
+     */
+    const voiced = (text: string, mp3: string | null) => {
+      if (mine !== generation || !/[\p{L}\p{N}]/u.test(text)) return;
+      // Anything `say` queued but hasn't asked for yet goes first, keeping the two lists in step.
+      fetchUpTo(pieces.length - 1);
+      let file: File | null = null;
+      if (mp3) {
+        try {
+          file = saveClip(mp3);
+        } catch (err) {
+          devlog("err", "couldn't save a voiced piece; voicing it here", err instanceof Error ? err.message : String(err));
+        }
+      }
+      pieces.push(text);
+      replyPieces++;
+      if (replyPieces === 1) markTurn("reply clip requested");
+      clips.push(
+        file
+          ? Promise.resolve(file)
+          : voice
+              .then((v) => fetchClip(token, text, v))
+              .catch((err) => {
+                devlog("err", "couldn't voice part of the reply", err instanceof Error ? err.message : String(err));
+                return null;
+              }),
+      );
+      wake();
+    };
+
+    /**
      * Plays a clip already on the phone, ahead of everything else ("One second
      * while I get that"): no network, so it starts at once. First thing only.
      */
@@ -575,7 +618,7 @@ export function createSpeaker(token: string) {
       );
     })();
 
-    return { say, end, done, clip };
+    return { say, end, done, clip, voiced };
   };
 
   const speak = async (text: string, { keepMic = false } = {}) => {
@@ -589,6 +632,70 @@ export function createSpeaker(token: string) {
 }
 
 type Speaker = ReturnType<typeof createSpeaker>;
+type Reply = ReturnType<Speaker["open"]>;
+
+/**
+ * Spoken turns ask the server to voice the reply in the same stream (ServerSpeech
+ * in api.ts). False goes back to this phone asking /voice/speak per sentence.
+ */
+const SERVER_VOICE = true;
+/**
+ * With the server voicing, the audio usually lands 300-600 ms after its words: no
+ * phone round trip in between. So the cached filler waits longer than
+ * FILLER_IF_SLOW_MS before covering a slow one — a filler that starts first holds
+ * the real answer back by its own length.
+ */
+const SERVER_FILLER_AFTER_MS = 1000;
+
+/**
+ * One reply's side of ServerSpeech: whether the server said it is voicing this
+ * reply, handing each voiced piece to the speaker, and a cached filler if the
+ * first piece is slow to come.
+ */
+export function serverSpeech(reply: Reply, cancelled: () => boolean = () => false) {
+  let on = false;
+  let heard = false;
+  let slow: ReturnType<typeof setTimeout> | null = null;
+  const settle = () => {
+    if (slow) clearTimeout(slow);
+    slow = null;
+  };
+  return {
+    /** The server said it's voicing this reply: don't voice the sentences here too. */
+    on: () => on,
+    /** The first words are in; their audio should be right behind them. */
+    firstSentence() {
+      if (!on || heard || slow) return;
+      slow = setTimeout(() => {
+        slow = null;
+        if (heard || cancelled()) return;
+        const filler = pickFiller();
+        if (!filler) return;
+        markTurn("filler while the server voices");
+        reply.clip(filler);
+      }, SERVER_FILLER_AFTER_MS);
+    },
+    /** What to send with the request, or undefined to voice everything here. */
+    async request(): Promise<ServerSpeech | undefined> {
+      if (!SERVER_VOICE) return undefined;
+      return {
+        voice: await voicePref.get(),
+        onVoicing: (voicing) => {
+          on = voicing;
+          if (!voicing) devlog("voice", "the server isn't voicing this reply; voicing it here");
+        },
+        onVoiced: (text, mp3) => {
+          if (cancelled()) return;
+          heard = true;
+          settle();
+          reply.voiced(text, mp3);
+        },
+      };
+    },
+    /** The request is over, however it ended. */
+    done: settle,
+  };
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -777,6 +884,7 @@ export function useConversation(
     addressed: boolean,
     onSentence?: (sentence: string) => void,
     signal?: AbortSignal,
+    extra?: { speech?: ServerSpeech },
   ) => Promise<string | null>,
   { interruptible = false, background = false, standby = false, name = "OVOA" } = {},
 ) {
@@ -891,16 +999,20 @@ export function useConversation(
         if (filler) reply.clip(filler);
       }
       let soFar = "";
+      const server = serverSpeech(reply, cancelled);
       const onSentence = (sentence: string) => {
         if (cancelled()) return;
         if (!soFar) {
           devlog("voice", `speaking ${Date.now() - asked} ms after the question`);
           setPhase("speaking");
           setWords("");
+          server.firstSentence();
         }
         soFar = soFar ? `${soFar} ${sentence}` : sentence;
         onSpeaking?.(soFar);
-        reply.say(sentence);
+        // The words still arrive for the screen and for telling the reply's echo from
+        // the user; the audio arrives separately when the server is voicing it.
+        if (!server.on()) reply.say(sentence);
       };
       // Before end() the speech only finishes if it's stopped: the user talked over it.
       // Then stop waiting for the rest of the reply and drop the request.
@@ -908,7 +1020,7 @@ export function useConversation(
       const interrupted = reply.done.then((): typeof INTERRUPTED => INTERRUPTED);
       let full: string | null;
       try {
-        const asking = handler.current(text, addressed, onSentence, abort.signal);
+        const asking = handler.current(text, addressed, onSentence, abort.signal, { speech: await server.request() });
         asking.catch(logFail("voice: handler.current")); // dropped after an interruption: its failure is expected
         const result = await Promise.race([asking, interrupted]);
         if (result === INTERRUPTED) {
@@ -920,6 +1032,8 @@ export function useConversation(
         reply.end();
         speaker.current.stop();
         throw err;
+      } finally {
+        server.done();
       }
       if (cancelled()) {
         speaker.current.stop();
@@ -1263,6 +1377,9 @@ const ALWAYS_LISTEN_KEY = "ovoa.alwaysListen";
 
 /** Danger zone "Always listen": listen on every screen and allow talking over replies. */
 const alwaysListenListeners = new Set<(on: boolean) => void>();
+
+// Listening to the room is consent the next account on this phone never gave.
+onSignOut("always listen", () => alwaysListenPref.set(false));
 
 /**
  * Always listen. Since 2026-09-20 it's only reachable from Dev tools: ambient
