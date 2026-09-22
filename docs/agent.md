@@ -156,9 +156,34 @@ npm run smoke        # in jarvis/api
 `test/smoke.sh` covers what only a running worker shows: migrations applying,
 defaults being off, seeding landing in the right timezone, and one account not
 being able to see another's. With `DEBUG_KEY` set,
-`POST /debug/agent/due?id=<job>` brings a job forward and
-`POST /debug/agent/tick` runs a cron tick by hand.
+`POST /debug/agent/due?id=<job>` brings a job forward,
+`POST /debug/agent/tick` runs one piece of a cron tick by hand, and
+`POST /debug/agent/tick?what=cron` runs the whole beat exactly as the cron does,
+leaving its row in `cron_ticks`.
 
 A local worker has no model key, so an autonomous run there always fails —
 which the smoke test uses on purpose, to check what the scheduler does when a
 run can't complete.
+
+## Reading what happened, without D1 credentials
+
+```bash
+curl -H "x-debug-key: $DEBUG_KEY" \
+  "https://jarvis-api.edgeformmedia.workers.dev/debug/logs?since=2h&kind=err"
+```
+
+One answer covering both halves: what the phone uploaded (`device_logs`) and
+what the server wrote down (`error_events`, `engine_stats`, `cron_ticks`, see
+`migrations/0030_observability.sql`). `since` takes `30m` / `6h` / `2d` or an
+epoch; `kind`, `text` and `limit` narrow it; `detail=1` asks for stack traces
+and detail lines.
+
+`health.lastTickMs` is the one number worth checking first — the two-minute
+cron should never be more than a couple of minutes stale, and nothing else in
+the system says whether it is still beating.
+
+What it will not return is the words. `device_logs` carries what was said out
+loud, so anything quoted is replaced, `detail` is withheld unless asked for and
+never returned at all for the kinds that carry speech, and anything
+token-shaped is masked wherever it appears (`scrub()` in `src/obs.ts`).
+Without `DEBUG_KEY` set the route 404s, which is how production stays shut.

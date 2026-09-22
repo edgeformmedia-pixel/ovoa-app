@@ -385,6 +385,14 @@ export default function Settings() {
         />
       </Section>
 
+      <Section title="Something went wrong">
+        <Text style={styles.meta}>
+          Tell us what happened and the app sends what it was doing at the time. No passwords or sign-in details go
+          with it.
+        </Text>
+        <Button label="Report a problem" onPress={() => router.push("/report-bug" as Href)} />
+      </Section>
+
       <Section title="Developer">
         <Button label="Sensors, inputs & ES100" onPress={() => router.push("/dev-tools")} />
       </Section>

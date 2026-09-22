@@ -1,0 +1,2098 @@
+<title>One Day, One Spine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap">
+
+<style>
+/* ───────────────────────────────────────────────────────────────
+   OVOA — DIRECTION 1: "One day, one spine"
+   Single-theme dark by intent. Every colour painted from a token.
+   ─────────────────────────────────────────────────────────────── */
+:root{
+  /* ground + the three layers above it */
+  --ground:#07090D;
+  --veil:#0C1017;        /* barely-there wash, used for washes not cards */
+  --veil-2:#121823;      /* inputs, chips, switch tracks */
+  --hair:#1B2330;        /* hairlines and the future spine */
+  --spine:#242D3C;       /* the spine itself, past */
+
+  /* type */
+  --ink:#F2F5FA;
+  --ink-2:#8A94A6;
+  --ink-3:#5A6473;
+
+  /* the accent means exactly one thing: NOW, and what is asking for you now */
+  --live:#22E2FF;
+  --live-wash:rgba(34,226,255,.13);
+  --live-deep:#0E2A33;
+
+  /* violet is never decoration: it marks work OVOA did itself */
+  --its:#7E5AFF;
+  --its-wash:rgba(126,90,255,.12);
+
+  /* semantics, unchanged from the app */
+  --ok:#3DDC97;
+  --warn:#FFC46B;
+  --warn-wash:rgba(255,196,107,.09);
+  --bad:#FF6B6B;
+
+  /* scale */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px; --s7:32px; --s8:48px;
+  --time-col:50px; --node-col:20px;
+
+  --ui:"Schibsted Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  --num:"DM Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:var(--ui); font-size:15px; line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
+.page{padding:var(--s4); padding-block:var(--s5) var(--s8); display:flex; flex-direction:column; align-items:center; gap:var(--s4)}
+
+/* ── the mock's own control strip — outside the phone, never part of the app ── */
+.rig{width:100%; max-width:400px; border:1px solid var(--hair); background:var(--veil); border-radius:10px; padding:var(--s3)}
+.rig h1{font-size:13px; margin:0 0 2px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-2); font-weight:600}
+.rig p{margin:0 0 var(--s3); font-size:12px; color:var(--ink-3); line-height:1.5}
+.rig-row{display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; margin-bottom:var(--s2)}
+.rig-row:last-child{margin-bottom:0}
+.rig-lab{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); width:100%}
+.tog{font:500 12px var(--ui); color:var(--ink-2); background:var(--veil-2); border:1px solid var(--hair);
+     border-radius:999px; padding:5px 11px; cursor:pointer}
+.tog:hover{color:var(--ink)}
+.tog[aria-pressed="true"]{background:var(--live-deep); border-color:var(--live); color:var(--live)}
+
+/* ── phone ── */
+.phone{
+  width:100%; max-width:400px;
+  height:min(824px, calc(100dvh - 96px)); min-height:600px;
+  background:var(--ground); border:1px solid var(--hair); border-radius:30px;
+  display:flex; flex-direction:column; overflow:hidden; position:relative;
+}
+@media (max-width:440px){ .phone{border-radius:18px; height:min(824px, calc(100dvh - 80px))} }
+
+.bar{
+  display:flex; align-items:center; gap:var(--s2); flex:0 0 auto;
+  padding:var(--s4) var(--s4) var(--s2);
+}
+.bar .back{
+  width:30px; height:30px; margin-left:-6px; display:none; place-items:center;
+  background:none; border:0; border-radius:8px; color:var(--live); cursor:pointer;
+}
+.bar.sub .back{display:grid}
+.bar h2{
+  margin:0; font-size:19px; font-weight:600; letter-spacing:-.01em; flex:1;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.bar .bar-note{font:500 11px var(--num); color:var(--ink-3); letter-spacing:.02em; white-space:nowrap}
+
+.body{flex:1 1 auto; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; position:relative}
+.screen{display:none; padding:0 var(--s4) var(--s7)}
+.screen.on{display:block}
+
+/* ── tab bar ── */
+.tabs{
+  flex:0 0 auto; display:flex; border-top:1px solid var(--hair); background:var(--ground);
+  padding:6px 2px calc(6px + env(safe-area-inset-bottom,0px));
+}
+.tab{
+  flex:1 1 0; min-width:0; background:none; border:0; cursor:pointer; color:var(--ink-3);
+  display:flex; flex-direction:column; align-items:center; gap:3px; padding:4px 0 2px; border-radius:8px;
+}
+.tab svg{width:21px; height:21px; display:block}
+.tab span{font-size:9.5px; font-weight:600; letter-spacing:.02em}
+.tab[aria-selected="true"]{color:var(--ink)}
+.tab[aria-selected="true"] .dotmark{background:var(--live)}
+.dotmark{width:4px; height:4px; border-radius:50%; background:transparent; margin-top:-1px}
+
+/* ── the spine ───────────────────────────────────────────────────
+   Every moment is a 3-column row: time | spine+node | what happened.
+   The spine is drawn by the middle column, so it exists exactly as
+   long as the day does — no borders, no cards.
+   ─────────────────────────────────────────────────────────────── */
+.spine{display:flex; flex-direction:column}
+.m{display:grid; grid-template-columns:var(--time-col) var(--node-col) minmax(0,1fr); align-items:stretch}
+.m-t{
+  font:500 11.5px var(--num); color:var(--ink-3); text-align:right; padding:13px var(--s2) 0 0;
+  font-variant-numeric:tabular-nums; letter-spacing:-.02em; white-space:nowrap;
+}
+.m-n{position:relative}
+.m-n::before{content:""; position:absolute; left:50%; top:0; bottom:0; width:1px; transform:translateX(-50%); background:var(--spine)}
+.m-n::after{
+  content:""; position:absolute; left:50%; top:17px; transform:translate(-50%,-50%);
+  width:8px; height:8px; border-radius:50%; background:var(--ground);
+  border:1px solid var(--ink-3); box-sizing:border-box;
+}
+.m-b{padding:var(--s3) 0 var(--s3) var(--s3); min-width:0}
+.m-b p{margin:0; font-size:15px; line-height:1.42}
+.m-b p.sub{margin-top:3px; font-size:13px; color:var(--ink-2); line-height:1.45; font-weight:400; letter-spacing:0}
+.m-b .kind{
+  display:inline-block; font-size:9.5px; font-weight:700; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--ink-3); margin-bottom:5px;
+}
+
+/* four states — colour AND form, so a glance is enough */
+.m--done .m-b p{color:var(--ink-2)}
+.m--done .m-n::after{border-color:var(--ok); background:var(--ok); width:6px; height:6px}
+.m--upcoming .m-t{color:var(--ink-3); opacity:.8}
+.m--upcoming .m-b p{color:var(--ink-2)}
+.m--upcoming .m-n::before{
+  background:repeating-linear-gradient(to bottom,var(--hair) 0 4px,transparent 4px 9px);
+}
+.m--upcoming .m-n::after{border-color:var(--hair); width:7px; height:7px}
+.m--now .m-t{color:var(--live)}
+.m--now .m-b p{font-size:19px; font-weight:600; line-height:1.3; letter-spacing:-.01em}
+.m--now .m-n::after{
+  width:11px; height:11px; background:var(--live); border-color:var(--live);
+  box-shadow:0 0 0 5px var(--live-wash);
+}
+.m--missed .m-t{color:var(--warn)}
+.m--missed .m-n::after{
+  width:16px; height:2px; border-radius:1px; background:var(--warn); border:0;
+}
+.m--missed .m-b p{color:var(--ink)}
+
+/* a moment that needs an answer: the spine itself thickens.
+   no border, no fill, no radius — it never becomes a card again. */
+.m--ask .m-n::before{width:2px; background:var(--warn); opacity:.5}
+.m--ask .m-n::after{
+  width:9px; height:9px; border-radius:1px; background:var(--warn); border:0;
+  transform:translate(-50%,-50%) rotate(45deg);
+}
+.m--ask .m-b{background:linear-gradient(90deg,var(--warn-wash),transparent 72%); padding-right:var(--s2)}
+.m--ask .m-b p{font-size:17px; line-height:1.35}
+.m--ask .kind{color:var(--warn)}
+
+/* a state changes the headline, never the supporting line */
+.m .m-b p.sub{font-size:13px; line-height:1.45; font-weight:400; color:var(--ink-2)}
+
+/* its work, not yours: violet ring, and a violet tick crossing into the time column */
+.m--its .m-n::after{border:1.5px solid var(--its); background:var(--ground); width:9px; height:9px}
+.m--its .m-t{color:var(--its); opacity:.85}
+.m--its .m-t::after{
+  content:""; display:block; margin:5px 0 0 auto; width:11px; height:1px; background:var(--its); opacity:.6;
+}
+.by{
+  display:inline-flex; align-items:center; gap:4px; font-size:9.5px; font-weight:700;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--its); margin-bottom:5px;
+}
+.by::before{content:""; width:5px; height:5px; border-radius:50%; border:1px solid var(--its)}
+.said{font-size:9.5px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3); margin-left:var(--s2)}
+.said.spoke{color:var(--ok)}
+
+/* the day's head and tail */
+.cap .m-n::before{top:17px}
+.cap .m-n::after{width:5px; height:5px; background:var(--spine); border-color:var(--spine)}
+.cap .m-b p, .tail .m-b p{font-size:11px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-3)}
+.tail .m-n::before{bottom:auto; height:17px; background:linear-gradient(var(--spine),transparent)}
+.tail .m-n::after{display:none}
+.tail .m-b{padding-bottom:0}
+
+/* NOW: the one place the two ring colours meet */
+.now{display:grid; grid-template-columns:var(--time-col) var(--node-col) minmax(0,1fr); align-items:center}
+.now-t{font:500 12px var(--num); color:var(--live); text-align:right; padding-right:var(--s2); font-variant-numeric:tabular-nums}
+.now-n{position:relative; height:26px}
+.now-n::before{content:""; position:absolute; left:50%; top:0; bottom:0; width:1px; transform:translateX(-50%); background:var(--spine)}
+.now-n::after{
+  content:""; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  width:9px; height:9px; border-radius:50%; background:var(--live); box-shadow:0 0 0 5px var(--live-wash);
+}
+.now-b{display:flex; align-items:center; gap:var(--s2); padding-left:var(--s3)}
+.now-b b{font-size:10px; font-weight:700; letter-spacing:.24em; color:var(--live)}
+.now-b i{flex:1; height:1px; background:linear-gradient(90deg,var(--live),var(--its) 55%,transparent)}
+
+/* rollups sit below the tail, where the spine has ended */
+.after-day{padding:var(--s5) 0 0 calc(var(--time-col) + var(--node-col)); display:flex; flex-direction:column; gap:var(--s4)}
+.roll{display:flex; flex-direction:column; gap:4px}
+.roll .kind{font-size:9.5px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-3)}
+.roll p{margin:0; font-size:14px; color:var(--ink-2); line-height:1.5}
+.roll p b{color:var(--ink); font-weight:600}
+.rule{height:1px; background:var(--hair); margin:var(--s5) 0 0}
+
+/* ── the day header: figures, not moments ── */
+.dayhead{padding:var(--s2) 0 var(--s5)}
+.eyebrow{font:500 11px var(--num); letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3)}
+.steps{display:flex; align-items:baseline; gap:var(--s2); margin-top:var(--s1)}
+.steps b{font:700 46px/1 var(--ui); letter-spacing:-.03em; font-variant-numeric:tabular-nums}
+.steps span{font-size:13px; color:var(--ink-2)}
+.track{height:3px; background:var(--veil-2); border-radius:2px; overflow:hidden; margin:var(--s3) 0 var(--s2)}
+.track i{display:block; height:100%; background:var(--ink); border-radius:2px}
+.track.met i{background:var(--ok)}
+.trio{display:flex; gap:var(--s5); margin-top:var(--s3); flex-wrap:wrap}
+.trio div{display:flex; flex-direction:column; gap:1px}
+.trio b{font:500 15px var(--num); font-variant-numeric:tabular-nums}
+.trio span{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3)}
+
+.bars{display:flex; gap:5px; align-items:flex-end; height:74px; margin-top:var(--s5)}
+.bars div{flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:5px; height:100%}
+.bars i{width:100%; max-width:22px; background:var(--spine); border-radius:2px 2px 0 0; display:block}
+.bars .met i{background:var(--ok)}
+.bars .today i{background:var(--ink)}
+.bars b{font:500 9.5px var(--num); color:var(--ink-3); font-variant-numeric:tabular-nums}
+.bars s{font:500 9.5px var(--num); color:var(--ink-3); text-decoration:none}
+.bars .today s{color:var(--ink)}
+
+.chips{display:flex; gap:6px; margin-top:var(--s4); flex-wrap:wrap}
+.chip{
+  font:500 12px var(--num); color:var(--ink-2); background:var(--veil-2); border:1px solid transparent;
+  border-radius:999px; padding:6px 12px; cursor:pointer; font-variant-numeric:tabular-nums;
+}
+.chip[aria-pressed="true"]{background:var(--ink); color:var(--ground); font-weight:500}
+
+/* vitals band — timeless numbers, so they never sit on the spine */
+.vitals{border-top:1px solid var(--hair); border-bottom:1px solid var(--hair); padding:var(--s4) 0; display:flex; flex-direction:column; gap:var(--s4)}
+.hr{display:flex; align-items:flex-end; gap:var(--s3)}
+.hr b{font:700 38px/1 var(--ui); letter-spacing:-.03em; font-variant-numeric:tabular-nums}
+.hr .u{font-size:12px; color:var(--ink-2); padding-bottom:5px}
+.hr .r{margin-left:auto; text-align:right}
+.hr .r b{font-size:18px}
+.hr .r span{display:block; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3)}
+.trace{width:100%; height:44px; display:block}
+.grid4{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--s3) var(--s4)}
+.vt{display:flex; justify-content:space-between; align-items:baseline; gap:var(--s2); border-bottom:1px solid var(--hair); padding-bottom:5px}
+.vt span{font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3)}
+.vt b{font:500 14px var(--num); font-variant-numeric:tabular-nums; white-space:nowrap}
+.foot{font-size:11.5px; color:var(--ink-3); line-height:1.5; padding-top:var(--s4)}
+
+/* ── controls ── */
+.act{display:flex; gap:6px; flex-wrap:wrap; margin-top:var(--s3)}
+.pill{
+  font:600 13px var(--ui); color:var(--ink); background:var(--veil-2); border:1px solid var(--hair);
+  border-radius:8px; padding:7px 13px; cursor:pointer;
+}
+.pill:hover{border-color:var(--ink-3)}
+.pill.go{background:var(--live); border-color:var(--live); color:var(--ground)}
+.pill.warnish{color:var(--warn); border-color:rgba(255,196,107,.35)}
+.pill.bad{color:var(--bad); border-color:rgba(255,107,107,.35)}
+.pill[disabled]{opacity:.4; cursor:default}
+.pill.wide{width:100%; justify-content:center; text-align:center; padding:11px}
+.done-mark{font:500 11px var(--num); letter-spacing:.06em; color:var(--ok)}
+.late-mark{font:500 11px var(--num); letter-spacing:.06em; color:var(--warn)}
+
+.todo{display:flex; align-items:flex-start; gap:var(--s3); padding:7px 0; width:100%; text-align:left;
+      background:none; border:0; color:inherit; font:inherit; cursor:pointer}
+.todo .box{flex:0 0 auto; width:17px; height:17px; border:1px solid var(--ink-3); border-radius:50%; margin-top:2px; position:relative}
+.todo[aria-checked="true"] .box{border-color:var(--ok); background:var(--ok)}
+.todo[aria-checked="true"] .box::after{
+  content:""; position:absolute; left:4px; top:7px; width:7px; height:3px; border-left:1.5px solid var(--ground);
+  border-bottom:1.5px solid var(--ground); transform:rotate(-45deg);
+}
+.todo[aria-checked="true"] .txt{color:var(--ink-3); text-decoration:line-through}
+
+/* rows for the screens that aren't a day at all */
+.sect{padding:var(--s6) 0 0}
+.sect > .head{display:grid; grid-template-columns:var(--time-col) var(--node-col) minmax(0,1fr); align-items:center}
+.sect > .head .lab{
+  padding-left:var(--s3); font-size:10px; font-weight:700; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-2);
+}
+.sect > .head .n{position:relative; height:20px}
+.sect > .head .n::before{content:""; position:absolute; left:50%; top:0; bottom:0; width:1px; transform:translateX(-50%); background:var(--spine)}
+.sect > .head .n::after{
+  content:""; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  width:5px; height:5px; background:var(--ink-2); border-radius:50%;
+}
+.sect > .rows{margin-left:calc(var(--time-col) + var(--node-col)); padding-left:var(--s3);
+  border-left:1px solid var(--spine); margin-top:0}
+.row{display:flex; flex-wrap:wrap; align-items:center; gap:var(--s3); padding:var(--s3) 0; border-bottom:1px solid var(--hair)}
+.row:last-child{border-bottom:0}
+.row .grow{flex:1; min-width:0}
+.row .t{font-size:15px}
+.row .d{font-size:12.5px; color:var(--ink-2); line-height:1.5; margin-top:3px}
+.row .d.danger{color:var(--warn)}
+.row .v{font:500 13px var(--num); color:var(--ink-2); font-variant-numeric:tabular-nums; white-space:nowrap; min-width:0}
+.row .grow{flex:1 1 120px}
+button.row{width:100%; text-align:left; background:none; border-top:0; border-left:0; border-right:0; color:inherit; font:inherit; cursor:pointer}
+button.row:hover .t{color:var(--live)}
+.chev{color:var(--ink-3); flex:0 0 auto}
+.link{background:none; border:0; padding:0; color:var(--live); font:600 13.5px var(--ui); cursor:pointer}
+
+/* switch */
+.sw{flex:0 0 auto; width:44px; height:26px; border-radius:999px; background:var(--veil-2); border:1px solid var(--hair);
+    position:relative; cursor:pointer; transition:background .16s}
+.sw::after{content:""; position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%;
+  background:var(--ink-2); transition:transform .16s, background .16s}
+.sw[aria-checked="true"]{background:var(--live-deep); border-color:var(--live)}
+.sw[aria-checked="true"]::after{transform:translateX(18px); background:var(--live)}
+.sw.risky[aria-checked="true"]{background:rgba(255,107,107,.18); border-color:var(--bad)}
+.sw.risky[aria-checked="true"]::after{background:var(--bad)}
+
+.seg{display:flex; background:var(--veil-2); border-radius:9px; padding:3px; gap:3px; margin:var(--s2) 0}
+.seg button{flex:1; min-width:0; background:none; border:0; border-radius:7px; padding:7px 4px; cursor:pointer;
+  font:600 13px var(--ui); color:var(--ink-2)}
+.seg button[aria-selected="true"]{background:var(--ground); color:var(--ink); box-shadow:inset 0 0 0 1px var(--hair)}
+.field{width:100%; background:var(--veil-2); border:1px solid var(--hair); border-radius:9px; color:var(--ink);
+  font:400 15px var(--ui); padding:10px 12px; margin-top:6px}
+.field::placeholder{color:var(--ink-3)}
+textarea.field{min-height:64px; resize:vertical}
+.lab{font-size:10px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-3)}
+.warn-text{color:var(--warn); font-size:12px; line-height:1.55; margin:var(--s2) 0 0}
+.note{color:var(--ink-2); font-size:12.5px; line-height:1.55; margin:var(--s2) 0 0}
+
+/* ── OVOA: the spine runs through the orb ── */
+.orbscreen{display:flex; flex-direction:column; align-items:center; min-height:100%; padding-bottom:var(--s5)}
+.orb-rail{width:1px; background:var(--spine); height:26px}
+.orb-rail.dashed{background:repeating-linear-gradient(to bottom,var(--spine) 0 4px,transparent 4px 9px)}
+.orbwrap{width:200px; height:200px; display:grid; place-items:center; position:relative}
+.halo{position:absolute; width:184px; height:184px; border-radius:50%; background:var(--live); opacity:.1}
+.orb{
+  width:180px; height:180px; border-radius:50%; background:var(--ground); position:relative; display:grid; place-items:center;
+  box-shadow:0 8px 24px rgba(0,0,0,.55);
+}
+.orb::before{
+  content:""; position:absolute; inset:0; border-radius:50%; padding:2px;
+  background:conic-gradient(from 210deg,var(--live),var(--its),var(--live));
+  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor; mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite:exclude;
+}
+.orb.off{opacity:.5}
+.orb.off::before{background:conic-gradient(from 210deg,var(--spine),var(--hair),var(--spine))}
+.orb svg{width:38px; height:38px}
+.phase{font-size:22px; font-weight:300; letter-spacing:.04em; margin-top:var(--s4); text-align:center}
+.words{font-size:17px; line-height:1.45; text-align:center; color:var(--ink); opacity:.85; margin-top:var(--s3); max-width:300px}
+.hint{font-size:13.5px; color:var(--ink-2); margin-top:var(--s2); text-align:center; max-width:300px}
+.orbtop{display:flex; width:100%; gap:var(--s2); align-items:flex-start; min-height:28px; margin-bottom:var(--s2)}
+.alwaysbar{
+  display:inline-flex; align-items:center; gap:6px; background:var(--bad); color:var(--ground);
+  border:0; border-radius:8px; padding:6px 10px; font:700 12px var(--ui); cursor:pointer; text-align:left;
+}
+.logschip{
+  margin-left:auto; display:inline-flex; align-items:center; gap:5px; background:var(--veil); border:1px solid var(--hair);
+  border-radius:8px; padding:6px 10px; font:600 12px var(--ui); color:var(--ink-2); cursor:pointer;
+}
+.logschip[aria-pressed="true"]{color:var(--live); border-color:var(--live)}
+.logs{width:100%; margin-top:var(--s4); border-top:1px solid var(--hair); padding-top:var(--s3)}
+.logs pre{margin:0; font:400 11px var(--num); color:var(--ink-2); line-height:1.7; white-space:pre-wrap; word-break:break-word}
+.logs .lv{color:var(--live)}
+
+@keyframes breathe{0%,100%{transform:scale(1); opacity:.09} 50%{transform:scale(1.14); opacity:.34}}
+.halo.breathing{animation:breathe 2.1s ease-in-out infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:30px; height:30px; border-radius:50%; border:2px solid var(--live-deep); border-top-color:var(--live); animation:spin .9s linear infinite}
+
+/* ── Record ── */
+.phases{display:flex; flex-direction:column; margin:var(--s2) 0 0}
+.ph{display:grid; grid-template-columns:var(--node-col) minmax(0,1fr); align-items:stretch}
+.ph .n{position:relative}
+.ph .n::before{content:""; position:absolute; left:50%; top:0; bottom:0; width:1px; transform:translateX(-50%); background:var(--spine)}
+.ph:first-child .n::before{top:14px}
+.ph:last-child .n::before{bottom:auto; height:14px}
+.ph .n::after{content:""; position:absolute; left:50%; top:14px; transform:translate(-50%,-50%);
+  width:7px; height:7px; border-radius:50%; background:var(--ground); border:1px solid var(--hair)}
+.ph .txt{padding:7px 0 7px var(--s3); font-size:14px; color:var(--ink-3)}
+.ph.past .n::after{background:var(--spine); border-color:var(--spine)}
+.ph.past .txt{color:var(--ink-2)}
+.ph.at .n::after{width:11px; height:11px; background:var(--live); border-color:var(--live); box-shadow:0 0 0 5px var(--live-wash)}
+.ph.at .txt{color:var(--ink); font-weight:600; font-size:15px}
+
+.recbtn{
+  width:88px; height:88px; border-radius:50%; background:var(--bad); border:0; cursor:pointer;
+  display:grid; place-items:center; margin:0 auto;
+}
+.recbtn.dead{background:var(--veil-2)}
+.recbtn .g{width:30px; height:30px; border-radius:50%; background:#fff}
+.recbtn.live .g{width:26px; height:26px; border-radius:4px}
+.recbtn.live{background:var(--ink)}
+.recbtn.dead .g{background:var(--ink-3)}
+.timer{font:400 32px var(--num); text-align:center; margin-top:var(--s3); font-variant-numeric:tabular-nums; letter-spacing:-.02em}
+.recstate{text-align:center; font-size:13px; color:var(--ink-2); margin-top:var(--s1)}
+
+/* ── Safety ── */
+.sos{
+  width:170px; height:170px; border-radius:50%; margin:var(--s5) auto var(--s3); border:0; cursor:pointer;
+  background:var(--bad); color:#fff; display:grid; place-items:center; align-content:center; gap:2px; position:relative;
+  box-shadow:0 0 44px rgba(255,107,107,.3);
+}
+.sos b{font:900 42px/1 var(--ui); letter-spacing:.08em}
+.sos span{font-size:11px; max-width:130px; text-align:center; line-height:1.35}
+.sos .fillring{position:absolute; inset:-5px; border-radius:50%; border:2px solid #fff; opacity:0; transform:scale(.9)}
+.sos.holding .fillring{opacity:.85; transition:transform 1.5s linear; transform:scale(1)}
+.call{width:100%; border:1.5px solid var(--bad); background:none; color:var(--bad); border-radius:10px;
+  padding:12px; font:700 16px var(--ui); cursor:pointer}
+
+/* empty state */
+.empty{text-align:center; padding:var(--s7) var(--s4); display:flex; flex-direction:column; gap:var(--s2); align-items:center}
+.empty b{font-size:16px; font-weight:600}
+.empty p{margin:0; font-size:13.5px; color:var(--ink-2); line-height:1.6; max-width:290px}
+
+/* overlays */
+.over{position:absolute; inset:0; background:var(--ground); z-index:40; display:none; flex-direction:column}
+.over.on{display:flex}
+.nag{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--s4);
+  padding:var(--s7) var(--s6); text-align:center; overflow-y:auto}
+.nag h3{margin:0; font-size:32px; font-weight:800; letter-spacing:-.02em}
+.nag .lbl{font-size:18px; color:var(--ink-2); margin:0}
+.nag .hintline{font-size:13.5px; color:var(--ink-3); margin:0}
+.nag .big{font:700 58px/1 var(--ui); color:var(--live); font-variant-numeric:tabular-nums}
+.nag .bigbtn{background:var(--live); color:var(--ground); border:0; border-radius:14px; padding:17px 44px;
+  font:800 19px var(--ui); cursor:pointer}
+.nagtrack{width:100%; height:10px; border-radius:5px; background:var(--veil-2); overflow:hidden}
+.nagtrack i{display:block; height:100%; background:var(--ok)}
+
+.setup{flex:1; display:flex; flex-direction:column; padding:var(--s4); gap:var(--s3); overflow-y:auto}
+.setup .who{display:flex; align-items:flex-end; justify-content:space-between; gap:var(--s2)}
+.setup .who b{font-size:22px; font-weight:700}
+.setup .who span{font-size:13.5px; color:var(--live); display:block}
+.setup .cnt{font:500 13px var(--num); color:var(--ink-3)}
+.setup .q{font-size:20px; line-height:1.35; text-align:center; padding:0 var(--s2)}
+.setup .heard{font-size:15px; color:var(--live); text-align:center}
+.calltrack{height:2px; background:var(--veil-2); border-radius:2px; overflow:hidden}
+.calltrack i{display:block; height:100%; background:var(--live)}
+.ctrls{display:flex; justify-content:space-around; padding-top:var(--s2)}
+.ctrl{background:none; border:0; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:5px; color:var(--ink-2); font:400 12.5px var(--ui)}
+.ctrl i{width:52px; height:52px; border-radius:50%; background:var(--veil-2); border:1px solid var(--hair); display:grid; place-items:center; color:var(--ink)}
+.ctrl.hang i{background:var(--bad); border-color:var(--bad); color:var(--ground)}
+
+/* transcript lines in first-run, typographic not bubbles */
+.callog{display:flex; flex-direction:column; gap:var(--s3); border-top:1px solid var(--hair); padding-top:var(--s3)}
+.cl{display:grid; grid-template-columns:44px minmax(0,1fr); gap:var(--s2)}
+.cl .w{font:500 10.5px var(--num); color:var(--ink-3); padding-top:3px; text-transform:uppercase; letter-spacing:.06em}
+.cl p{margin:0; font-size:14.5px; line-height:1.45}
+.cl.you .w{color:var(--live)}
+.cl.you p{color:var(--ink)}
+.cl.it p{color:var(--ink-2)}
+
+:focus-visible{outline:2px solid var(--live); outline-offset:2px; border-radius:4px}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important; transition:none !important}
+}
+</style>
+
+<div class="page">
+
+  <!-- ══ the mock's own controls. Not part of the app. ══ -->
+  <div class="rig">
+    <h1>Direction 1 — one day, one spine</h1>
+    <p>A working mock of all six tabs. These switches belong to the mock, not to OVOA — they exist so the states the app enters on its own can be seen without waiting for them.</p>
+    <div class="rig-row"><span class="rig-lab">OVOA orb</span>
+      <button class="tog" data-orb="idle" aria-pressed="true">Idle</button>
+      <button class="tog" data-orb="listening" aria-pressed="false">Listening</button>
+      <button class="tog" data-orb="thinking" aria-pressed="false">Thinking</button>
+      <button class="tog" data-orb="speaking" aria-pressed="false">Speaking</button>
+      <button class="tog" data-orb="approval" aria-pressed="false">Needs approval</button>
+      <button class="tog" data-orb="which" aria-pressed="false">Which contact?</button>
+      <button class="tog" data-orb="acting" aria-pressed="false">Doing it</button>
+    </div>
+    <div class="rig-row"><span class="rig-lab">Clip</span>
+      <button class="tog" data-clip="idle" aria-pressed="false">Not connected</button>
+      <button class="tog" data-clip="scanning" aria-pressed="false">Looking</button>
+      <button class="tog" data-clip="pairing" aria-pressed="false">Press button</button>
+      <button class="tog" data-clip="connecting" aria-pressed="false">Connecting</button>
+      <button class="tog" data-clip="connected" aria-pressed="true">Connected</button>
+    </div>
+    <div class="rig-row"><span class="rig-lab">Fall sensor</span>
+      <button class="tog" data-fall="on" aria-pressed="true">Watching</button>
+      <button class="tog" data-fall="unavailable" aria-pressed="false">No sensor</button>
+      <button class="tog" data-fall="denied" aria-pressed="false">Denied</button>
+    </div>
+    <div class="rig-row"><span class="rig-lab">Full-screen moments &amp; the empty day</span>
+      <button class="tog" id="rig-nag">An alarm going off</button>
+      <button class="tog" id="rig-setup">First run</button>
+      <button class="tog" id="rig-empty" aria-pressed="false">Empty day</button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ PHONE ══════════════════════ -->
+  <div class="phone">
+    <div class="bar" id="bar">
+      <button class="back" id="back" aria-label="Back">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <h2 id="title">Activity</h2>
+      <span class="bar-note" id="barnote">Tue 21 Sep</span>
+    </div>
+
+    <div class="body" id="scroller">
+
+      <!-- ─────────────── ACTIVITY ─────────────── -->
+      <section class="screen on" id="s-activity">
+        <div class="dayhead">
+          <div class="eyebrow">Today · steps</div>
+          <div class="steps"><b id="stepnum">7,412</b><span>of <span id="goaltxt">8,000</span></span></div>
+          <div class="track" id="steptrack"><i style="width:92%"></i></div>
+          <div class="eyebrow" id="stepgap" style="letter-spacing:.02em;text-transform:none;font-size:12px">588 to go</div>
+          <div class="trio">
+            <div><b>5.6 km</b><span>Distance</span></div>
+            <div><b>296</b><span>Calories</span></div>
+            <div><b>4 days</b><span>Streak</span></div>
+          </div>
+          <div class="bars" id="bars">
+            <div><b>6.1k</b><i style="height:41%"></i><s>Wed</s></div>
+            <div class="met"><b>9.4k</b><i style="height:63%"></i><s>Thu</s></div>
+            <div><b>3.2k</b><i style="height:21%"></i><s>Fri</s></div>
+            <div class="met"><b>11.8k</b><i style="height:79%"></i><s>Sat</s></div>
+            <div class="met"><b>8.9k</b><i style="height:59%"></i><s>Sun</s></div>
+            <div class="met"><b>8.2k</b><i style="height:55%"></i><s>Mon</s></div>
+            <div class="today"><b>7.4k</b><i style="height:49%"></i><s>Today</s></div>
+          </div>
+          <div class="lab" style="margin-top:var(--s5)">Daily goal</div>
+          <div class="chips" id="goalchips">
+            <button class="chip" aria-pressed="false">5k</button>
+            <button class="chip" aria-pressed="true">8k</button>
+            <button class="chip" aria-pressed="false">10k</button>
+            <button class="chip" aria-pressed="false">12k</button>
+            <button class="chip" aria-pressed="false">15k</button>
+          </div>
+        </div>
+
+        <div class="vitals">
+          <div class="hr">
+            <b>72</b><span class="u">bpm · 12 min ago</span>
+            <span class="r"><b>58</b><span>Resting</span></span>
+          </div>
+          <svg class="trace" viewBox="0 0 320 44" preserveAspectRatio="none" aria-label="Heart rate, last 6 hours, 54 to 121 bpm">
+            <line x1="0" y1="22" x2="320" y2="22" stroke="#1B2330" stroke-width="1" fill="none"/>
+            <polyline fill="none" stroke="#FF6B6B" stroke-opacity="0.55" stroke-width="1.6" stroke-linejoin="round"
+              points="2,30 18,27 34,31 50,22 66,25 82,14 98,8 114,17 130,24 146,21 162,28 178,33 194,26 210,19 226,23 242,30 258,27 274,31 290,25 306,21"/>
+            <circle cx="306" cy="21" r="3.4" fill="#22E2FF"/>
+          </svg>
+          <div class="grid4" style="margin-top:-4px">
+            <div class="vt"><span>Last 6 h</span><b>54–121</b></div>
+            <div class="vt"><span>HRV SDNN</span><b>41 ms</b></div>
+            <div class="vt"><span>Sleep</span><b>6.8 h</b></div>
+            <div class="vt"><span>Active</span><b>412 kcal</b></div>
+            <div class="vt"><span>Exercise</span><b>34 min</b></div>
+            <div class="vt"><span>Stand</span><b>9 h</b></div>
+          </div>
+        </div>
+
+        <!-- two shortcuts, as the first two moments of the screen rather than a pair of tiles -->
+        <div class="sect" style="padding-top:var(--s4)">
+          <div class="rows" style="margin-left:0; padding-left:0; border-left:0">
+            <button class="row" data-go="live">
+              <span class="grow"><span class="t">Live</span><span class="d">Heart rate and motion while this screen is open</span></span>
+              <svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+            </button>
+            <button class="row" data-go="claude">
+              <span class="grow"><span class="t">Ask Claude</span><span class="d">A question and an answer, typed</span></span>
+              <svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- ═══════ THE DAY ═══════ -->
+        <div id="dayfull">
+        <div class="spine" style="margin-top:var(--s5)">
+
+          <div class="m cap">
+            <div class="m-t">06:20</div><div class="m-n"></div>
+            <div class="m-b"><p>The day opens · quiet hours ended</p></div>
+          </div>
+
+          <div class="m m--done m--its">
+            <div class="m-t">06:48</div><div class="m-n"></div>
+            <div class="m-b">
+              <span class="by">Morning brief</span><span class="said spoke">spoke</span>
+              <p>Three things today. The 9:30 with Dana moved to 10:15. The pharmacy opens at nine.</p>
+            </div>
+          </div>
+
+          <div class="m m--done">
+            <div class="m-t">07:00</div><div class="m-n"></div>
+            <div class="m-b"><span class="kind">Meds</span><p>Vitamin D · Metformin 500 mg</p><p class="sub"><span class="done-mark">done · confirmed by voice</span></p></div>
+          </div>
+
+          <div class="m m--done">
+            <div class="m-t">07:20</div><div class="m-n"></div>
+            <div class="m-b"><span class="kind">Workout</span><p>Outdoor Walk</p><p class="sub">28 min · 2,140 steps · 91 kcal · 1.6 km</p></div>
+          </div>
+
+          <div class="m m--done">
+            <div class="m-t">08:05</div><div class="m-n"></div>
+            <div class="m-b"><span class="kind">Remembered</span><p>You take Metformin with food, never on an empty stomach.</p></div>
+          </div>
+
+          <div class="m m--done">
+            <div class="m-t">10:15</div><div class="m-n"></div>
+            <div class="m-b"><p>Standup with Dana</p><p class="sub">Calendar · 25 min · moved from 09:30</p></div>
+          </div>
+
+          <div class="m m--missed">
+            <div class="m-t">11:00</div><div class="m-n"></div>
+            <div class="m-b"><span class="kind">Routine</span><p>Missed: Walk before lunch</p>
+              <div class="act"><button class="pill" data-late>Did it anyway</button><button class="pill" data-skip>Skip today</button></div>
+            </div>
+          </div>
+
+          <div class="m m--done m--its">
+            <div class="m-t">12:40</div><div class="m-n"></div>
+            <div class="m-b">
+              <span class="by">Found something</span><span class="said">kept it to itself</span>
+              <p>Your repeat prescription is ready at Boots on Fore Street. Not urgent, so it waited for you here.</p>
+              <p class="sub">gmail_search · calendar_list</p>
+            </div>
+          </div>
+
+          <div class="m m--done">
+            <div class="m-t">13:10</div><div class="m-n"></div>
+            <div class="m-b"><span class="kind">Recording</span><p>Chat with Dr Whitfield</p>
+              <p class="sub">4:12 · started with the clip's button · <span class="done-mark">in your timeline</span></p></div>
+          </div>
+
+          <div class="m m--done">
+            <div class="m-t">13:55</div><div class="m-n"></div>
+            <div class="m-b"><span class="kind">You asked</span><p>“Can I afford the £180 boots?”</p>
+              <p class="sub">Tight this week. £214 left before Friday, and the food shop is usually £60 of it. The boots fit, but they take the room you'd have for anything else.</p></div>
+          </div>
+
+          <div class="m m--now">
+            <div class="m-t">14:30</div><div class="m-n"></div>
+            <div class="m-b"><span class="kind">Meds · due now</span><p>Metformin 500 mg</p>
+              <div class="act"><button class="pill go" data-confirm>Done</button><button class="pill" data-snooze>Later</button></div>
+            </div>
+          </div>
+
+          <div class="now">
+            <div class="now-t">14:41</div><div class="now-n"></div>
+            <div class="now-b"><b>NOW</b><i></i></div>
+          </div>
+
+          <div class="m m--ask" id="favor-1">
+            <div class="m-t">any<br>time</div><div class="m-n"></div>
+            <div class="m-b">
+              <span class="kind">Asked of you</span>
+              <p>You said you'd send Sarah the photos from Saturday.</p>
+              <p class="sub">Sarah, this morning · “I'll get them over to you today.”</p>
+              <div class="act"><button class="pill go" data-settle="favor-1">Done</button><button class="pill" data-settle="favor-1">Not needed</button></div>
+            </div>
+          </div>
+
+          <div class="m m--ask" id="favor-2">
+            <div class="m-t">any<br>time</div><div class="m-n"></div>
+            <div class="m-b">
+              <span class="kind">Did they ask?</span>
+              <p>Did Ravi ask you to send him the landlord's email?</p>
+              <p class="sub">Ravi, Monday · heard once, not repeated</p>
+              <div class="act"><button class="pill go" data-settle="favor-2">Yes, keep it</button><button class="pill" data-settle="favor-2">No</button></div>
+            </div>
+          </div>
+
+          <div class="m m--ask">
+            <div class="m-t">14:38</div><div class="m-n"></div>
+            <div class="m-b">
+              <span class="kind">Waiting on you</span>
+              <p>A text to Sarah Bell is written and waiting for your approval.</p>
+              <div class="act"><button class="pill warnish" data-tab="ovoa">Open it on the OVOA tab →</button></div>
+            </div>
+          </div>
+
+          <div class="m">
+            <div class="m-t">any<br>time</div><div class="m-n"></div>
+            <div class="m-b">
+              <span class="kind">Today's list</span>
+              <button class="todo" role="checkbox" aria-checked="false"><span class="box"></span><span class="txt">Ring the pharmacy about the repeat</span></button>
+              <button class="todo" role="checkbox" aria-checked="false"><span class="box"></span><span class="txt">Send Sarah the photos from Saturday</span></button>
+              <button class="todo" role="checkbox" aria-checked="true"><span class="box"></span><span class="txt">Move the standup invite</span></button>
+              <button class="todo" role="checkbox" aria-checked="false"><span class="box"></span><span class="txt">Water the olive tree</span></button>
+            </div>
+          </div>
+
+          <div class="m m--upcoming m--its">
+            <div class="m-t">18:00</div><div class="m-n"></div>
+            <div class="m-b"><span class="by">Commitment sweep</span><span class="said">speaks only if pressing</span>
+              <p>Checks what you said you'd do and stays quiet unless something's about to slip.</p></div>
+          </div>
+
+          <div class="m m--upcoming m--its">
+            <div class="m-t">19:00</div><div class="m-n"></div>
+            <div class="m-b"><span class="by">One-off nudge</span><span class="said">held until 07:00 · quiet hours</span>
+              <p>Three hours before you promised Ravi the landlord's email.</p></div>
+          </div>
+
+          <div class="m m--upcoming">
+            <div class="m-t">19:30</div><div class="m-n"></div>
+            <div class="m-b"><span class="kind">Meds</span><p>Ibuprofen 200 mg</p></div>
+          </div>
+
+          <div class="m m--upcoming">
+            <div class="m-t">21:00</div><div class="m-n"></div>
+            <div class="m-b"><span class="kind">Routine</span><p>Wind-down buzz on the clip</p></div>
+          </div>
+
+          <div class="m tail">
+            <div class="m-t">22:00</div><div class="m-n"></div>
+            <div class="m-b"><p>Quiet hours begin · nothing reaches you until 07:00</p></div>
+          </div>
+        </div>
+
+        <div class="after-day">
+          <div class="roll">
+            <span class="kind">Today</span>
+            <p><b>Two calls placed, one invite moved, four things filed.</b> ~35 min saved (estimated)</p>
+          </div>
+          <div class="roll">
+            <span class="kind">Streak</span>
+            <p><b>Meds on time:</b> 11 days</p>
+          </div>
+          <div class="roll">
+            <span class="kind">This week</span>
+            <p>Six mornings briefed, 22 things filed, three commitments settled · ~3 h 10 min saved (estimated)</p>
+          </div>
+          <div class="roll">
+            <span class="kind">Recently</span>
+            <p><b>Mon 17:20</b> · asked what was left on the week</p>
+            <p><b>Mon 09:02</b> · OVOA moved the dentist to Thursday</p>
+            <p><b>Sun 20:14</b> · recorded “Sunday with Mum”, 11:04</p>
+          </div>
+          <p class="foot">Distance and calories are estimates based on average stride.</p>
+        </div>
+        </div>
+
+        <!-- the same spine on a day with nothing on it -->
+        <div id="dayempty" hidden>
+          <div class="spine" style="margin-top:var(--s5)">
+            <div class="m cap"><div class="m-t">06:20</div><div class="m-n"></div><div class="m-b"><p>The day opens · quiet hours ended</p></div></div>
+            <div class="now"><div class="now-t">14:41</div><div class="now-n"></div><div class="now-b"><b>NOW</b><i></i></div></div>
+            <div class="m m--upcoming"><div class="m-t">22:00</div><div class="m-n"></div><div class="m-b"><p>Quiet hours begin</p></div></div>
+            <div class="m tail"><div class="m-t"></div><div class="m-n"></div><div class="m-b"><p>End of the day</p></div></div>
+          </div>
+          <div class="empty">
+            <b>Nothing recorded</b>
+            <p>Nothing was recorded today, so there's nothing to look back at. The spine still runs — it's the day, not the contents.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────── OVOA ─────────────── -->
+      <section class="screen" id="s-ovoa">
+        <div class="orbscreen">
+          <div class="orbtop">
+            <button class="alwaysbar" id="alwaysbar" hidden>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 3a7 7 0 00-7 7c0 2 1 3 1 5a3 3 0 006 0c0-1 1-1 1 0a2 2 0 004 0c0-3-1-5-1-5a4 4 0 00-4-7z"/></svg>
+              Always listen is on · tap to turn off
+            </button>
+            <button class="logschip" id="logschip" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 17l5-5-5-5M12 19h8"/></svg>
+              Logs
+            </button>
+          </div>
+
+          <!-- the spine does not stop at the orb: the orb sits on it -->
+          <div class="orb-rail"></div>
+          <button class="orbwrap" id="orbbtn" aria-label="Start listening to OVOA">
+            <span class="halo" id="halo" hidden></span>
+            <span class="orb off" id="orb">
+              <span id="orbglyph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#8A94A6" stroke-width="1.8" stroke-linecap="round"><path d="M9 5a3 3 0 016 0v5M12 17v4M8 21h8M5 10a7 7 0 0011.3 5.5M3 3l18 18"/></svg>
+              </span>
+            </span>
+          </button>
+          <div class="phase" id="phase">Tap to start listening</div>
+          <div class="words" id="words" hidden></div>
+          <div class="hint" id="hint"></div>
+          <div class="orb-rail dashed" style="height:34px" id="orbrail2"></div>
+
+          <div style="width:100%" id="orbmoments"></div>
+
+          <div class="logs" id="logspanel" hidden>
+            <pre id="logtext"></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────── RECORD ─────────────── -->
+      <section class="screen" id="s-record">
+        <div class="sect" style="padding-top:var(--s3)">
+          <div class="head"><div class="m-t" style="padding-top:0">clip</div><div class="n"></div><div class="lab">ES100</div></div>
+          <div class="rows">
+            <div class="row">
+              <span class="grow"><span class="t" id="clipname">ES100 clip</span><span class="d" id="clipphase">Connected</span></span>
+              <button class="link" id="disconnect">Disconnect</button>
+            </div>
+            <div class="row" id="cliplive">
+              <span class="v">84% · charging</span><span class="v">−61 dBm</span><span class="v">118 MB free</span>
+              <span class="grow"></span><button class="link" data-go="dev">Inputs →</button>
+            </div>
+          </div>
+          <div class="phases" id="clipphases" style="margin-left:var(--time-col)">
+            <div class="ph" data-phase="idle"><div class="n"></div><div class="txt">Not connected</div></div>
+            <div class="ph" data-phase="scanning"><div class="n"></div><div class="txt">Looking for clips…</div></div>
+            <div class="ph" data-phase="pairing"><div class="n"></div><div class="txt">Press the clip's button</div></div>
+            <div class="ph" data-phase="connecting"><div class="n"></div><div class="txt">Connecting…</div></div>
+            <div class="ph" data-phase="connected"><div class="n"></div><div class="txt">Connected</div></div>
+          </div>
+          <div style="margin-left:calc(var(--time-col) + var(--node-col)); padding-left:var(--s3)">
+            <div class="act" id="findrow" hidden>
+              <button class="pill go" id="findbtn">Find clips</button>
+              <button class="pill" id="connectbtn">Connect</button>
+            </div>
+            <div id="foundlist" hidden>
+              <div class="row"><span class="grow"><span class="t">ES100-4C2A</span><span class="d">your clip · −58 dBm</span></span>
+                <svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></div>
+              <div class="row"><span class="grow"><span class="t">ES100-91F7</span><span class="d">−77 dBm</span></span>
+                <svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">now</div><div class="n"></div><div class="lab">Record</div></div>
+          <div class="rows" style="padding-top:var(--s4)">
+            <button class="recbtn dead" id="recbtn" aria-label="Start recording"><span class="g"></span></button>
+            <div class="timer" id="rectimer">0:00</div>
+            <div class="recstate" id="recstate">Tap to record on the clip</div>
+            <div class="act" id="reccontrols" style="justify-content:center" hidden>
+              <button class="pill" id="pausebtn">Pause</button>
+              <button class="pill go" id="stopbtn">Stop &amp; save</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">kept</div><div class="n"></div><div class="lab">Recordings</div>
+          </div>
+          <div class="rows">
+            <div class="row"><span class="grow"><span class="t">Chat with Dr Whitfield</span>
+              <span class="d">4:12 · 13:10 · <span class="done-mark">in your timeline</span></span></span>
+              <button class="link" data-play>Play</button><button class="link" data-rename>Rename</button></div>
+            <div class="row"><span class="grow"><span class="t">Untitled 2:41 pm</span>
+              <span class="d">0:38 · just now · Adding to your timeline…</span></span>
+              <button class="link" data-play>Play</button><button class="link" data-rename>Rename</button></div>
+            <div class="row"><span class="grow"><span class="t">Sunday with Mum</span>
+              <span class="d">11:04 · Sun 20:14</span></span>
+              <button class="link" data-play>Play</button><button class="link" data-rename>Rename</button></div>
+            <div class="row"><span class="grow"></span><button class="link" id="importbtn">Import from clip</button></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────── JOURNAL ─────────────── -->
+      <section class="screen" id="s-journal">
+        <div class="seg" id="jseg" style="margin-top:var(--s2)">
+          <button aria-selected="true" data-j="notes">From OVOA</button>
+          <button aria-selected="false" data-j="days">Your days</button>
+          <button aria-selected="false" data-j="tr">Transcripts</button>
+        </div>
+
+        <!-- Notes: the outbox, as moments -->
+        <div id="j-notes">
+          <div class="spine" style="margin-top:var(--s4)">
+            <div class="m cap"><div class="m-t">today</div><div class="m-n"></div><div class="m-b"><p>Its outbox · newest first</p></div></div>
+
+            <div class="m m--ask m--its">
+              <div class="m-t">12:44</div><div class="m-n"></div>
+              <div class="m-b"><span class="by">A question it couldn't answer</span><span class="said">waiting in the app</span>
+                <p>Is the Thursday dentist appointment the one you wanted moved, or the Friday one?</p>
+                <div class="act"><button class="pill go" data-answer>Thursday</button><button class="pill" data-answer>Friday</button><button class="pill" data-dismiss>Dismiss</button></div>
+              </div>
+            </div>
+
+            <div class="m m--its">
+              <div class="m-t">12:40</div><div class="m-n"></div>
+              <div class="m-b"><span class="by">Found something</span><span class="said">kept it to itself</span>
+                <p>Repeat prescription ready at Boots, Fore Street.</p>
+                <p class="sub">commitment sweep · <button class="link" data-dismiss>Dismiss</button></p></div>
+            </div>
+
+            <div class="m m--done m--its">
+              <div class="m-t">06:48</div><div class="m-n"></div>
+              <div class="m-b"><span class="by">Morning brief</span><span class="said spoke">spoke</span>
+                <p>Three things today. The 9:30 with Dana moved to 10:15. The pharmacy opens at nine.</p>
+                <p class="sub">morning brief · <button class="link" data-dismiss>Dismiss</button></p></div>
+            </div>
+
+            <div class="m m--its">
+              <div class="m-t">Yest<br>18:00</div><div class="m-n"></div>
+              <div class="m-b"><span class="by">Commitment sweep</span><span class="said">held until 07:00 · quiet hours</span>
+                <p>Two things you said you'd do are still open: Sarah's photos, Ravi's landlord email.</p>
+                <p class="sub"><span class="late-mark">Waiting for you to approve something →</span></p></div>
+            </div>
+
+            <div class="m">
+              <div class="m-t">any<br>time</div><div class="m-n"></div>
+              <div class="m-b"><span class="kind">Today's list</span>
+                <button class="todo" role="checkbox" aria-checked="false"><span class="box"></span><span class="txt">Ring the pharmacy about the repeat</span></button>
+                <button class="todo" role="checkbox" aria-checked="false"><span class="box"></span><span class="txt">Send Sarah the photos from Saturday</span></button>
+              </div>
+            </div>
+
+            <div class="m tail"><div class="m-t"></div><div class="m-n"></div><div class="m-b"><p>Nothing older kept · it stays quiet by default</p></div></div>
+          </div>
+          <div class="after-day">
+            <button class="pill wide" data-go="agent">What OVOA is set up to do</button>
+          </div>
+        </div>
+
+        <!-- Your days -->
+        <div id="j-days" hidden>
+          <div class="seg" style="max-width:180px; margin:var(--s4) auto 0" id="grain">
+            <button aria-selected="true" data-g="day">Day</button>
+            <button aria-selected="false" data-g="week">Week</button>
+          </div>
+          <div class="row" style="border-bottom:0; justify-content:space-between">
+            <button class="link" id="dayprev">‹ Earlier</button>
+            <b id="daylabel" style="font-size:16px">Today</b>
+            <button class="link" id="daynext" style="color:var(--ink-3)">Later ›</button>
+          </div>
+
+          <div id="dayview">
+            <div class="roll" style="padding-left:calc(var(--time-col) + var(--node-col) + var(--s3))">
+              <span class="kind">The day, in one line</span>
+              <p><b>A short morning, a long afternoon on the phone.</b> Walk before work, standup moved, an appointment with Dr Whitfield, and the boots you decided against.</p>
+            </div>
+            <div class="spine" style="margin-top:var(--s4)">
+              <div class="m cap"><div class="m-t">06:20</div><div class="m-n"></div><div class="m-b"><p>Woke · 6 h 48 m</p></div></div>
+              <div class="m m--done"><div class="m-t">07:20</div><div class="m-n"></div><div class="m-b"><p>Walk to the park and back</p><p class="sub">28 min · 2,140 steps</p></div></div>
+              <div class="m m--done"><div class="m-t">10:15</div><div class="m-n"></div><div class="m-b"><p>Standup with Dana</p><p class="sub">Moved from 09:30 the night before. Nothing needed from you.</p></div></div>
+              <div class="m m--done"><div class="m-t">13:10</div><div class="m-n"></div><div class="m-b"><p>Chat with Dr Whitfield</p><p class="sub">The repeat prescription, and to come back in six weeks. Recorded, 4:12.</p></div></div>
+              <div class="m m--done"><div class="m-t">13:55</div><div class="m-n"></div><div class="m-b"><p>The boots</p><p class="sub">Decided against them for this week.</p></div></div>
+              <div class="now"><div class="now-t">14:41</div><div class="now-n"></div><div class="now-b"><b>NOW</b><i></i></div></div>
+              <div class="m tail"><div class="m-t">22:00</div><div class="m-n"></div><div class="m-b"><p>The rest of the day hasn't happened yet</p></div></div>
+            </div>
+
+            <div class="after-day">
+              <div class="roll"><span class="kind">Still owed</span>
+                <p><b>Send Sarah the photos from Saturday</b></p>
+                <p style="font-style:italic">“I'll get them over to you today.”</p>
+                <p>you said · Sarah · this morning</p>
+              </div>
+              <div class="roll">
+                <p><b>Send Ravi the landlord's email</b></p>
+                <p style="font-style:italic">“I'll dig it out tonight.”</p>
+                <p>you said · Ravi · Monday</p>
+              </div>
+              <div class="rule"></div>
+              <div class="roll">
+                <span class="kind">Add a moment by hand</span>
+                <input class="field" id="momentfield" placeholder="What just happened?" aria-label="What just happened?">
+                <div class="act"><button class="pill go" id="addmoment">Add</button></div>
+                <p id="addedmsg" hidden style="color:var(--ok)">Added to today.</p>
+              </div>
+            </div>
+          </div>
+
+          <div id="weekview" hidden>
+            <div class="roll" style="padding-left:calc(var(--time-col) + var(--node-col) + var(--s3))">
+              <span class="kind">Sep 14 – Sep 20</span>
+              <p><b>A week that got busier as it went.</b> Two appointments, one long Sunday, and the walking habit held every day but Friday.</p>
+            </div>
+            <div class="spine" style="margin-top:var(--s4)">
+              <div class="m cap"><div class="m-t">Sun 14</div><div class="m-n"></div><div class="m-b"><p>The week opens</p></div></div>
+              <div class="m m--done"><div class="m-t">Mon</div><div class="m-n"></div><div class="m-b"><p>Dentist moved · walk · a long call with Mum</p></div></div>
+              <div class="m m--done"><div class="m-t">Tue</div><div class="m-n"></div><div class="m-b"><p>Walk · standup · groceries</p></div></div>
+              <div class="m m--done"><div class="m-t">Wed</div><div class="m-n"></div><div class="m-b"><p>Nothing recorded</p></div></div>
+              <div class="m m--done"><div class="m-t">Thu</div><div class="m-n"></div><div class="m-b"><p>Swim · the boiler man · Ravi at the pub</p></div></div>
+              <div class="m m--done"><div class="m-t">Fri</div><div class="m-n"></div><div class="m-b"><p>Quiet day at home</p></div></div>
+              <div class="m m--done"><div class="m-t">Sat</div><div class="m-n"></div><div class="m-b"><p>Sarah's, and the photos nobody has sent yet</p></div></div>
+              <div class="m tail"><div class="m-t">Sun 20</div><div class="m-n"></div><div class="m-b"><p>Sunday with Mum · 11:04 recorded</p></div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Transcripts inside the Journal -->
+        <div id="j-tr" hidden>
+          <div id="trbody"></div>
+        </div>
+      </section>
+
+      <!-- ─────────────── SAFETY ─────────────── -->
+      <section class="screen" id="s-safety">
+        <button class="sos" id="sos" aria-label="Press and hold to alert your contacts">
+          <span class="fillring"></span>
+          <b>SOS</b><span>Press and hold to alert your contacts</span>
+        </button>
+        <button class="call" id="call911">Call 911</button>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">watch</div><div class="n"></div><div class="lab">Fall detection</div></div>
+          <div class="rows">
+            <div class="row">
+              <span class="grow"><span class="t">Fall detection</span><span class="d" id="fallstatus">Watching for falls while the app is open.</span></span>
+              <button class="sw" id="fallsw" role="switch" aria-checked="true" aria-label="Fall detection"></button>
+            </div>
+            <div class="row" style="border-bottom:0; display:block">
+              <p class="warn-text" style="margin:0">Fall detection only works while OVOA is open on screen. It is not a medical device. Don't rely on it alone.</p>
+              <div class="act"><button class="pill" id="testfall">Test the fall alert</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">who</div><div class="n"></div><div class="lab">Emergency contacts</div></div>
+          <div class="rows">
+            <div class="row" style="border-bottom:0; display:block">
+              <p class="note" style="margin:0">They get a text with your location when you press SOS or don't respond after a fall. Your phone opens the message; tap Send.</p>
+            </div>
+            <div id="contacts">
+              <div class="row"><span class="grow"><span class="t">Sarah Bell</span><span class="d">+44 7700 900461</span></span>
+                <button class="link" style="color:var(--bad)" data-remove>Remove</button></div>
+              <div class="row"><span class="grow"><span class="t">Mum</span><span class="d">+44 7700 900112</span></span>
+                <button class="link" style="color:var(--bad)" data-remove>Remove</button></div>
+            </div>
+            <div class="row" style="display:block; border-bottom:0">
+              <input class="field" id="cname" placeholder="Name" aria-label="Name">
+              <input class="field" id="cphone" placeholder="Phone number" aria-label="Phone number" inputmode="tel">
+              <div class="act"><button class="pill" id="addcontact">Add contact</button></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- alerts are moments on the same day as everything else -->
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">then</div><div class="n"></div><div class="lab">Recent alerts</div></div>
+          <div class="spine" style="margin-top:var(--s2)" id="alerts">
+            <div class="m m--done"><div class="m-t">Sun<br>19:02</div><div class="m-n"></div>
+              <div class="m-b"><p>Possible fall</p><p class="sub">Marked OK · 12 s after</p></div></div>
+            <div class="m m--missed"><div class="m-t">Sep 4<br>08:31</div><div class="m-n"></div>
+              <div class="m-b"><p>SOS</p><p class="sub">Contacts alerted · Sarah Bell, Mum</p></div></div>
+            <div class="m tail"><div class="m-t"></div><div class="m-n"></div><div class="m-b"><p>Nothing before that</p></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────── SETTINGS ─────────────── -->
+      <section class="screen" id="s-settings">
+        <div class="sect" style="padding-top:var(--s3)">
+          <div class="head"><div class="m-t" style="padding-top:0">01</div><div class="n"></div><div class="lab">Account</div></div>
+          <div class="rows">
+            <div class="row" style="display:block; border-bottom:0">
+              <span class="d" style="margin:0">thomas@example.com</span>
+              <span class="lab" style="display:block; margin-top:var(--s3)">Your name</span>
+              <input class="field" value="Thomas" aria-label="Your name">
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">02</div><div class="n"></div><div class="lab">Assistant</div></div>
+          <div class="rows">
+            <div class="row" style="display:block; border-bottom:0">
+              <span class="lab">Assistant name</span>
+              <input class="field" value="OVOA" aria-label="Assistant name">
+              <span class="lab" style="display:block; margin-top:var(--s3)">Personality</span>
+              <textarea class="field" aria-label="Personality" placeholder="e.g. Dry British wit, keeps answers brief">Dry British wit, keeps answers brief</textarea>
+              <div class="act"><button class="pill" id="savechanges">Save changes</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">03</div><div class="n"></div><div class="lab">Voice</div></div>
+          <div class="rows">
+            <div class="row" style="display:block; border-bottom:0">
+              <div class="chips" id="voices" style="margin-top:0">
+                <button class="chip" aria-pressed="true">Aria</button>
+                <button class="chip" aria-pressed="false">Cove</button>
+                <button class="chip" aria-pressed="false">Juniper</button>
+                <button class="chip" aria-pressed="false">Vale</button>
+              </div>
+              <div class="act"><button class="pill" id="hearvoice">Hear a sample</button></div>
+              <p class="note" id="voicemsg" hidden>Playing Aria: “I'll take it from here.”</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">04</div><div class="n"></div><div class="lab">How to start talking</div></div>
+          <div class="rows">
+            <div class="row">
+              <span class="grow"><span class="t">Always listen</span>
+                <span class="d">The microphone stays on and answers when you say its name. Off: double-click the band's button to talk. With it on, a double click turns it off.</span>
+                <span class="d danger">The microphone stays on, even in the background, and hears everything around you, including other people.</span></span>
+              <button class="sw risky" id="alwayssw" role="switch" aria-checked="false" aria-label="Always listen"></button>
+            </div>
+            <div class="row" style="display:block; border-bottom:0">
+              <div class="seg" id="listenmode">
+                <button aria-selected="true" data-hint="Say the assistant's name while the OVOA tab is open.">Wake word</button>
+                <button aria-selected="false" data-hint="Double-click the ES100's button: it buzzes and listens. Press once to send what you said; press once while it answers to cut it off. Works from other apps too.">Clip click</button>
+              </div>
+              <p class="note" id="listenhint">Say the assistant's name while the OVOA tab is open.</p>
+              <span class="lab" style="display:block; margin-top:var(--s4)">Microphone</span>
+              <div class="seg" id="micsrc">
+                <button aria-selected="false" data-hint="The iPhone's microphone hears you. It answers as soon as you stop talking.">Phone</button>
+                <button aria-selected="true" data-hint="The clip records what you say on its own microphone. Click to start, click again when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.">ES100 band</button>
+              </div>
+              <p class="note" id="michint">The clip records what you say on its own microphone. Click to start, click again when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">05</div><div class="n"></div><div class="lab">Background work</div></div>
+          <div class="rows">
+            <div class="row">
+              <span class="grow"><span class="t">Let OVOA work on its own</span>
+                <span class="d">It checks things between conversations — what's actually on today, what you said you'd do — and tells you only when it's worth interrupting you. Everything it does is logged.</span></span>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Let OVOA work on its own"></button>
+            </div>
+            <button class="row" data-go="agent">
+              <span class="grow"><span class="t">What it's set up to do</span><span class="d">Standing jobs, goals, and everything it has done</span></span>
+              <svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">06</div><div class="n"></div><div class="lab">Google accounts</div></div>
+          <div class="rows">
+            <div class="row"><span class="grow"><span class="t">thomas@example.com</span>
+              <span class="d">Gmail · Calendar · Drive · Docs · Sheets · Tasks</span></span>
+              <button class="link" style="color:var(--bad)" data-say="Disconnected — Gmail, Calendar and Drive are no longer readable">Disconnect</button></div>
+            <div class="row"><span class="grow"></span><button class="link" data-say="Opening Google to choose an account…">Connect another account</button></div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">07</div><div class="n"></div><div class="lab">Siri</div></div>
+          <div class="rows">
+            <div class="row"><span class="grow"><span class="t">“Hey Siri, ask OVOA…”</span>
+              <span class="d">Installed. Siri hands the question over and reads the answer back.</span></span>
+              <span class="v" style="color:var(--ok)">ready</span></div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">08</div><div class="n"></div><div class="lab">Memory</div></div>
+          <div class="rows">
+            <div class="row">
+              <span class="grow"><span class="t">Remember things about me</span><span class="d">OVOA learns facts from your chats.</span></span>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Remember things about me"></button>
+            </div>
+            <button class="row" id="memtoggle" aria-expanded="false">
+              <span class="grow"><span class="t">3 things remembered</span></span><span class="v" id="memchev">▸</span>
+            </button>
+            <div id="memlist" hidden>
+              <div class="row"><span class="grow"><span class="t">Takes Metformin with food, never on an empty stomach.</span></span><button class="link" style="color:var(--bad)" data-forget>Forget</button></div>
+              <div class="row"><span class="grow"><span class="t">Sarah Bell is the sister, Sarah Okonjo is work.</span></span><button class="link" style="color:var(--bad)" data-forget>Forget</button></div>
+              <div class="row"><span class="grow"><span class="t">Hates being read long lists out loud.</span></span><button class="link" style="color:var(--bad)" data-forget>Forget</button></div>
+            </div>
+            <div class="row" style="border-bottom:0; display:block">
+              <p class="warn-text" style="margin:0">Forget everything: all remembered facts will be erased.</p>
+              <div class="act"><button class="pill bad" id="forgetall">Forget everything</button>
+                <button class="pill bad" id="clearchat">Clear chat history</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">09</div><div class="n"></div><div class="lab">Password</div></div>
+          <div class="rows">
+            <div class="row" style="display:block; border-bottom:0">
+              <span class="lab">Current password</span><input class="field" type="password" value="········" aria-label="Current password">
+              <span class="lab" style="display:block; margin-top:var(--s3)">New password</span><input class="field" type="password" placeholder="At least 8 characters" aria-label="New password">
+              <div class="act"><button class="pill" data-say="Password changed — other devices have been signed out">Change password</button></div>
+              <p class="note">Changing it signs out your other devices.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">10</div><div class="n"></div><div class="lab">Your day</div></div>
+          <div class="rows">
+            <div class="row">
+              <span class="grow"><span class="t">Keep a record of my days</span>
+                <span class="d">What you record gets summarised into a day OVOA can look things up in — “what did I do Tuesday”, “did I ever call Sarah back”. Only ever what you chose to record: nothing is captured in the background.</span>
+                <span class="d">The words themselves are never stored on the server. They're read once to write the summary and then dropped; the recordings stay on this phone.</span></span>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Keep a record of my days"></button>
+            </div>
+            <div class="row" style="display:block">
+              <span class="lab">Forget summaries after</span>
+              <div class="seg" id="retention">
+                <button aria-selected="true">2 weeks</button><button aria-selected="false">3 months</button>
+                <button aria-selected="false">A year</button><button aria-selected="false">Keep</button>
+              </div>
+              <p class="warn-text" style="margin:0">Forget the last hour: everything recorded in the last hour is deleted, along with anything pulled out of it.</p>
+              <div class="act"><button class="pill bad" id="forgethour">Forget the last hour</button></div>
+            </div>
+            <div class="row">
+              <span class="grow"><span class="t">Location timeline</span>
+                <span class="d">Learns home, work and the places you go, so reminders can wait for where you'll be. Where you went is kept 14 days; named places until you remove them.</span></span>
+              <button class="sw" role="switch" aria-checked="false" aria-label="Location timeline"></button>
+            </div>
+            <button class="row" data-go="tr">
+              <span class="grow"><span class="t">Transcripts — everything said</span></span>
+              <svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">11</div><div class="n"></div><div class="lab">Go through setup again</div></div>
+          <div class="rows">
+            <div class="row" style="display:block; border-bottom:0">
+              <p class="note" style="margin:0">Wake and bed times, work hours, medications and routines. Going through it again adds to what's there; it doesn't remove anything.</p>
+              <div class="act"><button class="pill" id="redosetup">Go through setup again</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">12</div><div class="n"></div><div class="lab">Developer</div></div>
+          <div class="rows">
+            <button class="row" data-go="dev">
+              <span class="grow"><span class="t">Sensors, inputs &amp; ES100</span></span>
+              <svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">13</div><div class="n"></div><div class="lab">Session</div></div>
+          <div class="rows"><div class="row" style="border-bottom:0"><button class="link" id="signout">Sign out</button></div></div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">14</div><div class="n"></div><div class="lab">Texts</div></div>
+          <div class="rows">
+            <div class="row">
+              <span class="grow"><span class="t">Send texts automatically</span>
+                <span class="d">Hands each text to your “OVOA Send Text” shortcut instead of opening Messages, so it goes without tapping Send. Your phone switches to Shortcuts for a moment and comes back.</span></span>
+              <button class="sw" id="autosend" role="switch" aria-checked="false" aria-label="Send texts automatically"></button>
+            </div>
+            <div class="row" id="shortcutrow" hidden style="border-bottom:0">
+              <span class="grow"><span class="d">iOS never lets an app send a text on its own, but the Shortcuts app can. Name it exactly “OVOA Send Text”.</span></span>
+              <button class="link" data-say="Switching to Shortcuts…">Open Shortcuts</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">!</div><div class="n"></div><div class="lab" style="color:var(--bad)">Danger zone</div></div>
+          <div class="rows" style="border-left-color:var(--bad)">
+            <div class="row">
+              <span class="grow"><span class="t">Approve for me</span>
+                <span class="d">Skip approval cards: OVOA sends emails, deletes things, and changes your contacts, calendar, and reminders right away. iOS still asks you to tap Send for emails, and for texts unless “Send texts automatically” is on.</span>
+                <span class="d danger">Mistakes can't always be undone.</span></span>
+              <button class="sw risky" role="switch" aria-checked="false" aria-label="Approve for me"></button>
+            </div>
+            <div class="row" style="border-bottom:0; display:block">
+              <p class="warn-text" style="margin:0">This permanently deletes your account, chats, and memories.</p>
+              <div class="act"><button class="pill bad" data-say="Hold to confirm — this cannot be undone">Delete account</button></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────── SUB: BACKGROUND WORK ─────────────── -->
+      <section class="screen" id="s-agent">
+        <div class="dayhead" style="padding-bottom:var(--s4)">
+          <div class="eyebrow">Runs used today</div>
+          <div class="steps"><b>6</b><span>of 40</span></div>
+          <div class="track"><i style="width:15%"></i></div>
+          <div class="trio">
+            <div><b>Suggest</b><span>How far it can go</span></div>
+            <div><b>22:00–07:00</b><span>Quiet hours</span></div>
+          </div>
+          <div class="seg" id="autonomy" style="margin-top:var(--s4)">
+            <button aria-selected="true" data-hint="It looks things up and tells you. Anything that would change something shows up as a card for you to approve.">Suggest</button>
+            <button aria-selected="false" data-hint="It can also add calendar events, tasks and drafts on its own when they follow from what you asked for.">Act</button>
+          </div>
+          <p class="note" id="autohint">It looks things up and tells you. Anything that would change something shows up as a card for you to approve.</p>
+          <p class="note">At every level it can't send a message or email on its own, and can't delete anything. Those always wait for you.</p>
+          <p class="note">It still works during quiet hours; it just saves what it found until morning. Something about to be missed tonight comes through anyway.</p>
+        </div>
+
+        <div class="sect" style="padding-top:var(--s2)">
+          <div class="head"><div class="m-t" style="padding-top:0">daily</div><div class="n"></div><div class="lab">Standing jobs</div></div>
+          <div class="rows">
+            <div class="row">
+              <span class="grow"><span class="t">Morning brief</span>
+                <span class="d">daily 07:00 · next today 07:00 · built in · always speaks</span>
+                <span class="d" style="font-style:italic">“Tell me what's actually on today and anything that moved.”</span></span>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Morning brief"></button>
+            </div>
+            <div class="row"><span class="grow"></span>
+              <button class="link" data-runnow="Morning brief">Run now</button>
+              <button class="link" style="color:var(--bad)">Stop it</button></div>
+            <div class="row">
+              <span class="grow"><span class="t">Commitment sweep</span>
+                <span class="d">daily 18:00 · next today 18:00 · built in · speaks only if pressing</span>
+                <span class="d" style="font-style:italic">“Check what I said I'd do and stay quiet unless something's about to slip.”</span></span>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Commitment sweep"></button>
+            </div>
+            <div class="row"><span class="grow"></span>
+              <button class="link" data-runnow="Commitment sweep">Run now</button>
+              <button class="link" style="color:var(--bad)">Stop it</button></div>
+            <div class="row">
+              <span class="grow"><span class="t">Nudge: Ravi's landlord email</span>
+                <span class="d">once 19:00 · three hours before you promised it · OVOA set this up</span>
+                <span class="d" style="font-style:italic">“Check whether it already went, and say nothing if it did.”</span></span>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Nudge about Ravi's landlord email"></button>
+            </div>
+            <div class="row" style="border-bottom:0"><span class="grow"></span>
+              <button class="link" data-runnow="Nudge: Ravi's landlord email">Run now</button>
+              <button class="link" style="color:var(--bad)">Stop it</button></div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">why</div><div class="n"></div><div class="lab">What you're trying to do</div></div>
+          <div class="rows">
+            <div class="row" style="display:block"><p class="note" style="margin:0">Standing intentions with no deadline. OVOA sees these every time it runs on its own, and takes them into account when it decides whether something is worth telling you.</p></div>
+            <div class="row"><span class="grow"><span class="t">Keep Thursday evenings clear</span><span class="d">So there's one night nobody can book.</span></span>
+              <button class="link" style="color:var(--bad)" data-drop>Drop</button></div>
+            <div class="row"><span class="grow"><span class="t">Walk every day, even a short one</span><span class="d">The knee is worse when I sit all week.</span></span>
+              <button class="link" style="color:var(--bad)" data-drop>Drop</button></div>
+            <div class="row"><span class="grow"><span class="t">Don't let Mum's calls pile up</span><span class="d">Two weeks is too long and I always notice too late.</span></span>
+              <button class="link" style="color:var(--bad)" data-drop>Drop</button></div>
+            <div class="row" style="border-bottom:0; display:block">
+              <input class="field" id="goalfield" placeholder="e.g. Keep Thursday evenings clear" aria-label="Add a goal">
+              <div class="act"><button class="pill" id="addgoal">Add</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">log</div><div class="n"></div><div class="lab">Everything it has done</div></div>
+          <div class="rows" style="border-left:0; padding-left:0; margin-left:0">
+            <div class="row" style="display:block; padding-left:calc(var(--time-col) + var(--node-col) + var(--s3)); border-bottom:0">
+              <p class="note" style="margin:0">Every time OVOA ran on its own, including the times it decided to stay quiet.</p>
+            </div>
+            <div class="spine" id="runlog">
+              <div class="m m--done m--its"><div class="m-t">14:02</div><div class="m-n"></div>
+                <div class="m-b"><p>commitment sweep · <span style="color:var(--ink-3)">nothing to say</span></p>
+                  <p class="sub">Both open promises still have time on them.</p><p class="sub">timeline_read</p></div></div>
+              <div class="m m--done m--its"><div class="m-t">12:40</div><div class="m-n"></div>
+                <div class="m-b"><p>inbox watch · <span style="color:var(--live)">told you</span></p>
+                  <p class="sub">Repeat prescription ready.</p><p class="sub">gmail_search, agent_say</p></div></div>
+              <div class="m m--done m--its"><div class="m-t">11:22</div><div class="m-n"></div>
+                <div class="m-b"><p>calendar watch · <span style="color:var(--warn)">set something up</span></p>
+                  <p class="sub">Held 15 minutes before the dentist for the drive.</p><p class="sub">calendar_list, calendar_create_event</p></div></div>
+              <div class="m m--done m--its"><div class="m-t">09:30</div><div class="m-n"></div>
+                <div class="m-b"><p>commitment sweep · <span style="color:var(--ink-3)">nothing to say</span></p><p class="sub">timeline_read</p></div></div>
+              <div class="m m--missed m--its"><div class="m-t">08:14</div><div class="m-n"></div>
+                <div class="m-b"><p>inbox watch · <span style="color:var(--bad)">failed</span></p>
+                  <p class="sub">Google said the token had expired. Reconnect the account.</p></div></div>
+              <div class="m m--done m--its"><div class="m-t">07:00</div><div class="m-n"></div>
+                <div class="m-b"><p>morning brief · <span style="color:var(--live)">told you</span></p>
+                  <p class="sub">Three things today.</p><p class="sub">calendar_list, gmail_search, agent_say</p></div></div>
+              <div class="m tail"><div class="m-t"></div><div class="m-n"></div><div class="m-b"><p>Quiet hours · it wrote two notes and pushed neither</p></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────── SUB: LIVE ─────────────── -->
+      <section class="screen" id="s-live">
+        <div class="dayhead">
+          <div class="eyebrow">Heart rate · from the band · live</div>
+          <div class="steps"><b style="color:var(--live)">74</b><span>bpm</span></div>
+          <p class="note" style="margin-top:0">Reading about once a second while this screen is open. Nothing here is sent anywhere.</p>
+        </div>
+        <div class="sect" style="padding-top:0">
+          <div class="head"><div class="m-t" style="padding-top:0">here</div><div class="n"></div><div class="lab">Where you are</div></div>
+          <div class="rows">
+            <div class="row"><span class="grow"><span class="t">Street</span></span><span class="v">14 Fore Street</span></div>
+            <div class="row"><span class="grow"><span class="t">City</span></span><span class="v">Exeter, Devon</span></div>
+            <div class="row"><span class="grow"><span class="t">Latitude</span></span><span class="v">50.723456</span></div>
+            <div class="row"><span class="grow"><span class="t">Longitude</span></span><span class="v">−3.533012</span></div>
+            <div class="row"><span class="grow"><span class="t">Accuracy</span></span><span class="v">± 4 m</span></div>
+          </div>
+        </div>
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">move</div><div class="n"></div><div class="lab">Altitude and movement</div></div>
+          <div class="rows">
+            <div class="row"><span class="grow"><span class="t">Altitude</span></span><span class="v">28.4 m (93 ft)</span></div>
+            <div class="row"><span class="grow"><span class="t">Speed</span></span><span class="v">0.0 km/h</span></div>
+            <div class="row"><span class="grow"><span class="t">Heading</span></span><span class="v">112° E</span></div>
+            <div class="row"><span class="grow"><span class="t">Air pressure</span></span><span class="v">1013.4 hPa</span></div>
+          </div>
+        </div>
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">band</div><div class="n"></div><div class="lab">Today and the band</div></div>
+          <div class="rows">
+            <div class="row"><span class="grow"><span class="t">Steps today</span></span><span class="v">7,412</span></div>
+            <div class="row"><span class="grow"><span class="t">Band</span></span><span class="v">linked · ES100-4C2A</span></div>
+            <div class="row"><span class="grow"><span class="t">Band battery</span></span><span class="v">84% · charging</span></div>
+            <div class="row"><span class="grow"><span class="t">Band signal</span></span><span class="v">−61 dBm</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────── SUB: ASK CLAUDE ─────────────── -->
+      <section class="screen" id="s-claude">
+        <div class="spine" style="margin-top:var(--s4)">
+          <div class="m cap"><div class="m-t">14:39</div><div class="m-n"></div><div class="m-b"><p>Typed, not spoken</p></div></div>
+          <div class="m m--done"><div class="m-t">14:39</div><div class="m-n"></div>
+            <div class="m-b"><span class="kind">You</span><p>What's the difference between HRV SDNN and RMSSD?</p></div></div>
+          <div class="m m--done m--its"><div class="m-t">14:39</div><div class="m-n"></div>
+            <div class="m-b"><span class="by">Claude</span>
+              <p>Both measure the variation between heartbeats. SDNN is the spread across the whole window, so it picks up slow changes too — breathing, posture, the day. RMSSD looks only at the gap between one beat and the next, so it tracks the fast, parasympathetic side. Apple Health shows SDNN, which is why yours reads 41 ms.</p></div></div>
+          <div class="m tail"><div class="m-t"></div><div class="m-n"></div><div class="m-b"><p>Ask another</p></div></div>
+        </div>
+        <div style="padding-left:calc(var(--time-col) + var(--node-col) + var(--s3))">
+          <input class="field" id="claudeq" placeholder="OVOA, ask Claude …" aria-label="Ask Claude anything">
+          <div class="act"><button class="pill go" id="claudeask">Ask</button></div>
+          <p class="note" id="claudemsg" hidden>Sent. The answer will be spoken and land here.</p>
+        </div>
+      </section>
+
+      <!-- ─────────────── SUB: TRANSCRIPTS ─────────────── -->
+      <section class="screen" id="s-tr"></section>
+
+      <!-- ─────────────── SUB: DEV TOOLS ─────────────── -->
+      <section class="screen" id="s-dev">
+        <div class="sect" style="padding-top:var(--s3)">
+          <div class="head"><div class="m-t" style="padding-top:0">phone</div><div class="n"></div><div class="lab">Sensors</div></div>
+          <div class="rows">
+            <div class="row"><span class="grow"><span class="t">Accelerometer</span></span><span class="v">0.01 −0.98 0.04</span></div>
+            <div class="row"><span class="grow"><span class="t">Gyroscope</span></span><span class="v">0.00 0.01 0.00</span></div>
+            <div class="row"><span class="grow"><span class="t">Magnetometer</span></span><span class="v">112° E</span></div>
+            <div class="row"><span class="grow"><span class="t">Barometer</span></span><span class="v">1013.4 hPa</span></div>
+            <div class="row"><span class="grow"><span class="t">Pedometer</span></span><span class="v">7,412</span></div>
+            <div class="row"><span class="grow"><span class="t">Fall detector</span></span><span class="v" style="color:var(--ok)">watching</span></div>
+          </div>
+        </div>
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">grants</div><div class="n"></div><div class="lab">Permissions</div></div>
+          <div class="rows">
+            <div class="row"><span class="grow"><span class="t">Motion &amp; Fitness</span></span><span class="v" style="color:var(--ok)">granted</span></div>
+            <div class="row"><span class="grow"><span class="t">Health</span></span><span class="v" style="color:var(--ok)">granted</span></div>
+            <div class="row"><span class="grow"><span class="t">Reminders</span></span><span class="v" style="color:var(--ok)">granted</span></div>
+            <div class="row"><span class="grow"><span class="t">Contacts</span></span><span class="v" style="color:var(--warn)">permission denied</span></div>
+            <div class="row"><span class="grow"><span class="t">Microphone</span></span><span class="v" style="color:var(--ok)">granted</span></div>
+          </div>
+        </div>
+        <div class="sect">
+          <div class="head"><div class="m-t" style="padding-top:0">clip</div><div class="n"></div><div class="lab">Clip — live</div></div>
+          <div class="rows">
+            <div class="row"><span class="grow"><span class="t">Firmware</span></span><span class="v">1.4.7</span></div>
+            <div class="row"><span class="grow"><span class="t">Motion stream</span></span><span class="v">gyro3 · ~1 Hz</span></div>
+            <div class="row"><span class="grow"><span class="t">Audio</span></span><span class="v">16 kHz mono opus</span></div>
+            <div class="row" style="border-bottom:0; display:block">
+              <div class="act">
+                <button class="pill" id="buzztest">Run buzz test (≈90 s)</button>
+                <button class="pill" id="hrtest">Test heart rate (≈70 s)</button>
+              </div>
+              <p class="note" id="devmsg" hidden>Buzzing. Say which ones you felt when it finishes.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /body -->
+
+    <nav class="tabs" role="tablist" aria-label="OVOA">
+      <button class="tab" role="tab" aria-selected="true" data-tab="activity">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="2"/><path d="M11 21l1.5-6-2.5-2 1-5 3 3 2.5 1M10 13l-2 3-2 5"/></svg>
+        <span>Activity</span><i class="dotmark"></i>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="ovoa">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3.5M8.5 21.5h7"/></svg>
+        <span>OVOA</span><i class="dotmark"></i>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="record">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></svg>
+        <span>Record</span><i class="dotmark"></i>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="journal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2 2 0 016 3.5h13v17H6a2 2 0 01-2-2z"/><path d="M8 3.5v17"/></svg>
+        <span>Journal</span><i class="dotmark"></i>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="safety">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.8-7 9-4-1.2-7-4.5-7-9V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg>
+        <span>Safety</span><i class="dotmark"></i>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.5 5.5l2 2M16.5 16.5l2 2M18.5 5.5l-2 2M7.5 16.5l-2 2"/></svg>
+        <span>Settings</span><i class="dotmark"></i>
+      </button>
+    </nav>
+
+    <!-- ══ full-screen moments ══ -->
+    <div class="over" id="nag">
+      <div class="nag">
+        <svg viewBox="0 0 24 24" width="60" height="60" fill="none" stroke="#22E2FF" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9.5V13l2.5 1.5M5 4.5L7 6.5M19 4.5L17 6.5"/></svg>
+        <h3>Morning, Thomas</h3>
+        <p class="lbl">Alarm · 06:20 · get up and walk</p>
+        <div class="big" id="nagsteps">0 / 20</div>
+        <p class="hintline">steps — get up and walk. It stops at 20.</p>
+        <div class="nagtrack"><i id="nagfill" style="width:0%"></i></div>
+        <button class="bigbtn" id="nagwalk">Take a step</button>
+        <p class="hintline">Or say “Hey OVOA, I'm awake.”</p>
+        <p class="hintline" id="nagmore">1 more waiting</p>
+        <button class="link" id="nagclose">Close this mock state</button>
+      </div>
+    </div>
+
+    <div class="over" id="setup">
+      <div class="setup">
+        <div class="who">
+          <div><b>OVOA</b><span id="setupstatus">Listening…</span></div>
+          <span class="cnt" id="setupcount">3 / 9</span>
+        </div>
+        <div class="calltrack"><i id="setupfill" style="width:33%"></i></div>
+        <div style="display:grid; place-items:center; padding:var(--s4) 0">
+          <div class="orbwrap" style="width:150px;height:150px">
+            <span class="halo breathing" style="width:138px;height:138px"></span>
+            <span class="orb" style="width:132px;height:132px">
+              <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="#22E2FF" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3.5"/></svg>
+            </span>
+          </div>
+        </div>
+        <p class="q" id="setupq">What time do you usually go to bed?</p>
+        <p class="heard" id="setupheard">about eleven, later on Fridays</p>
+        <div class="callog">
+          <div class="cl it"><span class="w">OVOA</span><p>Hi, I'm OVOA. A few quick questions so I can plan around your day. Just answer out loud, and say skip for any you'd rather not.</p></div>
+          <div class="cl it"><span class="w">OVOA</span><p>What time do you usually wake up?</p></div>
+          <div class="cl you"><span class="w">You</span><p>Half six most days.</p></div>
+          <div class="cl it"><span class="w">OVOA</span><p>06:30 on weekdays. And what medications do you take, and when?</p></div>
+          <div class="cl you"><span class="w">You</span><p>Metformin morning and evening, vitamin D with breakfast.</p></div>
+          <div class="cl it"><span class="w">OVOA</span><p>Metformin twice a day, vitamin D at breakfast — I'll put those in Reminders. What time do you usually go to bed?</p></div>
+        </div>
+        <div class="ctrls">
+          <button class="ctrl" id="setuptype"><i><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8"/></svg></i>Type</button>
+          <button class="ctrl" id="setupskip"><i><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l9 7-9 7zM18 5v14"/></svg></i>Skip</button>
+          <button class="ctrl hang" id="setupclose"><i><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="transform:rotate(135deg)"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.5.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.5.1.4 0 .8-.2 1z"/></svg></i>Later</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /phone -->
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var $  = function(s,r){ return (r||document).querySelector(s); };
+  var $$ = function(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); };
+
+  /* ── navigation: six tabs, sub-screens on a stack ─────────────── */
+  var TITLES = {
+    activity:"Activity", ovoa:"OVOA", record:"Record", journal:"Journal",
+    safety:"Safety", settings:"Settings",
+    agent:"Background work", live:"Live", claude:"Ask Claude",
+    tr:"Transcripts", dev:"Sensors, inputs & ES100"
+  };
+  var NOTES = {
+    activity:"Tue 21 Sep", ovoa:"", record:"", journal:"Tue 21 Sep",
+    safety:"", settings:"", agent:"6 of 40 runs", live:"live", claude:"", tr:"", dev:""
+  };
+  var stack = ["activity"];
+
+  /* a control that only reports back still has to report back */
+  document.addEventListener("click", function(e){
+    var s = e.target.closest("[data-say]");
+    if (!s) return;
+    var was = s.textContent;
+    s.textContent = s.dataset.say;
+    setTimeout(function(){ s.textContent = was; }, 2200);
+  });
+
+  function render(){
+    var id = stack[stack.length-1];
+    $$(".screen").forEach(function(s){ s.classList.toggle("on", s.id === "s"+"-"+id); });
+    $("#title").textContent = TITLES[id] || id;
+    $("#barnote").textContent = NOTES[id] || "";
+    $("#bar").classList.toggle("sub", stack.length > 1);
+    var root = stack[0];
+    $$(".tab").forEach(function(t){ t.setAttribute("aria-selected", String(t.dataset.tab === root)); });
+    $("#scroller").scrollTop = 0;
+    if (id === "tr") mountTranscripts($("#s-tr"));
+  }
+  function goTab(id){ stack = [id]; render(); }
+  function push(id){ stack.push(id); render(); }
+  function pop(){ if (stack.length > 1) stack.pop(); render(); }
+
+  $$(".tab").forEach(function(t){ t.addEventListener("click", function(){ goTab(t.dataset.tab); }); });
+  $("#back").addEventListener("click", pop);
+  document.addEventListener("click", function(e){
+    var g = e.target.closest("[data-go]");   if (g){ push(g.dataset.go); return; }
+    var t = e.target.closest("[data-tab]:not(.tab)"); if (t){ goTab(t.dataset.tab); }
+  });
+
+  /* ── Transcripts: one panel, two doors (Settings and Journal) ─── */
+  var TR_HTML =
+    '<div style="padding-top:var(--s4)">'+
+    '<input class="field" placeholder="Search everything said" aria-label="Search everything said" style="margin-bottom:var(--s3)">'+
+    '<div class="spine">'+
+      '<div class="m cap"><div class="m-t">today</div><div class="m-n"></div><div class="m-b"><p>Kept on this phone · 2 weeks</p></div></div>'+
+      '<div class="m m--done"><div class="m-t">13:10</div><div class="m-n"></div><div class="m-b">'+
+        '<span class="kind">Recording · 4:12</span><p>Chat with Dr Whitfield</p>'+
+        '<p class="sub">“…so the repeat is on the system, just pick it up from Fore Street, and come back and see me in six weeks.”</p>'+
+        '<div class="act"><button class="pill bad" data-say="The words and their title are deleted for good">Forget these five minutes?</button></div></div></div>'+
+      '<div class="m m--done"><div class="m-t">08:05</div><div class="m-n"></div><div class="m-b">'+
+        '<span class="kind">Spoken turn</span><p>“Remind me to ring the pharmacy about the repeat prescription.”</p>'+
+        '<p class="sub">Background · added to today’s list</p></div></div>'+
+      '<div class="m m--done"><div class="m-t">Sun<br>20:14</div><div class="m-n"></div><div class="m-b">'+
+        '<span class="kind">Recording · 11:04</span><p>Not titled yet</p>'+
+        '<p class="sub">Sunday with Mum · summarised, words dropped</p></div></div>'+
+      '<div class="m tail"><div class="m-t"></div><div class="m-n"></div><div class="m-b"><p>Older than 2 weeks · forgotten on purpose</p></div></div>'+
+    '</div>'+
+    '<p class="note" style="padding-left:calc(var(--time-col) + var(--node-col) + var(--s3))">The words are read once to write the summary and then dropped. They are never stored on the server.</p>'+
+    '</div>';
+  function mountTranscripts(host){ if (!host.dataset.ready){ host.innerHTML = TR_HTML; host.dataset.ready = "1"; } }
+  mountTranscripts($("#trbody"));
+
+  /* ── ticking a todo ───────────────────────────────────────────── */
+  document.addEventListener("click", function(e){
+    var td = e.target.closest(".todo");
+    if (!td) return;
+    td.setAttribute("aria-checked", td.getAttribute("aria-checked") === "true" ? "false" : "true");
+  });
+
+  /* ── confirming a routine: due-now becomes done, in place ─────── */
+  document.addEventListener("click", function(e){
+    var c = e.target.closest("[data-confirm]");
+    if (c){
+      var m = c.closest(".m");
+      m.className = "m m--done";
+      m.querySelector(".kind").textContent = "Meds";
+      m.querySelector(".act").outerHTML = '<p class="sub"><span class="done-mark">done · 14:41</span></p>';
+      return;
+    }
+    var s = e.target.closest("[data-snooze]");
+    if (s){
+      var ms = s.closest(".m");
+      ms.className = "m m--upcoming";
+      ms.querySelector(".kind").textContent = "Meds";
+      ms.querySelector(".act").outerHTML = '<p class="sub">later · asks again at 16:30</p>';
+      return;
+    }
+    var l = e.target.closest("[data-late]") || e.target.closest("[data-skip]");
+    if (l){
+      var ml = l.closest(".m"), late = l.hasAttribute("data-late");
+      ml.className = late ? "m m--done" : "m";
+      ml.querySelector(".m-b p").textContent = late ? "Walk before lunch" : "Walk before lunch";
+      ml.querySelector(".act").outerHTML = '<p class="sub"><span class="'+(late?"done-mark":"late-mark")+'">'+(late?"done · late":"skipped today")+'</span></p>';
+    }
+  });
+
+  /* ── settling a commitment: the moment leaves the spine ───────── */
+  document.addEventListener("click", function(e){
+    var b = e.target.closest("[data-settle]");
+    if (!b) return;
+    var m = document.getElementById(b.dataset.settle);
+    var how = b.textContent.trim();
+    m.className = "m m--done";
+    m.querySelector(".act").remove();
+    m.querySelector(".m-b").style.background = "none";
+    m.querySelector(".kind").textContent = "Settled";
+    m.querySelector(".m-b p").innerHTML = m.querySelector(".m-b p").textContent +
+      ' <span class="done-mark">· ' + how.toLowerCase() + '</span>';
+  });
+
+  /* ── dismissing / answering an agent note ─────────────────────── */
+  document.addEventListener("click", function(e){
+    var d = e.target.closest("[data-dismiss]");
+    if (d){ var md = d.closest(".m"); md.style.display = "none"; return; }
+    var a = e.target.closest("[data-answer]");
+    if (a){
+      var ma = a.closest(".m"), pick = a.textContent.trim();
+      ma.className = "m m--done m--its";
+      ma.querySelector(".m-b").style.background = "none";
+      ma.querySelector(".act").outerHTML = '<p class="sub"><span class="done-mark">you said ' + pick + ' · it moved the ' + pick + ' appointment</span></p>';
+    }
+  });
+
+  /* ── the orb ──────────────────────────────────────────────────── */
+  var MIC   = '<svg viewBox="0 0 24 24" fill="none" stroke="#22E2FF" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3.5M8.5 21.5h7"/></svg>';
+  var MICOFF= '<svg viewBox="0 0 24 24" fill="none" stroke="#8A94A6" stroke-width="1.8" stroke-linecap="round"><path d="M9 5a3 3 0 016 0v5M12 17v4M8 21h8M5 10a7 7 0 0011.3 5.5M3 3l18 18"/></svg>';
+  var SPK   = '<svg viewBox="0 0 24 24" fill="none" stroke="#3DDC97" stroke-width="1.8" stroke-linecap="round"><path d="M4 9h3l5-4v14l-5-4H4zM17 8.5a5 5 0 010 7M20 6a9 9 0 010 12"/></svg>';
+  var SPIN  = '<span class="spinner"></span>';
+
+  var APPROVAL =
+    '<div class="spine">'+
+      '<div class="m m--ask" id="ap-1"><div class="m-t">14:38</div><div class="m-n"></div><div class="m-b">'+
+        '<span class="kind">Needs your approval</span>'+
+        '<p>Text Sarah Bell: “Running about twenty minutes late, sorry — see you at three.”</p>'+
+        '<p class="sub">To: Sarah Bell · +44 7700 900461</p>'+
+        '<div class="act"><button class="pill go" data-approve="ap-1">Approve</button>'+
+        '<button class="pill" data-cancel="ap-1">Cancel</button></div></div></div>'+
+      '<div class="m tail"><div class="m-t"></div><div class="m-n"></div><div class="m-b"><p>Nothing else waiting</p></div></div>'+
+    '</div>';
+
+  var WHICH =
+    '<div class="spine">'+
+      '<div class="m m--ask" id="ap-2"><div class="m-t">14:38</div><div class="m-n"></div><div class="m-b">'+
+        '<span class="kind">Needs your approval</span>'+
+        '<p>Text Sarah: “Running about twenty minutes late, sorry — see you at three.”</p>'+
+        '<p class="sub">Which contact?</p>'+
+        '<div class="act">'+
+          '<button class="pill" data-pick>Sarah Bell · +44 7700 900461</button>'+
+          '<button class="pill" data-pick>Sarah Okonjo · +44 7700 900733</button>'+
+        '</div>'+
+        '<div class="act"><button class="pill go" data-approve="ap-2" disabled>Approve</button>'+
+        '<button class="pill" data-cancel="ap-2">Cancel</button></div></div></div>'+
+      '<div class="m tail"><div class="m-t"></div><div class="m-n"></div><div class="m-b"><p>Nothing else waiting</p></div></div>'+
+    '</div>';
+
+  var ACTING =
+    '<div class="spine">'+
+      '<div class="m m--now"><div class="m-t">14:41</div><div class="m-n"></div><div class="m-b">'+
+        '<span class="kind">Doing it for you…</span><p>Moving the standup to 10:15 and telling Dana.</p></div></div>'+
+      '<div class="m tail"><div class="m-t"></div><div class="m-n"></div><div class="m-b"><p>It will say when it is done</p></div></div>'+
+    '</div>';
+
+  var orbState = "idle";
+  function setOrb(state){
+    orbState = state;
+    var live = state !== "idle";
+    var orb = $("#orb"), halo = $("#halo");
+    orb.classList.toggle("off", !live);
+    halo.hidden = !(state === "listening" || state === "speaking");
+    halo.classList.toggle("breathing", state === "listening");
+    halo.style.background = state === "speaking" ? "var(--ok)" : "var(--live)";
+
+    var glyph = MICOFF, phase = "Tap to start listening", hint = "", words = "";
+    if (state === "listening"){ glyph = MIC; phase = "Listening"; hint = "Tap to stop listening"; words = "remind me to ring the pharmacy about the repeat…"; }
+    else if (state === "thinking"){ glyph = SPIN; phase = "Thinking…"; hint = "Tap to stop listening"; words = "Remind me to ring the pharmacy about the repeat prescription."; }
+    else if (state === "speaking"){ glyph = SPK; phase = "Speaking"; hint = "Tap to interrupt"; words = "Added to today's list. The pharmacy on Fore Street opens at nine."; }
+    else if (state === "approval" || state === "which"){ glyph = MIC; phase = "Listening"; hint = "Tap to stop listening"; words = "text Sarah I'm running twenty minutes late"; }
+    else if (state === "acting"){ glyph = SPIN; phase = "Thinking…"; hint = "Tap to stop listening"; words = "move the standup to quarter past ten"; }
+
+    $("#orbglyph").innerHTML = glyph;
+    $("#phase").textContent = phase;
+    $("#hint").textContent  = $("#alwaysbar").hidden ? hint
+      : (state === "speaking" ? "Talk or tap to interrupt" : "Always listen is on · tap the orb to turn it off");
+    var w = $("#words"); w.hidden = !words; w.textContent = words;
+    $("#orbbtn").setAttribute("aria-label", live ? "Stop listening to OVOA" : "Start listening to OVOA");
+
+    $("#orbmoments").innerHTML = state === "approval" ? APPROVAL
+      : state === "which" ? WHICH : state === "acting" ? ACTING : "";
+    $("#orbrail2").hidden = !$("#orbmoments").innerHTML;
+
+    $("#logtext").textContent =
+      (live ? phase.toLowerCase().replace("…","") : "off") +
+      " · mic " + (state === "listening" || state === "approval" || state === "which" ? "62 dB" : "—") +
+      ($("#alwaysbar").hidden ? "" : " · always listen") + "\n" +
+      "voice.start  phase=" + (live ? "listening" : "off") + "\n" +
+      "clip.pull    ES100-4C2A  16 kHz mono opus  38 KB\n" +
+      "turn.post    transcribe 1.2 s · model 4.6 s · speak 1.1 s\n" +
+      "turn.total   8.4 s";
+
+    $$("[data-orb]").forEach(function(b){ b.setAttribute("aria-pressed", String(b.dataset.orb === state)); });
+  }
+  $$("[data-orb]").forEach(function(b){
+    b.addEventListener("click", function(){ setOrb(b.dataset.orb); goTab("ovoa"); });
+  });
+  $("#orbbtn").addEventListener("click", function(){
+    if (!$("#alwaysbar").hidden){ $("#alwaysbar").hidden = true; setOrb("idle"); return; }
+    setOrb(orbState === "idle" ? "listening" : orbState === "speaking" ? "idle" : "idle");
+  });
+  $("#alwaysbar").addEventListener("click", function(e){
+    e.stopPropagation(); $("#alwaysbar").hidden = true; setOrb(orbState);
+  });
+  $("#logschip").addEventListener("click", function(){
+    var on = $("#logschip").getAttribute("aria-pressed") !== "true";
+    $("#logschip").setAttribute("aria-pressed", String(on));
+    $("#logspanel").hidden = !on;
+  });
+  setOrb("idle");
+
+  /* approve / cancel / pick a contact */
+  document.addEventListener("click", function(e){
+    var p = e.target.closest("[data-pick]");
+    if (p){
+      $$("[data-pick]").forEach(function(x){ x.classList.remove("go"); });
+      p.classList.add("go");
+      var ok = $("[data-approve]"); if (ok) ok.disabled = false;
+      return;
+    }
+    var ap = e.target.closest("[data-approve]");
+    if (ap){
+      var m = document.getElementById(ap.dataset.approve);
+      m.className = "m m--done";
+      m.querySelector(".m-b").style.background = "none";
+      m.querySelector(".kind").textContent = "Approved";
+      $$(".act", m).forEach(function(a){ a.remove(); });
+      m.insertAdjacentHTML("beforeend", '<p class="sub"><span class="done-mark">sent at 14:41 · Messages did not need you</span></p>');
+      return;
+    }
+    var cn = e.target.closest("[data-cancel]");
+    if (cn){
+      var mc = document.getElementById(cn.dataset.cancel);
+      mc.className = "m";
+      mc.querySelector(".m-b").style.background = "none";
+      mc.querySelector(".kind").textContent = "Cancelled";
+      $$(".act", mc).forEach(function(a){ a.remove(); });
+      mc.insertAdjacentHTML("beforeend", '<p class="sub">Nothing was sent.</p>');
+    }
+  });
+
+  /* ── the clip's connection, as a progress spine ───────────────── */
+  var PHASES = ["idle","scanning","pairing","connecting","connected"];
+  var PHASE_TEXT = { idle:"Not connected", scanning:"Looking for clips…", pairing:"Press the clip's button",
+                     connecting:"Connecting…", connected:"Connected" };
+  function setClip(phase){
+    var at = PHASES.indexOf(phase);
+    $$(".ph").forEach(function(el, i){
+      el.classList.toggle("past", i < at);
+      el.classList.toggle("at", i === at);
+    });
+    $("#clipphase").textContent = PHASE_TEXT[phase];
+    $("#clipname").textContent  = phase === "connected" ? "ES100-4C2A" : "ES100 clip";
+    $("#cliplive").hidden   = phase !== "connected";
+    $("#disconnect").hidden = phase !== "connected";
+    $("#findrow").hidden    = phase === "connected";
+    $("#foundlist").hidden  = !(phase === "scanning" || phase === "pairing");
+    $("#findbtn").textContent = phase === "scanning" ? "Scanning…" : "Find clips";
+    $$("[data-clip]").forEach(function(b){ b.setAttribute("aria-pressed", String(b.dataset.clip === phase)); });
+    if (!recording) setRec(null, phase === "connected");
+  }
+  $$("[data-clip]").forEach(function(b){
+    b.addEventListener("click", function(){ setClip(b.dataset.clip); goTab("record"); });
+  });
+  $("#disconnect").addEventListener("click", function(){ setClip("idle"); });
+  $("#findbtn").addEventListener("click", function(){ setClip("scanning"); });
+  $("#connectbtn").addEventListener("click", function(){ setClip("connecting"); });
+  $("#foundlist").addEventListener("click", function(){ setClip("connecting"); });
+  $("#importbtn").addEventListener("click", function(){
+    $("#importbtn").textContent = "Up to date — every recording is already on your phone";
+  });
+
+  /* ── the record control ───────────────────────────────────────── */
+  var recording = null, recTimer = null;
+  function fmt(s){ var m = Math.floor(s/60); var r = s%60; return m + ":" + (r<10?"0":"") + r; }
+  function setRec(state, connected){
+    var btn = $("#recbtn");
+    if (!state){
+      recording = null; clearInterval(recTimer);
+      btn.className = "recbtn" + (connected ? "" : " dead");
+      btn.querySelector(".g").className = "g";
+      $("#rectimer").textContent = "0:00";
+      $("#recstate").textContent = connected ? "Tap to record on the clip" : "Connect the clip to record";
+      $("#reccontrols").hidden = true;
+      btn.disabled = !connected;
+      return;
+    }
+    btn.disabled = false;
+    btn.className = "recbtn live";
+    $("#reccontrols").hidden = false;
+    $("#pausebtn").textContent = state === "paused" ? "Resume" : "Pause";
+    $("#recstate").textContent = state === "paused" ? "Paused" : "Recording on the clip";
+  }
+  $("#recbtn").addEventListener("click", function(){
+    if (recording){ setRec(null, true); return; }
+    recording = { s:0, state:"running" };
+    setRec("running", true);
+    recTimer = setInterval(function(){
+      if (recording && recording.state === "running"){ recording.s++; $("#rectimer").textContent = fmt(recording.s); }
+    }, 1000);
+  });
+  $("#pausebtn").addEventListener("click", function(){
+    if (!recording) return;
+    recording.state = recording.state === "paused" ? "running" : "paused";
+    setRec(recording.state, true);
+  });
+  $("#stopbtn").addEventListener("click", function(){ setRec(null, true); });
+  setClip("connected");
+
+  /* ── Journal segments ─────────────────────────────────────────── */
+  $$("#jseg button").forEach(function(b){
+    b.addEventListener("click", function(){
+      $$("#jseg button").forEach(function(x){ x.setAttribute("aria-selected", String(x === b)); });
+      $("#j-notes").hidden = b.dataset.j !== "notes";
+      $("#j-days").hidden  = b.dataset.j !== "days";
+      $("#j-tr").hidden    = b.dataset.j !== "tr";
+    });
+  });
+  $$("#grain button").forEach(function(b){
+    b.addEventListener("click", function(){
+      $$("#grain button").forEach(function(x){ x.setAttribute("aria-selected", String(x === b)); });
+      var week = b.dataset.g === "week";
+      $("#dayview").hidden = week; $("#weekview").hidden = !week;
+      $("#daylabel").textContent = week ? "Sep 14 – Sep 20" : "Today";
+    });
+  });
+  $("#dayprev").addEventListener("click", function(){ $("#daylabel").textContent = "Monday, Sep 20"; });
+  $("#daynext").addEventListener("click", function(){ $("#daylabel").textContent = "Today"; });
+  $("#addmoment").addEventListener("click", function(){
+    var v = $("#momentfield").value.trim();
+    if (!v) return;
+    $("#momentfield").value = "";
+    $("#addedmsg").hidden = false;
+    $("#addedmsg").textContent = "Added to today: “" + v + "”";
+  });
+
+  /* ── switches, segments, chips ────────────────────────────────── */
+  document.addEventListener("click", function(e){
+    var sw = e.target.closest(".sw");
+    if (!sw) return;
+    var on = sw.getAttribute("aria-checked") !== "true";
+    sw.setAttribute("aria-checked", String(on));
+    if (sw.id === "fallsw") paintFall();
+    if (sw.id === "alwayssw"){ $("#alwaysbar").hidden = !on; setOrb(on ? "listening" : "idle"); }
+    if (sw.id === "autosend") $("#shortcutrow").hidden = !on;
+  });
+  ["#listenmode","#micsrc","#autonomy","#retention"].forEach(function(sel){
+    var host = $(sel); if (!host) return;
+    $$("button", host).forEach(function(b){
+      b.addEventListener("click", function(){
+        $$("button", host).forEach(function(x){ x.setAttribute("aria-selected", String(x === b)); });
+        var hintId = sel === "#listenmode" ? "#listenhint" : sel === "#micsrc" ? "#michint" : sel === "#autonomy" ? "#autohint" : null;
+        if (hintId && b.dataset.hint) $(hintId).textContent = b.dataset.hint;
+      });
+    });
+  });
+  $$("#goalchips .chip").forEach(function(c){
+    c.addEventListener("click", function(){
+      $$("#goalchips .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x === c)); });
+      var goal = parseFloat(c.textContent) * 1000, today = 7412;
+      $("#goaltxt").textContent = goal.toLocaleString();
+      var pct = Math.min(100, today / goal * 100);
+      $("#steptrack").firstElementChild.style.width = pct + "%";
+      $("#steptrack").classList.toggle("met", pct >= 100);
+      $("#stepgap").textContent = pct >= 100 ? "Goal reached. Nice work!" : (goal - today).toLocaleString() + " to go";
+    });
+  });
+  $$("#voices .chip").forEach(function(c){
+    c.addEventListener("click", function(){
+      $$("#voices .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x === c)); });
+      $("#voicemsg").hidden = false;
+      $("#voicemsg").textContent = "Playing " + c.textContent + ": “I'll take it from here.”";
+    });
+  });
+  $("#hearvoice").addEventListener("click", function(){
+    var on = $("#voices .chip[aria-pressed='true']");
+    $("#voicemsg").hidden = false;
+    $("#voicemsg").textContent = "Playing " + (on ? on.textContent : "Aria") + ": “I'll take it from here.”";
+  });
+  $("#memtoggle").addEventListener("click", function(){
+    var open = $("#memlist").hidden;
+    $("#memlist").hidden = !open;
+    $("#memchev").textContent = open ? "▾" : "▸";
+    $("#memtoggle").setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("click", function(e){
+    var f = e.target.closest("[data-forget]") || e.target.closest("[data-remove]") || e.target.closest("[data-drop]");
+    if (f) f.closest(".row").remove();
+  });
+  ["#savechanges","#forgetall","#clearchat","#forgethour","#signout","#call911"].forEach(function(id){
+    var el = $(id); if (!el) return;
+    el.addEventListener("click", function(){
+      var was = el.textContent;
+      el.textContent = id === "#savechanges" ? "Saved" :
+                       id === "#forgetall"  ? "Everything forgotten" :
+                       id === "#clearchat"  ? "Chat history cleared" :
+                       id === "#forgethour" ? "Forgot 3 moments" :
+                       id === "#signout"    ? "Signed out" : "Calling 911…";
+      setTimeout(function(){ el.textContent = was; }, 1800);
+    });
+  });
+  $("#addcontact").addEventListener("click", function(){
+    var n = $("#cname").value.trim(), p = $("#cphone").value.trim();
+    if (!n || !p) return;
+    $("#contacts").insertAdjacentHTML("beforeend",
+      '<div class="row"><span class="grow"><span class="t">' + n + '</span><span class="d">' + p +
+      '</span></span><button class="link" style="color:var(--bad)" data-remove>Remove</button></div>');
+    $("#cname").value = ""; $("#cphone").value = "";
+  });
+  $("#addgoal").addEventListener("click", function(){
+    var v = $("#goalfield").value.trim(); if (!v) return;
+    $("#goalfield").closest(".row").insertAdjacentHTML("beforebegin",
+      '<div class="row"><span class="grow"><span class="t">' + v + '</span><span class="d">Added just now.</span></span>' +
+      '<button class="link" style="color:var(--bad)" data-drop>Drop</button></div>');
+    $("#goalfield").value = "";
+  });
+  $("#claudeask").addEventListener("click", function(){
+    if (!$("#claudeq").value.trim()) return;
+    $("#claudemsg").hidden = false; $("#claudeq").value = "";
+  });
+  ["#buzztest","#hrtest"].forEach(function(id){
+    $(id).addEventListener("click", function(){
+      $("#devmsg").hidden = false;
+      $("#devmsg").textContent = id === "#buzztest"
+        ? "Buzzing. Say which ones you felt when it finishes."
+        : "Measuring. Keep the clip against your skin — about 70 seconds.";
+    });
+  });
+  document.addEventListener("click", function(e){
+    var r = e.target.closest("[data-runnow]");
+    if (!r) return;
+    r.textContent = "Ran just now";
+    $("#runlog").insertAdjacentHTML("afterbegin",
+      '<div class="m m--now m--its"><div class="m-t">14:41</div><div class="m-n"></div><div class="m-b">' +
+      '<p>' + r.dataset.runnow.toLowerCase() + ' · <span style="color:var(--ink-3)">nothing to say</span></p>' +
+      '<p class="sub">It looked and decided there was nothing worth telling you.</p></div></div>');
+  });
+  document.addEventListener("click", function(e){
+    var pl = e.target.closest("[data-play]");
+    if (pl){ pl.textContent = pl.textContent === "Play" ? "Pause" : "Play"; return; }
+    var rn = e.target.closest("[data-rename]");
+    if (rn){
+      var t = rn.closest(".row").querySelector(".t");
+      t.contentEditable = "true"; t.focus();
+      t.addEventListener("blur", function(){ t.contentEditable = "false"; }, { once:true });
+    }
+  });
+
+  /* ── Safety: fall status, SOS hold ───────────────────────────── */
+  var fallSensor = "on";
+  var FALL = { on:"Watching for falls while the app is open.",
+               unavailable:"This device has no motion sensor.",
+               denied:"Allow Motion & Fitness access in the Settings app." };
+  function paintFall(){
+    var on = $("#fallsw").getAttribute("aria-checked") === "true";
+    $("#fallstatus").textContent = on ? FALL[fallSensor] : "Off";
+    $$("[data-fall]").forEach(function(b){ b.setAttribute("aria-pressed", String(b.dataset.fall === fallSensor)); });
+  }
+  $$("[data-fall]").forEach(function(b){
+    b.addEventListener("click", function(){ fallSensor = b.dataset.fall; paintFall(); goTab("safety"); });
+  });
+  paintFall();
+  $("#testfall").addEventListener("click", function(){
+    addAlert("Possible fall", "Marked OK · test, nobody was contacted", "m--done");
+    $("#testfall").textContent = "Test sent";
+    setTimeout(function(){ $("#testfall").textContent = "Test the fall alert"; }, 1800);
+  });
+  function addAlert(title, sub, cls){
+    $("#alerts").insertAdjacentHTML("afterbegin",
+      '<div class="m ' + cls + '"><div class="m-t">14:41</div><div class="m-n"></div><div class="m-b"><p>' +
+      title + '</p><p class="sub">' + sub + '</p></div></div>');
+  }
+  var holdTimer = null;
+  var sos = $("#sos");
+  function holdStart(e){
+    e.preventDefault();
+    sos.classList.add("holding");
+    holdTimer = setTimeout(function(){
+      sos.classList.remove("holding");
+      addAlert("SOS", "Contacts alerted · your phone opened the message", "m--missed");
+      sos.querySelector("span").textContent = "Contacts alerted";
+      setTimeout(function(){ sos.querySelector("span").textContent = "Press and hold to alert your contacts"; }, 2400);
+    }, 1500);
+  }
+  function holdEnd(){ clearTimeout(holdTimer); sos.classList.remove("holding"); }
+  sos.addEventListener("pointerdown", holdStart);
+  sos.addEventListener("pointerup", holdEnd);
+  sos.addEventListener("pointerleave", holdEnd);
+  sos.addEventListener("keydown", function(e){ if (e.key === "Enter" || e.key === " ") holdStart(e); });
+  sos.addEventListener("keyup", holdEnd);
+
+  /* ── full-screen moments ─────────────────────────────────────── */
+  var nagSteps = 0;
+  $("#rig-nag").addEventListener("click", function(){ $("#nag").classList.add("on"); });
+  $("#nagclose").addEventListener("click", function(){
+    $("#nag").classList.remove("on"); nagSteps = 0;
+    $("#nagsteps").textContent = "0 / 20"; $("#nagfill").style.width = "0%";
+  });
+  $("#nagwalk").addEventListener("click", function(){
+    nagSteps = Math.min(20, nagSteps + 4);
+    $("#nagsteps").textContent = nagSteps + " / 20";
+    $("#nagfill").style.width = (nagSteps / 20 * 100) + "%";
+    if (nagSteps === 20){
+      $("#nagsteps").textContent = "20 / 20";
+      $("#nagwalk").textContent = "Awake. Dismissing…";
+      $("#nagmore").textContent = "Next: Don't forget — Metformin 500 mg";
+      setTimeout(function(){ $("#nagclose").click(); $("#nagwalk").textContent = "Take a step"; $("#nagmore").textContent = "1 more waiting"; }, 1400);
+    }
+  });
+  $("#rig-setup").addEventListener("click", function(){ $("#setup").classList.add("on"); });
+  $("#setupclose").addEventListener("click", function(){ $("#setup").classList.remove("on"); });
+  $("#redosetup").addEventListener("click", function(){ $("#setup").classList.add("on"); });
+  $("#setupskip").addEventListener("click", function(){
+    $("#setupq").textContent = "What hours do you usually work?";
+    $("#setupheard").textContent = "";
+    $("#setupcount").textContent = "4 / 9";
+    $("#setupfill").style.width = "44%";
+  });
+  $("#setuptype").addEventListener("click", function(){
+    $("#setupstatus").textContent = "Typing instead";
+    $("#setupheard").textContent = "The keyboard is open; the call waits.";
+  });
+
+  /* ── empty day ───────────────────────────────────────────────── */
+  $("#rig-empty").addEventListener("click", function(){
+    var on = $("#rig-empty").getAttribute("aria-pressed") !== "true";
+    $("#rig-empty").setAttribute("aria-pressed", String(on));
+    $("#dayfull").hidden = on;
+    $("#dayempty").hidden = !on;
+    goTab("activity");
+  });
+
+  render();
+})();
+</script>

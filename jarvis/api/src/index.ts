@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 import {
@@ -7,6 +7,7 @@ import {
   deleteSession,
   hashPassword,
   sessionForToken,
+  touchSession,
   verifyPassword,
 } from "./auth";
 import { isMeantForAssistant } from "./ambient";
@@ -30,7 +31,20 @@ import { contextAssistant, isContextTool, recordBlock, type BlockSource } from "
 import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
 import { googleAuthed, googlePublic } from "./google/oauth";
-import { chatWithTools, coolingEngines, DEFER, generateText, type LoopState, type OnText, type Turn } from "./llm";
+import {
+  chatWithTools,
+  classifyEngineError,
+  coolingEngines,
+  DEFER,
+  engineTrouble,
+  generateText,
+  type EngineAttempt,
+  type LoopState,
+  type OnText,
+  type Turn,
+} from "./llm";
+import { labelFor, noteEngines, noteTick, observe, pruneStatements, recordError, say } from "./obs";
+import { KEEP_MS as DEVICE_LOG_KEEP_MS } from "./logs";
 import { describeToolCall, kindForTool, logAction, toolSucceeded } from "./actionlog";
 import { dropRepeats, sentenceStream } from "./sentences";
 import { isPhoneTool, type PhoneCaps } from "./phone";
@@ -131,11 +145,23 @@ type Settings = {
 
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 
+// First, so the duration it measures is the whole request and the request id is
+// set before anything else can want it.
+app.use("*", observe());
 app.use("*", cors());
 
 app.onError((err, c) => {
+  // The row is written by observe(), which sees c.error after this returns
+  // (hono/dist/compose.js sets context.error before calling the handler).
+  // Recording here as well would count every failure twice.
+  say("err", { rid: c.get("requestId"), route: labelFor(c), why: classifyEngineError(err) });
   console.error(err);
-  // Workers AI (the last fallback, after Gemini and DeepSeek) has a free daily limit.
+  // When no engine can answer, say which one and why. "Something went wrong"
+  // 166 times in a day is what the alternative looked like (2026-09-21).
+  const trouble = engineTrouble();
+  if (trouble) return c.json({ error: `OVOA can't reach an AI model right now. ${trouble}` }, 503);
+  // Still here for a 4006 raised somewhere outside the engine loop, where
+  // nothing was cooled down and engineTrouble has nothing to report.
   if (/\b4006\b|daily free allocation/.test(String(err))) {
     return c.json(
       { error: "OVOA's AI is out of usage for today. Add credit to the Gemini or DeepSeek account, or try again after midnight UTC." },
@@ -153,37 +179,116 @@ app.route("/", logs);
 
 // ---------- Auth ----------
 
+/**
+ * One shape for an address, in and out. users.email is already UNIQUE COLLATE
+ * NOCASE (migrations/0001_init.sql:4), so case was never the problem and no
+ * stored row moves; this is for the two things NOCASE does not do — trim, and
+ * fold anything outside A-Z — and so a pasted " bob@x.com " stops being
+ * reported to the person as a wrong password.
+ */
+const emailField = z.string().trim().toLowerCase().pipe(z.email().max(254));
+
 const signupSchema = z.object({
-  email: z.email().max(254),
+  email: emailField,
   password: z.string().min(8).max(200),
   name: z.string().trim().min(1).max(80),
 });
 
 const loginSchema = z.object({
-  email: z.email(),
+  email: emailField,
   password: z.string().min(1).max(200),
 });
+
+/**
+ * The three things signup can be unhappy about, each in the words the person
+ * needs. One lumped "enter a name, a valid email, and a password of 8+
+ * characters" is why a device tried to sign up four times and left: it names
+ * three boxes and does not say which one is wrong (device_logs, 2026-09-21).
+ */
+const SIGNUP_FIELD_ERRORS: Record<string, string> = {
+  name: "Enter your name",
+  email: "That email doesn't look right — check it for a typo",
+  password: "Password must be at least 8 characters",
+};
+
+function fieldErrors(issues: readonly { path: PropertyKey[] }[]) {
+  const fields: Record<string, string> = {};
+  for (const issue of issues) {
+    const key = String(issue.path[0] ?? "");
+    if (SIGNUP_FIELD_ERRORS[key] && !fields[key]) fields[key] = SIGNUP_FIELD_ERRORS[key];
+  }
+  return fields;
+}
+
+/** A stable, meaningless tag for one address, so repeats can be counted without it. */
+function emailTag(email: string) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < email.length; i++) {
+    h ^= email.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/** What was wrong with what they typed, described without the address in the log. */
+function emailShape(body: unknown) {
+  const raw = (body as { email?: unknown } | null)?.email;
+  if (typeof raw !== "string") return { email: "missing" };
+  const at = raw.lastIndexOf("@");
+  return {
+    chars: raw.length,
+    spaced: Number(raw !== raw.trim()),
+    upper: Number(/[A-Z]/.test(raw)),
+    at: Number(at > 0),
+    tld: Number(at > 0 && raw.slice(at + 1).includes(".")),
+  };
+}
+
+/**
+ * One line per auth attempt — never the password, never the address. The domain
+ * and an opaque tag are enough to tell a tester with a typo from someone who
+ * never had an account, which is the question device_logs could not answer:
+ * 38 devices, 123 failed logins, 2 accounts, and not one line saying why
+ * (2026-09-21). observability is on in wrangler.jsonc, so `wrangler tail` sees these.
+ */
+function logAuth(route: "signup" | "login", outcome: string, email: string | null, extra?: Record<string, unknown>) {
+  say("auth", {
+    route,
+    outcome,
+    ...(email ? { domain: email.slice(email.lastIndexOf("@") + 1), who: emailTag(email) } : {}),
+    ...extra,
+  });
+}
 
 async function publicUser(db: D1Database, userId: string) {
   const user = await db
     .prepare("SELECT id, email, name, created_at FROM users WHERE id = ?")
     .bind(userId)
     .first<{ id: string; email: string; name: string; created_at: number }>();
+  if (!user) return null;
   const [settings, profile] = await Promise.all([getSettings(db, userId), getProfile(db, userId)]);
   // onboarded: the app shows the setup conversation until this is true.
-  return user && { ...user, settings: formatSettings(settings), onboarded: !!profile.onboardedAt };
+  return { ...user, settings: formatSettings(settings), onboarded: !!profile.onboardedAt };
 }
 
-async function getSettings(db: D1Database, userId: string) {
-  return (await db
-    .prepare(
-      `SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone,
+const SETTINGS_QUERY = `SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone,
               context_enabled, context_retain_days, agent_enabled, agent_autonomy, quiet_start, quiet_end, agent_daily_runs,
               capture_everything
-         FROM settings WHERE user_id = ?`,
-    )
-    .bind(userId)
-    .first<Settings>())!;
+         FROM settings WHERE user_id = ?`;
+
+async function getSettings(db: D1Database, userId: string) {
+  const row = await db.prepare(SETTINGS_QUERY).bind(userId).first<Settings>();
+  if (row) return row;
+  // Signup writes this row in the same batch as the user, so a missing one means
+  // something went wrong long ago. The `!` that used to be here turned that into
+  // a 500 on every /me and every login for that account — a lock-out with no
+  // message anywhere. Write the defaults and carry on.
+  console.warn(`auth: no settings row for ${userId}; writing the defaults`);
+  await db
+    .prepare("INSERT OR IGNORE INTO settings (user_id, assistant_name, updated_at) VALUES (?, ?, ?)")
+    .bind(userId, "OVOA", Date.now())
+    .run();
+  return (await db.prepare(SETTINGS_QUERY).bind(userId).first<Settings>())!;
 }
 
 function formatSettings(s: Settings) {
@@ -206,12 +311,31 @@ function formatSettings(s: Settings) {
 }
 
 app.post("/auth/signup", async (c) => {
-  const parsed = signupSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "Enter a name, a valid email, and a password of 8+ characters" }, 400);
+  const body = await c.req.json().catch(() => null);
+  const parsed = signupSchema.safeParse(body);
+  if (!parsed.success) {
+    // Which box, not which three boxes. `error` keeps every message joined for
+    // builds already on phones that don't know about `fields` yet.
+    const fields = fieldErrors(parsed.error.issues);
+    logAuth("signup", `rejected (${Object.keys(fields).join(",") || "body"})`, null, emailShape(body));
+    return c.json(
+      {
+        error: Object.values(fields).join(" · ") || "Enter a name, a valid email, and a password of 8+ characters",
+        fields,
+      },
+      400,
+    );
+  }
   const { email, password, name } = parsed.data;
 
   const exists = await c.env.DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(email).first();
-  if (exists) return c.json({ error: "An account with that email already exists" }, 409);
+  if (exists) {
+    logAuth("signup", "already exists", email);
+    return c.json(
+      { error: "An account with that email already exists", fields: { email: "An account with that email already exists" } },
+      409,
+    );
+  }
 
   const id = crypto.randomUUID();
   const now = Date.now();
@@ -226,23 +350,42 @@ app.post("/auth/signup", async (c) => {
   ]);
 
   const token = await createSession(c.env.DB, id);
+  logAuth("signup", "created", email, { user: id });
   return c.json({ token, user: await publicUser(c.env.DB, id) }, 201);
 });
 
+/**
+ * Something to hash against when the address matches nobody, so a wrong address
+ * and a wrong password cost the same. Without it the 401 is only vague in words:
+ * "no such account" came back in milliseconds and a real one took a PBKDF2.
+ */
+const NO_SUCH_USER = { password_salt: "00000000000000000000000000000000", password_hash: "" };
+
 app.post("/auth/login", async (c) => {
-  const parsed = loginSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "Invalid email or password" }, 401);
+  const body = await c.req.json().catch(() => null);
+  const parsed = loginSchema.safeParse(body);
+  if (!parsed.success) {
+    // Same 401 as a wrong password on purpose: the reply must not say whether an
+    // account exists. But "they typed an address with no dot in it" and "they got
+    // the password wrong" looked identical in the logs too, and that is what
+    // hid 123 failures across 38 devices. The reason goes to the log only.
+    logAuth("login", "malformed", null, emailShape(body));
+    return c.json({ error: "Invalid email or password" }, 401);
+  }
   const { email, password } = parsed.data;
 
   const user = await c.env.DB
     .prepare("SELECT id, password_hash, password_salt FROM users WHERE email = ?")
     .bind(email)
     .first<{ id: string; password_hash: string; password_salt: string }>();
-  if (!user || !(await verifyPassword(password, user.password_salt, user.password_hash))) {
+  const match = await verifyPassword(password, (user ?? NO_SUCH_USER).password_salt, (user ?? NO_SUCH_USER).password_hash);
+  if (!user || !match) {
+    logAuth("login", user ? "wrong password" : "no account", email, user ? { user: user.id } : undefined);
     return c.json({ error: "Invalid email or password" }, 401);
   }
 
   const token = await createSession(c.env.DB, user.id);
+  logAuth("login", "ok", email, { user: user.id });
   return c.json({ token, user: await publicUser(c.env.DB, user.id) });
 });
 
@@ -251,10 +394,18 @@ const authed = new Hono<{ Bindings: Env; Variables: Vars }>();
 
 authed.use("*", async (c, next) => {
   const token = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
-  const session = token && (await sessionForToken(c.env.DB, token));
-  if (!token || !session) return c.json({ error: "Not signed in" }, 401);
+  if (!token) return c.json({ error: "Not signed in" }, 401);
+  const session = await sessionForToken(c.env.DB, token);
+  if (!session) {
+    // Expired, revoked, or from an account that is gone. Worth a line: this is
+    // what a phone being quietly signed out looks like from here.
+    say("auth", { outcome: "stale token", method: c.req.method, path: c.req.path });
+    return c.json({ error: "Not signed in" }, 401);
+  }
   // The Siri key only works for asking the assistant.
   if (session.kind === "siri" && c.req.path !== "/siri") return c.json({ error: "Not allowed with a Siri key" }, 403);
+  // Used today, so good for another month. At most one write a day per session.
+  await touchSession(c.env.DB, session).catch((err) => console.error("auth: couldn't extend the session", err));
   c.set("userId", session.userId);
   c.set("token", token);
   await next();
@@ -267,7 +418,18 @@ authed.post("/auth/logout", async (c) => {
 
 // ---------- Account & settings ----------
 
-authed.get("/me", async (c) => c.json({ user: await publicUser(c.env.DB, c.var.userId) }));
+authed.get("/me", async (c) => {
+  const user = await publicUser(c.env.DB, c.var.userId);
+  // No user behind a live session: the account was deleted. A 200 with a null
+  // user leaves the app signed out but still holding the token, on every launch,
+  // for ever — it only clears the token on a 401. So give it one.
+  if (!user) {
+    console.warn(`auth: live session for a missing user ${c.var.userId}; dropping it`);
+    await deleteSession(c.env.DB, c.var.token);
+    return c.json({ error: "Not signed in" }, 401);
+  }
+  return c.json({ user });
+});
 
 const updateMeSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
@@ -494,6 +656,8 @@ type TurnInput = {
   resume?: { state: LoopState; results: Record<string, unknown> };
   /** Streaming: receives each sentence of the reply as soon as it's written. */
   onSentence?: (sentence: string) => void;
+  /** The cf-ray from observe(), so this turn's line can be joined to its request's. */
+  requestId?: string;
 };
 
 /**
@@ -503,7 +667,7 @@ type TurnInput = {
 async function runTurn(
   env: Env,
   ctx: Pick<ExecutionContext, "waitUntil">,
-  { userId, text, timeZone, caps, voice, source, resume, onSentence }: TurnInput,
+  { userId, text, timeZone, caps, voice, source, resume, onSentence, requestId }: TurnInput,
 ) {
   const fromAgent = source === "agent";
   const started = Date.now();
@@ -662,11 +826,16 @@ async function runTurn(
   // What each tool cost. A turn that felt slow is usually either the model thinking or one
   // slow lookup (a Google round trip, say), and the meta says which without guessing.
   const toolTimings: { name: string; ms: number }[] = [];
-  const outcome = await chatWithTools(env, {
+  // Which engines were tried, which answered, and which were already dead. The
+  // meta only ever carried the one that won; this is the rest of the story, and
+  // it is what makes "all three were down at 14:00" a query instead of a guess.
+  const attempts: EngineAttempt[] = [];
+  const modelRun = chatWithTools(env, {
     model: env.CHAT_MODEL,
     system,
     turns,
     tools,
+    onAttempt: (a) => attempts.push(a),
     callTool: async (name, args) => {
       const call = Date.now();
       if (fromAgent && FORBIDDEN_FOR_COMMANDS.has(name)) return { error: "Not available to the agent's commands." };
@@ -729,6 +898,10 @@ async function runTurn(
     voice,
     onText,
   });
+  // Written down whether the turn worked or not. A turn where every engine
+  // failed is the one this table exists for, and recording only after a
+  // successful await wrote down nothing at all on exactly that day.
+  const outcome = await modelRun.finally(() => ctx.waitUntil(noteEngines(env, attempts)));
   spoken?.end();
   const pendingActions = [...phone.pending, ...shortcuts.pending, ...google.pending];
   const cooling = coolingEngines();
@@ -753,13 +926,21 @@ async function runTurn(
     `tools ${JSON.stringify(tools).length}`,
     `history ${turns.reduce((n, t) => n + t.text.length, 0)}`,
   ].join(", ");
-  console.log(
-    `turn: ${meta.engine}, ${meta.ms} ms${voice ? ", voice" : ""}${spoken ? ", streamed" : ""} ` +
-      `(context ${meta.contextMs} ms, first token ${meta.firstTokenMs ?? "-"} ms, ` +
-      `first sentence ${meta.firstSentenceMs ?? "-"} ms, ${meta.toolCount} tools, ${meta.promptChars} prompt chars)` +
-      (toolTimings.length ? ` ran ${toolTimings.map((t) => `${t.name} ${t.ms} ms`).join(", ")}` : "") +
-      `\n  prompt: ${promptShape}`,
-  );
+  say("turn", {
+    rid: requestId,
+    engine: meta.engine,
+    ms: meta.ms,
+    mode: voice ? (spoken ? "voice-stream" : "voice") : spoken ? "stream" : "text",
+    context: meta.contextMs,
+    firstToken: meta.firstTokenMs ?? undefined,
+    firstSentence: meta.firstSentenceMs ?? undefined,
+    tools: meta.toolCount,
+    chars: meta.promptChars,
+    tried: attempts.map((a) => `${a.engine}:${a.outcome}`).join(",") || undefined,
+    cooling: cooling.length || undefined,
+  });
+  if (toolTimings.length) say("tools", { rid: requestId, ran: toolTimings.map((t) => `${t.name}:${t.ms}`).join(",") });
+  console.log(`ovoa.prompt rid=${requestId ?? "-"} ${promptShape}`);
 
   if (outcome.kind === "paused") {
     const turnId = crypto.randomUUID();
@@ -820,20 +1001,90 @@ type Ignored = { ignored: true };
  *   {"type":"error","error":"..."}
  * so the phone can start speaking the first sentence while the rest is written.
  */
-function streamTurn(ctx: Pick<ExecutionContext, "waitUntil">, run: (onSentence: (s: string) => void) => Promise<TurnResult | Ignored>) {
+/**
+ * How long a streamed turn may produce nothing before the server writes it
+ * down. Under the phone's own 60 s abort (app/src/lib/api.ts REQUEST_TIMEOUT_MS)
+ * on purpose, so the stall is recorded here while the reason is still known,
+ * rather than only appearing on the phone as "stalled after 60029 ms".
+ */
+const STALL_MS = 45_000;
+
+function streamTurn(
+  c: Context<{ Bindings: Env; Variables: Vars }>,
+  run: (onSentence: (s: string) => void) => Promise<TurnResult | Ignored>,
+) {
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
-  const send = (line: unknown) => writer.write(encoder.encode(`${JSON.stringify(line)}\n`)).catch(() => {});
-  ctx.waitUntil(
+  const started = Date.now();
+  const route = c.req.path;
+  const rid = c.get("requestId");
+  const userId = c.get("userId") as string | undefined;
+  // The phone hangs up after 60 s of silence, and the Worker used to never learn
+  // that it had: write() rejected and the rejection was thrown away. A reply
+  // nobody heard is a different failure from an error and needs its own name.
+  let gone = false;
+  const send = (line: unknown) =>
+    writer.write(encoder.encode(`${JSON.stringify(line)}\n`)).catch(() => {
+      gone = true;
+    });
+  let sentences = 0;
+  const stall = setTimeout(() => {
+    say("stall", { rid, route, ms: Date.now() - started, sentences });
+    void recordError(c.env, {
+      kind: "stall",
+      route,
+      requestId: rid,
+      userId: userId ?? null,
+      ms: Date.now() - started,
+      message: `no sentence after ${STALL_MS} ms`,
+    });
+  }, STALL_MS);
+  c.executionCtx.waitUntil(
     (async () => {
       try {
-        const result = await run((text) => void send({ type: "sentence", text }));
+        const result = await run((text) => {
+          sentences++;
+          void send({ type: "sentence", text });
+        });
         await send("ignored" in result ? { type: "done", ...IGNORED } : { type: "done", ...turnResponse(result) });
       } catch (err) {
-        console.error("streamed turn failed", err);
-        await send({ type: "error", error: err instanceof Error ? err.message : "The assistant failed" });
+        // This catch is why no 5xx ever reached the phone: the Response went out
+        // as a 200 before any of this ran, so app.onError never sees it. The
+        // record has to be written here or it is written nowhere.
+        const trouble = engineTrouble();
+        say("err", { rid, route, ms: Date.now() - started, sentences, why: classifyEngineError(err) });
+        console.error("ovoa.err streamed turn failed", err);
+        await recordError(c.env, {
+          kind: trouble ? "engines_down" : "error",
+          route: `${route} (streamed)`,
+          requestId: rid,
+          userId: userId ?? null,
+          ms: Date.now() - started,
+          message: trouble ?? (err instanceof Error ? err.message : String(err)),
+          stack: err instanceof Error ? err.stack : undefined,
+        });
+        await send({
+          type: "error",
+          error: trouble
+            ? `OVOA can't reach an AI model right now. ${trouble}`
+            : err instanceof Error
+              ? err.message
+              : "The assistant failed",
+        });
       } finally {
+        clearTimeout(stall);
+        if (gone) {
+          say("gone", { rid, route, ms: Date.now() - started, sentences });
+          await recordError(c.env, {
+            kind: "gone",
+            route,
+            requestId: rid,
+            userId: userId ?? null,
+            ms: Date.now() - started,
+            message: `the phone stopped reading after ${sentences} sentence(s)`,
+          });
+        }
         await writer.close().catch(() => {});
       }
     })(),
@@ -847,8 +1098,9 @@ authed.post("/chat", async (c) => {
   const parsed = chatSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Message is required" }, 400);
   const { data } = parsed;
-  if (data.stream) return streamTurn(c.executionCtx, (onSentence) => chatTurn(c.env, c.executionCtx, c.var.userId, data, onSentence));
-  const result = await chatTurn(c.env, c.executionCtx, c.var.userId, data);
+  const rid = c.var.requestId;
+  if (data.stream) return streamTurn(c, (onSentence) => chatTurn(c.env, c.executionCtx, c.var.userId, data, onSentence, rid));
+  const result = await chatTurn(c.env, c.executionCtx, c.var.userId, data, undefined, rid);
   return c.json("ignored" in result ? IGNORED : turnResponse(result));
 });
 
@@ -858,6 +1110,7 @@ async function chatTurn(
   userId: string,
   data: z.infer<typeof chatSchema>,
   onSentence?: (sentence: string) => void,
+  requestId?: string,
 ): Promise<TurnResult | Ignored> {
   const db = env.DB;
   if (data.ambient) {
@@ -893,6 +1146,7 @@ async function chatTurn(
     voice: data.voice,
     source: data.source,
     onSentence,
+    requestId,
   });
 }
 
@@ -930,8 +1184,9 @@ authed.post("/chat/resume", async (c) => {
       source: caps.source === "agent" ? "agent" : undefined,
       resume: { state: JSON.parse(row.state), results },
       onSentence,
+      requestId: c.var.requestId,
     });
-  if (parsed.data.stream) return streamTurn(c.executionCtx, run);
+  if (parsed.data.stream) return streamTurn(c, run);
   return c.json(turnResponse(await run()));
 });
 
@@ -1369,6 +1624,9 @@ app.post("/debug/agent/tick", async (c) => {
   if (which === "money") return c.json({ ...(await moneyTick(c.env)), ms: Date.now() - started });
   if (which === "rhythm") return c.json({ ...(await rhythmTick(c.env)), ms: Date.now() - started });
   if (which === "transcripts") return c.json({ titled: await titleTranscripts(c.env), ms: Date.now() - started });
+  // The whole beat, exactly as the cron runs it, including the row it leaves in
+  // cron_ticks. The branches above run one piece; this runs the real thing.
+  if (which === "cron") return c.json(await runTick(c.env, "*/2 * * * *"));
   if (which === "routines") {
     return c.json({
       fired: await fireDueRoutines(c.env),
@@ -1441,6 +1699,11 @@ async function nightly(env: Env) {
   const expectations = await learnAllExpectations(env).catch((err) => (console.error("rhythm: learning failed", err), 0));
   const accounts = await relearnAccounts(env).catch((err) => (console.error("routing: relearning failed", err), 0));
   await env.DB.batch([
+    ...pruneStatements(env.DB, now),
+    // Also pruned on a 1-in-50 roll inside a phone upload (logs.ts). That roll
+    // never comes up on the days the phone has stopped uploading, which are the
+    // days the table grows fastest, so the nightly job owns it too.
+    env.DB.prepare("DELETE FROM device_logs WHERE received_at < ?").bind(now - DEVICE_LOG_KEEP_MS),
     env.DB.prepare("DELETE FROM hr_samples WHERE ts < ?").bind(now - HR_RETAIN_DAYS * 86_400_000),
     env.DB.prepare("DELETE FROM raw_captures WHERE ts < ?").bind(now - TRANSCRIPT_RETAIN_DAYS * 86_400_000),
     // Day titles are kept after the words expire: they're what "on this day" reads.
@@ -1453,6 +1716,72 @@ async function nightly(env: Env) {
 }
 
 /**
+ * One tick, start to finish, with what it decided.
+ *
+ * agent_runs only gets a row when an autonomous turn actually runs, and
+ * command_queue only when the agent queues something -- so with the agent off
+ * they are both empty and there is no way to tell a firing cron from a stopped
+ * one. cron_ticks is the heartbeat: 30 rows an hour on the two-minute beat,
+ * whether or not anything was due.
+ *
+ * Each part is caught on its own. Before this, one subsystem throwing took the
+ * remaining eight down with it and left a single "routines tick failed" line
+ * that expired in three days.
+ */
+async function runTick(env: Env, cron: string) {
+  const started = Date.now();
+  const decided: Record<string, number> = {};
+  let errors = 0;
+
+  const part = async (name: string, work: Promise<unknown>) => {
+    const at = Date.now();
+    try {
+      const got = await work;
+      if (typeof got === "number") {
+        if (got) decided[name] = got;
+      } else if (got && typeof got === "object") {
+        for (const [key, n] of Object.entries(got as Record<string, unknown>)) {
+          if (typeof n === "number" && n) decided[`${name}.${key}`] = n;
+        }
+      }
+    } catch (err) {
+      errors++;
+      say("err", { cron, part: name, ms: Date.now() - at, why: classifyEngineError(err) });
+      console.error(`ovoa.err cron=${cron} part=${name}`, err);
+      await recordError(env, {
+        kind: "cron",
+        route: `cron ${name}`,
+        ms: Date.now() - at,
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+    }
+  };
+
+  const nightlyRun = cron.startsWith("13 4");
+  await part("agent", tick(env, cron));
+  if (nightlyRun) {
+    await part("nightly", nightly(env));
+  } else {
+    // The same order as before. Sequential on purpose: a Worker has one CPU.
+    await part("routines", fireDueRoutines(env));
+    await part("escalate", escalate(env));
+    await part("notes", fireDueNotes(env));
+    await part("evening", eveningTick(env));
+    await part("transcripts", titleTranscripts(env));
+    await part("rhythm", rhythmTick(env));
+    await part("extras", extrasTick(env));
+    await part("alarms", nagTick(env));
+    await part("money", moneyTick(env));
+  }
+
+  const ms = Date.now() - started;
+  say("cron", { cron, ms, errors, ...decided });
+  await noteTick(env, cron, ms, decided, errors);
+  return { ms, errors, decided };
+}
+
+/**
  * Cron. Every few minutes the agent looks for work that has come due and pushes
  * whatever it decided to say; once a night it tidies up and enforces the
  * retention window the user set. The schedule is in wrangler.jsonc.
@@ -1460,33 +1789,6 @@ async function nightly(env: Env) {
 export default {
   fetch: app.fetch,
   scheduled: (event: ScheduledController, env: Env, ctx: ExecutionContext) => {
-    ctx.waitUntil(tick(env, event.cron).catch((err) => console.error("agent tick failed", err)));
-    // Routines run on the same two-minute beat. The phone's own local notifications
-    // give exact timing; this is what escalates, buzzes and keeps the record.
-    if (event.cron.startsWith("13 4")) ctx.waitUntil(nightly(env).catch((err) => console.error("nightly failed", err)));
-    if (!event.cron.startsWith("13 4")) {
-      ctx.waitUntil(
-        (async () => {
-          const fired = await fireDueRoutines(env);
-          const chased = await escalate(env);
-          const reminded = await fireDueNotes(env);
-          const evening = await eveningTick(env);
-          await titleTranscripts(env);
-          const rhythm = await rhythmTick(env);
-          const extras = await extrasTick(env);
-          const nags = await nagTick(env);
-          const cash = await moneyTick(env);
-          if (cash.rolled || cash.warned) console.log("money:", JSON.stringify(cash));
-          if (nags.fired || nags.nagged) console.log("alarms:", JSON.stringify(nags));
-          if (extras.followUps || extras.bills || extras.weekly || extras.preps) console.log("extras:", JSON.stringify(extras));
-          if (rhythm.briefs || rhythm.windDowns || rhythm.commutes || rhythm.oddities) console.log("rhythm:", JSON.stringify(rhythm));
-          if (fired || chased || reminded || evening.built || evening.told) {
-            console.log(
-              `routines: ${fired} fired, ${chased} followed up, ${reminded} notes, ${evening.built} lists, ${evening.told} bedtimes`,
-            );
-          }
-        })().catch((err) => console.error("routines tick failed", err)),
-      );
-    }
+    ctx.waitUntil(runTick(env, event.cron).catch((err) => console.error("ovoa.err cron failed outright", err)));
   },
 } satisfies ExportedHandler<Env>;

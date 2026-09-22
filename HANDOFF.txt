@@ -1,0 +1,431 @@
+================================================================================
+FULL PROJECT HANDOFF — OVOA (Jarvis)
+Personal voice assistant: ES100 wrist clip + iPhone + Cloudflare Worker backend
+================================================================================
+
+Paste this file into a new Claude Code session opened in `ovoa-app` to continue.
+
+================================================================================
+WHAT THE PRODUCT IS
+================================================================================
+
+OVOA is a personal voice assistant with two main components:
+
+1. JARVIS/API (Cloudflare Worker backend)
+   - Hono + Zod running at https://jarvis-api.edgeformmedia.workers.dev
+   - D1 database (jarvis-db)
+   - Handles chat turns, tool calling, background agent jobs
+   - Interfaces with three LLM engines: DeepSeek (primary) → Gemini → Workers AI
+   - Transcription proxy (Deepgram STT), TTS proxy (ElevenLabs), Google integration
+
+2. JARVIS/APP (Expo SDK 57 iOS app)
+   - React Native mobile app
+   - Communicates with ES100 wrist clip over BLE
+   - Controls clip button, receives audio files via BLE
+   - Integrates HealthKit for health metrics
+   - Development builds on Codemagic → TestFlight
+   - Built and tested on real iPhone hardware only (HealthKit + ES100 require dev builds, not Expo Go)
+
+WORKFLOW: User presses ES100 button → records on clip → presses again → app
+downloads file over BLE → decodes opus → uploads to API → transcribes → model
+answers → speaks back. Typical round-trip: 8–12 seconds.
+
+================================================================================
+ARCHITECTURE & DATA FLOW
+================================================================================
+
+ES100 ──BLE──> iPhone (Expo) ──HTTPS──> Cloudflare Worker
+ clip          (audio decode,        (STT, model, TTS,
+ mic-only      HealthKit read,       tools, DB, agent)
+               chat UI)
+
+Key architectural decisions:
+- Phone owns the codec: ES100 → app decodes opus/WAV → uploads PCM16
+- Backend owns the API keys: nothing shipped in app binary
+- Providers sit behind interfaces: mock transcriber when keys are unset
+- Standalone rule: every feature degrades gracefully without optional inputs
+
+================================================================================
+CRITICAL GROUND RULES (Will save you hours)
+================================================================================
+
+1. ALWAYS MIGRATE + DEPLOY after server changes
+   - After any jarvis/api file changes: run in jarvis/api/
+     npm run db:migrate && npm run deploy
+   - User expects this without being asked
+
+2. OneDrive + git: Use git ls-files and Grep tool, never find/grep -r
+   - OneDrive makes recursive file operations time out (node_modules issue)
+
+3. Bash heredocs: Backslashes collapse inside heredocs
+   - A Python/Node heredoc containing \\n becomes a real newline
+   - Use Edit/Write tools instead for anything with escapes
+
+4. TypeScript verification: Run in BOTH directories
+   - jarvis/api: npx tsc --noEmit
+   - jarvis/app: npx tsc --noEmit
+
+5. Test the server without Cloudflare auth
+   - npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest
+   - Then: npm run smoke (47 checks, needs no auth)
+
+6. Read phone logs before guessing
+   - Device logs live in D1 device_logs table, uploaded every 3 seconds
+   - Query: npx wrangler d1 execute jarvis-db --remote --json --command
+     "SELECT time, kind, text, detail FROM device_logs ORDER BY id DESC LIMIT 200"
+   - Check this FIRST when debugging app-side issues
+
+7. Hardware requirements
+   - HealthKit and ES100 BLE module need development builds (Codemagic → TestFlight)
+   - Expo Go cannot test HealthKit, BLE, or ES100 features
+   - Always test on real iPhone, never in simulator for hardware features
+
+8. ES100 clip constraints
+   - Motion stream is ~1 Hz gyro only (twist-to-listen dropped due to this)
+   - Motion commands flood freeze the clip (don't send them rapidly)
+   - Keep ≥30 seconds between buzzes (queue duplicates if closer)
+   - SDK status 0 means "Connected" by default (use bridge's linked flag)
+
+9. Expo documentation: Read before writing Expo code
+   - https://docs.expo.dev/versions/v57.0.0/
+   - Expo has changed; don't write from memory
+
+================================================================================
+BUILD & DEPLOYMENT PROCEDURES
+================================================================================
+
+LOCAL DEVELOPMENT SERVER:
+  cd jarvis/api
+  wrangler dev --local --port 8787
+
+LOCAL TESTING (no Cloudflare auth):
+  npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest
+  npm run smoke
+
+PRODUCTION DEPLOYMENT:
+  cd jarvis/api
+  npm run db:migrate        # Always run migrations first
+  npm run deploy            # Deploy the Worker
+
+TESTFLIGHT BUILD (iOS):
+  - Codemagic workflow: ios-testflight
+  - Works since build #16 (2026-09-18)
+  - Key: 5PW75KAHB4 (check cert limit in signing log)
+  - Read the signing log before investigating build failures
+  - Run `eas init` in jarvis/app if push notifications needed
+  - Triggered after commit + Codemagic monitors main
+
+DATABASE MIGRATIONS:
+  - Located in: jarvis/api/migrations/
+  - Always number after the latest
+  - Run before deploying
+  - Format: CREATE/ALTER TABLE statements, DML
+  - Test with wrangler dev --local first
+
+PUSHING TO MAIN:
+  - You may push commits and trigger Codemagic builds freely (2026-09-21 memo)
+  - Migrations and deploys are safe to do without asking
+
+================================================================================
+CURRENT STATE (as of 2026-09-21)
+================================================================================
+
+COMPLETED WORK:
+✓ Backend API (chat, tools, agent)
+✓ iOS app skeleton (Expo SDK 57)
+✓ ES100 BLE communication module (custom native module)
+✓ HealthKit integration (health.ts, HealthCards.tsx)
+✓ Voice latency instrumentation (turnTimer.ts, perf logging)
+✓ Health cards on Activity tab (heart rate, resting, HRV, sleep, workouts)
+✓ Multiple LLM engines (DeepSeek primary, Gemini fallback, Workers AI tertiary)
+✓ Google integration (Workspace, Gmail, Drive)
+✓ Background agent (cron jobs, tool calling)
+✓ Push notifications (Expo Notifications)
+✓ Dev tools panel (Settings → Dev Tools)
+
+COMMITTED CHANGES:
+  bb06c92 - Update the context note
+  61f38f1 - Catch the band's double click, and log every failure
+  aa68615 - Double-click the band to talk, or to turn Always listen off
+  e11be0c - Make alarms go off even when the phone was never told about them
+  1b6b84b - Try DeepSeek first, Gemini after it
+
+TRACKED METRICS (from 2026-09-20 device logs):
+  Band turn timing (from second button press):
+  - Press → download starts: 150–250 ms
+  - BLE fetch (11–20 KB/s): 1.7–2.4 s
+  - Opus → WAV decode: 350–560 ms
+  - Upload + Deepgram: 730–990 ms (300–580 KB WAV)
+  - Model first call: 0.8–12.4 s (median ~3.5 s, 32.5k prompt, 50 tools)
+  - Phone lookup + second call: +1.1–4.4 s
+  - First voice clip: ~540 ms
+  - Total typical: 8–12 seconds
+
+KEY FILES & THEIR ROLES:
+
+API (jarvis/api/):
+  src/index.ts             - Main Worker, runTurn handler, voice prompt
+  src/agent.ts             - Background agent (cron, tool calling)
+  src/context.ts           - Commitments, user context
+  src/ambient.ts           - Wake word matching
+  src/phone.ts             - Phone-specific tools
+  src/google/assistant.ts  - Google Workspace integration
+  src/google/tools.ts      - Gmail, Drive, Calendar tools
+  src/push.ts              - Push notification sending
+  migrations/              - D1 schema (run before deploy)
+
+APP (jarvis/app/):
+  src/lib/health.ts        - HealthKit queries (today, history, sync)
+  src/lib/clip.ts          - ES100 BLE communication, downloading recordings
+  src/lib/voice.ts         - Speech synthesis, audio playback
+  src/lib/assistant.tsx    - Band/phone turn logic, streaming
+  src/lib/devlog.ts        - App logging (perf, debug, etc.)
+  src/lib/turnTimer.ts     - Turn timing instrumentation
+  src/components/HealthCards.tsx - Health metrics UI
+  src/components/DevLogPanel.tsx - Dev log viewer
+  src/app/(tabs)/index.tsx - Activity tab
+  src/app/dev-tools.tsx    - Dev tools panel
+  modules/ute-ble/         - Custom BLE module for ES100
+
+================================================================================
+IMPORTANT TABLES & SCHEMA
+================================================================================
+
+device_logs (uploads every 3 seconds from phone)
+  Columns: id, time, kind, text, detail
+  Kinds: perf, debug, error, info
+  Search: SELECT ... WHERE kind = 'perf' ORDER BY id DESC LIMIT 20
+
+chat_turns
+  Columns: id, user_id, ts, role, content, meta (JSON)
+  meta includes: contextMs, firstTokenMs, firstSentenceMs, promptChars, toolCount
+
+action_log (for F2 when implemented)
+  Planned: id, user_id, ts, kind, summary, source, ref_id, minutes_saved
+
+routines (for F6 when implemented)
+  Planned: id, user_id, kind (med|pet|habit|custom), title, times[], days[],
+           buzz_pattern, active, external_source, external_id
+
+================================================================================
+KEY CONSTRAINTS & LEGAL DECISIONS
+================================================================================
+
+ALWAYS-LISTENING IS OFF (2026-09-20 legal decision)
+  - Context/timeline feature is explicit-capture only
+  - Ambient always-on listening was ruled out on legal grounds
+  - Do NOT propose or build always-listening features
+  - For features F13–F15 (marked [AL]): build behind dev-only captureEverything
+    flag limited to the user's account, or skip them
+
+CONSUMER BAR (zero setup)
+  - No Raspberry Pi, Home Assistant, or ADB integrations
+  - No local-network setup required
+  - Prefer OAuth cloud integrations
+  - Anyone can use without technical setup
+
+PUSH NOTIFICATIONS
+  - EAS project id is set up (eas init already run)
+  - Expo Go cannot receive push (use real builds)
+  - Command queue drains on app foreground or silent push (iOS may not wake killed app)
+
+================================================================================
+DEBUGGING GUIDE
+================================================================================
+
+ON-DEVICE ISSUES:
+  1. First: Read the device logs
+     npx wrangler d1 execute jarvis-db --remote --json --command
+     "SELECT time, kind, text, detail FROM device_logs ORDER BY id DESC LIMIT 200"
+
+  2. Check perf timing breakdown
+     SELECT time, text, detail FROM device_logs WHERE kind = 'perf' ORDER BY id DESC LIMIT 20
+
+  3. Search for errors
+     SELECT time, text, detail FROM device_logs WHERE kind = 'error' ORDER BY id DESC LIMIT 50
+
+SERVER ISSUES:
+  1. Check local dev server works
+     npm run smoke (47 checks)
+
+  2. Test migrations applied
+     wrangler d1 info jarvis-db --remote
+
+  3. Check Worker logs on live (Cloudflare dashboard)
+
+BLE COMMUNICATION:
+  - Check ES100 is connected: clip.isConnected
+  - Motion commands flood freeze the clip (don't send rapidly)
+  - Verify ≥30s between buzzes
+  - Download timeout is 30 seconds (clip.downloadOne)
+
+HEALTHKIT ISSUES:
+  - Unavailable in Expo Go (need dev build)
+  - Check permission state: await healthPermission()
+  - Query catches individual permission failures
+  - Verify iPhone has health data: check Health app
+  - Heart rate: ES100 claims to support it (firmware isSupportHeartRateTest)
+
+PERFORMANCE OPTIMIZATION TARGETS (ranked by impact):
+  1. Send ogg-opus instead of 580 KB WAV (~16× smaller upload)
+     File: jarvis/app/modules/ute-ble/ios/src/OpusWav.swift
+  2. Trim voice system prompt (gate shortcut/agent tools from voice ~12 of 50 tools)
+  3. Check buzz timing doesn't slow BLE transfer (needs B/s in fetch log)
+  4. Verify filler (2.2s) doesn't overlap real reply
+  5. Ensure short first sentence isn't held back behind filler
+
+================================================================================
+FEATURE PLAN SUMMARY
+================================================================================
+
+See docs/feature-plan.md for full spec. Currently working through Phase 1 (Core Loop):
+
+Phase 0: Foundation (F1–F3)
+  F1. Band buzz from anywhere
+  F2. Action log
+  F3. Push command channel
+
+Phase 1: Core loop (F4–F9)
+  F4. Agent sends itself commands
+  F5. Onboarding conversation
+  F6. Routines, medications, reminders (Apple Health/Reminders/Google)
+  F7. Mental notes
+  F8. End-of-day to-do list
+  F9. Value feed (home screen)
+
+Phase 2: Sensing (F10–F12)
+  F10. Location timeline
+  F11. Heart rate ingest
+  F12. Workout detection + summaries
+
+Phase 3: Social memory (F14–F17)
+  [Note: F13–F15 marked [AL] are always-listening related — build dev-only or skip]
+
+Phase 4: Daily rhythm (F18–F22)
+  Morning brief, leaving-home, commute, wind-down, oddity detection
+
+Phase 5: Extras (F23–F34)
+
+Standalone rule: Every feature must degrade gracefully when optional inputs
+are missing (no band → phone notification; no Google → local only; no watch
+→ manual logging).
+
+================================================================================
+KNOWN BLOCKERS & LIMITATIONS
+================================================================================
+
+UNSOLVED:
+  - ES100 protocol sniffing still needed for advanced features
+  - Signed shortcut creation needs a signing service (no Mac available)
+  - Always-listening ruled out on legal grounds (2026-09-20)
+
+CONSTRAINTS:
+  - ES100 motion stream: ~1 Hz gyro only (no fast motion data)
+  - iOS local notification cap: 64 pending
+  - iOS geofence limit: 20 regions
+  - Silent push may not wake a killed app (hence command queue + drain pattern)
+  - HealthKit/BLE need real device builds, not Expo Go
+
+HARDWARE TESTING:
+  - ES100 hardware: real device only, motion commands freeze it
+  - Apple Watch: needed for HR/workout features (F11–F12)
+  - Location Always: needs real device + iOS background location mode
+
+================================================================================
+CONTEXT FILE
+================================================================================
+
+See contextforclaude.txt for the running 5-line summary of current state.
+Rewrite it after each task (don't skip — it's your continuity bridge).
+
+Example format:
+  Band turn timing instrumented (perf log, dev-tools card)
+  Next: get build on phone, read perf lines
+  [other key state]
+  [blocker if any]
+  [immediate next task]
+
+================================================================================
+WHAT TO DO NEXT (From last session)
+================================================================================
+
+Priority order (from voice-latency.md):
+
+1. GET A BUILD ON DEVICE
+   - Codemagic build → TestFlight
+   - Read new "perf" log lines (SELECT ... WHERE kind = 'perf')
+   - Verify HealthKit cards work on device
+
+2. CHECK BLE TIMING
+   - Review download B/s in fetch marks
+   - If BLE transfer dropped below 11–20 KB/s baseline, move buzz to after download
+   - (Code comment in assistant.tsx already flags this)
+
+3. TRIM VOICE PROMPT
+   - Use new per-section numbers from performance logs
+   - Gate shortcut-writing + agent tools out of voice turns (~12 of 50 tools)
+   - Expected win: reduce model latency
+
+4. SEND OGG-OPUS NOT WAV
+   - Replace 580 KB WAV with ogg-opus (~16× smaller)
+   - File: jarvis/app/modules/ute-ble/ios/src/OpusWav.swift
+   - Eliminates 350–560 ms decode time
+
+5. VERIFY FILLER TIMING
+   - Confirm 2.2s filler never overlaps real reply
+   - Verify short first sentence isn't held back behind filler
+
+================================================================================
+USEFUL COMMANDS
+================================================================================
+
+# Development
+cd jarvis/api && wrangler dev --local --port 8787
+
+# Testing (local, no Cloudflare auth)
+cd jarvis/api && npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest
+npm run smoke
+
+# Database
+npx wrangler d1 execute jarvis-db --remote --json --command "SELECT ..."
+npx wrangler d1 info jarvis-db --remote
+
+# Phone logs
+SELECT time, kind, text, detail FROM device_logs ORDER BY id DESC LIMIT 200;
+SELECT time, text, detail FROM device_logs WHERE kind = 'perf' ORDER BY id DESC LIMIT 20;
+
+# TypeScript check
+npx tsc --noEmit
+
+# Deploy (ALWAYS migrate first)
+npm run db:migrate && npm run deploy
+
+# Expo build
+eas build --platform ios --profile preview  # TestFlight
+eas submit -p ios --latest                  # Submit to TestFlight
+
+================================================================================
+FILES TO READ FIRST (When picking up work)
+================================================================================
+
+1. contextforclaude.txt        - Current state (5 lines)
+2. docs/voice-latency.md       - Latest optimization targets
+3. docs/feature-plan.md        - Full feature spec
+4. docs/handoff.md             - Last session's detailed notes
+5. jarvis/api/src/index.ts     - Main Worker, voice prompt, runTurn
+6. jarvis/app/src/lib/assistant.tsx - Band/phone turn logic
+7. jarvis/app/AGENTS.md        - Expo-specific notes
+
+================================================================================
+CONTACT & QUESTIONS
+================================================================================
+
+If something is unclear or contradicts the code:
+- Check git log for recent decisions (commits are descriptive)
+- Read the device logs before guessing (D1 device_logs table)
+- Device > tests; always verify on real hardware for HealthKit/ES100 features
+- Context file (contextforclaude.txt) has the running state
+
+================================================================================
+END OF HANDOFF
+================================================================================

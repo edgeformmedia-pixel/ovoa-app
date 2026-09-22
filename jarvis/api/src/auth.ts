@@ -1,6 +1,9 @@
 // Workers caps PBKDF2 at 100k iterations.
 const PBKDF2_ITERATIONS = 100_000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// A session in daily use is pushed back out to the full month, at most one
+// write a day. See touchSession.
+const SESSION_RENEW_AFTER_MS = 24 * 60 * 60 * 1000;
 
 const enc = new TextEncoder();
 
@@ -51,11 +54,31 @@ export async function createSession(
 }
 
 export async function sessionForToken(db: D1Database, token: string) {
+  const tokenHash = await sha256(token);
   const row = await db
-    .prepare("SELECT user_id, kind FROM sessions WHERE token_hash = ? AND expires_at > ?")
-    .bind(await sha256(token), Date.now())
-    .first<{ user_id: string; kind: SessionKind }>();
-  return row && { userId: row.user_id, kind: row.kind };
+    .prepare("SELECT user_id, kind, expires_at FROM sessions WHERE token_hash = ? AND expires_at > ?")
+    .bind(tokenHash, Date.now())
+    .first<{ user_id: string; kind: SessionKind; expires_at: number }>();
+  return row && { userId: row.user_id, kind: row.kind, tokenHash, expiresAt: row.expires_at };
+}
+
+/**
+ * Keeps a phone signed in while it is being used. Until now a session simply
+ * died 30 days after sign-in however much the app was used in between, and put
+ * the person back on a sign-in screen that 36 of 38 devices never got past
+ * (device_logs, 2026-09-21). Siri keys have their own five-year life; left alone.
+ */
+export async function touchSession(
+  db: D1Database,
+  session: { tokenHash: string; kind: SessionKind; expiresAt: number },
+) {
+  if (session.kind !== "app") return;
+  const now = Date.now();
+  if (session.expiresAt > now + SESSION_TTL_MS - SESSION_RENEW_AFTER_MS) return;
+  await db
+    .prepare("UPDATE sessions SET expires_at = ? WHERE token_hash = ?")
+    .bind(now + SESSION_TTL_MS, session.tokenHash)
+    .run();
 }
 
 export async function deleteOtherSessions(db: D1Database, userId: string, keepToken: string) {

@@ -1,9 +1,8 @@
-import { File } from "expo-file-system";
 import { useEffect } from "react";
 import { api } from "./api";
 import { useAuth } from "./auth";
 import { devlog } from "./devlog";
-import { getRecordings, updateRecording, useRecordings, type Recording } from "./recordings";
+import { getRecordings, markLost, updateRecording, useRecordings, wavFile, type Recording } from "./recordings";
 import { transcribe } from "./voice";
 
 // How a recording becomes a moment in the timeline.
@@ -24,31 +23,41 @@ const MAX_BYTES = 10 * 1024 * 1024;
 /** In flight right now, so two passes can't send the same recording twice. */
 const working = new Set<string>();
 
-function sizeOf(uri: string) {
-  try {
-    return new File(uri).size ?? 0;
-  } catch {
-    return 0;
-  }
-}
-
 /**
  * Transcribes one saved recording and files it in the timeline. The outcome is
  * written back onto the recording, so a failure is visible in the Record tab
  * rather than silent, and so a retry doesn't start from nothing.
  */
 export async function captureRecording(token: string, recording: Recording) {
-  if (!recording.wavUri || recording.blockId || working.has(recording.id)) return;
+  if (recording.blockId || recording.lost || working.has(recording.id)) return;
+  // Joined onto Documents as it is right now. The old code carried an absolute uri
+  // saved when the recording was made, and iOS moves the container on every app
+  // update, so every one of them pointed at a folder that no longer existed.
+  const audio = wavFile(recording);
+  if (!audio) return;
   working.add(recording.id);
   updateRecording(recording.id, { capturing: true, captureError: undefined });
 
   try {
-    const bytes = sizeOf(recording.wavUri);
+    if (!audio.exists) {
+      // A dead end, not a retry: nothing on this phone will bring the file back.
+      markLost(recording.id, "The audio for this one is no longer on the phone, so it can't be added to your timeline.");
+      return;
+    }
+    // v57: File.size is 0 for a file that isn't there, so the check above has to
+    // come first — otherwise a missing file looks like a 0-byte one and only
+    // blows up later, inside transcribe (device_logs 2026-09-20 23:18).
+    const bytes = audio.size;
+    devlog("file", `timeline: reading ${audio.name}, ${Math.round(bytes / 1024)} KB`, audio.uri);
     if (bytes > MAX_BYTES) {
       throw new Error(`Too long to transcribe (${Math.round(bytes / 1024 / 1024)} MB). The limit is 10 MB.`);
     }
+    if (bytes === 0) {
+      markLost(recording.id, "This recording came out empty, so there's nothing to add to your timeline.");
+      return;
+    }
 
-    const text = await transcribe(token, recording.wavUri, "audio/wav", { keep: true });
+    const text = await transcribe(token, audio.uri, "audio/wav", { keep: true });
     if (!text.trim()) {
       // Silence or noise. Marked so it isn't retried on every launch.
       updateRecording(recording.id, { capturing: false, captureError: "Nothing was said in this one." });
@@ -66,15 +75,21 @@ export async function captureRecording(token: string, recording: Recording) {
     devlog("log", `timeline: filed "${block.title}"`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    devlog("err", "timeline: couldn't file a recording", message);
+    // The uri goes in the detail: without it the log said which file was missing
+    // but never which folder was tried, which is the whole of this bug.
+    devlog("err", "timeline: couldn't file a recording", `${recording.id} · ${audio.uri}\n${message}`);
     updateRecording(recording.id, { capturing: false, captureError: message });
   } finally {
     working.delete(recording.id);
   }
 }
 
-/** Clears the error so the next pass tries again. */
+/** Clears the error so the next pass tries again. A lost recording has nothing to try. */
 export function retryCapture(token: string, recording: Recording) {
+  if (recording.lost) {
+    devlog("log", `timeline: retry ignored, ${recording.id} has no audio`, recording.lost);
+    return Promise.resolve();
+  }
   updateRecording(recording.id, { captureError: undefined });
   return captureRecording(token, { ...recording, captureError: undefined });
 }
@@ -93,13 +108,16 @@ export function useAutoCapture() {
     if (!on) return;
     let stopped = false;
     (async () => {
+      let tried = 0;
       // Read fresh each time: a capture rewrites the list as it goes.
       for (const recording of getRecordings()) {
         if (stopped) return;
         const current = getRecordings().find((r) => r.id === recording.id);
-        if (!current?.wavUri || current.blockId || current.captureError) continue;
+        if (!current?.wavName || current.blockId || current.captureError || current.lost) continue;
+        tried++;
         await captureRecording(token!, current);
       }
+      if (tried) devlog("log", `timeline: pass over ${tried} unfiled recording${tried === 1 ? "" : "s"} finished`);
     })();
     return () => {
       stopped = true;

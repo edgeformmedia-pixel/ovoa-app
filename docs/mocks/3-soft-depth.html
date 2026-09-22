@@ -1,0 +1,2054 @@
+<title>OVOA Soft Depth</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
+<style>
+  /* ============================================================
+     OVOA — Direction 3: Soft depth.
+     Three elevation levels: the ground, things resting on it, and
+     the one thing that wants you right now. Single dark theme, on
+     purpose: every colour is painted from a token, no light mode.
+     ============================================================ */
+  :root{
+    /* ground and surfaces */
+    --ground:#07090D;
+    --well:#04060B;              /* insets: tracks, inputs, wells */
+    --s1-top:#121822;             /* level 1 resting surface */
+    --s1-bot:#0E131B;
+    --s1-edge:rgba(255,255,255,.055);
+    --s2-top:#1B2331;             /* level 2 lifted surface */
+    --s2-bot:#11161F;
+    --s2-edge:rgba(255,255,255,.10);
+
+    /* ink */
+    --text:#F2F5FA;
+    --dim:#8A94A6;
+    --faint:#5A6475;
+
+    /* identity + semantics */
+    --cyan:#22E2FF;
+    --violet:#7E5AFF;
+    --accent-well:#0E2A33;
+    --ok:#3DDC97;
+    --warn:#FFC46B;
+    --danger:#FF6B6B;
+
+    /* elevation roles */
+    --e0:none;
+    --e1:0 1px 2px rgba(0,0,0,.55), 0 10px 22px -16px rgba(0,0,0,.9);
+    --e2:0 2px 4px rgba(0,0,0,.5), 0 14px 28px -14px rgba(0,0,0,.85),
+         0 40px 64px -36px rgba(0,0,0,.95), 0 0 56px -26px rgba(34,226,255,.30);
+
+    /* radii */
+    --r-well:12px; --r1:20px; --r2:28px; --r-chip:999px;
+
+    /* 4px spacing scale */
+    --sp1:4px; --sp2:8px; --sp3:12px; --sp4:16px; --sp5:20px;
+    --sp6:24px; --sp8:32px; --sp10:40px;
+
+    /* type scale */
+    --t-display:34px; --t-title:24px; --t-head:19px; --t-body:15px;
+    --t-sub:13px; --t-micro:11px;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  body{
+    margin:0;
+    background:var(--ground);
+    color:var(--text);
+    font-family:"Manrope",-apple-system,"SF Pro Text",system-ui,"Segoe UI",sans-serif;
+    font-size:var(--t-body);
+    -webkit-font-smoothing:antialiased;
+    padding:var(--sp6) var(--sp4) var(--sp8);
+  }
+  .stage{display:flex;flex-direction:column;align-items:center;gap:var(--sp5)}
+  .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+
+  /* ---------- the phone ---------- */
+  .phone{
+    width:100%;max-width:390px;height:min(844px,84vh);min-height:600px;
+    border-radius:46px;padding:5px;
+    background:linear-gradient(170deg,#262e3b,#0b0e14 55%,#1a202a);
+    box-shadow:0 2px 0 rgba(255,255,255,.06) inset,0 50px 90px -50px #000,0 20px 40px -30px #000;
+  }
+  .app{
+    position:relative;height:100%;overflow:hidden;
+    border-radius:41px;background:var(--ground);
+    display:flex;flex-direction:column;
+  }
+
+  /* ---------- header per screen ---------- */
+  .vhead{
+    flex:0 0 auto;display:flex;align-items:center;gap:var(--sp2);
+    padding:var(--sp4) var(--sp4) var(--sp2);min-height:52px;
+  }
+  .vhead h1{
+    margin:0;font-size:var(--t-head);font-weight:600;letter-spacing:.2px;
+  }
+  .vhead .right{margin-left:auto;display:flex;align-items:center;gap:var(--sp2)}
+  .wordmark{font-size:var(--t-head);font-weight:800;letter-spacing:4px}
+  .backbtn{
+    display:grid;place-items:center;width:32px;height:32px;margin-left:-6px;
+    border:0;border-radius:var(--r-chip);background:transparent;color:var(--text);cursor:pointer;
+  }
+  .backbtn:hover{background:rgba(255,255,255,.05)}
+
+  /* ---------- scroll body ---------- */
+  .scroll{
+    flex:1 1 auto;overflow-y:auto;overflow-x:hidden;
+    padding:var(--sp1) var(--sp4) var(--sp8);
+    display:flex;flex-direction:column;gap:var(--sp4);
+    scrollbar-width:thin;scrollbar-color:#20262f transparent;
+  }
+  .scroll::-webkit-scrollbar{width:6px}
+  .scroll::-webkit-scrollbar-thumb{background:#1b212b;border-radius:3px}
+
+  /* ============ THE THREE LEVELS ============ */
+  /* level 0 — on the ground. No fill, no border, no shadow. */
+  .ground{padding:0 var(--sp1)}
+
+  /* level 1 — resting on the ground. Soft fill, hairline edge, one shallow shadow. */
+  .rest{
+    background:linear-gradient(180deg,var(--s1-top),var(--s1-bot));
+    border:1px solid var(--s1-edge);
+    border-radius:var(--r1);
+    padding:var(--sp5);
+    box-shadow:var(--e1);
+    display:flex;flex-direction:column;gap:var(--sp3);
+  }
+  /* level 2 — the one thing that wants you now. Wider radius, more padding,
+     a real shadow, and the orb ring's gradient as a light edge. */
+  .lift{
+    position:relative;
+    background:linear-gradient(180deg,var(--s2-top),var(--s2-bot));
+    border:1px solid transparent;
+    border-radius:var(--r2);
+    padding:var(--sp6);
+    box-shadow:var(--e2);
+    display:flex;flex-direction:column;gap:var(--sp3);
+  }
+  .lift::before{
+    content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+    background:linear-gradient(155deg,rgba(34,226,255,.85),rgba(126,90,255,.5) 38%,rgba(255,255,255,.05) 72%,rgba(255,255,255,.02));
+    -webkit-mask:linear-gradient(#000,#000) content-box,linear-gradient(#000,#000);
+    -webkit-mask-composite:xor;mask:linear-gradient(#000,#000) content-box,linear-gradient(#000,#000);
+    mask-composite:exclude;pointer-events:none;
+  }
+  /* nothing nested inside a surface gets its own shadow — only dividers and wells */
+  .rest .rest,.lift .rest{box-shadow:none}
+
+  /* a well: pressed into the surface rather than sitting on it */
+  .well{background:var(--well);border-radius:var(--r-well);box-shadow:0 1px 1px rgba(255,255,255,.04),inset 0 1px 3px rgba(0,0,0,.9)}
+
+  /* ---------- rows inside a surface (never their own surface) ---------- */
+  .rows{display:flex;flex-direction:column;margin:calc(var(--sp1) * -1) 0}
+  .row{
+    display:flex;align-items:center;gap:var(--sp3);
+    padding:var(--sp3) 0;border-top:1px solid rgba(255,255,255,.05);
+    text-align:left;
+  }
+  .rows > .row:first-child{border-top:0}
+  button.row{background:transparent;border-left:0;border-right:0;border-bottom:0;
+    color:inherit;font:inherit;width:100%;cursor:pointer;border-radius:8px}
+  button.row:hover{background:rgba(255,255,255,.035)}
+  button.row[disabled]{cursor:default;background:transparent}
+  [role="button"]{cursor:pointer}
+  .row .grow{flex:1;min-width:0}
+  .row > svg{flex:0 0 auto}
+  .chev{color:var(--faint);flex:0 0 auto}
+
+  /* ---------- type roles ---------- */
+  h2.sec{
+    margin:var(--sp4) var(--sp1) calc(var(--sp2) * -1);
+    font-size:var(--t-sub);font-weight:600;letter-spacing:.4px;color:var(--dim);
+  }
+  .kicker{font-size:var(--t-micro);font-weight:700;letter-spacing:1.1px;color:var(--faint);text-transform:uppercase}
+  .display{font-size:var(--t-display);font-weight:800;letter-spacing:-1px;line-height:1.05}
+  .title{font-size:var(--t-title);font-weight:700;letter-spacing:-.3px;line-height:1.2}
+  .head{font-size:var(--t-head);font-weight:600;line-height:1.25}
+  .body{font-size:var(--t-body);line-height:1.5;margin:0}
+  .sub{font-size:var(--t-sub);line-height:1.45;color:var(--dim);margin:0}
+  .micro{font-size:var(--t-micro);line-height:1.4;color:var(--faint);margin:0}
+  .warn{color:var(--warn)}.ok{color:var(--ok)}.bad{color:var(--danger)}
+  .strike{color:var(--dim);text-decoration:line-through}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--t-micro)}
+
+  /* ---------- controls ---------- */
+  .chip{
+    border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);
+    color:var(--text);border-radius:var(--r-chip);padding:7px 13px;cursor:pointer;
+    font-family:inherit;font-size:var(--t-sub);font-weight:600;line-height:1;
+  }
+  .chip:hover{background:rgba(255,255,255,.08)}
+  /* cyan on a chip means "act here". A chip that only records a choice stays neutral. */
+  .chip.on{background:var(--accent-well);border-color:rgba(34,226,255,.35);color:var(--cyan)}
+  .chip.sel{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.2);color:var(--text)}
+  .chip.quiet{background:transparent;color:var(--dim)}
+  .chiprow{display:flex;flex-wrap:wrap;gap:var(--sp2)}
+  .primary{
+    border:0;border-radius:var(--r-well);background:var(--cyan);color:#04121a;
+    padding:13px var(--sp5);cursor:pointer;
+    font-family:inherit;font-size:var(--t-body);font-weight:700;line-height:1;
+    box-shadow:0 8px 20px -12px rgba(34,226,255,.8);
+  }
+  .primary[disabled]{opacity:.42;box-shadow:none;cursor:not-allowed}
+  .secondary{
+    border:1px solid rgba(255,255,255,.09);border-radius:var(--r-well);
+    background:rgba(255,255,255,.035);color:var(--text);
+    padding:13px var(--sp4);cursor:pointer;width:100%;
+    font-family:inherit;font-size:var(--t-body);font-weight:600;line-height:1.2;
+  }
+  .secondary:hover{background:rgba(255,255,255,.07)}
+  .secondary.danger{color:var(--danger)}
+  .link{background:none;border:0;padding:0;color:var(--cyan);cursor:pointer;
+    font-family:inherit;font-size:var(--t-sub);font-weight:600;line-height:1.3}
+  .link.danger{color:var(--danger)}
+  input,textarea{
+    width:100%;font-family:inherit;font-size:var(--t-body);font-weight:400;line-height:1.4;color:var(--text);
+    background:var(--well);border:1px solid rgba(255,255,255,.05);border-radius:var(--r-well);
+    padding:11px 13px;box-shadow:inset 0 1px 3px rgba(0,0,0,.8);
+  }
+  input::placeholder,textarea::placeholder{color:var(--faint)}
+  textarea{min-height:64px;resize:vertical}
+  .field{display:flex;flex-direction:column;gap:var(--sp2)}
+  :focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+  /* switch */
+  .sw{
+    flex:0 0 auto;width:48px;height:29px;border-radius:var(--r-chip);border:0;cursor:pointer;
+    background:#20262f;box-shadow:inset 0 1px 3px rgba(0,0,0,.9);position:relative;transition:background .18s;
+  }
+  .sw::after{
+    content:"";position:absolute;top:3px;left:3px;width:23px;height:23px;border-radius:50%;
+    background:#c9d2de;box-shadow:0 2px 5px rgba(0,0,0,.6);transition:transform .18s,background .18s;
+  }
+  .sw[aria-checked="true"]{background:var(--cyan)}
+  .sw[aria-checked="true"]::after{transform:translateX(19px);background:#fff}
+  .sw.risky[aria-checked="true"]{background:var(--danger)}
+
+  /* segmented */
+  .seg{display:flex;gap:3px;padding:3px;border-radius:var(--r-well);background:var(--well);box-shadow:inset 0 1px 3px rgba(0,0,0,.85)}
+  .seg button{
+    flex:1;border:0;border-radius:9px;background:transparent;color:var(--dim);
+    padding:9px 4px;cursor:pointer;white-space:nowrap;
+    font-family:inherit;font-size:var(--t-sub);font-weight:600;line-height:1;
+  }
+  .seg button[aria-selected="true"]{
+    background:linear-gradient(180deg,#1d2533,#161d28);color:var(--text);
+    box-shadow:0 1px 0 rgba(255,255,255,.06) inset,0 4px 10px -6px #000;
+  }
+
+  /* tracks and bars */
+  .track{height:10px;border-radius:var(--r-chip);background:var(--well);box-shadow:inset 0 1px 3px rgba(0,0,0,.9);overflow:hidden}
+  .track > i{display:block;height:100%;border-radius:var(--r-chip);background:linear-gradient(90deg,var(--cyan),#6fd8ff)}
+  .track > i.done{background:linear-gradient(90deg,var(--ok),#7ef0bd)}
+  .bars{display:flex;align-items:flex-end;gap:5px;height:104px}
+  .bars > div{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%}
+  .bars .col{flex:1;width:100%;display:flex;align-items:flex-end;border-radius:6px 6px 4px 4px;background:rgba(255,255,255,.03)}
+  .bars .col > i{width:100%;border-radius:6px 6px 4px 4px;background:linear-gradient(180deg,#2b3442,#1b2230)}
+  .bars .col > i.hit{background:linear-gradient(180deg,var(--ok),#1e7d59)}
+  .bars .col > i.now{background:linear-gradient(180deg,var(--cyan),#0d6f85)}
+  .heart{display:flex;align-items:flex-end;gap:2px;height:56px}
+  .heart > i{flex:1;border-radius:2px;background:#3a2a3a}
+  .heart > i.last{background:var(--cyan)}
+
+  /* status dot */
+  .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:var(--faint)}
+  .dot.on{background:var(--ok);box-shadow:0 0 10px rgba(61,220,151,.8)}
+  .dot.busy{background:var(--warn);box-shadow:0 0 10px rgba(255,196,107,.7)}
+
+  /* tag: who did this */
+  .tag{
+    display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:var(--r-chip);
+    font-size:var(--t-micro);font-weight:700;letter-spacing:.5px;
+    background:rgba(126,90,255,.14);color:#b9a6ff;border:1px solid rgba(126,90,255,.3);
+  }
+  .tag.quiet{background:rgba(255,255,255,.05);color:var(--dim);border-color:rgba(255,255,255,.08)}
+  .tag.spoke{background:var(--accent-well);color:var(--cyan);border-color:rgba(34,226,255,.3)}
+
+  /* stat trio on the ground, split by hairlines instead of three cards */
+  .trio{display:flex;align-items:stretch}
+  .trio > div{flex:1;padding:0 var(--sp3);display:flex;flex-direction:column;gap:2px}
+  .trio > div + div{border-left:1px solid rgba(255,255,255,.07)}
+  .trio > div:first-child{padding-left:var(--sp1)}
+  .trio .v{font-size:var(--t-head);font-weight:700}
+
+  /* ---------- tab bar ---------- */
+  .tabbar{
+    flex:0 0 auto;display:flex;gap:2px;
+    padding:var(--sp2) 6px calc(var(--sp2) + env(safe-area-inset-bottom,0px));
+    background:linear-gradient(180deg,rgba(7,9,13,.6),var(--ground) 60%);
+    border-top:1px solid rgba(255,255,255,.06);
+    box-shadow:0 -18px 30px -24px #000;
+  }
+  .tabbar button{
+    position:relative;flex:1;min-width:0;border:0;background:transparent;cursor:pointer;color:var(--faint);
+    display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 1px 4px;border-radius:14px;
+    font-family:inherit;font-size:9.5px;font-weight:600;line-height:1;letter-spacing:.2px;
+  }
+  .tabbar button svg{width:21px;height:21px}
+  .tabbar button[aria-current="page"]{color:var(--text)}
+  .tabbar button[aria-current="page"] svg{filter:drop-shadow(0 0 8px rgba(34,226,255,.5))}
+  .tabbar .ind{position:absolute;top:3px;left:50%;transform:translateX(-50%);width:22px;height:2px;border-radius:2px;background:transparent}
+  .tabbar button[aria-current="page"] .ind{background:linear-gradient(90deg,var(--cyan),var(--violet))}
+
+  /* ---------- views ---------- */
+  .view{display:none;flex:1 1 auto;min-height:0;flex-direction:column}
+  .view.active{display:flex}
+  .view.active .lift{animation:rise .5s cubic-bezier(.2,.8,.25,1) both}
+  /* the one page-load moment: the lifted object rises, nothing else moves */
+  @keyframes rise{
+    from{transform:translateY(9px);opacity:.55}
+    to{transform:none;opacity:1}
+  }
+  .view.active .lift::before{animation:edge .7s ease-out both}
+  @keyframes edge{from{opacity:0}to{opacity:1}}
+
+  /* ---------- the orb ---------- */
+  .orbstage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--sp3);padding:var(--sp4) var(--sp5) 0;text-align:center}
+  .orbwrap{
+    position:relative;width:236px;height:236px;display:grid;place-items:center;border:0;background:none;cursor:pointer;padding:0;
+  }
+  .halo{
+    position:absolute;width:214px;height:214px;border-radius:50%;opacity:0;
+    background:radial-gradient(circle,rgba(34,226,255,.55),rgba(126,90,255,.18) 55%,transparent 72%);
+    filter:blur(6px);transition:opacity .4s,transform .4s;
+  }
+  .orb{
+    position:relative;width:180px;height:180px;border-radius:50%;
+    background:radial-gradient(120% 120% at 32% 22%,#1b2331,#05070b 70%);
+    display:grid;place-items:center;
+    box-shadow:0 30px 60px -28px #000,0 0 60px -22px rgba(34,226,255,.35),inset 0 1px 1px rgba(255,255,255,.08);
+    transition:transform .4s,box-shadow .4s,opacity .4s;
+  }
+  .orb::before{
+    content:"";position:absolute;inset:0;border-radius:50%;padding:3px;
+    background:conic-gradient(from 210deg,var(--cyan),var(--violet) 42%,#1b2331 70%,var(--cyan));
+    -webkit-mask:linear-gradient(#000,#000) content-box,linear-gradient(#000,#000);
+    -webkit-mask-composite:xor;mask:linear-gradient(#000,#000) content-box,linear-gradient(#000,#000);
+    mask-composite:exclude;
+  }
+  .orb svg{width:38px;height:38px;color:var(--dim)}
+  /* states */
+  .st-idle .orb{opacity:.72}
+  .st-listening .halo{opacity:1;animation:breathe 2.8s ease-in-out infinite}
+  .st-listening .orb svg{color:var(--cyan)}
+  .st-listening .orb{transform:scale(1.02)}
+  @keyframes breathe{0%,100%{transform:scale(1);opacity:.55}50%{transform:scale(1.13);opacity:1}}
+  /* when something else on the screen needs approval, the orb gives up the top level */
+  .demoted .orb{transform:scale(.62);box-shadow:0 14px 30px -20px #000,inset 0 1px 1px rgba(255,255,255,.06)}
+  .demoted .orbwrap{height:150px}
+  .demoted .halo{opacity:0}
+  .words{font-size:17px;line-height:1.45;color:var(--text);opacity:.9;margin:0}
+  .alwaysbar{
+    display:flex;align-items:center;gap:6px;border:0;cursor:pointer;
+    background:var(--danger);color:#180405;border-radius:var(--r-chip);padding:7px 13px;
+    font-family:inherit;font-size:var(--t-sub);font-weight:700;line-height:1;
+  }
+
+  /* SOS */
+  .sos{
+    position:relative;align-self:center;width:188px;height:188px;border-radius:50%;border:0;cursor:pointer;
+    background:radial-gradient(120% 120% at 34% 24%,#ff8f8f,#c0303a 70%);
+    color:#fff;display:grid;place-items:center;gap:2px;
+    box-shadow:0 26px 50px -22px rgba(255,60,70,.55),0 0 70px -30px rgba(255,107,107,.8),inset 0 2px 2px rgba(255,255,255,.35);
+    overflow:hidden;
+  }
+  .sos .fill{position:absolute;left:0;bottom:0;width:100%;height:0;background:rgba(255,255,255,.22);transition:height .1s linear}
+  .sos .lbl{position:relative;display:grid;place-items:center;gap:2px}
+  .sos b{font-size:42px;font-weight:800;letter-spacing:3px}
+  .sos span{font-size:var(--t-micro);opacity:.95;max-width:150px;text-align:center}
+
+  /* record button */
+  .recbtn{
+    align-self:center;width:96px;height:96px;border-radius:50%;border:0;cursor:pointer;
+    background:radial-gradient(120% 120% at 34% 24%,#ff9a9a,#cf3742 70%);
+    display:grid;place-items:center;
+    box-shadow:0 20px 40px -20px rgba(255,80,90,.6),inset 0 2px 2px rgba(255,255,255,.3);
+  }
+  .recbtn[disabled]{background:linear-gradient(180deg,#1d2432,#141a24);box-shadow:none;cursor:not-allowed}
+  .recbtn .glyph{width:30px;height:30px;border-radius:50%;background:#fff}
+  .recbtn.running .glyph{border-radius:6px;width:26px;height:26px}
+  .recbtn[disabled] .glyph{background:#39424f}
+
+  /* overlays */
+  .overlay{
+    position:absolute;inset:0;z-index:20;background:var(--ground);
+    display:flex;flex-direction:column;
+  }
+  .overlay[hidden]{display:none}
+  .nagbody{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--sp4);padding:var(--sp8) var(--sp6);text-align:center}
+  .nagglow{
+    width:118px;height:118px;border-radius:50%;display:grid;place-items:center;
+    background:radial-gradient(circle,rgba(34,226,255,.3),transparent 70%);
+  }
+  .nagglow svg{width:62px;height:62px;color:var(--cyan)}
+
+  .legend{max-width:390px;color:var(--dim);font-size:var(--t-sub);line-height:1.5;text-align:center;margin:0}
+  .legend b{color:var(--text);font-weight:700}
+  .legend .dirname{display:block;font-size:var(--t-micro);letter-spacing:1.4px;text-transform:uppercase;color:var(--faint);margin-bottom:6px}
+
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+  }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-walk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="13" cy="4" r="2"/><path d="M11 21l1.5-6-3-2.5L8 9l4-1 3 3 3 1"/><path d="M12.5 15l-3 6"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21"/></symbol>
+  <symbol id="i-micoff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M15 5.5A3 3 0 009 5.5v4M9 13a3 3 0 004.5 2.6"/><path d="M5.5 11a6.5 6.5 0 009.8 5.6M12 17.5V21"/><path d="M4 3l16 17"/></symbol>
+  <symbol id="i-speak" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 9.5h3l5-4v13l-5-4H4z"/><path d="M16.5 8.5a5 5 0 010 7M19.5 6a8.5 8.5 0 010 12"/></symbol>
+  <symbol id="i-rec" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+    <circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 5.5A2 2 0 016 3.5h13v17H6a2 2 0 01-2-2z"/><path d="M8 3.5v17"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3l7 2.5v6c0 4.5-3 7.8-7 9.5-4-1.7-7-5-7-9.5v-6z"/><path d="M9 12l2.2 2.2L15.5 10"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14.5 5.5L8 12l6.5 6.5"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9.5 5.5L16 12l-6.5 6.5"/></symbol>
+  <symbol id="i-chevl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14.5 5.5L8 12l6.5 6.5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12.5l4.5 4.5L19 7"/></symbol>
+  <symbol id="i-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/></symbol>
+  <symbol id="i-checkfill" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="8.5" fill="currentColor" opacity=".18"/><circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.3l2.6 2.6 5-5.2"/></symbol>
+  <symbol id="i-alarm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v4l2.5 2M5 4.5L7.5 6.5M19 4.5L16.5 6.5"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3s4.5 4 4.5 8a4.5 4.5 0 01-9 0c0-1.6.8-2.9 1.6-3.8C9.8 8.6 12 7 12 3z"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5M12 16.2v.3"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12.5h3.5L9 7l3 10 2.5-4.5H21"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3.5l1.8 4.7 4.7 1.8-4.7 1.8L12 16.5l-1.8-4.7L5.5 10l4.7-1.8z"/><path d="M18.5 16.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5l11 6.5-11 6.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="5.5" width="3.6" height="13" rx="1"/><rect x="13.4" y="5.5" width="3.6" height="13" rx="1"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7 10l2.5 2L7 14M12.5 14.5h4"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.5 1.5M16.9 16.9l1.5 1.5M18.4 5.6l-1.5 1.5M7.1 16.9l-1.5 1.5"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="8.5"/><path d="M9.8 9.5a2.2 2.2 0 114.2 1c0 1.3-2 1.6-2 3M12 16.2v.3"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6.5h11M9 12h11M9 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01"/></symbol>
+  <symbol id="i-bt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 7.5L16 16.5 12 20V4l4 3.5L8 16.5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></symbol>
+  <symbol id="i-arrowup" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 19V6M6 11.5L12 5.5l6 6"/></symbol>
+  <symbol id="i-keypad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 9.5h.01M12 9.5h.01M17 9.5h.01M7 14h.01M12 14h10"/></symbol>
+  <symbol id="i-skip" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5.5l9 6.5-9 6.5z"/><rect x="16" y="5.5" width="2.6" height="13" rx="1"/></symbol>
+  <symbol id="i-call" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 4.5h3l1.5 4-2 1.5a10 10 0 005.5 5.5l1.5-2 4 1.5v3c0 1-.8 1.8-1.8 1.7C10 19 5 14 4.3 6.3 4.2 5.3 5 4.5 5 4.5z"/></symbol>
+</defs></svg>
+
+<div class="stage">
+<div class="phone"><div class="app" id="app">
+
+  <!-- ===================== TAB 1 — ACTIVITY ===================== -->
+  <section class="view active" id="v-activity">
+    <div class="vhead"><h1>Activity</h1>
+      <div class="right"><span class="micro num">Tue 21 Sep</span></div>
+    </div>
+    <div class="scroll">
+
+      <div class="rows ground">
+        <button class="row" data-go="live">
+          <svg width="21" height="21" class="bad"><use href="#i-pulse"/></svg>
+          <span class="grow"><span class="head">Live</span>
+            <span class="sub" style="display:block">Heart rate and motion, while this screen is open</span></span>
+          <svg class="chev" width="18" height="18"><use href="#i-chev"/></svg>
+        </button>
+        <button class="row" data-go="claude">
+          <svg width="21" height="21" style="color:var(--violet)"><use href="#i-spark"/></svg>
+          <span class="grow"><span class="head">Ask Claude</span>
+            <span class="sub" style="display:block">A question straight to Claude, not OVOA's everyday model</span></span>
+          <svg class="chev" width="18" height="18"><use href="#i-chev"/></svg>
+        </button>
+      </div>
+
+      <!-- LEVEL 2 — the only thing on this screen that needs a decision -->
+      <div class="lift" id="favorCard">
+        <span class="kicker warn">Asked of you</span>
+        <p class="sub">Sarah, on the phone at 4:12 PM</p>
+        <p class="body">Send Sarah the flat's inventory list before Thursday.</p>
+        <p class="micro">Her words: "can you dig out that list, the one with the boiler on it"</p>
+        <div class="chiprow" id="favorChips">
+          <button class="chip on" data-settle="done">Done</button>
+          <button class="chip" data-settle="drop">Not needed</button>
+        </div>
+      </div>
+
+      <div class="rest">
+        <p class="body">You had four things on today and did three. Pills at 8, gym at 6, and the landlord emailed back.</p>
+        <p class="sub">~35 min saved (estimated)</p>
+      </div>
+
+      <!-- steps -->
+      <div class="rest" id="stepsPanel" style="align-items:center;text-align:center">
+        <span class="kicker">Today</span>
+        <p class="display num" id="stepCount" style="margin:0">7,412</p>
+        <p class="sub num" style="margin-top:-6px">of 8,000 steps</p>
+        <div class="track" style="align-self:stretch"><i style="width:92.6%"></i></div>
+        <p class="sub num" id="stepsLeft">588 to go</p>
+        <div class="trio" style="align-self:stretch;margin-top:var(--sp2)">
+          <div><span class="v num">5.6 km</span><span class="micro">Distance</span></div>
+          <div><span class="v num">297</span><span class="micro">Calories</span></div>
+          <div><span class="v num">4 days</span><span class="micro">Streak</span></div>
+        </div>
+      </div>
+
+      <div class="rest">
+        <span class="kicker">Last 7 days</span>
+        <div class="bars num" aria-label="Steps, last seven days">
+          <div><span class="micro num">8.4k</span><span class="col"><i class="hit" style="height:56%"></i></span><span class="micro">Wed</span></div>
+          <div><span class="micro num">9.1k</span><span class="col"><i class="hit" style="height:61%"></i></span><span class="micro">Thu</span></div>
+          <div><span class="micro num">6.2k</span><span class="col"><i style="height:41%"></i></span><span class="micro">Fri</span></div>
+          <div><span class="micro num">12.4k</span><span class="col"><i class="hit" style="height:83%"></i></span><span class="micro">Sat</span></div>
+          <div><span class="micro num">9.8k</span><span class="col"><i class="hit" style="height:65%"></i></span><span class="micro">Sun</span></div>
+          <div><span class="micro num">8.6k</span><span class="col"><i class="hit" style="height:57%"></i></span><span class="micro">Mon</span></div>
+          <div><span class="micro num">7.4k</span><span class="col"><i class="now" style="height:49%"></i></span><span class="micro">Today</span></div>
+        </div>
+        <span class="kicker" style="margin-top:var(--sp2)">Daily goal</span>
+        <div class="chiprow num" id="goalChips">
+          <button class="chip" data-goal="5000">5k</button>
+          <button class="chip sel" data-goal="8000">8k</button>
+          <button class="chip" data-goal="10000">10k</button>
+          <button class="chip" data-goal="12000">12k</button>
+          <button class="chip" data-goal="15000">15k</button>
+        </div>
+      </div>
+
+      <!-- today's list -->
+      <div class="rest">
+        <span class="kicker">Today's list</span>
+        <div class="rows" id="todoList">
+          <button class="row" type="button" data-todo="open">
+            <svg width="21" height="21" class="tickicon" style="color:var(--dim)"><use href="#i-circle"/></svg>
+            <span class="grow body">Dig out the flat inventory for Sarah</span></button>
+          <button class="row" type="button" data-todo="open">
+            <svg width="21" height="21" class="tickicon" style="color:var(--dim)"><use href="#i-circle"/></svg>
+            <span class="grow body">Book the boiler service</span></button>
+          <button class="row" type="button" data-todo="done" disabled>
+            <svg width="21" height="21" class="tickicon ok"><use href="#i-checkfill"/></svg>
+            <span class="grow body strike">Refill the prescription</span></button>
+        </div>
+      </div>
+
+      <!-- meds & routines -->
+      <div class="rest">
+        <span class="kicker">Meds &amp; routines</span>
+        <div class="rows" id="routineList">
+          <div class="row"><span class="sub num" style="width:58px">8:00 AM</span>
+            <span class="grow body strike">Metformin, 500 mg</span><span class="sub">done</span></div>
+          <div class="row"><span class="sub num" style="width:58px">1:00 PM</span>
+            <span class="grow body">Vitamin D</span><span class="sub warn">missed</span></div>
+          <div class="row"><span class="sub num" style="width:58px">6:00 PM</span>
+            <span class="grow body">Gym — legs</span>
+            <button class="chip on" data-confirm>Done</button></div>
+          <div class="row"><span class="sub num" style="width:58px">9:30 PM</span>
+            <span class="grow body">Wind-down: phone on the shelf</span><span class="sub">later</span></div>
+          <div class="row"><span class="sub num" style="width:58px">10:00 PM</span>
+            <span class="grow body">Stretch</span><span class="sub">snoozed</span></div>
+        </div>
+      </div>
+
+      <!-- the agent's own card -->
+      <div class="rest" id="agentCard" role="button" tabindex="0" data-tab="journal" style="text-align:left">
+        <span class="tag">OVOA · while you were out</span>
+        <div class="rows">
+          <div class="row"><span class="sub num" style="width:58px">7:02 AM</span>
+            <span class="grow body">Read you the morning brief. Two meetings, the 9:30 moved to 10.</span></div>
+          <div class="row"><span class="sub num" style="width:58px">11:40 AM</span>
+            <span class="grow body">Found the landlord's reply and put Thursday 6 PM in your calendar.</span></div>
+          <div class="row"><span class="sub num" style="width:58px">2:15 PM</span>
+            <span class="grow body">Looked, had nothing worth saying.</span></div>
+        </div>
+        <span class="sub" style="color:var(--cyan)">Everything it has done →</span>
+      </div>
+
+      <div class="rows ground">
+        <div class="row"><svg width="20" height="20" class="ok"><use href="#i-flame"/></svg>
+          <span class="grow body">Four days over 8,000: your best run since June.</span></div>
+        <div class="row"><svg width="20" height="20" class="warn"><use href="#i-alert"/></svg>
+          <span class="grow body">Missed: Vitamin D at 1:00 PM.</span></div>
+        <div class="row"><svg width="20" height="20" style="color:var(--violet)"><use href="#i-spark"/></svg>
+          <span class="grow body">Remembered: your sister's landline is the one that rings in the kitchen.</span></div>
+      </div>
+
+      <!-- health -->
+      <div class="rest">
+        <div style="display:flex;align-items:baseline;justify-content:space-between">
+          <span class="kicker">Heart rate</span><span class="micro">4 min ago</span>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px">
+          <span class="display num">62</span><span class="sub" style="padding-bottom:6px">bpm</span>
+          <span style="margin-left:auto;text-align:right"><span class="head num">54</span>
+            <span class="micro" style="display:block">resting</span></span>
+        </div>
+        <div class="heart num" id="heartGraph" aria-label="Heart rate, last six hours"></div>
+        <div style="display:flex;justify-content:space-between">
+          <span class="micro num">last 6 h · 41 readings</span><span class="micro num">today 51–128 bpm</span>
+        </div>
+      </div>
+
+      <div class="rest">
+        <div class="trio">
+          <div><span class="v num">7.2 h</span><span class="micro">Sleep</span></div>
+          <div><span class="v num">412 kcal</span><span class="micro">Active</span></div>
+          <div><span class="v num">38 min</span><span class="micro">Exercise</span></div>
+        </div>
+        <div class="trio" style="border-top:1px solid rgba(255,255,255,.07);padding-top:var(--sp3)">
+          <div><span class="v num">46 ms</span><span class="micro">HRV (SDNN)</span></div>
+          <div><span class="v num">9 h</span><span class="micro">Stand</span></div>
+        </div>
+      </div>
+
+      <div class="rest">
+        <span class="kicker">Today's workouts</span>
+        <div class="rows">
+          <div class="row"><span class="grow"><span class="head">Functional Strength Training</span>
+            <span class="micro num" style="display:block">6:12 PM · 38 min · 296 kcal</span></span></div>
+          <div class="row"><span class="grow"><span class="head">Outdoor Walk</span>
+            <span class="micro num" style="display:block">8:40 AM · 22 min · 1.9 km</span></span></div>
+        </div>
+      </div>
+
+      <div class="rest">
+        <span class="kicker">This week</span>
+        <p class="body num">62,140 steps, five days over goal, three gym sessions · ~2 h 10 min saved (estimated)</p>
+      </div>
+
+      <div class="rest">
+        <span class="kicker">Recently</span>
+        <div class="rows">
+          <div class="row"><span class="sub num" style="width:58px">5:48 PM</span>
+            <span class="grow body">You asked what was left on today's list.</span></div>
+          <div class="row"><span class="sub num" style="width:58px">4:12 PM</span>
+            <span class="grow body">Call with Sarah — the flat, the boiler, Thursday.</span></div>
+          <div class="row"><span class="sub num" style="width:58px">11:40 AM</span>
+            <span class="grow body"><span class="tag quiet">OVOA</span> Added "Landlord — Thursday 6 PM" to Calendar.</span></div>
+        </div>
+      </div>
+
+      <p class="micro" style="text-align:center">Distance and calories are estimates based on average stride.</p>
+    </div>
+  </section>
+
+  <!-- ===================== TAB 2 — OVOA ===================== -->
+  <section class="view" id="v-ovoa">
+    <div class="vhead">
+      <span class="wordmark">OVOA</span>
+      <div class="right">
+        <button class="chip quiet" id="logsBtn" aria-pressed="false" style="display:flex;align-items:center;gap:5px">
+          <svg width="15" height="15"><use href="#i-term"/></svg>Logs</button>
+      </div>
+    </div>
+
+    <div class="scroll" id="ovoaScroll" style="gap:var(--sp3)">
+      <div id="alwaysWrap" hidden style="display:flex"><button class="alwaysbar" id="alwaysBar">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><use href="#i-mic"/></svg>
+        Always listen is on · tap to turn off</button></div>
+
+      <div class="orbstage st-idle" id="orbStage">
+        <button class="orbwrap" id="orb" aria-label="Start listening to OVOA">
+          <span class="halo"></span>
+          <span class="orb"><svg id="orbIcon"><use href="#i-micoff"/></svg></span>
+        </button>
+        <p class="title" id="orbLabel" style="font-weight:300;letter-spacing:.6px">Tap to start listening</p>
+        <p class="words" id="orbWords" hidden></p>
+        <p class="sub" id="orbHint">The clip's button works too — click, talk, click.</p>
+      </div>
+
+      <!-- needs-approval state: this takes the top level and the orb gives it up -->
+      <div class="lift" id="approvalCard" hidden>
+        <span class="kicker warn">Needs your approval</span>
+        <p class="body">Text Sarah: "Found the inventory list — sending it over tonight. The boiler's on page two."</p>
+        <p class="sub">Which contact?</p>
+        <div class="rows" id="contactPick">
+          <button class="row" data-pick><svg width="18" height="18" class="chev" style="opacity:0"><use href="#i-check"/></svg>
+            <span class="grow"><span class="head">Sarah Ellison</span><span class="micro num" style="display:block">mobile · +44 7700 900412</span></span></button>
+          <button class="row" data-pick><svg width="18" height="18" class="chev" style="opacity:0"><use href="#i-check"/></svg>
+            <span class="grow"><span class="head">Sarah (work)</span><span class="micro num" style="display:block">mobile · +44 7700 900988</span></span></button>
+        </div>
+        <div style="display:flex;gap:var(--sp2)">
+          <button class="secondary" id="cancelBtn">Cancel</button>
+          <button class="primary" id="approveBtn" style="flex:1" disabled>Approve</button>
+        </div>
+        <p class="micro" id="approveNote">Pick a contact first. Nothing leaves the phone until you approve it.</p>
+      </div>
+
+      <div id="doingRow" hidden style="display:flex;align-items:center;gap:var(--sp2);padding:0 var(--sp1)">
+        <span class="dot busy"></span><span class="sub">Doing it for you…</span>
+      </div>
+
+      <div class="ground" style="margin-top:auto">
+        <p class="micro" style="margin-bottom:6px">Design study — switch the state</p>
+        <div class="seg" id="orbStates" role="tablist">
+          <button role="tab" aria-selected="true" data-state="idle">Idle</button>
+          <button role="tab" aria-selected="false" data-state="listening">Listening</button>
+          <button role="tab" aria-selected="false" data-state="approval">Needs approval</button>
+        </div>
+      </div>
+
+      <div class="rest" id="logPanel" hidden>
+        <div style="display:flex;align-items:center;gap:var(--sp3)">
+          <span class="mono grow" id="logLive">listening · mic 62 dB · always listen</span>
+          <button class="link" id="logClose">Close</button>
+        </div>
+        <div class="well mono" style="padding:10px;line-height:1.7;color:var(--dim)">
+          <div><span style="color:var(--faint)">18:41:02 </span><span style="color:var(--cyan)">VOICE </span>listening started · phone mic</div>
+          <div><span style="color:var(--faint)">18:41:06 </span><span style="color:var(--cyan)">REQ </span>POST /turn · 3.1 s of audio</div>
+          <div><span style="color:var(--faint)">18:41:09 </span><span style="color:var(--ok)">RES </span>200 · "text Sarah about the inventory"</div>
+          <div><span style="color:var(--faint)">18:41:09 </span><span style="color:var(--warn)">AGENT </span>pending_action · phone_message_compose</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== TAB 3 — RECORD ===================== -->
+  <section class="view" id="v-record">
+    <div class="vhead"><h1>Record</h1></div>
+    <div class="scroll">
+
+      <!-- lifted while the clip is the blocking step -->
+      <div class="lift" id="clipPanel">
+        <div style="display:flex;align-items:center;gap:var(--sp3)">
+          <span class="dot" id="clipDot"></span>
+          <span class="grow"><span class="head" id="clipName">ES100 clip</span>
+            <span class="sub" id="clipPhase" style="display:block">Not connected</span></span>
+          <button class="link" id="disconnectBtn" hidden>Disconnect</button>
+        </div>
+        <div id="clipStats" hidden>
+          <div class="trio">
+            <div><span class="v num">84%</span><span class="micro">Battery</span></div>
+            <div><span class="v num">−58 dBm</span><span class="micro">Signal</span></div>
+            <div><span class="v num">112 MB</span><span class="micro">Free</span></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:var(--sp2);align-items:center">
+          <button class="primary" id="findBtn" style="flex:1">Find clips</button>
+          <button class="chip" data-go="devtools" style="display:flex;align-items:center;gap:4px">Inputs
+            <svg width="13" height="13"><use href="#i-chev"/></svg></button>
+        </div>
+        <div class="rows" id="foundList" hidden>
+          <button class="row" id="foundClip"><svg width="18" height="18" style="color:var(--cyan)"><use href="#i-bt"/></svg>
+            <span class="grow"><span class="head">ES100-7A3F</span>
+              <span class="micro num" style="display:block">your clip · −58 dBm</span></span>
+            <svg class="chev" width="16" height="16"><use href="#i-chev"/></svg></button>
+          <button class="row"><svg width="18" height="18" class="chev"><use href="#i-bt"/></svg>
+            <span class="grow"><span class="head">(no name)</span>
+              <span class="micro num" style="display:block">−81 dBm</span></span>
+            <svg class="chev" width="16" height="16"><use href="#i-chev"/></svg></button>
+        </div>
+      </div>
+
+      <div class="rest" id="recorder" style="align-items:center;text-align:center;gap:var(--sp4)">
+        <button class="recbtn" id="recBtn" disabled aria-label="Start recording"><span class="glyph"></span></button>
+        <p class="title num" id="recTimer" style="font-weight:300">0:00</p>
+        <p class="sub" id="recState">Connect the clip to record</p>
+        <div style="display:flex;gap:var(--sp2);align-self:stretch" id="recControls" hidden>
+          <button class="secondary" id="pauseBtn">Pause</button>
+          <button class="primary" id="stopBtn" style="flex:1">Stop &amp; save</button>
+        </div>
+      </div>
+
+      <div class="ground" style="display:flex;align-items:baseline;gap:var(--sp3)">
+        <h2 class="sec" style="margin:0;color:var(--text);font-size:var(--t-head);font-weight:600;letter-spacing:0">Recordings</h2>
+        <button class="link" id="importBtn" style="margin-left:auto" hidden>Import from clip</button>
+      </div>
+
+      <div class="rest" id="recList">
+        <div class="rows">
+          <div class="row" data-rec>
+            <button class="chip" data-play style="width:38px;height:38px;display:grid;place-items:center;padding:0;background:var(--accent-well);border-color:rgba(34,226,255,.25)">
+              <svg width="16" height="16" style="color:var(--cyan)"><use href="#i-play"/></svg></button>
+            <span class="grow"><span class="head rec-title">Call with Sarah</span>
+              <span class="sub num" style="display:block">4:12 PM · 11:38</span>
+              <span class="micro" style="display:flex;align-items:center;gap:5px;margin-top:2px">
+                <span class="dot busy" style="width:7px;height:7px"></span>Adding to your timeline…</span></span>
+            <button class="link" data-rename>Rename</button>
+          </div>
+          <div class="row" data-rec>
+            <button class="chip" data-play style="width:38px;height:38px;display:grid;place-items:center;padding:0;background:var(--accent-well);border-color:rgba(34,226,255,.25)">
+              <svg width="16" height="16" style="color:var(--cyan)"><use href="#i-play"/></svg></button>
+            <span class="grow"><span class="head rec-title">Kitchen, Monday night</span>
+              <span class="sub num" style="display:block">Mon 9:04 PM · 3:12</span>
+              <span class="micro ok" style="display:block;margin-top:2px">In your timeline: "Planning the week"</span></span>
+            <button class="link" data-rename>Rename</button>
+          </div>
+          <div class="row" data-rec>
+            <button class="chip" data-play style="width:38px;height:38px;display:grid;place-items:center;padding:0;background:var(--accent-well);border-color:rgba(34,226,255,.25)">
+              <svg width="16" height="16" style="color:var(--cyan)"><use href="#i-play"/></svg></button>
+            <span class="grow"><span class="head rec-title">Note to self — boiler</span>
+              <span class="sub num" style="display:block">Sun 2:31 PM · 0:24</span></span>
+            <button class="link" data-rename>Rename</button>
+          </div>
+        </div>
+      </div>
+      <p class="micro" style="text-align:center">Nothing is ever recorded on its own. Recording is always something you started.</p>
+    </div>
+  </section>
+
+  <!-- ===================== TAB 4 — JOURNAL ===================== -->
+  <section class="view" id="v-journal">
+    <div class="vhead"><h1>Journal</h1></div>
+    <div class="scroll">
+      <div class="seg" id="journalSeg" role="tablist">
+        <button role="tab" aria-selected="true" data-seg="notes">From OVOA</button>
+        <button role="tab" aria-selected="false" data-seg="days">Your days</button>
+        <button role="tab" aria-selected="false" data-seg="transcripts">Transcripts</button>
+      </div>
+
+      <!-- ---- notes: the agent's outbox ---- -->
+      <div id="seg-notes" style="display:flex;flex-direction:column;gap:var(--sp4)">
+        <!-- lifted: the one note that needs an answer from you -->
+        <div class="lift" id="noteQuestion">
+          <div style="display:flex;align-items:center;gap:var(--sp2)">
+            <svg width="19" height="19" class="warn"><use href="#i-help"/></svg>
+            <span class="grow head">Which Thursday did you mean?</span>
+            <span class="micro num">6:04 PM</span>
+          </div>
+          <p class="body">You told Sarah "before Thursday". There's one this week and one after the trip. I've left the nudge unset until you say.</p>
+          <div style="display:flex;align-items:center;gap:var(--sp3);flex-wrap:wrap">
+            <span class="tag spoke">Told you</span>
+            <span class="micro">commitment sweep</span>
+            <button class="link" data-tab="ovoa" style="margin-left:auto">Answer it out loud →</button>
+          </div>
+        </div>
+
+        <div class="rest">
+          <div style="display:flex;align-items:center;gap:var(--sp2)">
+            <svg width="19" height="19" style="color:var(--cyan)"><use href="#i-sun"/></svg>
+            <span class="grow head">Morning brief</span><span class="micro num">7:02 AM</span>
+          </div>
+          <p class="body">Two meetings. The 9:30 moved to 10. Rain from 4, so the walk is better before lunch. Pills at 8.</p>
+          <div style="display:flex;align-items:center;gap:var(--sp3)">
+            <span class="tag spoke">Spoke it</span><span class="micro">morning brief · always speaks</span>
+            <button class="link quiet" style="margin-left:auto;color:var(--dim)">Dismiss</button>
+          </div>
+        </div>
+
+        <div class="rest">
+          <div style="display:flex;align-items:center;gap:var(--sp2)">
+            <svg width="19" height="19" class="warn"><use href="#i-alarm"/></svg>
+            <span class="grow head">Two things you said you'd do</span><span class="micro num">6:00 PM</span>
+          </div>
+          <p class="body">Sarah's inventory list, and calling your mother back. Neither is tonight, so this waited.</p>
+          <div style="display:flex;align-items:center;gap:var(--sp3)">
+            <span class="tag quiet">Kept to itself · held until 07:00, quiet hours</span>
+          </div>
+        </div>
+
+        <div class="rest">
+          <div style="display:flex;align-items:center;gap:var(--sp2)">
+            <svg width="19" height="19" class="ok"><use href="#i-list"/></svg>
+            <span class="grow head">Today's list</span><span class="micro num">7:02 AM</span>
+          </div>
+          <p class="body">Inventory for Sarah · boiler service · prescription refill (done).</p>
+          <span class="tag quiet">Kept to itself</span>
+        </div>
+
+        <button class="link" data-go="agentwork" style="align-self:center;padding:var(--sp3)">What OVOA is set up to do →</button>
+      </div>
+
+      <!-- ---- your days ---- -->
+      <div id="seg-days" hidden style="display:flex;flex-direction:column;gap:var(--sp4)">
+        <div class="seg" style="max-width:160px;align-self:center" id="grainSeg" role="tablist">
+          <button role="tab" aria-selected="true" data-grain="day">Day</button>
+          <button role="tab" aria-selected="false" data-grain="week">Week</button>
+        </div>
+
+        <div class="ground" style="display:flex;align-items:center;justify-content:space-between">
+          <button class="chip quiet" id="dayPrev" aria-label="Previous day" style="padding:8px">
+            <svg width="17" height="17" style="color:var(--cyan)"><use href="#i-chevl"/></svg></button>
+          <span class="head" id="dayLabel">Today</span>
+          <button class="chip quiet" id="dayNext" aria-label="Next day" style="padding:8px">
+            <svg width="17" height="17" class="chev"><use href="#i-chev"/></svg></button>
+        </div>
+
+        <!-- lifted: the day you're actually reading -->
+        <div class="lift" id="daySummary">
+          <span class="kicker" id="dayKicker">The day</span>
+          <p class="title" id="dayTitle">A call that turned into a to-do list</p>
+          <p class="body" id="dayBody">Quiet morning, a long call with Sarah about the flat, gym in the evening. Two things came out of the call that you said you'd do.</p>
+        </div>
+
+        <div class="rest" id="dayBlocks">
+          <div class="rows">
+            <div class="row"><span class="sub num" style="width:58px">8:05 AM</span>
+              <span class="grow"><span class="head">Kitchen, pills and coffee</span>
+                <span class="sub" style="display:block">Metformin taken, brief read out loud.</span></span></div>
+            <div class="row"><span class="sub num" style="width:58px">4:12 PM</span>
+              <span class="grow"><span class="head">Call with Sarah</span>
+                <span class="sub" style="display:block">The flat, the boiler, and Thursday. Two promises made.</span></span></div>
+            <div class="row"><span class="sub num" style="width:58px">6:12 PM</span>
+              <span class="grow"><span class="head">Gym — legs</span>
+                <span class="sub" style="display:block">38 minutes, heart peaked at 128.</span></span></div>
+          </div>
+        </div>
+
+        <div class="ground" id="dayEmpty" hidden style="text-align:center;padding:var(--sp8) var(--sp4);display:flex;flex-direction:column;align-items:center;gap:var(--sp3)">
+          <svg width="34" height="34" class="chev"><use href="#i-circle"/></svg>
+          <p class="head">Nothing recorded</p>
+          <p class="sub">Nothing was recorded that day, so there's nothing to look back at.</p>
+        </div>
+
+        <h2 class="sec">Still owed</h2>
+        <div class="rest">
+          <div class="rows">
+            <div class="row"><span class="grow"><span class="head">Send Sarah the flat's inventory list</span>
+              <span class="sub" style="display:block;font-style:italic">"can you dig out that list, the one with the boiler on it"</span>
+              <span class="micro" style="display:block">you said you would · Sarah · before Thursday</span></span></div>
+            <div class="row"><span class="grow"><span class="head">Call your mother back</span>
+              <span class="micro" style="display:block">you said you would · Mum · no date</span></span></div>
+          </div>
+        </div>
+
+        <div class="rest">
+          <span class="kicker">Add something to the timeline</span>
+          <label class="sub" for="momentInput">What just happened?</label>
+          <textarea id="momentInput" placeholder="What just happened?"></textarea>
+          <button class="secondary" id="addMoment">Add</button>
+        </div>
+      </div>
+
+      <!-- ---- transcripts ---- -->
+      <div id="seg-transcripts" hidden style="display:flex;flex-direction:column;gap:var(--sp4)">
+        <div class="lift">
+          <div style="display:flex;align-items:center;gap:var(--sp2)">
+            <svg width="17" height="17" class="chev"><use href="#i-search"/></svg>
+            <input id="tSearch" placeholder="Search everything said" style="background:transparent;border:0;box-shadow:none;padding:6px 0">
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid rgba(255,255,255,.06);padding-top:var(--sp3)">
+            <span class="head">Today</span><span class="micro num">14 days kept · 41 blocks</span>
+          </div>
+          <p class="body">Sarah, the boiler, and a promise about Thursday</p>
+        </div>
+
+        <div class="rest">
+          <div class="rows">
+            <button class="row" data-hour><span class="sub num" style="width:52px;color:var(--cyan);font-weight:700">4 PM</span>
+              <span class="grow body">The flat, the boiler, and Thursday</span>
+              <svg width="15" height="15" class="chev"><use href="#i-chev"/></svg></button>
+            <div class="row" style="align-items:flex-start">
+              <span class="sub num" style="width:52px">4:10</span>
+              <span class="grow"><span class="body">Working out what's actually in the flat</span>
+                <span class="chiprow" style="margin-top:6px">
+                  <span class="chip" style="cursor:default;padding:2px 8px;font-size:var(--t-micro);color:var(--cyan);border-color:rgba(34,226,255,.3)">You</span>
+                  <span class="chip" style="cursor:default;padding:2px 8px;font-size:var(--t-micro);color:var(--warn);border-color:rgba(255,196,107,.3)">Recording</span>
+                  <span class="micro num">18 lines</span></span></span>
+            </div>
+            <div class="row" style="align-items:flex-start">
+              <span class="sub num" style="width:52px">4:15</span>
+              <span class="grow"><span class="body">Agreeing to send the list before Thursday</span>
+                <span class="chiprow" style="margin-top:6px">
+                  <span class="chip" style="cursor:default;padding:2px 8px;font-size:var(--t-micro);color:var(--ok);border-color:rgba(61,220,151,.3)">OVOA</span>
+                  <span class="micro num">9 lines</span></span></span>
+            </div>
+          </div>
+          <p class="micro">Hold a block to forget it. The words are kept 14 days, then dropped.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== TAB 5 — SAFETY ===================== -->
+  <section class="view" id="v-safety">
+    <div class="vhead"><h1>Safety</h1></div>
+    <div class="scroll">
+      <!-- lifted: the SOS control, and it is the only round object here -->
+      <button class="sos lift" id="sosBtn" style="padding:0">
+        <span class="fill" id="sosFill"></span>
+        <span class="lbl"><b>SOS</b><span id="sosHint">Press and hold to alert your contacts</span></span>
+      </button>
+
+      <button class="secondary danger" id="callBtn" style="border-color:rgba(255,107,107,.45);font-weight:700">Call 911</button>
+
+      <div class="rest">
+        <div style="display:flex;align-items:center;gap:var(--sp3)">
+          <span class="grow"><span class="head">Fall detection</span>
+            <span class="sub" id="fallStatus" style="display:block">Watching for falls while the app is open.</span></span>
+          <button class="sw" role="switch" aria-checked="true" id="fallSw" aria-label="Fall detection"></button>
+        </div>
+        <p class="micro warn">Fall detection only works while OVOA is open on screen. It is not a medical device. Don't rely on it alone.</p>
+        <button class="secondary" id="testFall">Test the fall alert</button>
+      </div>
+
+      <div class="rest">
+        <span class="head">Emergency contacts</span>
+        <p class="sub">They get a text with your location when you press SOS or don't respond after a fall. Your phone opens the message; tap Send.</p>
+        <div class="rows" id="contactList">
+          <div class="row"><span class="grow"><span class="head">Sarah Ellison</span>
+            <span class="sub num" style="display:block">+44 7700 900412</span></span>
+            <button class="link danger" data-remove>Remove</button></div>
+          <div class="row"><span class="grow"><span class="head">Mum</span>
+            <span class="sub num" style="display:block">+44 7700 900155</span></span>
+            <button class="link danger" data-remove>Remove</button></div>
+        </div>
+        <div class="field"><label class="sub" for="cName">Name</label><input id="cName" placeholder="Name"></div>
+        <div class="field"><label class="sub" for="cPhone">Phone number</label><input id="cPhone" placeholder="Phone number" inputmode="tel"></div>
+        <button class="secondary" id="addContact">Add contact</button>
+      </div>
+
+      <div class="rest">
+        <span class="head">Recent alerts</span>
+        <div class="rows" id="alertList">
+          <div class="row"><span class="grow head">Possible fall</span>
+            <span class="sub num" style="text-align:right">Marked OK · 14/09, 19:22</span></div>
+          <div class="row"><span class="grow head">SOS</span>
+            <span class="sub num" style="text-align:right">Contacts alerted · 02/09, 08:10</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== TAB 6 — SETTINGS ===================== -->
+  <section class="view" id="v-settings">
+    <div class="vhead"><h1>Settings</h1></div>
+    <div class="scroll">
+
+      <h2 class="sec">Account</h2>
+      <div class="rest">
+        <p class="sub num">thomas@example.com</p>
+        <div class="field"><label class="sub" for="yourName">Your name</label><input id="yourName" value="Thomas"></div>
+      </div>
+
+      <h2 class="sec">Assistant</h2>
+      <div class="rest">
+        <div class="field"><label class="sub" for="asstName">Assistant name</label><input id="asstName" value="OVOA"></div>
+        <div class="field"><label class="sub" for="persona">Personality</label>
+          <textarea id="persona" placeholder="e.g. Dry British wit, keeps answers brief">Dry British wit, keeps answers brief</textarea></div>
+        <button class="secondary" id="saveAsst">Save changes</button>
+      </div>
+
+      <h2 class="sec">Voice</h2>
+      <div class="rest">
+        <p class="sub">How the assistant sounds. Tap a voice to hear it.</p>
+        <div class="rows" id="voiceList">
+          <button class="row" data-voice><span class="grow"><span class="head">Thalia</span><span class="micro" style="display:block">Clear, confident</span></span><svg width="18" height="18" class="mark ok" style="opacity:1"><use href="#i-check"/></svg></button>
+          <button class="row" data-voice><span class="grow"><span class="head">Andromeda</span><span class="micro" style="display:block">Casual, expressive</span></span><svg width="18" height="18" class="mark ok" style="opacity:0"><use href="#i-check"/></svg></button>
+          <button class="row" data-voice><span class="grow"><span class="head">Helena</span><span class="micro" style="display:block">Caring, friendly</span></span><svg width="18" height="18" class="mark ok" style="opacity:0"><use href="#i-check"/></svg></button>
+          <button class="row" data-voice><span class="grow"><span class="head">Luna</span><span class="micro" style="display:block">Soft, calm</span></span><svg width="18" height="18" class="mark ok" style="opacity:0"><use href="#i-check"/></svg></button>
+          <button class="row" data-voice><span class="grow"><span class="head">Apollo</span><span class="micro" style="display:block">Confident, casual</span></span><svg width="18" height="18" class="mark ok" style="opacity:0"><use href="#i-check"/></svg></button>
+          <button class="row" data-voice><span class="grow"><span class="head">Arcas</span><span class="micro" style="display:block">Smooth, natural</span></span><svg width="18" height="18" class="mark ok" style="opacity:0"><use href="#i-check"/></svg></button>
+          <button class="row" data-voice><span class="grow"><span class="head">Orion</span><span class="micro" style="display:block">Calm, polite</span></span><svg width="18" height="18" class="mark ok" style="opacity:0"><use href="#i-check"/></svg></button>
+          <button class="row" data-voice><span class="grow"><span class="head">Hermes</span><span class="micro" style="display:block">Expressive, engaging</span></span><svg width="18" height="18" class="mark ok" style="opacity:0"><use href="#i-check"/></svg></button>
+        </div>
+        <p class="micro" id="voiceNote" hidden>Playing a sample…</p>
+      </div>
+
+      <h2 class="sec">How to start talking</h2>
+      <div class="rest">
+        <div style="display:flex;align-items:center;gap:var(--sp3)">
+          <span class="grow"><span class="head">Always listen</span>
+            <span class="sub" style="display:block">The microphone stays on and answers when you say its name. Off: double-click the band's button to talk. With it on, a double click turns it off.</span></span>
+          <button class="sw risky" role="switch" aria-checked="false" id="alwaysSw" aria-label="Always listen"></button>
+        </div>
+        <p class="micro bad" id="alwaysWarn" hidden>The microphone stays on, even in the background, and hears everything around you, including other people.</p>
+        <div class="seg" id="listenSeg" role="tablist">
+          <button role="tab" aria-selected="false" data-listen="wake">Wake word</button>
+          <button role="tab" aria-selected="true" data-listen="twist">Clip click</button>
+        </div>
+        <p class="sub" id="listenHint">Double-click the ES100's button: it buzzes and listens. Press once to send what you said; press once while it answers to cut it off. Works from other apps too.</p>
+        <span class="head" style="margin-top:var(--sp2)">Microphone</span>
+        <div class="seg" id="micSeg" role="tablist">
+          <button role="tab" aria-selected="false" data-mic="phone">Phone</button>
+          <button role="tab" aria-selected="true" data-mic="band">ES100 band</button>
+        </div>
+        <p class="sub" id="micHint">The clip records what you say on its own microphone. Click to start, click again when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.</p>
+      </div>
+
+      <h2 class="sec">Background work</h2>
+      <!-- lifted: the one live thing in a screen of preferences -->
+      <div class="lift" id="bgWorkRow" role="button" tabindex="0" data-go="agentwork" style="text-align:left">
+        <div style="display:flex;align-items:center;gap:var(--sp3)">
+          <span class="dot on"></span>
+          <span class="grow"><span class="head">Working on its own</span>
+            <span class="sub num" style="display:block">Suggest · 6 of 40 runs today · next 6:00 PM</span></span>
+          <svg width="18" height="18" class="chev"><use href="#i-chev"/></svg>
+        </div>
+        <div class="track"><i style="width:15%"></i></div>
+        <p class="sub">It checks things between conversations — what's actually on today, what you said you'd do — and tells you only when it's worth interrupting you. Everything it does is logged.</p>
+      </div>
+      <div class="rest">
+        <div style="display:flex;align-items:center;gap:var(--sp3)">
+          <span class="grow head">Let OVOA work on its own</span>
+          <button class="sw" role="switch" aria-checked="true" id="agentSw" aria-label="Background work"></button>
+        </div>
+        <div id="agentExtra" style="display:flex;flex-direction:column;gap:var(--sp3)">
+          <span class="head">Don't disturb me between</span>
+          <div style="display:flex;align-items:center;gap:var(--sp3)">
+            <input class="num" id="quietStart" value="22:00" style="width:86px;text-align:center" inputmode="numeric">
+            <span class="sub">and</span>
+            <input class="num" id="quietEnd" value="07:00" style="width:86px;text-align:center" inputmode="numeric">
+          </div>
+          <p class="sub">It still works during these hours; it just saves what it found until morning. Something about to be missed tonight comes through anyway.</p>
+        </div>
+      </div>
+
+      <h2 class="sec">Google accounts</h2>
+      <div class="rest">
+        <div class="rows">
+          <div class="row"><span class="dot on"></span><span class="grow"><span class="head">thomas@example.com</span>
+            <span class="micro" style="display:block">Gmail · Calendar · Drive · Docs · Sheets · Tasks</span></span>
+            <button class="link">Disconnect</button></div>
+          <button class="row"><span class="grow head" style="color:var(--cyan)">Connect another account</span>
+            <svg width="17" height="17" class="chev"><use href="#i-chev"/></svg></button>
+        </div>
+      </div>
+
+      <h2 class="sec">Siri</h2>
+      <div class="rest">
+        <p class="sub">Add "Hey Siri, ask OVOA" so you can start a turn without opening the app.</p>
+        <button class="secondary">Add to Siri</button>
+      </div>
+
+      <h2 class="sec">Memory</h2>
+      <div class="rest">
+        <div style="display:flex;align-items:center;gap:var(--sp3)">
+          <span class="grow"><span class="head">Remember things about me</span>
+            <span class="sub" style="display:block">OVOA learns facts from your chats.</span></span>
+          <button class="sw" role="switch" aria-checked="true" id="memSw" aria-label="Memory"></button>
+        </div>
+        <button class="row" id="memDisclose" style="border-top:0"><span class="grow head num">7 things remembered</span>
+          <span class="chev" id="memChev">▸</span></button>
+        <div id="memList" hidden>
+          <div class="rows">
+            <div class="row"><span class="grow body">Sister's landline is the one that rings in the kitchen.</span>
+              <button class="link danger">Forget</button></div>
+            <div class="row"><span class="grow body">Gym on Tuesday and Thursday evenings, legs first.</span>
+              <button class="link danger">Forget</button></div>
+            <div class="row"><span class="grow body">Landlord is called Dermot; prefers email.</span>
+              <button class="link danger">Forget</button></div>
+          </div>
+          <button class="secondary danger" style="margin-top:var(--sp3)">Forget everything</button>
+        </div>
+        <button class="secondary danger">Clear chat history</button>
+      </div>
+
+      <h2 class="sec">Password</h2>
+      <div class="rest">
+        <div class="field"><label class="sub" for="pw1">Current password</label><input id="pw1" type="password" value="········"></div>
+        <div class="field"><label class="sub" for="pw2">New password</label><input id="pw2" type="password" placeholder="At least 8 characters"></div>
+        <button class="secondary">Change password</button>
+      </div>
+
+      <h2 class="sec">Your day</h2>
+      <div class="rest">
+        <div style="display:flex;align-items:center;gap:var(--sp3)">
+          <span class="grow"><span class="head">Keep a record of my days</span>
+            <span class="sub" style="display:block">What you record gets summarised into a day OVOA can look things up in — "what did I do Tuesday", "did I ever call Sarah back". Only ever what you chose to record: nothing is captured in the background.</span></span>
+          <button class="sw" role="switch" aria-checked="true" id="timelineSw" aria-label="Timeline"></button>
+        </div>
+        <div id="timelineExtra" style="display:flex;flex-direction:column;gap:var(--sp3)">
+          <p class="micro">The words themselves are never stored on the server. They're read once to write the summary and then dropped; the recordings stay on this phone.</p>
+          <span class="head">Forget summaries after</span>
+          <div class="seg" id="retainSeg" role="tablist">
+            <button role="tab" aria-selected="true" data-retain="14">2 weeks</button>
+            <button role="tab" aria-selected="false" data-retain="90">3 months</button>
+            <button role="tab" aria-selected="false" data-retain="365">A year</button>
+            <button role="tab" aria-selected="false" data-retain="0">Keep</button>
+          </div>
+          <button class="secondary danger" id="forgetHour">Forget the last hour</button>
+        </div>
+        <div class="rows">
+          <button class="row" id="toTranscripts"><span class="grow head">Transcripts — everything said</span>
+            <svg width="17" height="17" class="chev"><use href="#i-chev"/></svg></button>
+          <button class="row" id="redoSetup"><span class="grow head">Go through setup again</span>
+            <svg width="17" height="17" class="chev"><use href="#i-chev"/></svg></button>
+        </div>
+        <p class="micro">Wake and bed times, work hours, medications and routines. Going through it again adds to what's there; it doesn't remove anything.</p>
+      </div>
+
+      <h2 class="sec">Developer</h2>
+      <div class="rest">
+        <div class="rows">
+          <button class="row" data-go="devtools"><span class="grow head">Sensors, inputs &amp; ES100</span>
+            <svg width="17" height="17" class="chev"><use href="#i-chev"/></svg></button>
+          <button class="row" id="showNag"><span class="grow head">Preview the alarm screen</span>
+            <svg width="17" height="17" class="chev"><use href="#i-chev"/></svg></button>
+        </div>
+      </div>
+
+      <h2 class="sec">Session</h2>
+      <div class="rest"><button class="secondary">Sign out</button></div>
+
+      <h2 class="sec">Texts</h2>
+      <div class="rest">
+        <div style="display:flex;align-items:center;gap:var(--sp3)">
+          <span class="grow"><span class="head">Send texts automatically</span>
+            <span class="sub" style="display:block">Hands each text to your "OVOA Send Text" shortcut instead of opening Messages, so it goes without tapping Send. Your phone switches to Shortcuts for a moment and comes back.</span></span>
+          <button class="sw" role="switch" aria-checked="false" id="autoTextSw" aria-label="Send texts automatically"></button>
+        </div>
+        <button class="secondary" id="openShortcuts" hidden>Open Shortcuts</button>
+      </div>
+
+      <h2 class="sec">Danger zone</h2>
+      <div class="rest" style="border-color:rgba(255,107,107,.22)">
+        <div style="display:flex;align-items:center;gap:var(--sp3)">
+          <span class="grow"><span class="head">Approve for me</span>
+            <span class="sub" style="display:block">Skip approval cards: OVOA sends emails, deletes things, and changes your contacts, calendar, and reminders right away. iOS still asks you to tap Send for emails, and for texts unless "Send texts automatically" is on.</span></span>
+          <button class="sw risky" role="switch" aria-checked="false" id="autoApproveSw" aria-label="Approve for me"></button>
+        </div>
+        <p class="micro bad" id="autoApproveWarn" hidden>Mistakes can't always be undone.</p>
+        <button class="secondary danger">Delete account</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SUB-SCREEN — Background work ============ -->
+  <section class="view" id="v-agentwork">
+    <div class="vhead">
+      <button class="backbtn" data-back aria-label="Back"><svg width="21" height="21"><use href="#i-back"/></svg></button>
+      <h1>Background work</h1>
+    </div>
+    <div class="scroll">
+      <!-- lifted: how far it may go, and what's left of today's budget -->
+      <div class="lift">
+        <span class="kicker">How far it can go</span>
+        <div class="seg" id="autonomySeg" role="tablist">
+          <button role="tab" aria-selected="true" data-auto="suggest">Suggest</button>
+          <button role="tab" aria-selected="false" data-auto="act">Act</button>
+        </div>
+        <p class="sub" id="autonomyHint">It looks things up and tells you. Anything that would change something shows up as a card for you to approve.</p>
+        <p class="micro">At every level it can't send a message or email on its own, and can't delete anything. Those always wait for you.</p>
+        <div style="display:flex;align-items:baseline;gap:var(--sp2);border-top:1px solid rgba(255,255,255,.07);padding-top:var(--sp3)">
+          <span class="title num">6</span><span class="sub">of 40 runs today</span>
+          <span class="sub num" style="margin-left:auto">quiet 22:00–07:00</span>
+        </div>
+        <div class="track"><i style="width:15%"></i></div>
+      </div>
+
+      <h2 class="sec">Standing jobs</h2>
+      <div class="rest">
+        <div class="rows">
+          <div class="row" style="align-items:flex-start;flex-wrap:wrap">
+            <span class="grow"><span class="head">Morning brief</span>
+              <span class="micro num" style="display:block">every day 7:00 AM · next 7:00 AM · always speaks</span>
+              <span class="sub" style="display:block;font-style:italic;margin-top:4px">"Tell me what's actually on today, and anything I said I'd do."</span></span>
+            <button class="sw" role="switch" aria-checked="true" aria-label="Morning brief"></button>
+            <span style="display:flex;gap:var(--sp5);width:100%;margin-top:var(--sp2)">
+              <button class="link" data-runnow>Run now</button>
+              <button class="link danger">Stop it</button>
+              <span class="micro" style="margin-left:auto">BUILT IN</span></span>
+          </div>
+          <div class="row" style="align-items:flex-start;flex-wrap:wrap">
+            <span class="grow"><span class="head">Commitment sweep</span>
+              <span class="micro num" style="display:block">every day 6:00 PM · next 6:00 PM · speaks only if pressing</span>
+              <span class="sub" style="display:block;font-style:italic;margin-top:4px">"Check what I said I'd do and whether it already happened. Stay quiet if it did."</span></span>
+            <button class="sw" role="switch" aria-checked="true" aria-label="Commitment sweep"></button>
+            <span style="display:flex;gap:var(--sp5);width:100%;margin-top:var(--sp2)">
+              <button class="link" data-runnow>Run now</button>
+              <button class="link danger">Stop it</button>
+              <span class="micro" style="margin-left:auto">BUILT IN</span></span>
+          </div>
+          <div class="row" style="align-items:flex-start;flex-wrap:wrap">
+            <span class="grow"><span class="head">Nudge: Sarah's inventory list</span>
+              <span class="micro num" style="display:block">once, Thu 3:00 PM · three hours before you said you'd do it</span>
+              <span class="sub" style="display:block;font-style:italic;margin-top:4px">"Check whether this already happened, and say nothing if it did."</span></span>
+            <button class="sw" role="switch" aria-checked="false" aria-label="Nudge"></button>
+            <span style="display:flex;gap:var(--sp5);width:100%;margin-top:var(--sp2)">
+              <button class="link" data-runnow>Run now</button>
+              <button class="link danger">Stop it</button>
+              <span class="micro" style="margin-left:auto">OVOA SET THIS UP</span></span>
+          </div>
+        </div>
+      </div>
+
+      <h2 class="sec">What you're trying to do</h2>
+      <div class="rest">
+        <p class="sub">Standing intentions with no deadline. OVOA sees these every time it runs on its own, and takes them into account when it decides whether something is worth telling you.</p>
+        <div class="rows">
+          <div class="row"><span class="grow"><span class="head">Keep Thursday evenings clear</span>
+            <span class="micro" style="display:block">because that's when your mother calls</span></span>
+            <button class="link danger">Drop</button></div>
+          <div class="row"><span class="grow"><span class="head">Walk 8,000 steps a day</span>
+            <span class="micro" style="display:block">because the physio asked for it</span></span>
+            <button class="link danger">Drop</button></div>
+          <div class="row"><span class="grow"><span class="head">Answer the landlord within a day</span>
+            <span class="micro" style="display:block">because last time it cost you two weeks</span></span>
+            <button class="link danger">Drop</button></div>
+        </div>
+        <div style="display:flex;gap:var(--sp2);align-items:center">
+          <input id="goalInput" placeholder="e.g. Keep Thursday evenings clear">
+          <button class="chip on" id="addGoal" style="padding:10px 14px">Add</button>
+        </div>
+      </div>
+
+      <h2 class="sec">Everything it has done</h2>
+      <div class="rest">
+        <p class="sub">Every time OVOA ran on its own, including the times it decided to stay quiet.</p>
+        <div class="rows" id="runLog">
+          <div class="row" style="align-items:flex-start"><span class="sub num" style="width:62px">6:00 PM</span>
+            <span class="grow"><span class="head">Commitment sweep <span class="ok">· told you</span></span>
+              <span class="sub" style="display:block">Two open promises, neither due tonight. Asked which Thursday.</span>
+              <span class="micro" style="display:block">commitments, calendar_list, agent_say</span></span></div>
+          <div class="row" style="align-items:flex-start"><span class="sub num" style="width:62px">4:40 PM</span>
+            <span class="grow"><span class="head">Promise nudge <span class="warn">· set something up</span></span>
+              <span class="sub" style="display:block">Scheduled a one-off for Thursday 3 PM.</span>
+              <span class="micro" style="display:block">agent_schedule</span></span></div>
+          <div class="row" style="align-items:flex-start"><span class="sub num" style="width:62px">2:15 PM</span>
+            <span class="grow"><span class="head">Inbox watch <span class="sub">· nothing to say</span></span>
+              <span class="sub" style="display:block">Nothing from the landlord. Stayed quiet.</span>
+              <span class="micro" style="display:block">gmail_search, agent_stay_quiet</span></span></div>
+          <div class="row" style="align-items:flex-start"><span class="sub num" style="width:62px">7:02 AM</span>
+            <span class="grow"><span class="head">Morning brief <span class="ok">· told you</span></span>
+              <span class="sub" style="display:block">Two meetings, one moved, rain from four.</span>
+              <span class="micro" style="display:block">calendar_list, weather, agent_say</span></span></div>
+          <div class="row" style="align-items:flex-start"><span class="sub num" style="width:62px">2:00 AM</span>
+            <span class="grow"><span class="head">Commitment sweep <span class="sub">· skipped</span></span>
+              <span class="sub" style="display:block">Quiet hours. Nothing pressing enough to push.</span></span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SUB-SCREEN — Live ============ -->
+  <section class="view" id="v-live">
+    <div class="vhead">
+      <button class="backbtn" data-back aria-label="Back"><svg width="21" height="21"><use href="#i-back"/></svg></button>
+      <h1>Live</h1>
+      <div class="right"><span class="dot on"></span><span class="micro">reading</span></div>
+    </div>
+    <div class="scroll">
+      <div class="lift" style="align-items:center;text-align:center">
+        <span class="kicker">Heart rate</span>
+        <p class="display num bad" style="font-size:58px;margin:0" id="liveBpm">64</p>
+        <p class="sub num">bpm · from the band · live</p>
+        <div class="heart num" id="liveHeart" style="align-self:stretch"></div>
+      </div>
+
+      <div class="rest">
+        <span class="kicker">Where you are</span>
+        <div class="rows">
+          <div class="row"><span class="grow sub">Street</span><span class="body num">41 Hillcrest Road</span></div>
+          <div class="row"><span class="grow sub">City</span><span class="body">Bristol, England</span></div>
+          <div class="row"><span class="grow sub">Postcode</span><span class="body num">BS6 6JA</span></div>
+          <div class="row"><span class="grow sub">Latitude</span><span class="mono num">51.465812</span></div>
+          <div class="row"><span class="grow sub">Longitude</span><span class="mono num">−2.601740</span></div>
+          <div class="row"><span class="grow sub">Accuracy</span><span class="body num">± 4 m</span></div>
+        </div>
+      </div>
+
+      <div class="rest">
+        <span class="kicker">Altitude and movement</span>
+        <div class="rows">
+          <div class="row"><span class="grow sub">Altitude</span><span class="body num">62.4 m (205 ft)</span></div>
+          <div class="row"><span class="grow sub">Speed</span><span class="body num">4.6 km/h (2.9 mph)</span></div>
+          <div class="row"><span class="grow sub">Heading</span><span class="body num">118° E</span></div>
+          <div class="row"><span class="grow sub">Air pressure</span><span class="body num">1008.4 hPa</span></div>
+        </div>
+      </div>
+
+      <div class="rest">
+        <span class="kicker">Today and the band</span>
+        <div class="rows">
+          <div class="row"><span class="grow sub">Steps today</span><span class="body num">7,412</span></div>
+          <div class="row"><span class="grow sub">Band</span><span class="body">linked · ES100-7A3F</span></div>
+          <div class="row"><span class="grow sub">Band battery</span><span class="body num">84%</span></div>
+          <div class="row"><span class="grow sub">Band signal</span><span class="body num">−58 dBm</span></div>
+        </div>
+      </div>
+      <p class="micro" style="text-align:center">Nothing here is sent anywhere; it's read on the phone.</p>
+    </div>
+  </section>
+
+  <!-- ============ SUB-SCREEN — Ask Claude ============ -->
+  <section class="view" id="v-claude">
+    <div class="vhead">
+      <button class="backbtn" data-back aria-label="Back"><svg width="21" height="21"><use href="#i-back"/></svg></button>
+      <h1>Ask Claude</h1>
+    </div>
+    <div class="scroll">
+      <div class="lift">
+        <div style="display:flex;gap:var(--sp2);align-items:flex-end">
+          <textarea id="askInput" placeholder="Ask Claude anything" style="min-height:52px"></textarea>
+          <button class="primary" id="askSend" aria-label="Send" style="padding:14px">
+            <svg width="18" height="18" style="display:block"><use href="#i-arrowup"/></svg></button>
+        </div>
+        <p class="micro">Answers come from Claude (Anthropic), not OVOA's everyday model.</p>
+      </div>
+      <div id="askList" style="display:flex;flex-direction:column;gap:var(--sp4)">
+        <div class="rest">
+          <p class="body" style="color:var(--cyan);font-weight:600">What's a fair price to pay for a boiler service in Bristol?</p>
+          <p class="body">A standard annual service runs about £70–£110, plus parts. Landlords usually cover it on a rented flat — worth checking the tenancy before you book anything.</p>
+          <button class="link" style="display:flex;align-items:center;gap:6px">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-speak"/></svg>Read it out</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SUB-SCREEN — Sensors, inputs & ES100 ============ -->
+  <section class="view" id="v-devtools">
+    <div class="vhead">
+      <button class="backbtn" data-back aria-label="Back"><svg width="21" height="21"><use href="#i-back"/></svg></button>
+      <h1>Sensors, inputs &amp; ES100</h1>
+    </div>
+    <div class="scroll">
+      <div class="lift">
+        <div style="display:flex;align-items:center;gap:var(--sp3)">
+          <span class="dot on"></span>
+          <span class="grow"><span class="head">ES100-7A3F</span>
+            <span class="sub num" style="display:block">Connected · firmware 1.4.2 · 84%</span></span>
+        </div>
+        <div class="rows">
+          <div class="row"><span class="grow sub">Audio</span><span class="body num">16 kHz mono opus</span></div>
+          <div class="row"><span class="grow sub">Motion stream</span><span class="body num">gyro3 · ~1 Hz</span></div>
+          <div class="row"><span class="grow sub">Button</span><span class="body">click · double-click · long press</span></div>
+        </div>
+        <p class="micro warn">Motion commands during a clip freeze the recording. Don't poll while it records.</p>
+      </div>
+
+      <div class="rest">
+        <span class="kicker">Inputs</span>
+        <div class="rows">
+          <div class="row"><span class="grow head">Band double-click</span><span class="sub ok">listening</span></div>
+          <div class="row"><span class="grow head">Wake word</span><span class="sub">off</span></div>
+          <div class="row"><span class="grow head">Phone mic</span><span class="sub">off — band is the source</span></div>
+          <div class="row"><span class="grow head">Heart rate sampling</span><span class="sub num">every 5 min · 1 min when raised</span></div>
+        </div>
+      </div>
+
+      <div class="rest">
+        <span class="kicker">Device log</span>
+        <div class="well mono" style="padding:10px;line-height:1.7;color:var(--dim)">
+          <div><span style="color:var(--faint)">18:36:20 </span><span style="color:var(--cyan)">BLE </span>linked · connectStatus 0 treated as connected</div>
+          <div><span style="color:var(--faint)">18:38:02 </span><span style="color:var(--warn)">PROBE </span>gyro3 12 frames · no twist</div>
+          <div><span style="color:var(--faint)">18:41:09 </span><span style="color:var(--ok)">PERF </span>turn round trip 9.4 s</div>
+        </div>
+        <div style="display:flex;gap:var(--sp4)">
+          <button class="link">Copy</button><button class="link">Clear</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== TAB BAR ===================== -->
+  <nav class="tabbar" id="tabbar" aria-label="Tabs">
+    <button data-tab="activity" aria-current="page"><span class="ind"></span><svg><use href="#i-walk"/></svg>Activity</button>
+    <button data-tab="ovoa"><span class="ind"></span><svg><use href="#i-mic"/></svg>OVOA</button>
+    <button data-tab="record"><span class="ind"></span><svg><use href="#i-rec"/></svg>Record</button>
+    <button data-tab="journal"><span class="ind"></span><svg><use href="#i-book"/></svg>Journal</button>
+    <button data-tab="safety"><span class="ind"></span><svg><use href="#i-shield"/></svg>Safety</button>
+    <button data-tab="settings"><span class="ind"></span><svg><use href="#i-gear"/></svg>Settings</button>
+  </nav>
+
+  <!-- ===================== OVERLAY — an alarm going off ===================== -->
+  <div class="overlay" id="nagOverlay" hidden>
+    <div class="nagbody">
+      <span class="nagglow"><svg><use href="#i-alarm"/></svg></span>
+      <p class="display">Morning, Thomas</p>
+      <p class="head" style="color:var(--dim);font-weight:400">Alarm · 6:45 AM</p>
+      <button class="primary" id="awakeBtn" style="padding:18px 48px;font-size:19px;border-radius:18px;margin-top:var(--sp4)">I'm awake</button>
+      <p class="sub">Or say "Hey OVOA, I'm awake."</p>
+      <p class="sub" style="margin-top:var(--sp4)">1 more waiting — Metformin, 8:00 AM</p>
+      <button class="link" id="nagClose" style="margin-top:var(--sp6)">Close this preview</button>
+    </div>
+  </div>
+
+  <!-- ===================== OVERLAY — first run ===================== -->
+  <div class="overlay" id="setupOverlay" hidden>
+    <div class="vhead" style="padding-bottom:0">
+      <span class="grow"><span class="title">OVOA</span>
+        <span class="sub" style="display:block;color:var(--cyan)">Listening…</span></span>
+      <span class="micro num">3 / 9</span>
+    </div>
+    <div class="scroll" style="gap:var(--sp4)">
+      <div class="track" style="height:3px"><i style="width:33%"></i></div>
+
+      <div class="orbstage st-listening" style="flex:0 0 auto;padding-top:var(--sp2)">
+        <button class="orbwrap" style="width:180px;height:180px" aria-label="Listening">
+          <span class="halo" style="width:164px;height:164px"></span>
+          <span class="orb" style="width:136px;height:136px"><svg style="color:var(--cyan)"><use href="#i-mic"/></svg></span>
+        </button>
+        <p class="title" style="font-weight:400;line-height:1.3">What time do you usually wake up?</p>
+        <p class="body" style="color:var(--cyan)">about half six, seven at the weekend</p>
+      </div>
+
+      <div class="rest">
+        <span class="kicker">The call so far</span>
+        <div class="rows">
+          <div class="row"><span class="grow body">Hi, I'm OVOA. A few quick questions so I can plan around your day. Just answer out loud, and say skip for any you'd rather not.</span></div>
+          <div class="row"><span class="grow body" style="color:var(--cyan)">go on then</span></div>
+          <div class="row"><span class="grow body">What should I call you?</span></div>
+          <div class="row"><span class="grow body" style="color:var(--cyan)">Thomas</span></div>
+          <div class="row"><span class="grow body">Thomas it is.</span></div>
+        </div>
+      </div>
+
+      <div class="ground" style="display:flex;justify-content:space-evenly;padding-block:var(--sp2) var(--sp4)">
+        <span style="display:flex;flex-direction:column;align-items:center;gap:6px">
+          <button class="chip" style="width:56px;height:56px;border-radius:50%;display:grid;place-items:center;padding:0">
+            <svg width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-keypad"/></svg></button>
+          <span class="micro">Type</span></span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap:6px">
+          <button class="chip" style="width:56px;height:56px;border-radius:50%;display:grid;place-items:center;padding:0">
+            <svg width="21" height="21"><use href="#i-skip"/></svg></button>
+          <span class="micro">Skip</span></span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap:6px">
+          <button class="chip" id="setupClose" style="width:56px;height:56px;border-radius:50%;display:grid;place-items:center;padding:0;background:var(--danger);border-color:var(--danger);color:#180405">
+            <svg width="21" height="21" style="transform:rotate(135deg)" fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-call"/></svg></button>
+          <span class="micro">Later</span></span>
+      </div>
+      <p class="micro" style="text-align:center">Every question can be typed instead. Setup is a conversation, not a form.</p>
+    </div>
+  </div>
+
+</div></div>
+
+<p class="legend"><span class="dirname">Direction 3 — Soft depth</span>
+<b>Working mock.</b> Six tabs, five sub-screens, and two full-screen moments. Tick a todo, confirm a routine,
+approve the text, hold SOS, switch the orb's state, connect the clip, flip any switch. Exactly one object per
+screen is lifted to the top elevation; everything else rests or sits on the ground.</p>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var $ = function(s,r){return (r||document).querySelector(s)};
+  var $$ = function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
+
+  /* ---------- navigation ---------- */
+  var stack = [];
+  var current = "activity";
+  var TABS = ["activity","ovoa","record","journal","safety","settings"];
+  function show(id){
+    $$(".view").forEach(function(v){v.classList.toggle("active", v.id === "v"+"-"+id)});
+    var isTab = TABS.indexOf(id) >= 0;
+    $("#tabbar").hidden = !isTab;
+    $$("#tabbar button").forEach(function(b){
+      if(b.dataset.tab === id) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
+    });
+    current = id;
+    var sc = $("#v"+"-"+id+" .scroll"); if(sc) sc.scrollTop = 0;
+  }
+  function setTab(id){ stack = []; show(id); }
+  function go(id){ stack.push(current); show(id); }
+  function back(){ show(stack.pop() || "activity"); }
+
+  document.addEventListener("click", function(e){
+    var t = e.target.closest("[data-tab],[data-go],[data-back]");
+    if(!t) return;
+    if(t.hasAttribute("data-back")) return back();
+    if(t.dataset.go) return go(t.dataset.go);
+    if(t.dataset.tab) return setTab(t.dataset.tab);
+  });
+
+  /* role="button" panels answer to Enter and Space like a real button */
+  document.addEventListener("keydown", function(e){
+    if(e.key !== "Enter" && e.key !== " ") return;
+    var t = e.target.closest('[role="button"][tabindex]');
+    if(!t) return;
+    e.preventDefault();
+    t.click();
+  });
+
+  /* ---------- switches ---------- */
+  document.addEventListener("click", function(e){
+    var sw = e.target.closest(".sw");
+    if(!sw) return;
+    var on = sw.getAttribute("aria-checked") !== "true";
+    sw.setAttribute("aria-checked", on ? "true" : "false");
+    if(sw.id === "alwaysSw"){ $("#alwaysWarn").hidden = !on; }
+    if(sw.id === "autoApproveSw"){ $("#autoApproveWarn").hidden = !on; }
+    if(sw.id === "autoTextSw"){ $("#openShortcuts").hidden = !on; }
+    if(sw.id === "agentSw"){ $("#agentExtra").hidden = !on; $("#bgWorkRow").style.opacity = on ? "1" : ".45"; }
+    if(sw.id === "timelineSw"){ $("#timelineExtra").hidden = !on; }
+    if(sw.id === "fallSw"){
+      $("#fallStatus").textContent = on ? "Watching for falls while the app is open." : "Off";
+    }
+  });
+
+  /* ---------- segmented controls ---------- */
+  function segment(rootId, fn){
+    var root = $(rootId); if(!root) return;
+    root.addEventListener("click", function(e){
+      var b = e.target.closest("button"); if(!b) return;
+      $$("button", root).forEach(function(x){x.setAttribute("aria-selected", x === b ? "true" : "false")});
+      if(fn) fn(b);
+    });
+  }
+  segment("#retainSeg");
+  segment("#listenSeg", function(b){
+    $("#listenHint").textContent = b.dataset.listen === "wake"
+      ? "Say the assistant's name while the OVOA tab is open."
+      : "Double-click the ES100's button: it buzzes and listens. Press once to send what you said; press once while it answers to cut it off. Works from other apps too.";
+  });
+  segment("#micSeg", function(b){
+    $("#micHint").textContent = b.dataset.mic === "phone"
+      ? "The iPhone's microphone hears you. It answers as soon as you stop talking."
+      : "The clip records what you say on its own microphone. Click to start, click again when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.";
+  });
+  segment("#autonomySeg", function(b){
+    $("#autonomyHint").textContent = b.dataset.auto === "suggest"
+      ? "It looks things up and tells you. Anything that would change something shows up as a card for you to approve."
+      : "It can also add calendar events, tasks and drafts on its own when they follow from what you asked for.";
+  });
+
+  /* ---------- Activity: todos, routines, the settled favour ---------- */
+  $$("#todoList [data-todo]").forEach(function(row){
+    row.addEventListener("click", function(){
+      if(row.dataset.todo === "done") return;      // done stays done
+      row.dataset.todo = "done";
+      row.disabled = true;
+      var icon = $(".tickicon", row);
+      icon.innerHTML = '<use href="#i-checkfill"/>';
+      icon.classList.add("ok"); icon.style.color = "";
+      $(".body", row).classList.add("strike");
+    });
+  });
+
+  $$("[data-confirm]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var row = btn.closest(".row");
+      $(".body", row).classList.add("strike");
+      var done = document.createElement("span");
+      done.className = "sub"; done.textContent = "done";
+      btn.replaceWith(done);
+    });
+  });
+
+  /* settling the one lifted card hands the top level to the steps panel */
+  $$("[data-settle]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var card = $("#favorCard");
+      var kept = btn.dataset.settle === "done";
+      card.classList.remove("lift"); card.classList.add("rows","ground");
+      card.style.padding = "0 4px";
+      card.innerHTML = '<div class="row" style="border-top:0"><svg width="20" height="20" class="'+(kept?"ok":"chev")+'">'+
+        '<use href="#i-'+(kept?"checkfill":"circle")+'"/></svg><span class="grow body '+(kept?"":"strike")+'">'+
+        (kept ? "Sent Sarah the inventory list. Settled, and the Thursday nudge is cancelled."
+              : "Not needed. Dropped, and the Thursday nudge is cancelled.")+'</span></div>';
+      var steps = $("#stepsPanel");
+      steps.classList.remove("rest"); steps.classList.add("lift");
+    });
+  });
+
+  /* ---------- Activity + Live: heart traces ---------- */
+  function trace(el, values){
+    if(!el) return;
+    var lo = Math.min.apply(null, values) - 5, hi = Math.max.apply(null, values) + 5;
+    el.innerHTML = values.map(function(v,i){
+      var h = Math.max(6, Math.round((v - lo) / (hi - lo) * 100));
+      return '<i class="'+(i === values.length-1 ? "last" : "")+'" style="height:'+h+'%'+
+        (i === values.length-1 ? "" : ";opacity:"+(0.35 + 0.4*i/values.length))+'"></i>';
+    }).join("");
+  }
+  var hr = [58,61,57,63,72,81,96,128,112,88,74,69,66,71,64,60,58,62,67,63,59,61,65,62];
+  trace($("#heartGraph"), hr);
+  trace($("#liveHeart"), [61,63,66,64,62,65,68,66,63,61,64,67,65,64]);
+
+  /* ---------- OVOA: three states ---------- */
+  var stage = $("#orbStage"), label = $("#orbLabel"), hint = $("#orbHint"),
+      words = $("#orbWords"), icon = $("#orbIcon");
+  function setState(s){
+    stage.className = "orbstage st-" + (s === "approval" ? "idle" : s);
+    $("#alwaysWrap").hidden = s !== "listening";
+    $("#approvalCard").hidden = s !== "approval";
+    $("#doingRow").hidden = true;
+    stage.classList.toggle("demoted", s === "approval");
+    $$("#orbStates button").forEach(function(b){
+      b.setAttribute("aria-selected", b.dataset.state === s ? "true" : "false");
+    });
+    if(s === "idle"){
+      icon.innerHTML = '<use href="#i-micoff"/>';
+      label.textContent = "Tap to start listening";
+      hint.textContent = "The clip's button works too — click, talk, click.";
+      words.hidden = true;
+    } else if(s === "listening"){
+      icon.innerHTML = '<use href="#i-mic"/>';
+      label.textContent = "Listening";
+      hint.textContent = "Always listen is on · tap the orb to turn it off";
+      words.hidden = false;
+      words.textContent = "text Sarah and tell her I found the inventory list";
+    } else {
+      icon.innerHTML = '<use href="#i-speak"/>';
+      label.textContent = "Speaking";
+      hint.textContent = "Tap to interrupt";
+      words.hidden = false;
+      words.textContent = "text Sarah and tell her I found the inventory list";
+    }
+    var b = $("#approveBtn");
+    b.disabled = true; b.textContent = "Approve";
+    $("#approveNote").textContent = "Pick a contact first. Nothing leaves the phone until you approve it.";
+    $$("#contactPick [data-pick] svg").forEach(function(s){s.style.opacity = "0"});
+  }
+  $("#orbStates").addEventListener("click", function(e){
+    var b = e.target.closest("button"); if(b) setState(b.dataset.state);
+  });
+  $("#orb").addEventListener("click", function(){
+    setState(stage.classList.contains("st-listening") ? "idle" : "listening");
+  });
+  $("#alwaysBar").addEventListener("click", function(){ setState("idle"); });
+  $("#logsBtn").addEventListener("click", function(){
+    var open = $("#logPanel").hidden;
+    $("#logPanel").hidden = !open;
+    $("#logsBtn").setAttribute("aria-pressed", open ? "true" : "false");
+    $("#logsBtn").classList.toggle("on", open);
+  });
+  $("#logClose").addEventListener("click", function(){
+    $("#logPanel").hidden = true;
+    $("#logsBtn").setAttribute("aria-pressed","false");
+    $("#logsBtn").classList.remove("on");
+  });
+  $$("#contactPick [data-pick]").forEach(function(row){
+    row.addEventListener("click", function(){
+      $$("#contactPick [data-pick] svg").forEach(function(s){s.style.opacity = "0"});
+      $("svg", row).style.opacity = "1";
+      $("#approveBtn").disabled = false;
+      $("#approveNote").textContent = "Sarah Ellison · mobile. It opens Messages; you tap Send.";
+    });
+  });
+  $("#approveBtn").addEventListener("click", function(){
+    $("#approvalCard").hidden = true;
+    $("#doingRow").hidden = false;
+    stage.classList.remove("demoted");
+    setTimeout(function(){
+      $("#doingRow").hidden = true;
+      setState("idle");
+      label.textContent = "Sent to Sarah";
+      hint.textContent = "Tap to start listening";
+    }, reduce ? 300 : 1600);
+  });
+  $("#cancelBtn").addEventListener("click", function(){ setState("idle"); });
+
+  /* ---------- Record: connection phases, recorder, rename ---------- */
+  var phase = "idle", timer = null, started = 0, paused = false;
+  var phases = {
+    idle:"Not connected", scanning:"Looking for clips…", pairing:"Press the clip's button",
+    connecting:"Connecting…", connected:"Connected"
+  };
+  function setPhase(p){
+    phase = p;
+    $("#clipPhase").textContent = phases[p];
+    var dot = $("#clipDot");
+    dot.className = "dot" + (p === "connected" ? " on" : (p === "idle" ? "" : " busy"));
+    $("#clipName").textContent = p === "idle" ? "ES100 clip" : "ES100-7A3F";
+    $("#foundList").hidden = !(p === "scanning" || p === "pairing");
+    $("#clipStats").hidden = p !== "connected";
+    $("#disconnectBtn").hidden = p !== "connected";
+    $("#importBtn").hidden = p !== "connected";
+    $("#findBtn").hidden = p === "connected";
+    $("#findBtn").textContent = p === "scanning" ? "Scanning…" : "Find clips";
+    var rec = $("#recBtn");
+    rec.disabled = p !== "connected";
+    $("#recState").textContent = p === "connected" ? "Tap to record on the clip" : "Connect the clip to record";
+    /* the lift follows the blocking step: the clip until it's linked, then the record control */
+    var clip = $("#clipPanel"), recorder = $("#recorder");
+    if(p === "connected"){
+      clip.classList.remove("lift"); clip.classList.add("rest");
+      recorder.classList.remove("rest"); recorder.classList.add("lift");
+    } else {
+      recorder.classList.remove("lift"); recorder.classList.add("rest");
+      clip.classList.remove("rest"); clip.classList.add("lift");
+    }
+  }
+  $("#findBtn").addEventListener("click", function(){
+    if(phase === "scanning") return;
+    setPhase("scanning");
+    setTimeout(function(){ if(phase === "scanning") setPhase("pairing"); }, reduce ? 200 : 1200);
+  });
+  $("#foundClip").addEventListener("click", function(){
+    setPhase("connecting");
+    setTimeout(function(){ setPhase("connected"); }, reduce ? 200 : 1000);
+  });
+  $("#disconnectBtn").addEventListener("click", function(){ stopRec(); setPhase("idle"); });
+
+  function clock(ms){
+    var s = Math.floor(ms/1000), m = Math.floor(s/60);
+    return m + ":" + String(s % 60).padStart(2,"0");
+  }
+  function tick(){ if(!paused) $("#recTimer").textContent = clock(Date.now() - started); }
+  function startRec(){
+    started = Date.now(); paused = false;
+    timer = setInterval(tick, 500);
+    $("#recBtn").classList.add("running");
+    $("#recControls").hidden = false;
+    $("#recState").textContent = "Recording on the clip";
+    $("#pauseBtn").textContent = "Pause";
+  }
+  function stopRec(){
+    clearInterval(timer); timer = null; paused = false;
+    $("#recBtn").classList.remove("running");
+    $("#recControls").hidden = true;
+    $("#recTimer").textContent = "0:00";
+    if(phase === "connected") $("#recState").textContent = "Tap to record on the clip";
+  }
+  $("#recBtn").addEventListener("click", function(){ timer ? stopRec() : startRec(); });
+  $("#stopBtn").addEventListener("click", stopRec);
+  $("#pauseBtn").addEventListener("click", function(){
+    paused = !paused;
+    $("#pauseBtn").textContent = paused ? "Resume" : "Pause";
+    $("#recState").textContent = paused ? "Paused" : "Recording on the clip";
+    if(!paused) started = Date.now() - (parseTimer());
+  });
+  function parseTimer(){
+    var p = $("#recTimer").textContent.split(":");
+    return (Number(p[0]) * 60 + Number(p[1])) * 1000;
+  }
+  $$("[data-rename]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var row = btn.closest("[data-rec]"), title = $(".rec-title", row);
+      if(btn.textContent === "Save"){
+        var input = $("input", row);
+        title.textContent = input.value.trim() || title.dataset.old;
+        title.hidden = false; input.remove(); btn.textContent = "Rename";
+        return;
+      }
+      title.dataset.old = title.textContent;
+      var input = document.createElement("input");
+      input.value = title.textContent; input.setAttribute("aria-label","Recording name");
+      title.hidden = true; title.parentNode.insertBefore(input, title);
+      input.focus(); btn.textContent = "Save";
+    });
+  });
+  $$("[data-play]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var playing = btn.dataset.on === "1";
+      $$("[data-play]").forEach(function(b){ b.dataset.on = "0"; $("svg",b).innerHTML = '<use href="#i-play"/>'; });
+      if(!playing){ btn.dataset.on = "1"; $("svg",btn).innerHTML = '<use href="#i-pause"/>'; }
+    });
+  });
+  $("#importBtn").addEventListener("click", function(){
+    $("#importBtn").textContent = "Every recording is already on your phone";
+    setTimeout(function(){ $("#importBtn").textContent = "Import from clip"; }, 2200);
+  });
+  setPhase("idle");
+
+  /* ---------- Journal ---------- */
+  segment("#journalSeg", function(b){
+    ["notes","days","transcripts"].forEach(function(k){
+      $("#seg-" + k).hidden = k !== b.dataset.seg;
+    });
+  });
+  var days = [
+    {label:"Today", kicker:"The day", title:"A call that turned into a to-do list",
+     body:"Quiet morning, a long call with Sarah about the flat, gym in the evening. Two things came out of the call that you said you'd do.", empty:false},
+    {label:"Sunday, Sep 19", kicker:"The day", title:"Mostly the kitchen",
+     body:"A short note about the boiler, a long walk, and nothing else recorded.", empty:false},
+    {label:"Saturday, Sep 18", kicker:"", title:"", body:"", empty:true}
+  ];
+  var dayAt = 0, grain = "day";
+  function renderDay(){
+    var d = days[dayAt];
+    $("#dayLabel").textContent = grain === "week" ? "Sep 14 – Sep 20" : d.label;
+    var empty = grain === "day" && d.empty;
+    $("#dayEmpty").hidden = !empty;
+    $("#daySummary").hidden = empty;
+    $("#dayBlocks").hidden = empty;
+    if(grain === "week"){
+      $("#dayKicker").textContent = "The week";
+      $("#dayTitle").textContent = "A week that ended owing two people something";
+      $("#dayBody").textContent = "Five days over 8,000 steps, three gym sessions, one long call. Two promises still open.";
+    } else if(!empty){
+      $("#dayKicker").textContent = d.kicker;
+      $("#dayTitle").textContent = d.title;
+      $("#dayBody").textContent = d.body;
+    }
+    $("#dayNext").disabled = dayAt === 0;
+    $("#dayNext").style.opacity = dayAt === 0 ? ".4" : "1";
+  }
+  $("#dayPrev").addEventListener("click", function(){ if(dayAt < days.length-1){ dayAt++; renderDay(); }});
+  $("#dayNext").addEventListener("click", function(){ if(dayAt > 0){ dayAt--; renderDay(); }});
+  segment("#grainSeg", function(b){ grain = b.dataset.grain; renderDay(); });
+  renderDay();
+
+  $("#addMoment").addEventListener("click", function(){
+    var box = $("#momentInput"), text = box.value.trim();
+    if(!text) return;
+    dayAt = 0; grain = "day";
+    $$("#grainSeg button").forEach(function(x){x.setAttribute("aria-selected", x.dataset.grain === "day" ? "true":"false")});
+    renderDay();
+    var now = new Date().toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+    var row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = '<span class="sub num" style="width:58px"></span><span class="grow">' +
+      '<span class="head"></span><span class="sub" style="display:block">Added by hand.</span></span>';
+    $(".sub", row).textContent = now;
+    $(".head", row).textContent = text;
+    $("#dayBlocks .rows").appendChild(row);
+    box.value = "";
+  });
+  $("#toTranscripts").addEventListener("click", function(){
+    setTab("journal");
+    $$("#journalSeg button").forEach(function(x){
+      x.setAttribute("aria-selected", x.dataset.seg === "transcripts" ? "true" : "false");
+    });
+    ["notes","days","transcripts"].forEach(function(k){ $("#seg-"+k).hidden = k !== "transcripts"; });
+  });
+  $$("[data-hour]").forEach(function(b){
+    b.addEventListener("click", function(){
+      var open = b.dataset.open === "1";
+      b.dataset.open = open ? "0" : "1";
+      $("svg", b).style.transform = open ? "none" : "rotate(90deg)";
+    });
+  });
+
+  /* ---------- Safety ---------- */
+  var holdTimer = null, held = 0;
+  var sos = $("#sosBtn"), fill = $("#sosFill");
+  function holdStart(e){
+    e.preventDefault();
+    if(holdTimer) return;
+    held = 0;
+    holdTimer = setInterval(function(){
+      held += 100;
+      fill.style.height = Math.min(100, held / 1500 * 100) + "%";
+      if(held >= 1500){
+        holdEnd();
+        $("#sosHint").textContent = "Contacts alerted";
+        var row = document.createElement("div");
+        row.className = "row";
+        row.innerHTML = '<span class="grow head">SOS</span><span class="sub num" style="text-align:right">Contacts alerted · just now</span>';
+        $("#alertList").prepend(row);
+        setTimeout(function(){ $("#sosHint").textContent = "Press and hold to alert your contacts"; }, 2600);
+      }
+    }, 100);
+  }
+  function holdEnd(){ clearInterval(holdTimer); holdTimer = null; fill.style.height = "0"; }
+  sos.addEventListener("mousedown", holdStart);
+  sos.addEventListener("touchstart", holdStart, {passive:false});
+  ["mouseup","mouseleave","touchend","touchcancel"].forEach(function(ev){ sos.addEventListener(ev, holdEnd); });
+  sos.addEventListener("keydown", function(e){ if(e.key === "Enter" || e.key === " ") holdStart(e); });
+  sos.addEventListener("keyup", holdEnd);
+
+  $("#testFall").addEventListener("click", function(){
+    $("#testFall").textContent = "Test alert sent — contacts were not messaged";
+    setTimeout(function(){ $("#testFall").textContent = "Test the fall alert"; }, 2400);
+  });
+  $("#callBtn").addEventListener("click", function(){
+    $("#callBtn").textContent = "Your phone would dial 911";
+    setTimeout(function(){ $("#callBtn").textContent = "Call 911"; }, 2000);
+  });
+  $("#contactList").addEventListener("click", function(e){
+    var b = e.target.closest("[data-remove]"); if(b) b.closest(".row").remove();
+  });
+  $("#addContact").addEventListener("click", function(){
+    var n = $("#cName").value.trim(), p = $("#cPhone").value.trim();
+    if(!n || !p) return;
+    var row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = '<span class="grow"><span class="head"></span><span class="sub num" style="display:block"></span></span>' +
+      '<button class="link danger" data-remove>Remove</button>';
+    $(".head", row).textContent = n;
+    $(".sub", row).textContent = p;
+    $("#contactList").appendChild(row);
+    $("#cName").value = ""; $("#cPhone").value = "";
+  });
+
+  /* ---------- Settings odds and ends ---------- */
+  $("#voiceList").addEventListener("click", function(e){
+    var row = e.target.closest("[data-voice]"); if(!row) return;
+    $$("#voiceList .mark").forEach(function(m){m.style.opacity = "0"});
+    $(".mark", row).style.opacity = "1";
+    var note = $("#voiceNote");
+    note.hidden = false;
+    note.textContent = 'Playing a sample… "Hi, I\'m ' + $(".head", row).textContent + '. This is how I\'ll sound when we talk."';
+    clearTimeout(note._t);
+    note._t = setTimeout(function(){ note.hidden = true; }, 2600);
+  });
+  $("#memDisclose").addEventListener("click", function(){
+    var open = $("#memList").hidden;
+    $("#memList").hidden = !open;
+    $("#memChev").textContent = open ? "▾" : "▸";
+  });
+  $("#saveAsst").addEventListener("click", function(){
+    $("#saveAsst").textContent = "Saved";
+    setTimeout(function(){ $("#saveAsst").textContent = "Save changes"; }, 1600);
+  });
+  $("#forgetHour").addEventListener("click", function(){
+    $("#forgetHour").textContent = "Forgot 3 moments";
+    setTimeout(function(){ $("#forgetHour").textContent = "Forget the last hour"; }, 2200);
+  });
+  $("#addGoal").addEventListener("click", function(){
+    var input = $("#goalInput"), text = input.value.trim();
+    if(!text) return;
+    var row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = '<span class="grow"><span class="head"></span>' +
+      '<span class="micro" style="display:block">no reason given yet — OVOA will ask</span></span>' +
+      '<button class="link danger">Drop</button>';
+    $(".head", row).textContent = text;
+    input.closest(".rest").querySelector(".rows").appendChild(row);
+    input.value = "";
+  });
+  $$("[data-runnow]").forEach(function(b){
+    b.addEventListener("click", function(){
+      var old = b.textContent;
+      b.textContent = "Running…";
+      setTimeout(function(){
+        b.textContent = old;
+        var row = document.createElement("div");
+        row.className = "row"; row.style.alignItems = "flex-start";
+        row.innerHTML = '<span class="sub num" style="width:62px">just now</span><span class="grow">' +
+          '<span class="head">Run by hand <span class="sub">· nothing to say</span></span>' +
+          '<span class="sub" style="display:block">Looked, and decided there was nothing worth telling you.</span></span>';
+        $("#runLog").prepend(row);
+      }, reduce ? 200 : 1100);
+    });
+  });
+  document.addEventListener("click", function(e){
+    var b = e.target.closest(".link.danger"); if(!b) return;
+    if(b.textContent === "Drop" || b.textContent === "Forget") b.closest(".row").remove();
+  });
+
+  /* ---------- Activity goal chips ---------- */
+  $("#goalChips").addEventListener("click", function(e){
+    var b = e.target.closest("[data-goal]"); if(!b) return;
+    $$("#goalChips .chip").forEach(function(c){c.classList.toggle("sel", c === b)});
+    var goal = Number(b.dataset.goal), today = 7412;
+    $("#stepsPanel .sub").textContent = "of " + goal.toLocaleString() + " steps";
+    var pct = Math.min(100, today / goal * 100);
+    var bar = $("#stepsPanel .track i");
+    bar.style.width = pct + "%";
+    bar.classList.toggle("done", today >= goal);
+    $("#stepsLeft").textContent = today >= goal
+      ? "Goal reached. Nice work!"
+      : (goal - today).toLocaleString() + " to go";
+    $("#stepsLeft").classList.toggle("ok", today >= goal);
+  });
+
+  /* ---------- overlays ---------- */
+  $("#showNag").addEventListener("click", function(){ $("#nagOverlay").hidden = false; });
+  $("#nagClose").addEventListener("click", function(){ $("#nagOverlay").hidden = true; });
+  $("#awakeBtn").addEventListener("click", function(){ $("#nagOverlay").hidden = true; });
+  $("#redoSetup").addEventListener("click", function(){ $("#setupOverlay").hidden = false; });
+  $("#setupClose").addEventListener("click", function(){ $("#setupOverlay").hidden = true; });
+
+  /* ---------- Ask Claude ---------- */
+  $("#askSend").addEventListener("click", function(){
+    var box = $("#askInput"), text = box.value.trim();
+    if(!text) return;
+    var card = document.createElement("div");
+    card.className = "rest";
+    card.innerHTML = '<p class="body" style="color:var(--cyan);font-weight:600"></p>' +
+      '<p class="body" style="color:var(--dim)">Thinking…</p>';
+    $("p", card).textContent = text;
+    $("#askList").prepend(card);
+    box.value = "";
+    setTimeout(function(){
+      card.querySelectorAll("p")[1].style.color = "";
+      card.querySelectorAll("p")[1].textContent =
+        "Here's the short answer, with the reasoning underneath. Ask for more and I'll go further.";
+    }, reduce ? 200 : 900);
+  });
+
+  setState("idle");
+})();
+</script>

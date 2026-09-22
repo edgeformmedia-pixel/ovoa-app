@@ -1,0 +1,2044 @@
+<title>One Thing at a Time</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  /* ── OVOA · direction 5, "one thing at a time" ────────────────────────────
+     Single theme on purpose: this is a near-black product. Every colour is
+     painted from a token so the page never borrows the host's ground.        */
+  :root{
+    --ground:#07090D;          /* the app's ground, unchanged from theme.ts */
+    --ground-list:#0B0F15;     /* list mode only — the one other ground     */
+    --hair:#161C25;
+    --hair-2:#232A36;
+    --ink:#F2F5FA;
+    --ink-2:#8A94A6;
+    --ink-3:#59626F;
+    --cyan:#22E2FF;            /* = "the subject you are on, and its action" */
+    --cyan-dim:#0E2A33;
+    --violet:#7E5AFF;          /* orb ring only */
+    --ok:#3DDC97;
+    --warn:#FFC46B;
+    --bad:#FF6B6B;
+
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+
+    --t-hero:40px; --t-display:30px; --t-lede:20px; --t-body:16px;
+    --t-meta:13px; --t-label:11px;
+
+    --face:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --r:18px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:var(--face); font-size:var(--t-body); line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page{padding-inline:16px; padding-block:24px 40px; display:flex; flex-direction:column; align-items:center; gap:20px}
+  :focus-visible{outline:2px solid var(--cyan); outline-offset:2px; border-radius:6px}
+  button{font:inherit; color:inherit; background:none; border:0; cursor:pointer}
+  input{font:inherit}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+
+  /* ── page furniture (not the app) ────────────────────────────────────── */
+  .masthead{max-width:390px; width:100%; display:flex; flex-direction:column; gap:6px}
+  .masthead h1{
+    margin:0; font-size:22px; font-weight:700; font-stretch:118%;
+    letter-spacing:-.01em; text-wrap:balance;
+  }
+  .masthead p{margin:0; color:var(--ink-2); font-size:var(--t-meta)}
+  .masthead .k{font-family:var(--mono); color:var(--cyan); font-size:11px; letter-spacing:.08em; text-transform:uppercase}
+
+  /* ── the phone ───────────────────────────────────────────────────────── */
+  .phone{
+    position:relative; width:min(100%,390px); height:clamp(600px,84vh,812px);
+    background:var(--ground); border:1px solid var(--hair-2); border-radius:42px;
+    overflow:hidden; display:flex; flex-direction:column;
+    box-shadow:0 40px 80px rgba(0,0,0,.6);
+  }
+  .statusbar{
+    flex:0 0 auto; height:34px; display:flex; align-items:center; justify-content:space-between;
+    padding:0 26px; font-family:var(--mono); font-size:11px; color:var(--ink-2);
+  }
+  .statusbar b{color:var(--ink); font-weight:500}
+
+  .nav{
+    flex:0 0 auto; display:flex; align-items:center; gap:var(--s2);
+    padding:2px var(--s4) var(--s2); min-height:38px;
+  }
+  .nav-title{
+    flex:1 1 auto; font-size:15px; font-weight:600; letter-spacing:.02em;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .nav-back{
+    width:30px; height:30px; border-radius:15px; display:grid; place-items:center;
+    color:var(--ink); font-size:19px; line-height:1; background:#0F141B;
+  }
+  .nav-right{display:flex; align-items:center; gap:6px; flex:0 0 auto}
+  .count{font-family:var(--mono); font-size:11px; color:var(--ink-2); letter-spacing:.06em}
+  .chip-nav{
+    font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--cyan); background:var(--cyan-dim); padding:5px 9px; border-radius:9px;
+  }
+
+  /* ── stage & screens ─────────────────────────────────────────────────── */
+  .stage{position:relative; flex:1 1 auto; overflow:hidden}
+  .screen{position:absolute; inset:0; display:flex; flex-direction:column}
+  .screen[hidden]{display:none!important}
+  .listmode{background:var(--ground-list)}
+
+  /* a deck of subjects: exactly one is on screen */
+  .deck{position:relative; flex:1 1 auto; overflow:hidden}
+  .subject{
+    position:absolute; inset:0; overflow-y:auto; overscroll-behavior:contain;
+    padding:var(--s5) var(--s4) var(--s3);
+    display:flex; flex-direction:column; gap:var(--s3);
+  }
+  .subject[hidden]{display:none!important}
+  .spring{flex:1 1 auto; min-height:var(--s2)}
+  @keyframes inR{from{transform:translateX(26%); opacity:0}to{transform:none; opacity:1}}
+  @keyframes inL{from{transform:translateX(-26%); opacity:0}to{transform:none; opacity:1}}
+  .inR{animation:inR .26s cubic-bezier(.22,.7,.2,1)}
+  .inL{animation:inL .26s cubic-bezier(.22,.7,.2,1)}
+
+  /* ── the one-subject vocabulary ──────────────────────────────────────── */
+  .eyebrow{
+    font-family:var(--mono); font-size:var(--t-label); letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-2); display:flex; align-items:center; gap:7px;
+  }
+  .eyebrow.now{color:var(--cyan)}
+  .eyebrow.late{color:var(--warn)}
+  .eyebrow.done{color:var(--ok)}
+  .eyebrow.bad{color:var(--bad)}
+  .dot{width:6px; height:6px; border-radius:3px; background:currentColor; flex:0 0 auto}
+  .hero{
+    margin:0; font-size:var(--t-hero); font-weight:700; font-stretch:118%;
+    letter-spacing:-.02em; line-height:1.03; overflow-wrap:break-word; text-wrap:balance;
+  }
+  .display{margin:0; font-size:var(--t-display); font-weight:600; font-stretch:112%; letter-spacing:-.015em; line-height:1.1}
+  .lede{margin:0; font-size:var(--t-lede); line-height:1.35; color:var(--ink)}
+  .said{font-size:var(--t-lede); line-height:1.4; color:var(--ink); font-style:italic}
+  .meta{margin:0; color:var(--ink-2); font-size:var(--t-meta)}
+  .meta b{color:var(--ink); font-weight:600}
+  .num{font-family:var(--mono); font-variant-numeric:tabular-nums; font-feature-settings:"tnum"}
+  .big-num{
+    font-family:var(--face); font-stretch:118%; font-weight:700;
+    font-variant-numeric:tabular-nums; font-size:64px; line-height:1; letter-spacing:-.03em;
+  }
+  .unit{color:var(--ink-2); font-size:var(--t-meta); font-family:var(--mono); letter-spacing:.06em}
+  .rule{height:1px; background:var(--hair); border:0; margin:var(--s2) 0}
+
+  /* the single action per screen */
+  .act{
+    width:100%; padding:16px; border-radius:var(--r); background:var(--cyan); color:var(--ground);
+    font-weight:700; font-size:17px; text-align:center; letter-spacing:.01em;
+  }
+  .act:active{transform:translateY(1px)}
+  .act.quiet{background:#121822; color:var(--ink); font-weight:600}
+  .act.warn{background:var(--warn); color:var(--ground)}
+  .act.bad{background:var(--bad); color:var(--ground)}
+  .act[disabled]{opacity:.38; cursor:default}
+  .act-row{display:flex; gap:var(--s2)}
+  .act-row .act{flex:1 1 0}
+  .link{color:var(--cyan); font-weight:600; font-size:var(--t-meta); text-align:left; padding:6px 0}
+  .link.bad{color:var(--bad)}
+  .link.dim{color:var(--ink-2)}
+
+  /* the overflow pointer — always countable, always leads somewhere */
+  .more{
+    align-self:flex-start; display:flex; align-items:center; gap:8px;
+    font-family:var(--mono); font-size:var(--t-label); letter-spacing:.1em; text-transform:uppercase;
+    color:var(--ink-2); border:1px solid var(--hair-2); border-radius:999px; padding:7px 12px;
+  }
+  .more b{color:var(--ink); font-weight:600}
+
+  /* small state pills used inside a subject */
+  .pills{display:flex; flex-wrap:wrap; gap:6px}
+  .pill{
+    font-family:var(--mono); font-size:var(--t-label); letter-spacing:.08em; text-transform:uppercase;
+    padding:7px 10px; border-radius:999px; border:1px solid var(--hair-2); color:var(--ink-2);
+  }
+  .pill[aria-pressed="true"]{border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim)}
+  .tag{
+    font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--ink-3);
+  }
+  .tag.spoke{color:var(--cyan)}
+  .tag.kept{color:var(--ink-2)}
+
+  /* ── checkable rows (the one list the direction allows inside a subject) ─ */
+  .checks{display:flex; flex-direction:column}
+  .check{
+    display:flex; align-items:flex-start; gap:var(--s3); padding:14px 0;
+    border-top:1px solid var(--hair); text-align:left; width:100%; font-size:17px; line-height:1.3;
+  }
+  .check:last-child{border-bottom:1px solid var(--hair)}
+  .box{
+    flex:0 0 auto; width:22px; height:22px; border-radius:11px; border:1.5px solid var(--ink-3);
+    display:grid; place-items:center; font-size:13px; color:var(--ground); margin-top:1px;
+  }
+  .check[aria-checked="true"] .box{background:var(--ok); border-color:var(--ok)}
+  .check[aria-checked="true"] .box::after{content:"✓"; font-weight:700}
+  .check[aria-checked="true"] .ct{color:var(--ink-2); text-decoration:line-through}
+
+  /* ── list mode: the declared exception ──────────────────────────────── */
+  .mode{
+    display:flex; align-items:center; gap:8px; padding:10px var(--s4);
+    border-bottom:1px solid var(--hair); background:#0E131A; flex:0 0 auto;
+  }
+  .mode span{font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-2)}
+  .mode em{
+    font-style:normal; font-family:var(--mono); font-size:10px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ground); background:var(--ink-2); padding:3px 7px; border-radius:5px;
+  }
+  .scroll{flex:1 1 auto; overflow-y:auto; padding:var(--s4) var(--s4) var(--s6)}
+  .group{margin:0 0 var(--s5)}
+  .group > .eyebrow{margin-bottom:var(--s2)}
+  .row{
+    display:flex; align-items:center; gap:var(--s3); width:100%; text-align:left;
+    padding:13px 0; border-top:1px solid var(--hair);
+  }
+  .row:last-child{border-bottom:1px solid var(--hair)}
+  .row .rt{flex:1 1 auto; min-width:0}
+  .row .rt b{display:block; font-weight:500; font-size:15px; overflow-wrap:break-word}
+  .row .rt span{display:block; color:var(--ink-2); font-size:var(--t-meta)}
+  .row .rv{flex:0 0 auto; color:var(--ink-2); font-size:var(--t-meta); font-family:var(--mono); text-align:right}
+  .chev{flex:0 0 auto; color:var(--ink-3); font-size:16px}
+  .time{
+    flex:0 0 58px; font-family:var(--mono); font-size:var(--t-meta); color:var(--ink-2);
+    font-variant-numeric:tabular-nums;
+  }
+
+  /* switches */
+  .sw{
+    flex:0 0 auto; width:46px; height:28px; border-radius:14px; background:#1A2130;
+    position:relative; transition:background .16s;
+  }
+  .sw::after{
+    content:""; position:absolute; top:3px; left:3px; width:22px; height:22px; border-radius:11px;
+    background:#7E8798; transition:transform .16s, background .16s;
+  }
+  .sw[aria-checked="true"]{background:var(--cyan-dim)}
+  .sw[aria-checked="true"]::after{transform:translateX(18px); background:var(--cyan)}
+  .sw.risk[aria-checked="true"]{background:#33181A}
+  .sw.risk[aria-checked="true"]::after{background:var(--bad)}
+  .warnbox{
+    border-left:2px solid var(--warn); padding:2px 0 2px var(--s3);
+    color:var(--warn); font-size:var(--t-meta);
+  }
+
+  /* fields */
+  .field{display:flex; flex-direction:column; gap:6px}
+  .field label{font-family:var(--mono); font-size:var(--t-label); letter-spacing:.12em; text-transform:uppercase; color:var(--ink-2)}
+  .field input{
+    background:#0E131A; border:1px solid var(--hair-2); color:var(--ink);
+    border-radius:12px; padding:13px var(--s3); font-size:16px; width:100%;
+  }
+  .field input::placeholder{color:var(--ink-3)}
+
+  /* charts */
+  .bars{display:flex; align-items:flex-end; gap:5px; height:104px}
+  .bcol{flex:1 1 0; display:flex; flex-direction:column; align-items:center; gap:5px; height:100%}
+  .btrack{flex:1 1 auto; width:100%; display:flex; align-items:flex-end}
+  .bar{width:100%; min-height:3px; border-radius:3px; background:#1E4B57}
+  .bar.hit{background:var(--ok)}
+  .bar.today{background:var(--cyan)}
+  .bcap{font-family:var(--mono); font-size:9px; color:var(--ink-3); letter-spacing:.04em}
+  .trace{display:flex; align-items:flex-end; gap:2px; height:56px}
+  .trace i{flex:1 1 0; background:#4A2730; border-radius:2px; min-height:2px}
+  .trace i:last-child{background:var(--cyan)}
+  .track{height:8px; border-radius:4px; background:#141A24; overflow:hidden}
+  .track > i{display:block; height:100%; background:var(--cyan); border-radius:4px}
+  .track > i.ok{background:var(--ok)}
+
+  /* ── pager: the control that moves between subjects ─────────────────── */
+  .pager{
+    flex:0 0 auto; display:flex; align-items:center; gap:var(--s2);
+    padding:var(--s2) var(--s3); border-top:1px solid var(--hair);
+  }
+  .pager[hidden]{display:none!important}
+  .arrow{
+    flex:0 0 auto; width:44px; height:44px; border-radius:22px; background:#111720;
+    border:1px solid var(--hair-2); display:grid; place-items:center; font-size:20px; color:var(--ink);
+  }
+  .arrow[disabled]{opacity:.3; cursor:default}
+  .pmid{flex:1 1 auto; min-width:0; display:flex; flex-direction:column; align-items:center; gap:6px}
+  .dots{display:flex; gap:4px; align-items:center; justify-content:center; flex-wrap:wrap}
+  .dots button{width:7px; height:7px; border-radius:4px; background:#222B38; padding:0}
+  .dots button[aria-current="true"]{width:20px; background:var(--cyan)}
+  .dots button.flag{background:var(--warn)}
+  .pnext{
+    font-family:var(--mono); font-size:10px; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--ink-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;
+  }
+  .pnext b{color:var(--ink); font-weight:500}
+
+  /* ── tab bar ─────────────────────────────────────────────────────────── */
+  .tabs{
+    flex:0 0 auto; display:flex; border-top:1px solid var(--hair-2); background:#080B10;
+    padding:var(--s2) 2px calc(var(--s2) + env(safe-area-inset-bottom,0px));
+  }
+  .tab{position:relative; flex:1 1 0; display:flex; flex-direction:column; align-items:center; gap:3px; padding:4px 0; min-width:0}
+  .tab svg{width:21px; height:21px; stroke:var(--ink-3); fill:none; stroke-width:1.7}
+  .tab span{
+    font-family:var(--mono); font-size:9px; letter-spacing:.04em; color:var(--ink-3);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;
+  }
+  .tab[aria-current="true"] svg{stroke:var(--cyan)}
+  .tab[aria-current="true"] span{color:var(--cyan)}
+  .badge{
+    position:absolute; transform:translate(11px,-4px); background:var(--warn); color:var(--ground);
+    font-family:var(--mono); font-size:9px; font-weight:600; border-radius:7px; padding:0 4px;
+  }
+
+  /* ── the orb ─────────────────────────────────────────────────────────── */
+  .orbwrap{position:relative; width:212px; height:212px; display:grid; place-items:center; margin:0 auto}
+  .halo{
+    position:absolute; width:196px; height:196px; border-radius:50%; background:var(--cyan);
+    opacity:.14; filter:blur(6px);
+  }
+  .orbwrap.speak .halo{background:var(--ok)}
+  @keyframes breathe{0%,100%{transform:scale(1); opacity:.12}50%{transform:scale(1.2); opacity:.4}}
+  .orbwrap.live .halo{animation:breathe 2.4s ease-in-out infinite}
+  .orb{
+    position:relative; width:180px; height:180px; border-radius:50%; background:var(--ground);
+    display:grid; place-items:center;
+    box-shadow:0 8px 18px rgba(0,0,0,.45);
+  }
+  .orb::before{
+    content:""; position:absolute; inset:0; border-radius:50%; padding:3px;
+    background:conic-gradient(from 210deg,var(--cyan),var(--violet),#0C1016 62%,var(--cyan));
+    -webkit-mask:radial-gradient(circle,transparent 0 84px,#000 84px);
+            mask:radial-gradient(circle,transparent 0 84px,#000 84px);
+  }
+  .orbwrap.off .orb{opacity:.5}
+  .orbwrap.off .orb::before{background:conic-gradient(from 210deg,#2A3341,#343E4E,#0C1016 62%,#2A3341)}
+  .orbglyph{font-size:34px; line-height:1; color:var(--cyan)}
+  .orbwrap.off .orbglyph{color:var(--ink-2)}
+  .orbwrap.speak .orbglyph{color:var(--ok)}
+  .phase{font-size:24px; font-weight:300; letter-spacing:.04em; text-align:center; margin:0}
+  .words{font-size:18px; line-height:1.4; text-align:center; opacity:.88; margin:0}
+  .hint{color:var(--ink-2); font-size:14px; text-align:center; margin:0}
+  .alwaysbar{
+    display:flex; align-items:center; gap:7px; background:var(--bad); color:var(--ground);
+    font-size:13px; font-weight:700; padding:7px var(--s3); border-radius:14px; align-self:flex-start;
+  }
+  .approve{
+    border-top:1px solid var(--warn); background:#0E1219; margin:0 calc(-1 * var(--s4));
+    padding:var(--s4); display:flex; flex-direction:column; gap:var(--s3);
+  }
+  .choice{border:1px solid var(--hair-2); border-radius:12px; padding:11px var(--s3); text-align:left; width:100%}
+  .choice[aria-checked="true"]{border-color:var(--cyan); background:#141A24}
+  .choice b{display:block; font-size:14px; font-weight:600}
+  .choice span{display:block; color:var(--ink-2); font-size:12px}
+  .logpanel{
+    position:absolute; left:0; right:0; bottom:0; background:#05070A; border-top:1px solid var(--hair-2);
+    padding:var(--s3) var(--s4); font-family:var(--mono); font-size:11px; color:var(--ink-2);
+    display:flex; flex-direction:column; gap:4px; max-height:44%; overflow-y:auto;
+  }
+  .logpanel b{color:var(--cyan); font-weight:500}
+
+  /* record button */
+  .recbtn{
+    width:132px; height:132px; border-radius:50%; margin:0 auto; display:grid; place-items:center;
+    border:2px solid var(--hair-2); background:#0D1219;
+  }
+  .recbtn i{display:block; width:54px; height:54px; border-radius:50%; background:var(--bad)}
+  .recbtn.on i{border-radius:8px; width:44px; height:44px}
+  .recbtn[disabled]{opacity:.4}
+
+  /* SOS */
+  .sos{
+    width:190px; height:190px; border-radius:50%; margin:0 auto; display:grid; place-items:center;
+    background:#2A0E11; border:2px solid var(--bad); position:relative; overflow:hidden;
+  }
+  .sos > i{position:absolute; inset:auto 0 0 0; height:0%; background:var(--bad); transition:height .1s linear}
+  .sos > div{position:relative; text-align:center; padding:0 22px}
+  .sos b{display:block; font-size:42px; font-weight:800; font-stretch:118%; letter-spacing:.1em; color:#fff}
+  .sos span{display:block; font-size:11px; color:#FFE9E9; margin-top:4px; line-height:1.3}
+
+  /* ── overlays ────────────────────────────────────────────────────────── */
+  .overlay{
+    position:absolute; inset:0; background:var(--ground); z-index:20;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:var(--s4); padding:var(--s6) var(--s5); text-align:center;
+  }
+  .overlay[hidden]{display:none!important}
+  @keyframes rise{from{transform:translateY(14px); opacity:0}to{transform:none; opacity:1}}
+  .overlay > *{animation:rise .22s ease-out}
+  .glyph-xl{font-size:66px; line-height:1}
+  .otitle{margin:0; font-size:34px; font-weight:800; font-stretch:112%; line-height:1.05; letter-spacing:-.02em}
+  .osub{margin:0; font-size:18px; color:var(--ink-2)}
+  .queue{font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--warn)}
+  .toast{
+    position:absolute; left:var(--s3); right:var(--s3); bottom:96px; z-index:19;
+    background:#121822; border:1px solid var(--hair-2); border-radius:14px;
+    padding:11px var(--s3); font-size:13px; color:var(--ink); display:flex; gap:8px; align-items:center;
+    animation:rise .2s ease-out;
+  }
+  .toast[hidden]{display:none!important}
+  .toast .num{color:var(--cyan); font-size:11px; letter-spacing:.06em}
+  .interrupt{
+    position:absolute; left:var(--s3); right:var(--s3); top:80px; z-index:18;
+    background:#1B1509; border:1px solid var(--warn); border-radius:14px; padding:11px var(--s3);
+    display:flex; align-items:center; gap:var(--s3); animation:rise .2s ease-out;
+  }
+  .interrupt[hidden]{display:none!important}
+  .interrupt .it{flex:1 1 auto; min-width:0}
+  .interrupt .it b{display:block; font-size:10px; font-family:var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--warn)}
+  .interrupt .it span{display:block; font-size:13px}
+  .interrupt button{font-size:13px; font-weight:700; color:var(--warn); flex:0 0 auto}
+  .interrupt button.dim{color:var(--ink-2); font-weight:500}
+
+  /* setup conversation */
+  .convo{width:100%; display:flex; flex-direction:column; gap:var(--s3); text-align:left}
+  .convo .them{font-size:19px; line-height:1.35}
+  .convo .you{font-size:19px; line-height:1.35; color:var(--cyan); padding-left:var(--s4); border-left:2px solid var(--cyan-dim)}
+  .convo .sys{font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3)}
+
+  /* ── mock control panel (not part of the app) ───────────────────────── */
+  .controls{
+    width:min(100%,390px); border:1px solid var(--hair-2); border-radius:18px;
+    padding:var(--s4); display:flex; flex-direction:column; gap:var(--s3); background:#0A0E14;
+  }
+  .controls h2{
+    margin:0; font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-2);
+  }
+  .cgroup{display:flex; flex-direction:column; gap:6px}
+  .cgroup > p{margin:0; font-size:11px; color:var(--ink-3); font-family:var(--mono); letter-spacing:.06em; text-transform:uppercase}
+  .cbtns{display:flex; flex-wrap:wrap; gap:6px}
+  .cbtn{
+    font-size:12px; padding:8px 11px; border-radius:10px; border:1px solid var(--hair-2); color:var(--ink);
+    background:#0E131A;
+  }
+  .cbtn[aria-pressed="true"]{border-color:var(--cyan); color:var(--cyan)}
+  .foot{max-width:390px; width:100%; color:var(--ink-3); font-size:12px; line-height:1.5}
+</style>
+
+<div class="page">
+
+  <div class="masthead">
+    <div class="k">Direction 5 · one thing at a time</div>
+    <h1>OVOA, one subject per screen</h1>
+    <p>A working mock: six tabs, sub-screens with a back arrow, and a pager that names the subject it will take you to. Tick a todo, confirm a medication, approve a text, fire the alarm.</p>
+  </div>
+
+  <div class="phone" id="phone">
+    <div class="statusbar"><b>9:41</b><span>ES100 84% &nbsp;·&nbsp; ▮▮▮</span></div>
+
+    <header class="nav">
+      <button class="nav-back" id="btnBack" hidden aria-label="Back">←</button>
+      <div class="nav-title" id="navTitle">Activity</div>
+      <div class="nav-right" id="navRight"></div>
+    </header>
+
+    <div class="stage" id="stage">
+
+      <!-- ══════════════ 1 · ACTIVITY, four things due ══════════════ -->
+      <section class="screen" id="sc-activity" data-tab="activity" data-title="Activity"
+               data-chip="All of today" data-chip-to="sc-all-today">
+
+        <!-- ── due deck ── -->
+        <div class="deck" id="dk-due">
+
+          <article class="subject" data-name="Metformin" data-flag="1" id="sub-metformin">
+            <div class="eyebrow now"><i class="dot"></i>Due now · 8:00</div>
+            <h2 class="hero">Metformin</h2>
+            <p class="lede">500 mg, with food. Every morning.</p>
+            <p class="meta">Yesterday you confirmed it at <span class="num">8:12</span>.</p>
+            <div class="spring"></div>
+            <button class="more" data-go="sc-all-today"><b>3</b> more due today →</button>
+            <button class="act" data-confirm="sub-metformin">Done</button>
+          </article>
+
+          <article class="subject" data-name="Levothyroxine" data-flag="1" id="sub-levo">
+            <div class="eyebrow late"><i class="dot"></i>Missed · 7:00</div>
+            <h2 class="hero">Levothyroxine</h2>
+            <p class="lede">Missed: Levothyroxine, 7:00.</p>
+            <p class="meta">An hour before food. Take it now or skip today — either answer clears it.</p>
+            <div class="spring"></div>
+            <div class="act-row">
+              <button class="act quiet" data-skip="sub-levo">Skipped</button>
+              <button class="act" data-confirm="sub-levo">Done</button>
+            </div>
+          </article>
+
+          <article class="subject" data-name="Today's list" id="sub-todos">
+            <div class="eyebrow">Today's list</div>
+            <h2 class="display">Four things you said you'd do</h2>
+            <p class="meta"><b class="num" id="todoCount">0</b> of <span class="num">4</span> done</p>
+            <div class="checks" id="todoList">
+              <button class="check" role="checkbox" aria-checked="false"><span class="box"></span><span class="ct">Call the pharmacy about the repeat</span></button>
+              <button class="check" role="checkbox" aria-checked="false"><span class="box"></span><span class="ct">Book the dentist</span></button>
+              <button class="check" role="checkbox" aria-checked="false"><span class="box"></span><span class="ct">Send Ana the photos from Sunday</span></button>
+              <button class="check" role="checkbox" aria-checked="false"><span class="box"></span><span class="ct">Pay the council tax</span></button>
+            </div>
+            <div class="spring"></div>
+            <p class="meta">Say “that's done” to OVOA and it ticks here too.</p>
+          </article>
+
+          <article class="subject" data-name="Asked of you" data-flag="1" id="sub-favor">
+            <div class="eyebrow late"><i class="dot"></i>Asked of you</div>
+            <p class="meta">Ana · Sunday, on the walk</p>
+            <p class="said">“Can you send me those photos when you get home?”</p>
+            <h2 class="display">Send Ana the photos from Sunday</h2>
+            <div class="spring"></div>
+            <div class="act-row">
+              <button class="act quiet" data-settle="sub-favor" data-word="Not needed">Not needed</button>
+              <button class="act" data-settle="sub-favor" data-word="Done">Done</button>
+            </div>
+          </article>
+
+          <article class="subject" data-name="Did they ask?" data-flag="1" id="sub-unsure">
+            <div class="eyebrow late"><i class="dot"></i>Did they ask?</div>
+            <p class="meta">Tuesday, on the call with Marcus</p>
+            <p class="said">“I'll look at the deck before Friday.”</p>
+            <h2 class="display">Look at the deck before Friday</h2>
+            <p class="meta">OVOA heard this and isn't sure it was a promise. It won't nudge you unless you keep it.</p>
+            <div class="spring"></div>
+            <div class="act-row">
+              <button class="act quiet" data-settle="sub-unsure" data-word="No">No</button>
+              <button class="act" data-settle="sub-unsure" data-word="Yes, keep it">Yes, keep it</button>
+            </div>
+          </article>
+
+          <article class="subject" data-name="Steps">
+            <div class="eyebrow">Today</div>
+            <div style="display:flex; align-items:baseline; gap:8px">
+              <span class="big-num">6,240</span><span class="unit">steps</span>
+            </div>
+            <p class="meta">of <span class="num">8,000</span> · <span class="num">1,760</span> to go</p>
+            <div class="track"><i style="width:78%"></i></div>
+            <p class="meta"><span class="num">4.7</span> km &nbsp;·&nbsp; <span class="num">289</span> kcal &nbsp;·&nbsp; <span class="num">6</span>-day streak 🔥</p>
+            <hr class="rule">
+            <div class="eyebrow">Last 7 days</div>
+            <div class="bars">
+              <div class="bcol"><div class="btrack"><div class="bar hit" style="height:74%"></div></div><span class="bcap">Sun</span></div>
+              <div class="bcol"><div class="btrack"><div class="bar hit" style="height:88%"></div></div><span class="bcap">Mon</span></div>
+              <div class="bcol"><div class="btrack"><div class="bar hit" style="height:66%"></div></div><span class="bcap">Tue</span></div>
+              <div class="bcol"><div class="btrack"><div class="bar" style="height:41%"></div></div><span class="bcap">Wed</span></div>
+              <div class="bcol"><div class="btrack"><div class="bar hit" style="height:95%"></div></div><span class="bcap">Thu</span></div>
+              <div class="bcol"><div class="btrack"><div class="bar hit" style="height:80%"></div></div><span class="bcap">Fri</span></div>
+              <div class="bcol"><div class="btrack"><div class="bar today" style="height:62%"></div></div><span class="bcap">Today</span></div>
+            </div>
+            <div class="spring"></div>
+            <div class="eyebrow">Daily goal</div>
+            <div class="pills" id="goalPills">
+              <button class="pill" aria-pressed="false">5k</button>
+              <button class="pill" aria-pressed="true">8k</button>
+              <button class="pill" aria-pressed="false">10k</button>
+              <button class="pill" aria-pressed="false">12k</button>
+              <button class="pill" aria-pressed="false">15k</button>
+            </div>
+            <p class="meta">Distance and calories are estimates based on average stride.</p>
+          </article>
+
+          <article class="subject" data-name="Heart">
+            <div class="eyebrow">Heart rate · <span class="num">12 min ago</span></div>
+            <div style="display:flex; align-items:baseline; gap:8px">
+              <span class="big-num">72</span><span class="unit">bpm</span>
+            </div>
+            <p class="meta">resting <b class="num">58</b> &nbsp;·&nbsp; today <span class="num">54–139</span> bpm</p>
+            <div class="trace">
+              <i style="height:38%"></i><i style="height:52%"></i><i style="height:44%"></i><i style="height:61%"></i>
+              <i style="height:73%"></i><i style="height:49%"></i><i style="height:40%"></i><i style="height:58%"></i>
+              <i style="height:81%"></i><i style="height:66%"></i><i style="height:47%"></i><i style="height:43%"></i>
+              <i style="height:55%"></i><i style="height:39%"></i><i style="height:51%"></i><i style="height:62%"></i>
+            </div>
+            <p class="meta">last <span class="num">6</span> h · <span class="num">48</span> readings</p>
+            <hr class="rule">
+            <div class="group" style="margin:0">
+              <div class="row"><div class="rt"><b>Sleep</b></div><div class="rv">6.8 h</div></div>
+              <div class="row"><div class="rt"><b>HRV (SDNN)</b></div><div class="rv">41 ms</div></div>
+              <div class="row"><div class="rt"><b>Active</b></div><div class="rv">289 kcal</div></div>
+              <div class="row"><div class="rt"><b>Exercise</b></div><div class="rv">32 min</div></div>
+            </div>
+            <div class="spring"></div>
+            <button class="act quiet" data-go="sc-live">Live metrics while this screen is open</button>
+          </article>
+
+          <article class="subject" data-name="Workout">
+            <div class="eyebrow">Workout · <span class="num">7:05 AM</span></div>
+            <h2 class="hero">Outdoor Walk</h2>
+            <p class="lede"><span class="num">32</span> min · <span class="num">148</span> kcal · <span class="num">2.6</span> km</p>
+            <p class="meta">Written to Apple Health by the watch, read here.</p>
+            <div class="spring"></div>
+          </article>
+
+          <article class="subject" data-name="While you were out">
+            <div class="eyebrow">🤖 While you were out</div>
+            <h2 class="display">Three runs, one worth telling you</h2>
+            <div class="group" style="margin-top:var(--s2)">
+              <div class="row"><span class="time">07:00</span><div class="rt"><b>Read your calendar and wrote the morning brief</b><span>told you</span></div></div>
+              <div class="row"><span class="time">11:20</span><div class="rt"><b>Found a promise to Ana in Tuesday's recording</b><span>set something up</span></div></div>
+              <div class="row"><span class="time">13:02</span><div class="rt"><b>Looked at today and decided there was nothing worth telling you</b><span>nothing to say</span></div></div>
+            </div>
+            <p class="meta">Suggest · <span class="num">6</span> runs today of <span class="num">40</span></p>
+            <div class="spring"></div>
+            <button class="act quiet" data-go="sc-agent">Everything it has done</button>
+          </article>
+
+          <article class="subject" data-name="Remembered">
+            <div class="eyebrow">Remembered</div>
+            <h2 class="display">Ana's birthday is 3 March.</h2>
+            <p class="meta">Learned from a chat on Sep 12. Forget it in Settings → Memory.</p>
+            <div class="spring"></div>
+          </article>
+
+          <article class="subject" data-name="This week">
+            <div class="eyebrow">This week</div>
+            <h2 class="display">Sep 14 – Sep 20</h2>
+            <p class="lede">Five mornings confirmed, two missed. Three promises settled, one still open. <span class="num">48,900</span> steps.</p>
+            <p class="meta">~<span class="num">2 h 10 min</span> saved (estimated)</p>
+            <div class="spring"></div>
+          </article>
+
+          <article class="subject" data-name="Recently">
+            <div class="eyebrow">Recently</div>
+            <h2 class="display">The last few things that happened</h2>
+            <div class="group" style="margin-top:var(--s2)">
+              <div class="row"><span class="time">13:02</span><div class="rt"><b>🤖 Looked, nothing to say</b></div></div>
+              <div class="row"><span class="time">11:47</span><div class="rt"><b>“Remind me to call the pharmacy about the repeat”</b></div></div>
+              <div class="row"><span class="time">11:20</span><div class="rt"><b>🤖 Set a nudge three hours before your promise to Ana</b></div></div>
+              <div class="row"><span class="time">08:12</span><div class="rt"><b>Confirmed Metformin</b></div></div>
+              <div class="row"><span class="time">07:05</span><div class="rt"><b>Outdoor Walk, 32 min</b></div></div>
+            </div>
+            <div class="spring"></div>
+          </article>
+        </div>
+
+        <!-- ── nothing-due deck ── -->
+        <div class="deck" id="dk-quiet" hidden>
+          <article class="subject" data-name="Nothing due">
+            <div class="eyebrow done"><i class="dot"></i>Today · all clear</div>
+            <div class="spring"></div>
+            <h2 class="hero">Nothing due</h2>
+            <p class="lede">Every medication confirmed, every promise settled, the list is empty.</p>
+            <p class="meta">~<span class="num">35 min</span> saved (estimated)</p>
+            <div class="spring"></div>
+            <p class="meta">Steps and heart are still there — page right if you want them.</p>
+          </article>
+
+          <article class="subject" data-name="Steps">
+            <div class="eyebrow">Today</div>
+            <div style="display:flex; align-items:baseline; gap:8px">
+              <span class="big-num">9,410</span><span class="unit">steps</span>
+            </div>
+            <p class="meta">of <span class="num">8,000</span> · Goal reached. Nice work!</p>
+            <div class="track"><i class="ok" style="width:100%"></i></div>
+            <p class="meta"><span class="num">7.1</span> km &nbsp;·&nbsp; <span class="num">436</span> kcal &nbsp;·&nbsp; <span class="num">7</span>-day streak 🔥</p>
+            <div class="spring"></div>
+          </article>
+
+          <article class="subject" data-name="While you were out">
+            <div class="eyebrow">🤖 While you were out</div>
+            <h2 class="display">It stayed quiet all day</h2>
+            <p class="lede">Eleven runs, nothing worth interrupting you for.</p>
+            <p class="meta">An empty screen means nothing needed you.</p>
+            <div class="spring"></div>
+            <button class="act quiet" data-go="sc-agent">Everything it has done</button>
+          </article>
+        </div>
+      </section>
+
+      <!-- ══════════════ 1b · ALL OF TODAY (the overflow lands here) ══════════════ -->
+      <section class="screen listmode" id="sc-all-today" data-tab="activity" data-title="All of today" data-back="1">
+        <div class="mode"><em>Index</em><span>tap a line to open it full size</span></div>
+        <div class="scroll">
+          <div class="group">
+            <div class="eyebrow late">Waiting on you · 4</div>
+            <button class="row" data-go="sc-activity" data-subject="Metformin"><span class="time">08:00</span><div class="rt"><b>Metformin</b><span>due now</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-activity" data-subject="Levothyroxine"><span class="time">07:00</span><div class="rt"><b>Levothyroxine</b><span>missed</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-activity" data-subject="Asked of you"><span class="time">Sun</span><div class="rt"><b>Send Ana the photos from Sunday</b><span>asked of you</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-activity" data-subject="Did they ask?"><span class="time">Tue</span><div class="rt"><b>Look at the deck before Friday</b><span>did they ask?</span></div><span class="chev">›</span></button>
+          </div>
+          <div class="group">
+            <div class="eyebrow">A record only · 7</div>
+            <button class="row" data-go="sc-activity" data-subject="Today's list"><span class="time">list</span><div class="rt"><b>Today's list</b><span id="rowTodo">0 of 4 done</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-activity" data-subject="Steps"><span class="time">now</span><div class="rt"><b>Steps</b><span>6,240 of 8,000</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-activity" data-subject="Heart"><span class="time">now</span><div class="rt"><b>Heart</b><span>72 bpm · resting 58</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-activity" data-subject="Workout"><span class="time">07:05</span><div class="rt"><b>Outdoor Walk</b><span>32 min · 2.6 km</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-activity" data-subject="While you were out"><span class="time">13:02</span><div class="rt"><b>While you were out</b><span>3 runs</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-activity" data-subject="This week"><span class="time">week</span><div class="rt"><b>This week</b><span>Sep 14 – Sep 20</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-activity" data-subject="Recently"><span class="time">log</span><div class="rt"><b>Recently</b><span>last 5 things</span></div><span class="chev">›</span></button>
+          </div>
+          <div class="group">
+            <div class="eyebrow">Open a tool</div>
+            <button class="row" data-go="sc-live"><div class="rt"><b>Live</b><span>heart rate and motion while the screen is open</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-ask"><div class="rt"><b>Ask Claude</b><span>a plain question and answer</span></div><span class="chev">›</span></button>
+          </div>
+          <p class="meta">TODAY · Two medications confirmed, one missed, one promise found. ~<span class="num">35 min</span> saved (estimated).</p>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-live" data-tab="activity" data-title="Live" data-back="1">
+        <div class="subject" style="position:relative">
+          <div class="eyebrow now"><i class="dot"></i>Live · while this screen is open</div>
+          <div style="display:flex; align-items:baseline; gap:8px"><span class="big-num" id="liveBpm">74</span><span class="unit">bpm</span></div>
+          <div class="trace" id="liveTrace">
+            <i style="height:40%"></i><i style="height:55%"></i><i style="height:48%"></i><i style="height:63%"></i>
+            <i style="height:70%"></i><i style="height:52%"></i><i style="height:44%"></i><i style="height:59%"></i>
+          </div>
+          <hr class="rule">
+          <div class="group" style="margin:0">
+            <div class="row"><div class="rt"><b>Motion</b><span>gyro, about once a second</span></div><div class="rv" id="liveGyro">0.04 rad/s</div></div>
+            <div class="row"><div class="rt"><b>Steps since opening</b></div><div class="rv" id="liveSteps">12</div></div>
+            <div class="row"><div class="rt"><b>Clip</b><span>ES100 · -62 dBm</span></div><div class="rv">84%</div></div>
+          </div>
+          <div class="spring"></div>
+          <p class="meta">Heart rate is measured on demand: the clip answers in about a second, then it's sampled every 5 minutes.</p>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-ask" data-tab="activity" data-title="Ask Claude" data-back="1">
+        <div class="subject">
+          <div class="eyebrow">Ask Claude</div>
+          <p class="said">“How long do I have to wait after Levothyroxine before coffee?”</p>
+          <hr class="rule">
+          <p class="lede">Thirty to sixty minutes on an empty stomach, and coffee is the usual reason people wait — it cuts absorption. Your 7:00 dose is still marked missed today.</p>
+          <div class="spring"></div>
+          <div class="field">
+            <label for="askq">Ask anything</label>
+            <input id="askq" placeholder="Type a question">
+          </div>
+          <button class="act">Ask</button>
+        </div>
+      </section>
+
+      <!-- ══════════════ 2 · OVOA ══════════════ -->
+      <section class="screen" id="sc-ovoa" data-tab="ovoa" data-title="OVOA">
+        <div class="subject" id="orbScreen" style="position:relative; justify-content:center">
+          <div class="alwaysbar" id="alwaysBar" hidden>👂 Always listen is on · tap to turn off</div>
+          <div class="spring"></div>
+          <div class="orbwrap off" id="orbWrap">
+            <div class="halo"></div>
+            <button class="orb" id="orb" aria-label="Start listening to OVOA">
+              <span class="orbglyph" id="orbGlyph">🎙</span>
+            </button>
+          </div>
+          <p class="phase" id="orbPhase">Tap to start listening</p>
+          <p class="words" id="orbWords" hidden></p>
+          <p class="hint" id="orbHint">One tap. Nothing is ever captured in the background.</p>
+          <div class="spring"></div>
+
+          <div class="approve" id="approveCard" hidden>
+            <div class="eyebrow late"><i class="dot"></i>Needs your approval</div>
+            <p class="lede" id="apprSummary">Text Ana Reyes: “Sending the photos from Sunday tonight.”</p>
+            <div id="apprChoices" hidden>
+              <p class="meta" style="margin-bottom:6px">Which contact?</p>
+              <div style="display:flex; flex-direction:column; gap:6px">
+                <button class="choice" role="radio" aria-checked="false"><b>Ana Reyes</b><span>mobile · 07700 900461</span></button>
+                <button class="choice" role="radio" aria-checked="false"><b>Ana Reyes</b><span>work · 020 7946 0102</span></button>
+              </div>
+            </div>
+            <p class="meta" id="apprRunning" hidden>◌ Doing it for you…</p>
+            <div class="act-row" id="apprButtons">
+              <button class="act quiet" id="btnCancelAppr">Cancel</button>
+              <button class="act" id="btnApprove">Approve</button>
+            </div>
+          </div>
+
+          <div class="logpanel" id="logPanel" hidden>
+            <div><b>live</b> listening · mic 62 dB · always listen</div>
+            <div>11:47:02 voice  turn started (band click)</div>
+            <div>11:47:09 net    upload 41 KB opus · 16 kHz mono</div>
+            <div>11:47:11 net    transcribe 620 ms</div>
+            <div>11:47:13 model  reply 1.9 s · 3 tools</div>
+            <div>11:47:13 phone  pending action: message_compose</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════════ 3 · RECORD ══════════════ -->
+      <section class="screen" id="sc-record" data-tab="record" data-title="Record">
+        <div class="deck" id="dk-record">
+
+          <article class="subject" data-name="The clip" id="sub-clip">
+            <div class="eyebrow" id="clipEyebrow"><i class="dot" style="color:var(--ok)"></i>Connected</div>
+            <h2 class="hero">ES100 clip</h2>
+            <p class="lede" id="clipPhase">Connected</p>
+            <div id="clipStats">
+              <div class="group" style="margin:var(--s3) 0 0">
+                <div class="row"><div class="rt"><b>Battery</b></div><div class="rv">84%</div></div>
+                <div class="row"><div class="rt"><b>Signal</b></div><div class="rv">-62 dBm</div></div>
+                <div class="row"><div class="rt"><b>Storage</b></div><div class="rv">118 MB free</div></div>
+              </div>
+              <button class="link" data-go="sc-dev">Inputs →</button>
+            </div>
+            <div id="clipFinding" hidden>
+              <div class="group" style="margin:var(--s3) 0 0">
+                <button class="row" data-connect="1"><div class="rt"><b>ES100</b><span>your clip · -58 dBm</span></div><span class="chev">›</span></button>
+                <button class="row" data-connect="1"><div class="rt"><b>ES100-4C2A</b><span>-71 dBm</span></div><span class="chev">›</span></button>
+                <button class="row" data-connect="1"><div class="rt"><b>(no name)</b><span>linked to this iPhone</span></div><span class="chev">›</span></button>
+              </div>
+            </div>
+            <div class="spring"></div>
+            <div class="pills" id="clipPhases">
+              <button class="pill" data-phase="idle">Not connected</button>
+              <button class="pill" data-phase="scanning">Looking for clips…</button>
+              <button class="pill" data-phase="pairing">Press the clip's button</button>
+              <button class="pill" data-phase="connecting">Connecting…</button>
+              <button class="pill" data-phase="connected" aria-pressed="true">Connected</button>
+            </div>
+            <button class="act quiet" id="clipAction">Disconnect</button>
+          </article>
+
+          <article class="subject" data-name="Record" id="sub-recorder" style="justify-content:center">
+            <div class="eyebrow" id="recEyebrow">Ready</div>
+            <div class="spring"></div>
+            <button class="recbtn" id="recBtn" aria-label="Start recording"><i></i></button>
+            <p class="hero num" id="recTimer" style="text-align:center; font-size:44px">0:00</p>
+            <p class="hint" id="recStatus">Tap to record on the clip</p>
+            <div class="spring"></div>
+            <div class="act-row" id="recRunning" hidden>
+              <button class="act quiet" id="recPause">Pause</button>
+              <button class="act" id="recStop">Stop &amp; save</button>
+            </div>
+            <p class="meta" id="recNote">Recording always starts because you started it.</p>
+          </article>
+
+          <article class="subject" data-name="Recordings" style="padding:0" id="sub-recordings">
+            <div class="mode"><em>List</em><span>a shelf, not a subject — 6 recordings</span></div>
+            <div class="scroll">
+              <div class="group">
+                <div class="row"><button class="link" style="padding:0; width:34px">▶</button><div class="rt"><b>This morning, kitchen</b><span>2:41 · 7:58 AM</span></div><span class="chev">⋯</span></div>
+                <div class="row"><button class="link" style="padding:0; width:34px">▶</button><div class="rt"><b>Call with Marcus</b><span>14:06 · 10:32 AM</span><span style="color:var(--cyan)">◌ Adding to your timeline…</span></div><span class="chev">⋯</span></div>
+                <div class="row"><button class="link" style="padding:0; width:34px">▶</button><div class="rt"><b>Walk, Sunday</b><span>6:12 · Sun 9:14 AM</span><span style="color:var(--ok)">Filed · Walk with Ana</span></div><span class="chev">⋯</span></div>
+                <div class="row"><button class="link" style="padding:0; width:34px">▶</button><div class="rt"><b>Pharmacy queue</b><span>0:48 · Sat 4:20 PM</span></div><span class="chev">⋯</span></div>
+                <div class="row"><button class="link" style="padding:0; width:34px">▶</button><div class="rt"><b>Note to self</b><span>0:19 · Fri 8:02 PM</span><span style="color:var(--warn)">Couldn't read the clip. Tap to try again.</span></div><span class="chev">⋯</span></div>
+                <div class="row"><button class="link" style="padding:0; width:34px">▶</button><div class="rt"><b>Thursday evening</b><span>3:55 · Thu 7:41 PM</span></div><span class="chev">⋯</span></div>
+              </div>
+              <button class="act quiet">Import from clip</button>
+              <p class="meta" style="margin-top:var(--s3)">Hold a recording to rename it, or delete it from the phone and the clip.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="screen listmode" id="sc-dev" data-tab="record" data-title="Sensors, inputs &amp; ES100" data-back="1">
+        <div class="mode"><em>List</em><span>developer panel</span></div>
+        <div class="scroll">
+          <div class="group">
+            <div class="eyebrow">ES100</div>
+            <div class="row"><div class="rt"><b>Firmware</b></div><div class="rv">1.4.2</div></div>
+            <div class="row"><div class="rt"><b>Codec</b></div><div class="rv">opus 16 kHz mono</div></div>
+            <div class="row"><div class="rt"><b>Motion stream</b><span>gyro3, about 1 Hz, signed bytes</span></div><div class="rv">on</div></div>
+            <div class="row"><div class="rt"><b>connectStatus</b><span>0 = connected by default; the bridge keeps its own linked flag</span></div><div class="rv">linked</div></div>
+          </div>
+          <div class="group">
+            <div class="eyebrow">Inputs</div>
+            <div class="row"><div class="rt"><b>Microphone</b></div><div class="rv">ES100 band</div></div>
+            <div class="row"><div class="rt"><b>Pedometer</b></div><div class="rv">ok</div></div>
+            <div class="row"><div class="rt"><b>Motion &amp; Fitness</b></div><div class="rv">allowed</div></div>
+            <div class="row"><div class="rt"><b>Apple Health</b></div><div class="rv">read only</div></div>
+          </div>
+          <button class="act quiet">Copy the last 200 log lines</button>
+        </div>
+      </section>
+
+      <!-- ══════════════ 4 · JOURNAL ══════════════ -->
+      <section class="screen" id="sc-journal" data-tab="journal" data-title="Journal">
+        <div class="mode" style="gap:6px" id="journalSegs">
+          <button class="pill" aria-pressed="true" data-seg="dk-notes">From OVOA</button>
+          <button class="pill" aria-pressed="false" data-seg="dk-days">Your days</button>
+          <button class="pill" aria-pressed="false" data-seg="dk-transcripts">Transcripts</button>
+        </div>
+
+        <div class="deck" id="dk-notes">
+          <article class="subject" data-name="Morning brief">
+            <div class="eyebrow"><span class="num">7:00</span> · morning brief <span class="tag spoke">· spoke it</span></div>
+            <h2 class="display">Three things today</h2>
+            <p class="lede">Dentist at 11:30, the pharmacy closes at 5, and you told Ana you'd send Sunday's photos. Metformin at 8 as usual.</p>
+            <p class="meta">This job always speaks — you asked for it.</p>
+            <div class="spring"></div>
+            <button class="link" data-go="sc-agent">What OVOA is set up to do →</button>
+          </article>
+
+          <article class="subject" data-name="Commitment sweep">
+            <div class="eyebrow"><span class="num">18:00</span> · commitment sweep <span class="tag kept">· kept to itself</span></div>
+            <h2 class="display">One promise still open</h2>
+            <p class="lede">The photos for Ana. Nothing else pressing.</p>
+            <p class="meta">Held until <span class="num">07:00</span> by quiet hours. Written at 18:00, not pushed — nothing tonight was about to be missed.</p>
+            <div class="spring"></div>
+          </article>
+
+          <article class="subject" data-name="A question" data-flag="1">
+            <div class="eyebrow late"><i class="dot"></i><span class="num">15:40</span> · question <span class="tag kept">· kept to itself</span></div>
+            <h2 class="display">Which Ana?</h2>
+            <p class="lede">Two contacts are called Ana Reyes. It stopped rather than guess.</p>
+            <div class="spring"></div>
+            <button class="act warn" data-go="sc-ovoa" data-state="contact">Waiting for you to approve something →</button>
+          </article>
+
+          <article class="subject" data-name="Today's list">
+            <div class="eyebrow"><span class="num">7:02</span> · today's list <span class="tag spoke">· spoke it</span></div>
+            <h2 class="display">Four things, in the order they'll be easiest</h2>
+            <p class="lede">Pharmacy first because it closes at 5; the dentist while you're out; the photos tonight; the council tax whenever.</p>
+            <div class="spring"></div>
+            <button class="link dim">Dismiss</button>
+          </article>
+        </div>
+
+        <div class="deck" id="dk-days" hidden>
+          <article class="subject" data-name="Today">
+            <div class="pills" style="margin-bottom:2px">
+              <button class="pill" aria-pressed="true" data-grain="day">Day</button>
+              <button class="pill" aria-pressed="false" data-grain="week">Week</button>
+            </div>
+            <div class="eyebrow">‹ &nbsp; Today &nbsp; ›</div>
+            <h2 class="display">A quiet Monday with one long call</h2>
+            <p class="lede">You walked before breakfast, took Metformin late, and spent an hour with Marcus on the deck. Ana came up twice.</p>
+            <hr class="rule">
+            <div class="group" style="margin:0">
+              <div class="row"><span class="time">07:05</span><div class="rt"><b>Walk before breakfast</b><span>Cold, quiet, the long way round the park.</span></div></div>
+              <div class="row"><span class="time">08:12</span><div class="rt"><b>Kitchen, pills and radio</b><span>Metformin confirmed out loud.</span></div></div>
+              <div class="row"><span class="time">10:32</span><div class="rt"><b>Call with Marcus</b><span>The deck, Friday, and who owns the numbers slide.</span></div></div>
+            </div>
+            <div class="spring"></div>
+            <div class="eyebrow">Still owed</div>
+            <p class="said" style="font-size:16px">“I'll look at the deck before Friday.”</p>
+            <p class="meta">said Tuesday · to Marcus · before Friday</p>
+          </article>
+
+          <article class="subject" data-name="Add a moment">
+            <div class="eyebrow">Add something to the timeline</div>
+            <h2 class="display">What just happened?</h2>
+            <div class="field">
+              <label for="moment">In your own words</label>
+              <input id="moment" placeholder="What just happened?">
+            </div>
+            <div class="spring"></div>
+            <button class="act" id="btnAddMoment">Add</button>
+            <p class="meta" id="momentNote" hidden>Added to today.</p>
+          </article>
+
+          <article class="subject" data-name="Sep 13" style="justify-content:center; text-align:center; align-items:center">
+            <div class="eyebrow">‹ &nbsp; Saturday, Sep 13 &nbsp; ›</div>
+            <div class="spring"></div>
+            <span class="glyph-xl" style="font-size:44px; opacity:.35">◌</span>
+            <h2 class="display">Nothing recorded</h2>
+            <p class="meta">You didn't record anything that day, so there's nothing to summarise.</p>
+            <div class="spring"></div>
+          </article>
+
+          <article class="subject" data-name="No timeline" style="justify-content:center; text-align:center; align-items:center">
+            <div class="eyebrow">Timeline is off</div>
+            <div class="spring"></div>
+            <h2 class="display">No timeline yet</h2>
+            <p class="meta">Turn on Timeline in Settings and what you record gets summarised into a day you can ask about later — 'what did I do Tuesday', 'did I ever call Sarah back'. The words themselves are never stored on the server.</p>
+            <div class="spring"></div>
+            <button class="act" data-go="sc-set-yourday">Open Settings</button>
+          </article>
+        </div>
+
+        <div class="deck" id="dk-transcripts" hidden>
+          <article class="subject" data-name="Transcripts" style="padding:0">
+            <div class="mode"><em>List</em><span>everything said, by hour</span></div>
+            <div class="scroll">
+              <div class="field" style="margin-bottom:var(--s4)">
+                <label for="tsearch">Search everything said</label>
+                <input id="tsearch" placeholder="Search everything said">
+              </div>
+              <div class="group">
+                <div class="eyebrow">The day · Today</div>
+                <div class="row"><span class="time">07:00</span><div class="rt"><b>Walk and radio</b><span>4 blocks · 61 lines</span></div><span class="chev">›</span></div>
+                <div class="row"><span class="time">08:00</span><div class="rt"><b>Kitchen</b><span>2 blocks · 18 lines</span></div><span class="chev">›</span></div>
+                <div class="row"><span class="time">10:00</span><div class="rt"><b>Call with Marcus</b><span>12 blocks · 240 lines</span></div><span class="chev">›</span></div>
+                <div class="row"><span class="time">11:00</span><div class="rt"><b>Not titled yet</b><span>1 block · 6 lines</span></div><span class="chev">›</span></div>
+              </div>
+              <p class="meta">Hold a block to forget it. The words are deleted for good.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ══════════════ 5 · SAFETY ══════════════ -->
+      <section class="screen" id="sc-safety" data-tab="safety" data-title="Safety">
+        <div class="deck" id="dk-safety">
+
+          <article class="subject" data-name="SOS" style="justify-content:center; align-items:center">
+            <div class="eyebrow bad"><i class="dot"></i>If something happens</div>
+            <div class="spring"></div>
+            <button class="sos" id="sosBtn" aria-label="Press and hold to alert your contacts">
+              <i id="sosFill"></i>
+              <div><b>SOS</b><span>Press and hold to alert your contacts</span></div>
+            </button>
+            <p class="hint" id="sosHint">Two contacts get a text with your location.</p>
+            <div class="spring"></div>
+            <button class="act bad" style="background:none; border:1px solid var(--bad); color:var(--bad)">Call 911</button>
+          </article>
+
+          <article class="subject" data-name="Fall detection">
+            <div class="eyebrow" id="fallEyebrow"><i class="dot" style="color:var(--ok)"></i>On</div>
+            <h2 class="hero">Fall detection</h2>
+            <p class="lede" id="fallStatus">Watching for falls while the app is open.</p>
+            <div class="warnbox">Fall detection only works while OVOA is open on screen. It is not a medical device. Don't rely on it alone.</div>
+            <div class="row" style="border-bottom:1px solid var(--hair)">
+              <div class="rt"><b>Fall detection</b><span>uses the phone's motion sensor</span></div>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Fall detection"></button>
+            </div>
+            <div class="spring"></div>
+            <div class="pills" id="fallStates">
+              <button class="pill" aria-pressed="true" data-fall="on">Watching</button>
+              <button class="pill" data-fall="unavailable">No sensor</button>
+              <button class="pill" data-fall="denied">Denied</button>
+            </div>
+            <button class="act quiet" id="btnTestFall">Test the fall alert</button>
+          </article>
+
+          <article class="subject" data-name="Contacts" style="padding:0">
+            <div class="mode"><em>List</em><span>people, not a subject — 2</span></div>
+            <div class="scroll">
+              <p class="meta">They get a text with your location when you press SOS or don't respond after a fall. Your phone opens the message; tap Send.</p>
+              <div class="group" style="margin-top:var(--s3)">
+                <div class="row"><div class="rt"><b>Ana Reyes</b><span>07700 900461</span></div><button class="link bad" style="padding:0">Remove</button></div>
+                <div class="row"><div class="rt"><b>Marcus Hale</b><span>020 7946 0102</span></div><button class="link bad" style="padding:0">Remove</button></div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:var(--s2); margin-top:var(--s4)">
+                <div class="field"><label for="cname">Name</label><input id="cname" placeholder="Name"></div>
+                <div class="field"><label for="cphone">Phone number</label><input id="cphone" placeholder="Phone number"></div>
+                <button class="act quiet">Add contact</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="subject" data-name="Recent alerts" style="padding:0">
+            <div class="mode"><em>List</em><span>what has gone off — 2</span></div>
+            <div class="scroll">
+              <div class="group">
+                <div class="row"><div class="rt"><b>Possible fall</b></div><div class="rv">Marked OK · 9/18/26, 6:22 PM</div></div>
+                <div class="row"><div class="rt"><b>SOS</b></div><div class="rv">Contacts alerted · 9/14/26, 4:07 PM</div></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ══════════════ 6 · SETTINGS (declared list mode) ══════════════ -->
+      <section class="screen listmode" id="sc-settings" data-tab="settings" data-title="Settings">
+        <div class="mode"><em>List</em><span>fourteen sections · one at a time inside</span></div>
+        <div class="scroll">
+          <div class="group">
+            <button class="row" data-go="sc-set-account"><div class="rt"><b>Account</b><span>thomaslancheros06@gmail.com</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-set-assistant"><div class="rt"><b>Assistant</b><span>OVOA · dry, brief</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-set-voice"><div class="rt"><b>Voice</b><span>Thalia</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-set-talking"><div class="rt"><b>How to start talking</b><span>Clip click · ES100 band</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-agent"><div class="rt"><b>Background work</b><span>On · Suggest · 6 runs today</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-set-google"><div class="rt"><b>Google accounts</b><span>2 connected</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-set-siri"><div class="rt"><b>Siri</b><span>“Hey Siri, Ask OVOA”</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-set-memory"><div class="rt"><b>Memory</b><span>14 things remembered</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-set-password"><div class="rt"><b>Password</b></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-set-yourday"><div class="rt"><b>Your day</b><span>Timeline on · transcripts kept 14 days</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-dev"><div class="rt"><b>Developer</b><span>Sensors, inputs &amp; ES100</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-set-texts"><div class="rt"><b>Texts</b><span>Send texts automatically · off</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-set-session"><div class="rt"><b>Session</b><span>Sign out</span></div><span class="chev">›</span></button>
+            <button class="row" data-go="sc-set-danger"><div class="rt" style="color:var(--bad)"><b>Danger zone</b><span style="color:var(--bad)">Approve for me · delete account</span></div><span class="chev">›</span></button>
+          </div>
+          <button class="row" data-setup="1"><div class="rt"><b>Go through setup again</b><span>Adds to what's there; it doesn't remove anything.</span></div><span class="chev">›</span></button>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-set-account" data-tab="settings" data-title="Account" data-back="1">
+        <div class="subject">
+          <div class="eyebrow">Account</div>
+          <h2 class="hero">Thomas</h2>
+          <p class="meta">thomaslancheros06@gmail.com</p>
+          <div class="field"><label for="yname">Your name</label><input id="yname" value="Thomas"></div>
+          <div class="spring"></div>
+          <button class="act">Save changes</button>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-set-assistant" data-tab="settings" data-title="Assistant" data-back="1">
+        <div class="subject">
+          <div class="eyebrow">Assistant</div>
+          <h2 class="hero">OVOA</h2>
+          <div class="field"><label for="aname">Assistant name</label><input id="aname" value="OVOA"></div>
+          <div class="field"><label for="apers">Personality</label><input id="apers" placeholder="e.g. Dry British wit, keeps answers brief"></div>
+          <div class="spring"></div>
+          <button class="act">Save changes</button>
+        </div>
+      </section>
+
+      <section class="screen listmode" id="sc-set-voice" data-tab="settings" data-title="Voice" data-back="1">
+        <div class="mode"><em>List</em><span>tap a voice to hear it</span></div>
+        <div class="scroll">
+          <p class="meta">How the assistant sounds. Tap a voice to hear it.</p>
+          <div class="group" style="margin-top:var(--s3)" id="voiceList">
+            <button class="row" aria-current="true"><div class="rt"><b>Thalia</b><span>Clear, confident</span></div><span class="rv">✓</span></button>
+            <button class="row"><div class="rt"><b>Andromeda</b><span>Casual, expressive</span></div></button>
+            <button class="row"><div class="rt"><b>Helena</b><span>Caring, friendly</span></div></button>
+            <button class="row"><div class="rt"><b>Luna</b><span>Soft, calm</span></div></button>
+            <button class="row"><div class="rt"><b>Apollo</b><span>Confident, casual</span></div></button>
+            <button class="row"><div class="rt"><b>Arcas</b><span>Smooth, natural</span></div></button>
+            <button class="row"><div class="rt"><b>Orion</b><span>Calm, polite</span></div></button>
+            <button class="row"><div class="rt"><b>Hermes</b><span>Expressive, engaging</span></div></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-set-talking" data-tab="settings" data-title="How to start talking" data-back="1">
+        <div class="subject">
+          <div class="eyebrow">How to start talking</div>
+          <div class="row" style="border-bottom:1px solid var(--hair)">
+            <div class="rt"><b>Always listen</b><span>The microphone stays on and answers when you say its name. Off: double-click the band's button to talk. With it on, a double click turns it off.</span></div>
+            <button class="sw risk" role="switch" aria-checked="false" aria-label="Always listen" id="swAlways"></button>
+          </div>
+          <div class="warnbox" id="alwaysWarn" hidden>The microphone stays on, even in the background, and hears everything around you, including other people. Turn it off here, from the Assistant tab, or with a double click on the band.</div>
+          <div class="eyebrow" style="margin-top:var(--s2)">Microphone</div>
+          <div class="pills">
+            <button class="pill">Phone</button>
+            <button class="pill" aria-pressed="true">ES100 band</button>
+          </div>
+          <p class="meta">The clip records what you say on its own microphone. Click to start, click again when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.</p>
+          <div class="spring"></div>
+        </div>
+      </section>
+
+      <section class="screen listmode" id="sc-set-google" data-tab="settings" data-title="Google accounts" data-back="1">
+        <div class="mode"><em>List</em><span>2 accounts</span></div>
+        <div class="scroll">
+          <p class="meta">It asks before sending, deleting, or inviting anyone.</p>
+          <div class="group" style="margin-top:var(--s3)">
+            <div class="row"><div class="rt"><b>thomas@…gmail.com</b><span>Personal · Default</span></div><button class="link bad" style="padding:0">Disconnect</button></div>
+            <div class="row"><div class="rt"><b>t.lancheros@…co.uk</b><span>Work</span></div><button class="link" style="padding:0">Make default</button></div>
+          </div>
+          <button class="act quiet" style="margin-top:var(--s4)">Add another Google account</button>
+          <p class="meta" style="margin-top:var(--s3)">Tag an account to tell the assistant what it's for — then ask it things like “what's on my work calendar today”.</p>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-set-siri" data-tab="settings" data-title="Siri" data-back="1">
+        <div class="subject">
+          <div class="eyebrow">Siri</div>
+          <h2 class="display">“Hey Siri, Ask OVOA”</h2>
+          <p class="meta">Build the shortcut once. This key is shown only now; setting up again replaces it.</p>
+          <div class="group" style="margin:var(--s2) 0 0">
+            <div class="row"><div class="rt"><b>URL</b><span>https://api.ovoa.app/siri</span></div><button class="link" style="padding:0">Copy</button></div>
+            <div class="row"><div class="rt"><b>Authorization header</b><span>Bearer 9f31c…</span></div><button class="link" style="padding:0">Copy</button></div>
+          </div>
+          <div class="spring"></div>
+          <button class="act quiet">Open Shortcuts</button>
+          <button class="link bad">Turn off Siri</button>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-set-memory" data-tab="settings" data-title="Memory" data-back="1">
+        <div class="subject">
+          <div class="eyebrow">Memory</div>
+          <div class="row" style="border-bottom:1px solid var(--hair)">
+            <div class="rt"><b>Remember things about me</b><span>OVOA learns facts from your chats.</span></div>
+            <button class="sw" role="switch" aria-checked="true" aria-label="Remember things about me"></button>
+          </div>
+          <p class="meta"><b class="num">14</b> things remembered</p>
+          <div class="group" style="margin:0">
+            <div class="row"><div class="rt"><b>Ana's birthday is 3 March.</b></div><button class="link bad" style="padding:0">Forget</button></div>
+            <div class="row"><div class="rt"><b>Takes Levothyroxine an hour before food.</b></div><button class="link bad" style="padding:0">Forget</button></div>
+            <div class="row"><div class="rt"><b>Hates being called before 9am.</b></div><button class="link bad" style="padding:0">Forget</button></div>
+          </div>
+          <div class="spring"></div>
+          <button class="act quiet" style="color:var(--bad)">Forget everything</button>
+          <button class="link bad">Clear chat history</button>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-set-password" data-tab="settings" data-title="Password" data-back="1">
+        <div class="subject">
+          <div class="eyebrow">Password</div>
+          <div class="field"><label for="pw1">Current password</label><input id="pw1" type="password" placeholder="••••••••"></div>
+          <div class="field"><label for="pw2">New password</label><input id="pw2" type="password" placeholder="At least 8 characters"></div>
+          <div class="spring"></div>
+          <p class="meta">Changing it signs out other devices.</p>
+          <button class="act">Change password</button>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-set-yourday" data-tab="settings" data-title="Your day" data-back="1">
+        <div class="subject">
+          <div class="eyebrow">Your day</div>
+          <div class="row">
+            <div class="rt"><b>Keep a record of my days</b><span>What you record gets summarised into a day OVOA can look things up in. Only ever what you chose to record: nothing is captured in the background.</span></div>
+            <button class="sw" role="switch" aria-checked="true" aria-label="Keep a record of my days"></button>
+          </div>
+          <div class="row" style="border-bottom:1px solid var(--hair)">
+            <div class="rt"><b>Location timeline</b><span>Where you went is kept 14 days; named places until you remove them.</span></div>
+            <button class="sw" role="switch" aria-checked="false" aria-label="Location timeline"></button>
+          </div>
+          <div class="eyebrow" style="margin-top:var(--s2)">Forget summaries after</div>
+          <div class="pills">
+            <button class="pill" aria-pressed="true">2 weeks</button>
+            <button class="pill">3 months</button>
+            <button class="pill">A year</button>
+            <button class="pill">Keep</button>
+          </div>
+          <div class="spring"></div>
+          <button class="act quiet" data-go="sc-journal" data-seg="dk-transcripts">Transcripts — everything said</button>
+          <button class="link bad">Forget the last hour</button>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-set-texts" data-tab="settings" data-title="Texts" data-back="1">
+        <div class="subject">
+          <div class="eyebrow">Texts</div>
+          <div class="row" style="border-bottom:1px solid var(--hair)">
+            <div class="rt"><b>Send texts automatically</b><span>Hands each text to your “OVOA Send Text” shortcut instead of opening Messages, so it goes without tapping Send. Your phone switches to Shortcuts for a moment and comes back.</span></div>
+            <button class="sw" role="switch" aria-checked="false" aria-label="Send texts automatically" id="swTexts"></button>
+          </div>
+          <div id="textsSteps" hidden>
+            <p class="meta">iOS never lets an app send a text on its own, but the Shortcuts app can.</p>
+            <div class="group" style="margin-top:var(--s2)">
+              <div class="row"><span class="time">1</span><div class="rt"><b>Open Shortcuts, tap +, and name it exactly “OVOA Send Text”.</b></div></div>
+              <div class="row"><span class="time">2</span><div class="rt"><b>Add “Split Text” with Shortcut Input, split by New Lines.</b></div></div>
+              <div class="row"><span class="time">3</span><div class="rt"><b>Add “Send Message”: Recipients = Item 1, Message = Item 2.</b></div></div>
+              <div class="row"><span class="time">4</span><div class="rt"><b>Turn “Show When Run” off.</b></div></div>
+            </div>
+            <button class="act quiet" style="margin-top:var(--s3)">Open Shortcuts</button>
+          </div>
+          <div class="spring"></div>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-set-session" data-tab="settings" data-title="Session" data-back="1">
+        <div class="subject">
+          <div class="eyebrow">Session</div>
+          <h2 class="display">Signed in as Thomas</h2>
+          <p class="meta">thomaslancheros06@gmail.com · this iPhone</p>
+          <div class="spring"></div>
+          <button class="act quiet" style="color:var(--bad)">Sign out</button>
+        </div>
+      </section>
+
+      <section class="screen" id="sc-set-danger" data-tab="settings" data-title="Danger zone" data-back="1">
+        <div class="subject">
+          <div class="eyebrow bad"><i class="dot"></i>Danger zone</div>
+          <div class="row" style="border-bottom:1px solid var(--hair)">
+            <div class="rt"><b>Approve for me</b><span>Skip approval cards: OVOA sends emails, deletes things, and changes your contacts, calendar, and reminders right away. iOS still asks you to tap Send for emails, and for texts unless “Send texts automatically” is on.</span></div>
+            <button class="sw risk" role="switch" aria-checked="false" aria-label="Approve for me" id="swAuto"></button>
+          </div>
+          <div class="warnbox" id="autoWarn" hidden>OVOA will act without asking first: sending and deleting emails, deleting calendar events, changing contacts, and more. Mistakes can't always be undone.</div>
+          <div class="spring"></div>
+          <p class="meta">This permanently deletes your account, chats, and memories.</p>
+          <button class="act bad">Delete account</button>
+        </div>
+      </section>
+
+      <!-- Background work -->
+      <section class="screen listmode" id="sc-agent" data-tab="settings" data-title="Background work" data-back="1">
+        <div class="mode"><em>List</em><span>the run log is a log — it stays a list</span></div>
+        <div class="scroll">
+          <div class="group">
+            <div class="eyebrow">How far it can go</div>
+            <div class="pills" id="autonomy">
+              <button class="pill" aria-pressed="true">Suggest</button>
+              <button class="pill">Act</button>
+            </div>
+            <p class="meta" style="margin-top:var(--s2)">It looks things up and tells you. Anything that would change something shows up as a card for you to approve. At every level it can't send a message or email on its own, and can't delete anything. Those always wait for you.</p>
+            <div class="row" style="margin-top:var(--s3)"><div class="rt"><b>Don't disturb me between</b><span>It still works; it saves what it found until morning.</span></div><div class="rv">22:00 – 07:00</div></div>
+            <div class="row"><div class="rt"><b>Runs used today</b></div><div class="rv">6 of 40</div></div>
+          </div>
+
+          <div class="group">
+            <div class="eyebrow">Standing jobs</div>
+            <div class="row">
+              <div class="rt"><b>Morning brief</b><span>daily 7:00 · next Tue 7:00 AM · always speaks</span></div>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Morning brief"></button>
+            </div>
+            <div class="row">
+              <div class="rt"><b>Commitment sweep</b><span>daily 18:00 · next 6:00 PM · speaks only if pressing</span></div>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Commitment sweep"></button>
+            </div>
+            <div class="row">
+              <div class="rt"><b>Nudge before the photos for Ana</b><span>once · next 5:00 PM · OVOA SET THIS UP</span></div>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Nudge before the photos"></button>
+            </div>
+            <div class="act-row" style="margin-top:var(--s3)">
+              <button class="act quiet" id="btnRunNow">Run now</button>
+              <button class="act quiet" style="color:var(--bad)">Stop it</button>
+            </div>
+            <p class="meta" id="runNote" hidden>Nothing to report — OVOA looked and decided there was nothing worth telling you.</p>
+          </div>
+
+          <div class="group">
+            <div class="eyebrow">What you're trying to do</div>
+            <p class="meta">Standing intentions with no deadline. OVOA sees these every time it runs on its own.</p>
+            <div class="row"><div class="rt"><b>Keep Thursday evenings clear</b></div><button class="link bad" style="padding:0">Drop</button></div>
+            <div class="row"><div class="rt"><b>Take the pills before food, not with coffee</b></div><button class="link bad" style="padding:0">Drop</button></div>
+            <div class="row"><div class="rt"><b>Call Ana every Sunday</b></div><button class="link bad" style="padding:0">Drop</button></div>
+            <div class="field" style="margin-top:var(--s3)"><label for="goal">Add one</label><input id="goal" placeholder="e.g. Keep Thursday evenings clear"></div>
+          </div>
+
+          <div class="group">
+            <div class="eyebrow">Everything it has done</div>
+            <p class="meta">Every time OVOA ran on its own, including the times it decided to stay quiet. <span class="num">6</span> runs today of <span class="num">40</span>.</p>
+            <div class="row"><span class="time">13:02</span><div class="rt"><b>Commitment sweep · <span style="color:var(--ink-2)">nothing to say</span></b></div></div>
+            <div class="row"><span class="time">11:20</span><div class="rt"><b>Commitment sweep · <span style="color:var(--warn)">set something up</span></b><span>Scheduled a nudge three hours before the photos for Ana</span></div></div>
+            <div class="row"><span class="time">10:00</span><div class="rt"><b>Inbox watch · <span style="color:var(--ink-2)">nothing to say</span></b><span>tools: gmail_search, agent_stay_quiet</span></div></div>
+            <div class="row"><span class="time">08:00</span><div class="rt"><b>Inbox watch · <span style="color:var(--bad)">failed</span></b><span>Google token expired · 1 of 3 before it pauses itself</span></div></div>
+            <div class="row"><span class="time">07:00</span><div class="rt"><b>Morning brief · <span style="color:var(--cyan)">told you</span></b><span>tools: calendar_list, agent_say</span></div></div>
+            <div class="row"><span class="time">02:00</span><div class="rt"><b>Commitment sweep · <span style="color:var(--ink-2)">skipped</span></b><span>quiet hours</span></div></div>
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /stage -->
+
+    <!-- pager -->
+    <div class="pager" id="pager">
+      <button class="arrow" id="btnPrev" aria-label="Previous subject">‹</button>
+      <div class="pmid">
+        <div class="dots" id="dots"></div>
+        <div class="pnext" id="pnext"></div>
+      </div>
+      <button class="arrow" id="btnNext" aria-label="Next subject">›</button>
+    </div>
+
+    <!-- tab bar -->
+    <nav class="tabs" id="tabs">
+      <button class="tab" data-tab="activity" aria-current="true">
+        <svg viewBox="0 0 24 24"><path d="M9 21l1-5 3-3 2 4 3 1"/><path d="M13 8l-3 2-3-1"/><circle cx="14" cy="4.5" r="2"/></svg><span>Activity</span>
+      </button>
+      <button class="tab" data-tab="ovoa">
+        <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 12a6 6 0 0012 0M12 18v3"/></svg><span>OVOA</span>
+      </button>
+      <button class="tab" data-tab="record">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></svg><span>Record</span>
+      </button>
+      <button class="tab" data-tab="journal">
+        <svg viewBox="0 0 24 24"><path d="M5 4h9a3 3 0 013 3v13H8a3 3 0 01-3-3z"/><path d="M8 4v16"/></svg><span>Journal</span><span class="badge">2</span>
+      </button>
+      <button class="tab" data-tab="safety">
+        <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg><span>Safety</span>
+      </button>
+      <button class="tab" data-tab="settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg><span>Settings</span>
+      </button>
+    </nav>
+
+    <!-- interrupt banner -->
+    <div class="interrupt" id="interrupt" hidden>
+      <div class="it"><b>Needs your approval</b><span>Text to Ana Reyes, waiting</span></div>
+      <button id="ibLook">Look</button>
+      <button class="dim" id="ibLater">Later</button>
+    </div>
+
+    <!-- hand-back toast -->
+    <div class="toast" id="toast" hidden></div>
+
+    <!-- alarm / nag overlay -->
+    <div class="overlay" id="ovNag" hidden>
+      <span class="glyph-xl" id="nagIcon">⏰</span>
+      <h2 class="otitle" id="nagTitle">Morning, Thomas</h2>
+      <p class="osub" id="nagLabel">Wake up · 6:40</p>
+      <div id="nagSimple">
+        <button class="act" id="nagBtn" style="padding:18px 48px; width:auto">I'm awake</button>
+        <p class="hint" id="nagHint" style="margin-top:12px">Or say “Hey OVOA, I'm awake.”</p>
+      </div>
+      <div id="nagHard" hidden style="width:100%">
+        <p class="big-num" style="color:var(--cyan); font-size:64px; margin:0" id="nagSteps">0 / 20</p>
+        <p class="hint">steps — get up and walk. It stops at 20.</p>
+        <div class="track" style="height:12px; border-radius:6px; margin-top:12px"><i class="ok" id="nagFill" style="width:0%"></i></div>
+        <button class="act quiet" id="nagWalk" style="margin-top:16px">Take a step (demo)</button>
+      </div>
+      <p class="queue" id="nagQueue" hidden>1 more waiting</p>
+    </div>
+
+    <!-- possible fall overlay -->
+    <div class="overlay" id="ovFall" hidden>
+      <span class="glyph-xl">🚨</span>
+      <h2 class="otitle">Are you okay?</h2>
+      <p class="osub">A possible fall, just now. Ana and Marcus get a text in <b class="num" id="fallCount">20</b> s.</p>
+      <button class="act" id="fallOk" style="padding:18px 40px; width:auto">I'm okay</button>
+      <button class="link bad" id="fallSend">Alert them now</button>
+    </div>
+
+    <!-- first run -->
+    <div class="overlay" id="ovSetup" hidden style="justify-content:flex-start; padding-top:var(--s7)">
+      <div class="orbwrap live" style="width:120px; height:120px">
+        <div class="halo" style="width:110px; height:110px"></div>
+        <div class="orb" style="width:96px; height:96px"><span class="orbglyph" style="font-size:22px">🎙</span></div>
+      </div>
+      <p class="eyebrow now" style="justify-content:center"><i class="dot"></i>Setting up · by talking</p>
+      <div class="convo" id="convo"></div>
+      <div class="spring"></div>
+      <button class="act" id="setupNext">Answer out loud</button>
+      <button class="link dim" id="setupSkip">Skip and type it later</button>
+    </div>
+
+  </div><!-- /phone -->
+
+  <!-- ── mock controls (not part of the app) ─────────────────────────── -->
+  <div class="controls">
+    <h2>Switchable states — this panel is the mock, not the app</h2>
+    <div class="cgroup"><p>Activity</p><div class="cbtns" id="ctlActivity">
+      <button class="cbtn" aria-pressed="true" data-deck="dk-due">Four things due</button>
+      <button class="cbtn" data-deck="dk-quiet">Nothing due</button>
+    </div></div>
+    <div class="cgroup"><p>OVOA orb</p><div class="cbtns" id="ctlOrb">
+      <button class="cbtn" aria-pressed="true" data-state="idle">Idle</button>
+      <button class="cbtn" data-state="listening">Listening</button>
+      <button class="cbtn" data-state="thinking">Thinking</button>
+      <button class="cbtn" data-state="speaking">Speaking</button>
+      <button class="cbtn" data-state="approval">Needs approval</button>
+      <button class="cbtn" data-state="contact">Which contact?</button>
+      <button class="cbtn" data-state="always">Always listen on</button>
+    </div></div>
+    <div class="cgroup"><p>Takes over the screen</p><div class="cbtns">
+      <button class="cbtn" id="ctlNag">Alarm going off</button>
+      <button class="cbtn" id="ctlFall">Possible fall</button>
+      <button class="cbtn" id="ctlAppr">Approval waiting</button>
+      <button class="cbtn" id="ctlSetup">First run</button>
+    </div></div>
+  </div>
+
+  <p class="foot">
+    Paging: the arrows, the dots, a swipe, or ← / → on the keyboard. The right arrow always names the subject it will take you to, so the control explains itself on first use. Nothing here talks to a server.
+  </p>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var stage   = document.getElementById('stage');
+  var navTitle= document.getElementById('navTitle');
+  var navRight= document.getElementById('navRight');
+  var btnBack = document.getElementById('btnBack');
+  var pager   = document.getElementById('pager');
+  var dotsEl  = document.getElementById('dots');
+  var pnext   = document.getElementById('pnext');
+  var btnPrev = document.getElementById('btnPrev');
+  var btnNext = document.getElementById('btnNext');
+  var toast   = document.getElementById('toast');
+  var reduce  = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  var screens = {};
+  Array.prototype.forEach.call(stage.querySelectorAll('.screen'), function(s){ screens[s.id] = s; s.hidden = true; });
+
+  var tabHome = { activity:'sc-activity', ovoa:'sc-ovoa', record:'sc-record',
+                  journal:'sc-journal', safety:'sc-safety', settings:'sc-settings' };
+  var current = 'sc-activity';
+  var stacks  = { activity:[], ovoa:[], record:[], journal:[], safety:[], settings:[] };
+  var tab     = 'activity';
+  var index   = {};   // deck id -> subject index
+
+  /* ---------- decks ---------- */
+  function subjects(deck){ return Array.prototype.slice.call(deck.querySelectorAll(':scope > .subject')); }
+  function activeDeck(){
+    var sc = screens[current];
+    return sc ? sc.querySelector('.deck:not([hidden])') : null;
+  }
+  function show(deck, i, dir){
+    var subs = subjects(deck);
+    if(!subs.length) return;
+    i = Math.max(0, Math.min(subs.length - 1, i));
+    index[deck.id] = i;
+    subs.forEach(function(s, n){
+      s.classList.remove('inR','inL');
+      s.style.transform = '';
+      s.hidden = (n !== i);
+    });
+    var el = subs[i];
+    if(dir && !reduce.matches){ el.classList.add(dir > 0 ? 'inR' : 'inL'); }
+    el.scrollTop = 0;
+    chrome();
+  }
+  function page(d){
+    var deck = activeDeck(); if(!deck) return;
+    var subs = subjects(deck), i = (index[deck.id] || 0) + d;
+    if(i < 0 || i >= subs.length) return;
+    show(deck, i, d);
+  }
+  function toSubject(deck, name){
+    var subs = subjects(deck);
+    for(var i = 0; i < subs.length; i++){
+      if(subs[i].getAttribute('data-name') === name){ show(deck, i, 1); return true; }
+    }
+    return false;
+  }
+
+  /* ---------- chrome ---------- */
+  function chrome(){
+    var sc = screens[current];
+    navTitle.textContent = sc.getAttribute('data-title') || '';
+    btnBack.hidden = !stacks[tab].length;
+
+    navRight.innerHTML = '';
+    var deck = activeDeck();
+    var subs = deck ? subjects(deck) : [];
+
+    if(deck && subs.length > 1){
+      var i = index[deck.id] || 0;
+      var c = document.createElement('span');
+      c.className = 'count';
+      c.textContent = (i + 1) + '/' + subs.length;
+      navRight.appendChild(c);
+    }
+    var chip = sc.getAttribute('data-chip');
+    if(chip){
+      var b = document.createElement('button');
+      b.className = 'chip-nav'; b.textContent = chip;
+      b.setAttribute('data-go', sc.getAttribute('data-chip-to'));
+      navRight.appendChild(b);
+    }
+    if(current === 'sc-ovoa'){
+      var l = document.createElement('button');
+      l.className = 'chip-nav'; l.textContent = 'Logs';
+      l.onclick = function(){ var p = document.getElementById('logPanel'); p.hidden = !p.hidden; };
+      navRight.appendChild(l);
+    }
+
+    // pager
+    if(deck && subs.length > 1){
+      pager.hidden = false;
+      var i2 = index[deck.id] || 0;
+      dotsEl.innerHTML = '';
+      subs.forEach(function(s, n){
+        var d = document.createElement('button');
+        d.type = 'button';
+        if(s.getAttribute('data-flag') === '1') d.className = 'flag';
+        if(n === i2) d.setAttribute('aria-current','true');
+        d.setAttribute('aria-label', 'Go to ' + s.getAttribute('data-name'));
+        d.onclick = function(){ show(deck, n, n > i2 ? 1 : -1); };
+        dotsEl.appendChild(d);
+      });
+      var nx = subs[i2 + 1], pv = subs[i2 - 1];
+      pnext.innerHTML = nx
+        ? 'Next · <b>' + nx.getAttribute('data-name') + '</b>'
+        : 'Back · <b>' + (pv ? pv.getAttribute('data-name') : '') + '</b>';
+      btnPrev.disabled = !pv;
+      btnNext.disabled = !nx;
+    } else {
+      pager.hidden = true;
+    }
+
+    Array.prototype.forEach.call(document.querySelectorAll('#tabs .tab'), function(t){
+      if(t.getAttribute('data-tab') === tab) t.setAttribute('aria-current','true');
+      else t.removeAttribute('aria-current');
+    });
+  }
+
+  function open(id){
+    if(!screens[id]) return;
+    screens[current].hidden = true;
+    current = id;
+    screens[id].hidden = false;
+    var deck = activeDeck();
+    if(deck && index[deck.id] === undefined) show(deck, 0, 0);
+    chrome();
+  }
+  function goTab(t){
+    tab = t;
+    var st = stacks[t];
+    open(st.length ? st[st.length - 1] : tabHome[t]);
+  }
+  function push(id){
+    var t = screens[id] ? (screens[id].getAttribute('data-tab') || tab) : tab;
+    tab = t;
+    if(screens[id].getAttribute('data-back') === '1'){ stacks[t].push(id); }
+    else { stacks[t] = []; }
+    open(id);
+  }
+  function back(){
+    stacks[tab].pop();
+    open(stacks[tab].length ? stacks[tab][stacks[tab].length - 1] : tabHome[tab]);
+  }
+  btnBack.onclick = back;
+  btnPrev.onclick = function(){ page(-1); };
+  btnNext.onclick = function(){ page(1); };
+
+  Array.prototype.forEach.call(document.querySelectorAll('#tabs .tab'), function(t){
+    t.onclick = function(){ goTab(t.getAttribute('data-tab')); };
+  });
+
+  function say(msg, sub){
+    toast.innerHTML = '<span>' + msg + '</span>' + (sub ? '<span class="num">' + sub + '</span>' : '');
+    toast.hidden = false;
+    clearTimeout(say._t);
+    say._t = setTimeout(function(){ toast.hidden = true; }, 2600);
+  }
+
+  /* ---------- global click routing ---------- */
+  document.addEventListener('click', function(e){
+    var go = e.target.closest('[data-go]');
+    if(go){
+      var id = go.getAttribute('data-go');
+      var seg = go.getAttribute('data-seg');
+      var st  = go.getAttribute('data-state');
+      var subj= go.getAttribute('data-subject');
+      push(id);
+      if(seg) segment(seg);
+      if(st) orbState(st);
+      if(subj){ var d = activeDeck(); if(d) toSubject(d, subj); }
+      return;
+    }
+    var sw = e.target.closest('.sw');
+    if(sw){
+      var on = sw.getAttribute('aria-checked') !== 'true';
+      sw.setAttribute('aria-checked', on ? 'true' : 'false');
+      if(sw.id === 'swAlways'){ document.getElementById('alwaysWarn').hidden = !on;
+        document.getElementById('alwaysBar').hidden = !on; }
+      if(sw.id === 'swTexts'){ document.getElementById('textsSteps').hidden = !on; }
+      if(sw.id === 'swAuto'){ document.getElementById('autoWarn').hidden = !on; }
+      return;
+    }
+    var pill = e.target.closest('.pill');
+    if(pill && pill.parentElement){
+      Array.prototype.forEach.call(pill.parentElement.querySelectorAll('.pill'), function(p){
+        p.setAttribute('aria-pressed', p === pill ? 'true' : 'false');
+      });
+      if(pill.hasAttribute('data-seg')) segment(pill.getAttribute('data-seg'));
+      if(pill.hasAttribute('data-phase')) clipPhase(pill.getAttribute('data-phase'));
+      if(pill.hasAttribute('data-fall')) fallState(pill.getAttribute('data-fall'));
+      return;
+    }
+    var ch = e.target.closest('.check');
+    if(ch){
+      var done = ch.getAttribute('aria-checked') !== 'true';
+      ch.setAttribute('aria-checked', done ? 'true' : 'false');
+      var n = document.querySelectorAll('#todoList .check[aria-checked="true"]').length;
+      document.getElementById('todoCount').textContent = n;
+      document.getElementById('rowTodo').textContent = n + ' of 4 done';
+      return;
+    }
+    var cho = e.target.closest('.choice');
+    if(cho){
+      Array.prototype.forEach.call(cho.parentElement.querySelectorAll('.choice'), function(c){
+        c.setAttribute('aria-checked', c === cho ? 'true' : 'false');
+      });
+      document.getElementById('btnApprove').disabled = false;
+      return;
+    }
+    var cf = e.target.closest('[data-confirm]');
+    if(cf){
+      var sub = document.getElementById(cf.getAttribute('data-confirm'));
+      settle(sub, 'Done', 'done');
+      return;
+    }
+    var sk = e.target.closest('[data-skip]');
+    if(sk){ settle(document.getElementById(sk.getAttribute('data-skip')), 'Skipped today', 'skipped'); return; }
+    var se = e.target.closest('[data-settle]');
+    if(se){ settle(document.getElementById(se.getAttribute('data-settle')), se.getAttribute('data-word'), 'settled'); return; }
+    var cn = e.target.closest('[data-connect]');
+    if(cn){ clipPhase('connected'); setPhasePill('connected'); return; }
+    var su = e.target.closest('[data-setup]');
+    if(su){ startSetup(); return; }
+  });
+
+  /* a subject that has been answered says so, then offers the next one */
+  function settle(sub, word, kind){
+    if(!sub) return;
+    var eye = sub.querySelector('.eyebrow');
+    eye.className = 'eyebrow ' + (kind === 'skipped' ? '' : 'done');
+    eye.innerHTML = '<i class="dot"></i>' + word + ' · <span class="num">9:41</span>';
+    Array.prototype.forEach.call(sub.querySelectorAll('.act-row, .act, .more'), function(r){ r.hidden = true; });
+    sub.setAttribute('data-flag','0');
+    var p = document.createElement('p');
+    p.className = 'meta';
+    p.textContent = 'Cleared. Page right for what is next.';
+    sub.appendChild(p);
+    var deck = activeDeck();
+    if(deck) chrome();
+    say(word + '.', 'one less');
+  }
+
+  /* ---------- journal segments ---------- */
+  function segment(id){
+    var sc = screens['sc-journal'];
+    Array.prototype.forEach.call(sc.querySelectorAll('.deck'), function(d){ d.hidden = (d.id !== id); });
+    Array.prototype.forEach.call(document.querySelectorAll('#journalSegs .pill'), function(p){
+      p.setAttribute('aria-pressed', p.getAttribute('data-seg') === id ? 'true' : 'false');
+    });
+    var deck = document.getElementById(id);
+    if(index[deck.id] === undefined) show(deck, 0, 0); else chrome();
+  }
+
+  /* ---------- activity state ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll('#ctlActivity .cbtn'), function(b){
+    b.onclick = function(){
+      Array.prototype.forEach.call(document.querySelectorAll('#ctlActivity .cbtn'), function(x){
+        x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+      });
+      var want = b.getAttribute('data-deck');
+      ['dk-due','dk-quiet'].forEach(function(id){ document.getElementById(id).hidden = (id !== want); });
+      var sc = screens['sc-activity'];
+      if(want === 'dk-quiet'){ sc.removeAttribute('data-chip'); } else { sc.setAttribute('data-chip','All of today'); }
+      stacks.activity = [];
+      goTab('activity');
+      var deck = document.getElementById(want);
+      show(deck, 0, 0);
+    };
+  });
+
+  /* ---------- the orb ---------- */
+  var wrap = document.getElementById('orbWrap'),
+      glyph= document.getElementById('orbGlyph'),
+      phase= document.getElementById('orbPhase'),
+      words= document.getElementById('orbWords'),
+      hint = document.getElementById('orbHint'),
+      card = document.getElementById('approveCard'),
+      choices = document.getElementById('apprChoices'),
+      running = document.getElementById('apprRunning'),
+      apprBtns= document.getElementById('apprButtons'),
+      alwaysBar = document.getElementById('alwaysBar');
+  var orbNow = 'idle';
+
+  function orbState(s){
+    orbNow = s;
+    wrap.className = 'orbwrap';
+    card.hidden = true; choices.hidden = true; running.hidden = true; apprBtns.hidden = false;
+    document.getElementById('btnApprove').disabled = false;
+    words.hidden = true;
+    alwaysBar.hidden = (s !== 'always');
+    if(s === 'idle'){
+      wrap.classList.add('off'); glyph.textContent = '🎙';
+      phase.textContent = 'Tap to start listening';
+      hint.textContent = 'One tap. Nothing is ever captured in the background.';
+    } else if(s === 'listening' || s === 'always'){
+      wrap.classList.add('live'); glyph.textContent = '🎙';
+      phase.textContent = 'Listening';
+      words.hidden = false;
+      words.textContent = "“Text Ana that I’ll send Sunday’s photos tonight”";
+      hint.textContent = (s === 'always')
+        ? 'Always listen is on · tap the orb to turn it off'
+        : 'Tap to stop listening';
+    } else if(s === 'thinking'){
+      wrap.classList.add('live'); glyph.textContent = '◌';
+      phase.textContent = 'Thinking…';
+      words.hidden = false; words.textContent = 'Looking up Ana in your contacts';
+      hint.textContent = 'Eight to twelve seconds, start to finish.';
+    } else if(s === 'speaking'){
+      wrap.classList.add('speak','live'); glyph.textContent = '🔊';
+      phase.textContent = 'Speaking';
+      words.hidden = false;
+      words.textContent = "“I’ve written the text. It needs your approval.”";
+      hint.textContent = 'Tap to interrupt';
+    } else if(s === 'approval' || s === 'contact'){
+      wrap.classList.add('speak'); glyph.textContent = '🔊';
+      phase.textContent = 'Speaking';
+      hint.textContent = 'Tap to interrupt';
+      card.hidden = false;
+      if(s === 'contact'){
+        choices.hidden = false;
+        document.getElementById('apprSummary').textContent = 'Text Ana Reyes: “Sending the photos from Sunday tonight.”';
+        document.getElementById('btnApprove').disabled = true;
+      }
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('#ctlOrb .cbtn'), function(x){
+      x.setAttribute('aria-pressed', x.getAttribute('data-state') === s ? 'true' : 'false');
+    });
+  }
+  document.getElementById('orb').onclick = function(){
+    if(orbNow === 'idle') orbState('listening');
+    else if(orbNow === 'listening') orbState('thinking');
+    else if(orbNow === 'thinking') orbState('speaking');
+    else if(orbNow === 'speaking') orbState('approval');
+    else if(orbNow === 'always') orbState('idle');
+    else orbState('idle');
+  };
+  alwaysBar.onclick = function(){ orbState('idle'); };
+  Array.prototype.forEach.call(document.querySelectorAll('#ctlOrb .cbtn'), function(b){
+    b.onclick = function(){ goTab('ovoa'); orbState(b.getAttribute('data-state')); };
+  });
+  document.getElementById('btnApprove').onclick = function(){
+    apprBtns.hidden = true; choices.hidden = true; running.hidden = false;
+    setTimeout(function(){
+      running.hidden = true;
+      document.getElementById('apprSummary').textContent = 'Sent to Ana Reyes · 9:41';
+      document.querySelector('#approveCard .eyebrow').className = 'eyebrow done';
+      document.querySelector('#approveCard .eyebrow').innerHTML = '<i class="dot"></i>Approved';
+      say('Text sent to Ana Reyes.');
+    }, 1200);
+  };
+  document.getElementById('btnCancelAppr').onclick = function(){ orbState('idle'); say('Cancelled. Nothing was sent.'); };
+
+  /* ---------- record ---------- */
+  var phaseText = { idle:'Not connected', scanning:'Looking for clips…', pairing:"Press the clip's button",
+                    connecting:'Connecting…', connected:'Connected' };
+  function setPhasePill(p){
+    Array.prototype.forEach.call(document.querySelectorAll('#clipPhases .pill'), function(x){
+      x.setAttribute('aria-pressed', x.getAttribute('data-phase') === p ? 'true' : 'false');
+    });
+  }
+  function clipPhase(p){
+    var eye = document.getElementById('clipEyebrow');
+    var col = p === 'connected' ? 'var(--ok)' : (p === 'idle' ? 'var(--ink-3)' : 'var(--warn)');
+    eye.innerHTML = '<i class="dot" style="color:' + col + '"></i>' + phaseText[p];
+    document.getElementById('clipPhase').textContent = phaseText[p];
+    document.getElementById('clipStats').hidden = (p !== 'connected');
+    document.getElementById('clipFinding').hidden = !(p === 'scanning' || p === 'pairing');
+    var a = document.getElementById('clipAction');
+    a.textContent = p === 'connected' ? 'Disconnect' : (p === 'scanning' ? 'Scanning…' : 'Find clips');
+    recStatus();
+  }
+  document.getElementById('clipAction').onclick = function(){
+    var on = document.getElementById('clipStats').hidden === false;
+    clipPhase(on ? 'idle' : 'scanning'); setPhasePill(on ? 'idle' : 'scanning');
+  };
+  var recOn = false, recPaused = false, recSecs = 0, recTimer = null;
+  function fmt(s){ return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
+  function recStatus(){
+    var connected = document.getElementById('clipStats').hidden === false;
+    var st = document.getElementById('recStatus'), eye = document.getElementById('recEyebrow');
+    var btn = document.getElementById('recBtn');
+    btn.disabled = !connected;
+    btn.classList.toggle('on', recOn);
+    document.getElementById('recRunning').hidden = !recOn;
+    document.getElementById('recTimer').textContent = fmt(recSecs);
+    if(!connected){ st.textContent = 'Connect the clip to record'; eye.textContent = 'No clip'; eye.className='eyebrow'; }
+    else if(recOn && recPaused){ st.textContent = 'Paused'; eye.innerHTML = '<i class="dot"></i>Paused'; eye.className='eyebrow late'; }
+    else if(recOn){ st.textContent = 'Recording on the clip'; eye.innerHTML = '<i class="dot"></i>Recording'; eye.className='eyebrow bad'; }
+    else { st.textContent = 'Tap to record on the clip'; eye.textContent = 'Ready'; eye.className='eyebrow'; }
+  }
+  document.getElementById('recBtn').onclick = function(){
+    if(recOn){ stopRec(); return; }
+    recOn = true; recPaused = false; recSecs = 0; recStatus();
+    recTimer = setInterval(function(){ if(!recPaused){ recSecs++; document.getElementById('recTimer').textContent = fmt(recSecs); } }, 1000);
+  };
+  function stopRec(){
+    recOn = false; recPaused = false; clearInterval(recTimer); recStatus();
+    say('Saved · Adding to your timeline…');
+  }
+  document.getElementById('recStop').onclick = stopRec;
+  document.getElementById('recPause').onclick = function(){
+    recPaused = !recPaused;
+    document.getElementById('recPause').textContent = recPaused ? 'Resume' : 'Pause';
+    recStatus();
+  };
+
+  /* ---------- safety ---------- */
+  var fallText = { on:'Watching for falls while the app is open.',
+                   unavailable:'This device has no motion sensor.',
+                   denied:'Allow Motion & Fitness access in the Settings app.' };
+  function fallState(k){
+    document.getElementById('fallStatus').textContent = fallText[k];
+    var eye = document.getElementById('fallEyebrow');
+    var col = k === 'on' ? 'var(--ok)' : 'var(--warn)';
+    eye.innerHTML = '<i class="dot" style="color:' + col + '"></i>' + (k === 'on' ? 'On' : 'Off');
+  }
+  var sosT = null, sosP = 0;
+  var sosBtn = document.getElementById('sosBtn'), sosFill = document.getElementById('sosFill');
+  function sosStart(){
+    sosP = 0;
+    sosT = setInterval(function(){
+      sosP += 100 / 15;
+      sosFill.style.height = Math.min(100, sosP) + '%';
+      if(sosP >= 100){
+        sosStop(true);
+        document.getElementById('sosHint').textContent = 'Contacts alerted. Ana and Marcus have your location.';
+        say('Contacts alerted.');
+      }
+    }, 100);
+  }
+  function sosStop(done){
+    clearInterval(sosT); sosT = null;
+    if(!done){ sosFill.style.height = '0%'; }
+  }
+  sosBtn.addEventListener('pointerdown', function(e){ e.preventDefault(); sosStart(); });
+  sosBtn.addEventListener('pointerup', function(){ sosStop(false); });
+  sosBtn.addEventListener('pointerleave', function(){ if(sosT) sosStop(false); });
+  sosBtn.addEventListener('keydown', function(e){ if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); if(!sosT) sosStart(); } });
+  sosBtn.addEventListener('keyup', function(){ sosStop(false); });
+
+  /* ---------- interruption: take over, then hand control back ---------- */
+  var held = null;
+  function hold(){
+    var deck = activeDeck();
+    held = { screen:current, tab:tab, stack:stacks[tab].slice(),
+             deck: deck ? deck.id : null, i: deck ? (index[deck.id] || 0) : 0,
+             name: deck ? subjects(deck)[index[deck.id] || 0].getAttribute('data-name') : null };
+  }
+  function handBack(){
+    if(!held) return;
+    tab = held.tab; stacks[tab] = held.stack.slice(); open(held.screen);
+    if(held.deck){
+      var d = document.getElementById(held.deck);
+      if(d && !d.hidden) show(d, held.i, 0);
+    }
+    say('Back where you were' + (held.name ? ' · ' + held.name : ''),
+        held.deck ? (held.i + 1) + '/' + subjects(document.getElementById(held.deck)).length : '');
+    held = null;
+  }
+
+  var nagQueueLeft = 1;
+  var ovNag = document.getElementById('ovNag');
+  function showNag(kind){
+    if(!held) hold();
+    ovNag.hidden = false;
+    document.getElementById('nagQueue').hidden = (nagQueueLeft <= 0);
+    document.getElementById('nagQueue').textContent = nagQueueLeft + ' more waiting';
+    if(kind === 'med'){
+      document.getElementById('nagIcon').textContent = '💊';
+      document.getElementById('nagTitle').textContent = "Don't forget";
+      document.getElementById('nagLabel').textContent = 'Metformin · 8:00';
+      document.getElementById('nagBtn').textContent = 'Done';
+      document.getElementById('nagHint').textContent = 'Or say “Hey OVOA, I did it.”';
+      document.getElementById('nagSimple').hidden = false;
+      document.getElementById('nagHard').hidden = true;
+    } else {
+      document.getElementById('nagIcon').textContent = '⏰';
+      document.getElementById('nagTitle').textContent = 'Morning, Thomas';
+      document.getElementById('nagLabel').textContent = "Get up · it stops when you've walked";
+      document.getElementById('nagSimple').hidden = true;
+      document.getElementById('nagHard').hidden = false;
+      hardSteps = 0; drawHard();
+    }
+  }
+  var hardSteps = 0;
+  function drawHard(){
+    document.getElementById('nagSteps').textContent = hardSteps + ' / 20';
+    document.getElementById('nagFill').style.width = (hardSteps / 20 * 100) + '%';
+  }
+  document.getElementById('nagWalk').onclick = function(){
+    hardSteps = Math.min(20, hardSteps + 4); drawHard();
+    if(hardSteps >= 20){ setTimeout(closeNag, 400); }
+  };
+  document.getElementById('nagBtn').onclick = function(){
+    if(nagQueueLeft > 0){ nagQueueLeft--; showNag('alarm'); }
+    else closeNag();
+  };
+  function closeNag(){
+    ovNag.hidden = true; nagQueueLeft = 1;
+    handBack();
+  }
+  document.getElementById('ctlNag').onclick = function(){ nagQueueLeft = 1; showNag('med'); };
+
+  var ovFall = document.getElementById('ovFall'), fallT = null;
+  document.getElementById('ctlFall').onclick = function(){
+    hold(); ovFall.hidden = false;
+    var n = 20; document.getElementById('fallCount').textContent = n;
+    fallT = setInterval(function(){
+      n--; document.getElementById('fallCount').textContent = Math.max(0, n);
+      if(n <= 0){ clearInterval(fallT); ovFall.hidden = true; handBack(); say('Contacts alerted after a possible fall.'); }
+    }, 1000);
+  };
+  document.getElementById('fallOk').onclick = function(){ clearInterval(fallT); ovFall.hidden = true; handBack(); say('Marked OK.'); };
+  document.getElementById('fallSend').onclick = function(){ clearInterval(fallT); ovFall.hidden = true; handBack(); say('Contacts alerted.'); };
+  document.getElementById('btnTestFall').onclick = function(){ document.getElementById('ctlFall').click(); };
+
+  var ib = document.getElementById('interrupt');
+  document.getElementById('ctlAppr').onclick = function(){ hold(); ib.hidden = false; };
+  document.getElementById('ibLook').onclick = function(){ ib.hidden = true; goTab('ovoa'); orbState('approval'); held = null; };
+  document.getElementById('ibLater').onclick = function(){ ib.hidden = true; say('Kept in Journal until you want it.'); held = null; };
+
+  /* ---------- first run: a spoken conversation ---------- */
+  var lines = [
+    ['sys','OVOA is listening'],
+    ['them','Hello. I only need a few things, and you can say them out loud.'],
+    ['them','What should I call you?'],
+    ['you','“Thomas.”'],
+    ['them','Thomas. And what should you call me?'],
+    ['you','“OVOA is fine.”'],
+    ['them','When do you usually wake up, and when do you go to bed?'],
+    ['you','“Up at half six, down about eleven.”'],
+    ['them','So I will stay quiet from 22:00 to 07:00. Any medications at fixed times?'],
+    ['you','“Levothyroxine at seven, Metformin at eight.”'],
+    ['them','Both are set, with a buzz on the clip. That is enough to start.']
+  ];
+  var convo = document.getElementById('convo'), li = 0;
+  function startSetup(){
+    convo.innerHTML = ''; li = 0;
+    document.getElementById('ovSetup').hidden = false;
+    document.getElementById('setupNext').textContent = 'Answer out loud';
+    step(); step();
+  }
+  function step(){
+    if(li >= lines.length){
+      document.getElementById('ovSetup').hidden = true;
+      goTab('activity'); say('Set up by talking. Nothing typed.');
+      return;
+    }
+    var l = lines[li++];
+    var p = document.createElement('p');
+    p.className = l[0];
+    p.textContent = l[1];
+    convo.appendChild(p);
+    while(convo.children.length > 5) convo.removeChild(convo.firstChild);
+    if(li >= lines.length) document.getElementById('setupNext').textContent = 'Take me in →';
+  }
+  document.getElementById('setupNext').onclick = step;
+  document.getElementById('setupSkip').onclick = function(){
+    document.getElementById('ovSetup').hidden = true; goTab('activity');
+  };
+  document.getElementById('ctlSetup').onclick = startSetup;
+
+  /* the voice list is a list, but picking one still has to land */
+  Array.prototype.forEach.call(document.querySelectorAll('#voiceList .row'), function(r){
+    r.onclick = function(){
+      Array.prototype.forEach.call(document.querySelectorAll('#voiceList .row'), function(x){
+        x.removeAttribute('aria-current');
+        var t = x.querySelector('.rv'); if(t) t.remove();
+      });
+      r.setAttribute('aria-current','true');
+      var m = document.createElement('span'); m.className = 'rv'; m.textContent = '✓';
+      r.appendChild(m);
+      say('Playing a sample of ' + r.querySelector('b').textContent + '.');
+    };
+  });
+
+  /* ---------- small live bits ---------- */
+  document.getElementById('btnAddMoment').onclick = function(){
+    var f = document.getElementById('moment');
+    if(!f.value.trim()) return;
+    document.getElementById('momentNote').hidden = false;
+    document.getElementById('momentNote').textContent = 'Added to today · “' + f.value.trim() + '”';
+    f.value = '';
+  };
+  document.getElementById('btnRunNow').onclick = function(){
+    var n = document.getElementById('runNote');
+    n.hidden = false; n.textContent = 'Running…';
+    setTimeout(function(){ n.textContent = 'Nothing to report — OVOA looked and decided there was nothing worth telling you.'; }, 900);
+  };
+  setInterval(function(){
+    if(current !== 'sc-live') return;
+    var b = 70 + Math.round(Math.random() * 8);
+    document.getElementById('liveBpm').textContent = b;
+    document.getElementById('liveGyro').textContent = (0.02 + Math.random() * 0.2).toFixed(2) + ' rad/s';
+    var t = document.getElementById('liveTrace');
+    var bar = document.createElement('i');
+    bar.style.height = (30 + Math.random() * 60) + '%';
+    t.appendChild(bar);
+    if(t.children.length > 14) t.removeChild(t.firstChild);
+  }, 1400);
+
+  /* ---------- swipe + keyboard ---------- */
+  var sx = 0, sy = 0, drag = null, moved = false;
+  stage.addEventListener('pointerdown', function(e){
+    var deck = activeDeck(); if(!deck) return;
+    if(e.target.closest('input, .scroll, .checks, .dots')) return;
+    drag = deck; sx = e.clientX; sy = e.clientY; moved = false;
+  });
+  stage.addEventListener('pointermove', function(e){
+    if(!drag) return;
+    var dx = e.clientX - sx, dy = e.clientY - sy;
+    if(Math.abs(dy) > Math.abs(dx)) return;
+    moved = true;
+    var cur = subjects(drag)[index[drag.id] || 0];
+    if(cur && !reduce.matches) cur.style.transform = 'translateX(' + (dx * 0.45) + 'px)';
+  });
+  stage.addEventListener('pointerup', function(e){
+    if(!drag) return;
+    var dx = e.clientX - sx;
+    var cur = subjects(drag)[index[drag.id] || 0];
+    if(cur) cur.style.transform = '';
+    if(moved && Math.abs(dx) > 56) page(dx < 0 ? 1 : -1);
+    drag = null;
+  });
+  stage.addEventListener('pointercancel', function(){ drag = null; });
+  document.addEventListener('keydown', function(e){
+    if(document.activeElement && document.activeElement.tagName === 'INPUT') return;
+    if(e.key === 'ArrowRight') page(1);
+    if(e.key === 'ArrowLeft') page(-1);
+  });
+
+  /* ---------- boot ---------- */
+  ['dk-due','dk-quiet','dk-record','dk-notes','dk-days','dk-transcripts','dk-safety'].forEach(function(id){
+    var d = document.getElementById(id);
+    if(d) show(d, 0, 0);
+  });
+  clipPhase('connected');
+  fallState('on');
+  orbState('idle');
+  open('sc-activity');
+})();
+</script>

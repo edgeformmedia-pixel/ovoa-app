@@ -1,6 +1,7 @@
 import * as LiveActivity from "expo-live-activity";
-import { AppState, Platform } from "react-native";
+import { Platform } from "react-native";
 import { devlog } from "./devlog";
+import { noteOffScreen, onScreen } from "./foreground";
 
 // Whether OVOA is listening, in the Dynamic Island and on the Lock Screen: a Live Activity while
 // the click standby or a conversation is on. The widget draws "sf:<symbol>#<colour>" as an SF
@@ -47,18 +48,29 @@ export function showIsland(status: IslandStatus | null) {
       // Only works with the app open; from the background it's tried again when the
       // app opens. Asking anyway throws "Target is not foreground" every time, which
       // is a log line rather than a problem, so don't ask.
-      if (AppState.currentState !== "active") return;
+      if (!onScreen()) return;
       activityId = LiveActivity.startActivity(LOOK[status], CONFIG) || null;
       if (!activityId) return;
       devlog("voice", "dynamic island: on");
     }
     shown = status;
+    // Otherwise one failure silences every identical failure for the life of the process.
+    lastError = "";
   } catch (err) {
     // The activity is gone (or couldn't start): start a new one on the next change.
     activityId = null;
     shown = null;
     const why = err instanceof Error ? err.message : String(err);
-    if (why !== lastError) devlog("err", "dynamic island failed", why);
+    // "Target is not foreground" means iOS took the foreground away between the
+    // check above and this call — ten of these in device_logs (2026-09-21). It's a
+    // race, not a fault: note it so nothing else asks for a microphone or an
+    // activity against a stale reading, and keep it out of the error log.
+    if (/not foreground/i.test(why)) {
+      noteOffScreen();
+      if (why !== lastError) devlog("log", "dynamic island: the app left the screen mid-start; it goes up when it's back");
+    } else if (why !== lastError) {
+      devlog("err", "dynamic island failed", why);
+    }
     lastError = why;
   }
 }

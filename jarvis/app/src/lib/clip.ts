@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { Alert } from "react-native";
 import * as ute from "../../modules/ute-ble";
 import { devlog, logFail } from "./devlog";
-import { addRecording, hasClipSession, type Recording } from "./recordings";
+import { addRecording, fileNameOf, hasClipSession, type Recording } from "./recordings";
 import { storage } from "./storage";
 import { mark as markTurn } from "./turnTimer";
 import { gyroLive, motionAfterBuzz, spinOf, spreadBatch, twistKind, type Sample } from "./twist";
@@ -106,8 +106,14 @@ export function useClipPaired() {
   return useSyncExternalStore(subscribe, () => !!state.savedDeviceId);
 }
 
-function say(line: string) {
-  devlog("ble", line);
+/**
+ * The clip's running commentary. Debug, not info: this is the loudest thing in
+ * the app — a probe turns SDK logging on and it becomes hundreds of lines a
+ * second — and none of it is worth a row in D1 unless something has gone wrong,
+ * in which case it is already attached to the error as a breadcrumb.
+ */
+function say(line: string, level: "debug" | "trace" = "debug") {
+  devlog("ble", line, undefined, { level });
   set({ log: [`${new Date().toLocaleTimeString()}  ${line}`, ...state.log].slice(0, 120) });
 }
 
@@ -183,7 +189,7 @@ function ensureStarted() {
     if (line.includes("SDK send pair")) set({ phase: "pairing" });
     // The probe turns on every SDK line (raw packets, many a second) and summarizes them itself.
     if (probe) return probe.onLog(line.trim());
-    say(`sdk: ${line.trim()}`);
+    say(`sdk: ${line.trim()}`, "trace");
   });
 
   ute.addListener("onRecordStart", (event) => {
@@ -1426,14 +1432,21 @@ async function downloadOne(sessionId: number, size: number) {
     if (result.bytes < size) say(`only got ${result.bytes} of ${size} bytes; keeping what arrived`);
     if (result.decodeError) say(`couldn't make it playable — ${result.decodeError}`);
     else say(`saved #${sessionId}: ${result.seconds?.toFixed(1)} s${result.badPackets ? `, ${result.badPackets} bad packets` : ""}`);
+    // Names, not uris. The native module hands back an absolute file:// path that
+    // includes the app container's UUID, and iOS changes that UUID on every app
+    // update — saving it killed all fourteen recordings at once (device_logs
+    // 2026-09-20 23:18). recordings.ts joins the name onto Documents at read time.
+    const rawName = fileNameOf(result.path);
+    const wavName = result.wavPath ? fileNameOf(result.wavPath) : undefined;
+    devlog("file", `clip #${sessionId}: wrote ${rawName}${wavName ? ` and ${wavName}` : " (no wav)"}`, result.uri);
     return addRecording({
       source: "clip",
       sessionId,
       // The session id is the clip's start time in unix seconds, when its clock was set.
       createdAt: sessionId > 1_500_000_000 ? sessionId * 1000 : Date.now(),
       seconds: result.seconds,
-      wavUri: result.wavUri,
-      rawUri: result.uri,
+      wavName,
+      rawName,
       bytes: result.bytes,
       decodeError: result.decodeError,
     });

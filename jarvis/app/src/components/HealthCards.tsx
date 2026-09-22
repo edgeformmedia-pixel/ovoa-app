@@ -10,6 +10,25 @@ import { colors } from "../lib/theme";
 // a phone with no watch has steps and little else, so each card hides itself
 // when Health has nothing for it, rather than showing a row of dashes.
 
+/**
+ * HealthKit hands back an XPC failure when its privacy daemon is busy or the
+ * phone is locked ("Apple Health couldn't be read … HealthPrivacyService",
+ * device_logs 2026-09-21). It rights itself, so it gets one more go before the
+ * user is shown an error. The raw message is logged either way: the pattern
+ * below is the only one seen so far, and the next one has to be readable.
+ */
+async function readToday() {
+  try {
+    return await todayHealth();
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    if (!/HealthPrivacyService|Connection invalidated|Code=4097/.test(why)) throw err;
+    devlog("warn", "Apple Health was busy; asking once more", why);
+    await new Promise((r) => setTimeout(r, 800));
+    return todayHealth();
+  }
+}
+
 export function HealthCards() {
   const [health, setHealth] = useState<TodayHealth | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "unavailable" | "error">("loading");
@@ -26,7 +45,7 @@ export function HealthCards() {
         if (alive()) setState("unavailable");
         return;
       }
-      const data = await todayHealth();
+      const data = await readToday();
       if (!alive()) return;
       devlog(
         "log",

@@ -140,7 +140,12 @@ async function sayLine(text: string) {
     }
     devlog("agent", "saying the wake-up line", text);
     const copy = new File(Paths.cache, `ovoa-wake-${Date.now()}.mp3`);
-    phrase.file.copy(copy);
+    // copySync, not copy: copy() is async in SDK 57, and an un-awaited one hands
+    // the player a file that hasn't been written yet — the same race that silenced
+    // the voice fillers (2026-09-21). Here the only backstop is a 15 s timeout, so
+    // losing it is an alarm that goes off at 6am and says nothing at all.
+    phrase.file.copySync(copy, { overwrite: true });
+    devlog("file", `wake-up line copied to cache, ${Math.round(copy.size / 1024)} KB`, copy.uri);
     await new Promise<void>((resolve) => {
       const player = createAudioPlayer(copy.uri);
       const done = () => {

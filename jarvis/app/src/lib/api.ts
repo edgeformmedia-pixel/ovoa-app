@@ -269,7 +269,8 @@ export type GoogleStatus =
 export const timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  /** Per-field messages, when the server said which box is wrong. Signup does. */
+  constructor(message: string, readonly status: number, readonly fields: Record<string, string> = {}) {
     super(message);
   }
 }
@@ -278,7 +279,10 @@ const REQUEST_TIMEOUT_MS = 60_000;
 
 export async function request<T>(path: string, token: string | null, init: RequestInit = {}): Promise<T> {
   const method = init.method ?? "GET";
-  // Auth bodies hold passwords and tokens; keep them out of the log.
+  // Auth request bodies hold passwords, and a successful reply holds a token:
+  // both stay out. A *failed* reply holds neither, and is the only thing in
+  // device_logs that can tell a typo from a person who never had an account —
+  // which is why 123 401s across 38 devices told us nothing (2026-09-21).
   const secret = path.startsWith("/auth/") || path.startsWith("/me/password");
   devlog("req", `${method} ${path}`, secret ? undefined : (init.body as string | undefined));
   const started = Date.now();
@@ -305,8 +309,12 @@ export async function request<T>(path: string, token: string | null, init: Reque
   }
   clearTimeout(timer);
   const body = await res.json().catch(() => ({}));
-  devlog(res.ok ? "res" : "err", `${res.status} ${method} ${path} · ${Date.now() - started} ms`, secret ? undefined : body);
-  if (!res.ok) throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status);
+  devlog(
+    res.ok ? "res" : "err",
+    `${res.status} ${method} ${path} · ${Date.now() - started} ms`,
+    secret && res.ok ? undefined : body,
+  );
+  if (!res.ok) throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status, body.fields ?? {});
   return body as T;
 }
 

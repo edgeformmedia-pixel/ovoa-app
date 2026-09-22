@@ -1,5 +1,7 @@
 OVOA/Jarvis: Expo iOS app (jarvis/app) + Cloudflare Worker (jarvis/api, D1 jarvis-db). Ships via Codemagic -> TestFlight.
-Done since 57e75a3: money feature (src/money.ts, migration 0028); spoken turns now carry 17 tools not ~70 (src/toolbelt.ts, more_tools loads the rest mid-turn); setup is a voice call (app/src/app/onboarding.tsx); codemagic auto-builds on push to main when jarvis/app changes.
-BLOCKED 1: wrangler OAuth token has no d1 scope -> can't migrate, deploy, or read device_logs. Run `npx wrangler login` then migrate + deploy.
-BLOCKED 2: Codemagic is out of build minutes (#58 failed on an Apple 500 in Publishing, not our code). Needs billing enabled.
-Next: after login, read device_logs perf lines to see whether the smaller prompt moved "think" time; the app-side voice fixes are still untested on device.
+Done since 57e75a3: money feature (src/money.ts, migration 0028); spoken turns carry 17 tools not ~70 (src/toolbelt.ts + more_tools); setup is a voice call (app/src/app/onboarding.tsx); codemagic auto-builds on push to main when jarvis/app changes.
+Design: UI reads flat because everything is a card, there's no type/spacing scale, and theme.ts holds colors only. docs/redesign-prompts.md has a shared brief + five direction blocks (spine / instrument panel / soft depth / voice on the page / one thing at a time) to run in five chats, then port the winner (tokens -> primitives -> Feed.tsx -> Journal -> orb).
+D1 is readable: `npx wrangler d1 execute jarvis-db --remote -y --json --command "..."`. A 7403 is transient — just retry it.
+Log sweep 2026-09-22 (8,055 err rows) is fixed end to end: the 3-second background mic loop, an un-awaited File.copy that silenced the filler on 11 of 19 turns (the real 8-9 s "first word"), the useAgent crash, stale .wav paths, lumped signup errors, the engines-all-down silence. Email was never case-sensitive — users.email is COLLATE NOCASE.
+New: collapsing logger (one loop = 2 rows, not 7,150), /report-bug screen, and GET /debug/logs?since=2h (x-debug-key) which reads device_logs + error_events + engine_stats + cron_ticks without wrangler. `health.lastTickMs` says whether the cron is beating. See docs/agent.md.
+BLOCKED: Codemagic is out of build minutes (#58 failed on an Apple 500 in Publishing, not our code). Needs billing enabled — nothing app-side reaches the phone until then.

@@ -1,35 +1,172 @@
+import * as Application from "expo-application";
 import Constants from "expo-constants";
+import { File, Paths } from "expo-file-system";
 import { AppState, Platform } from "react-native";
 import { API_URL } from "./api";
-import { onDevLog, type LogEntry } from "./devlog";
+import {
+  breadcrumbs,
+  clock,
+  devlog,
+  formatDevLog,
+  LEVEL_ORDER,
+  onDevLog,
+  recentLog,
+  setLogContext,
+  sweepLog,
+  type LogEntry,
+  type LogLevel,
+} from "./devlog";
 import { storage } from "./storage";
 
-// Sends the dev log to the server (POST /logs → D1 table device_logs) every few
-// seconds, so what happens on the phone can be read remotely. Also routes
-// console output, uncaught JS errors and unhandled promise rejections into the log.
+// Sends the dev log to the server (POST /logs → D1 table device_logs), so what
+// happens on the phone can be read remotely. Also routes console output,
+// uncaught JS errors and unhandled promise rejections into the log.
+//
+// Two things it has to get right. Battery: the old uploader woke the phone every
+// three seconds all day whether or not it had anything to say, so there is no
+// interval any more — a line schedules the next send and nothing is running when
+// the queue is empty. And crashes: a fatal used to call flush() and return, which
+// gave the request no time to finish, so the one line worth having was the one
+// that never arrived. The queue is now written to disk synchronously first
+// (expo-file-system's File.write is synchronous in SDK 57) and picked up next launch.
 
+/** How soon a new line goes. Long enough for a burst to travel together. */
 const FLUSH_MS = 3000;
+/** Something that went wrong goes sooner: a crash may be a second away. */
+const URGENT_MS = 400;
+/** The server's own per-request limit (api/src/logs.ts). */
 const MAX_BATCH = 200;
+/** 200 rows × a 4000-character detail is an 800 KB body; a phone on one bar never lands it. */
+const MAX_BODY_BYTES = 256 * 1024;
 const MAX_QUEUE = 2000;
+/** Waits after a failure, then two minutes forever. */
+const BACKOFF_MS = [3_000, 8_000, 20_000, 45_000, 120_000];
+/** How many rows a crash is allowed to write to disk. A synchronous write during a crash must be small. */
+const SPILL_ROWS = 300;
+/**
+ * In the cache, not Documents: Documents is backed up to iCloud, and a standing
+ * copy of the log there is a worse trade than iOS occasionally purging a spill
+ * we only need to survive until the next launch.
+ */
+const SPILL_FILE = "ovoa-log-spill.json";
 const DEVICE_KEY = "ovoa.deviceId";
 
 let queue: LogEntry[] = [];
+/** Rows recovered from a previous launch. They keep that launch's session id, so they go on their own. */
+let carried: { sessionId: string; rows: LogEntry[] } | null = null;
 let token: string | null = null;
 let deviceId: string | null = null;
 let flushing = false;
 let started = false;
-const sessionId = Math.random().toString(36).slice(2, 12);
-const build = `${Constants.expoConfig?.version ?? "?"} ${Platform.OS} ${__DEV__ ? "dev" : "release"}`;
+let failures = 0;
+let lastOkAt = 0;
+/** Whether the last attempt reached the server at all. Null until something has been tried. */
+let online: boolean | null = null;
+let droppedTotal = 0;
+let trimming = false;
+let badShapeLogged = false;
+/** True while React Native's own error handler is running, which logs the same error again. */
+let inHandler = false;
 
-/** Tags uploads with the signed-in user (or clears it on sign-out). */
+/**
+ * Below this, a line is kept on the phone but not uploaded. "info" to start
+ * with: `debug` now carries React Native's and the libraries' own console
+ * chatter, which is worth having on the phone and not worth 90,000 rows a day
+ * in D1. Dev tools can lower it to "trace" on a phone that is being worked on.
+ */
+let uploadFrom: LogLevel = "info";
+export const setUploadLevel = (level: LogLevel) => (uploadFrom = level);
+
+const sessionId = Math.random().toString(36).slice(2, 12);
+const build = `${Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? "?"} (${
+  Application.nativeBuildVersion ?? "?"
+}) ${Platform.OS} ${__DEV__ ? "dev" : "release"}`;
+
+/** Tags uploads with the signed-in user (or clears it on sign-out). The token itself is never logged. */
 export function setLogToken(value: string | null) {
   token = value;
 }
 
-async function flush() {
-  if (flushing || !queue.length || !deviceId) return;
+// --- Context ---------------------------------------------------------------
+
+let diskAt = 0;
+let diskMB: number | null = null;
+
+/** Free disk, read at most every five minutes: it is a native call and it barely moves. */
+function freeDiskMB() {
+  const now = Date.now();
+  if (now - diskAt > 5 * 60_000) {
+    diskAt = now;
+    try {
+      diskMB = Math.round(Paths.availableDiskSpace / (1024 * 1024));
+    } catch {
+      diskMB = null;
+    }
+  }
+  return diskMB;
+}
+
+/**
+ * What was true of the phone while this batch was written. Reachability comes
+ * from our own uploads rather than a network module: the question it answers is
+ * "why did nothing arrive", and a failed upload is that answer exactly.
+ */
+function context() {
+  return {
+    state: AppState.currentState,
+    net: online === null ? "?" : online ? "up" : "down",
+    sinceOkS: lastOkAt ? Math.round((Date.now() - lastOkAt) / 1000) : null,
+    signedIn: !!token,
+    diskMB: freeDiskMB(),
+    queued: queue.length,
+    droppedTotal,
+  };
+}
+
+/** A line for the Report a problem screen and for the Dev tools readout. */
+export const logStatus = () => ({ build, deviceId, sessionId, ...context() });
+
+// --- Uploading -------------------------------------------------------------
+
+let timer: ReturnType<typeof setTimeout> | null = null;
+let dueAt = 0;
+
+/** Nothing is running when there is nothing to send, and an error can pull the next send forward. */
+function schedule(ms: number) {
+  const at = Date.now() + ms;
+  if (timer && dueAt <= at) return;
+  if (timer) clearTimeout(timer);
+  dueAt = at;
+  timer = setTimeout(() => {
+    timer = null;
+    void flush();
+  }, ms);
+}
+
+const backoff = () => {
+  const base = BACKOFF_MS[Math.min(failures, BACKOFF_MS.length - 1)];
+  // Jitter, so a hundred phones coming back on the same cell don't retry in step.
+  return base + Math.floor(Math.random() * base * 0.25);
+};
+
+/** As many rows as fit in one request: the server takes 200, a bad radio takes less. */
+function fit(rows: LogEntry[]) {
+  const batch = rows.slice(0, MAX_BATCH);
+  let bytes = 0;
+  for (let i = 0; i < batch.length; i++) {
+    bytes += batch[i].text.length + (batch[i].detail?.length ?? 0) + 160;
+    if (bytes > MAX_BODY_BYTES) return batch.slice(0, Math.max(1, i));
+  }
+  return batch;
+}
+
+export async function flush() {
+  if (flushing || !deviceId) return;
+  sweepLog();
+  const sending = carried ?? { sessionId, rows: queue };
+  if (!sending.rows.length) return;
   flushing = true;
-  const batch = queue.slice(0, MAX_BATCH);
+  const batch = fit(sending.rows);
   try {
     // Plain fetch, not request(): request() logs, which would log the upload forever.
     const res = await fetch(`${API_URL}/logs`, {
@@ -37,26 +174,161 @@ async function flush() {
       headers: { "content-type": "application/json", ...(token && { authorization: `Bearer ${token}` }) },
       body: JSON.stringify({
         deviceId,
-        sessionId,
+        sessionId: sending.sessionId,
         build,
+        context: JSON.stringify(context()).slice(0, 1000),
         entries: batch.map((e) => ({
           time: e.time,
           kind: e.kind,
+          level: e.level,
           text: e.text.slice(0, 1000),
           ...(e.detail && { detail: e.detail.slice(0, 4000) }),
+          ...(e.count > 1 && { count: e.count }),
+          seq: e.seq,
+          ...(e.route && { route: e.route.slice(0, 120) }),
+          ...(e.state && { state: e.state.slice(0, 16) }),
         })),
       }),
     });
+    online = true;
     // Drop the batch if the server took it, or rejected it as malformed (retrying won't help).
-    if (res.ok || res.status === 400) queue = queue.slice(batch.length);
+    if (res.ok || res.status === 400) {
+      const rest = sending.rows.slice(batch.length);
+      if (carried) carried = rest.length ? { ...carried, rows: rest } : null;
+      else queue = rest;
+      failures = 0;
+      lastOkAt = Date.now();
+      if (res.status === 400 && !badShapeLogged) {
+        badShapeLogged = true;
+        devlog("warn", `the server refused a log batch as malformed (400); ${batch.length} rows are gone`, undefined, {
+          collapse: false,
+        });
+      }
+    } else {
+      failures++;
+    }
   } catch {
-    // Offline: keep it and try again next time.
+    // Offline, or the radio dropped it: keep the rows and try again later.
+    failures++;
+    online = false;
   } finally {
     flushing = false;
+    const left = (carried?.rows.length ?? 0) + queue.length;
+    if (left) schedule(failures ? backoff() : 0);
   }
 }
 
-function text(args: unknown[]) {
+/**
+ * The queue is full — no signal for a long stretch. Throw away the chatter
+ * before the warnings, and say how much went, so a hole in the sequence numbers
+ * has an explanation sitting next to it.
+ */
+function trim() {
+  if (trimming) return;
+  trimming = true;
+  try {
+    const over = queue.length - MAX_QUEUE;
+    if (over <= 0) return;
+    const bad = queue.filter((e) => LEVEL_ORDER[e.level] >= LEVEL_ORDER.warn);
+    if (bad.length > MAX_QUEUE) {
+      queue = bad.slice(-MAX_QUEUE);
+    } else {
+      const room = MAX_QUEUE - bad.length - 1;
+      const chatter = queue.filter((e) => LEVEL_ORDER[e.level] < LEVEL_ORDER.warn).slice(-Math.max(0, room));
+      queue = [...bad, ...chatter].sort((a, b) => a.seq - b.seq);
+    }
+    droppedTotal += over;
+    devlog(
+      "warn",
+      `log queue full: ${over} lines dropped before they could be uploaded`,
+      `${queue.length} still waiting; last upload ${lastOkAt ? `${Math.round((Date.now() - lastOkAt) / 60_000)} min ago` : "never"}`,
+      { collapse: false },
+    );
+  } finally {
+    trimming = false;
+  }
+}
+
+// --- Surviving a crash -----------------------------------------------------
+
+/**
+ * Writes what hasn't been uploaded to disk, synchronously. File.write is
+ * synchronous in expo-file-system 57, which is the only reason this can run
+ * inside a fatal handler at all — an awaited fetch there never finishes.
+ */
+function spill(why: string) {
+  try {
+    const rows = [...(carried?.rows ?? []), ...queue].slice(-SPILL_ROWS);
+    if (!rows.length) return;
+    new File(Paths.cache, SPILL_FILE).write(JSON.stringify({ why, at: Date.now(), sessionId, rows }));
+  } catch {
+    // A full disk, or the file is locked. Nothing useful to do about it from here.
+  }
+}
+
+/** Picks up what the last run never sent. Those rows keep their own session id and go first. */
+function recoverSpill() {
+  try {
+    const file = new File(Paths.cache, SPILL_FILE);
+    if (!file.exists) return;
+    const saved = JSON.parse(file.textSync()) as { why?: string; at?: number; sessionId?: string; rows?: LogEntry[] };
+    file.delete();
+    const rows = Array.isArray(saved.rows) ? saved.rows.slice(-SPILL_ROWS) : [];
+    if (!rows.length) return;
+    carried = { sessionId: saved.sessionId ?? `lost-${sessionId}`, rows };
+    devlog(
+      "warn",
+      `picked up ${rows.length} log lines the last run never sent (${saved.why ?? "reason unknown"})`,
+      `session ${saved.sessionId ?? "?"}, saved ${saved.at ? clock(saved.at) : "?"}`,
+      { collapse: false },
+    );
+  } catch {
+    try {
+      new File(Paths.cache, SPILL_FILE).delete();
+    } catch {}
+  }
+}
+
+// --- Reporting a bug -------------------------------------------------------
+
+/**
+ * One row a tester can produce without anybody reading D1 first: easy to find
+ * (`WHERE text LIKE 'BUG REPORT%'`), carrying what they typed, what the phone
+ * was doing and the last fifty events. Everything queued is pushed before this
+ * answers, so "sent" means sent.
+ */
+export async function sendBugReport(note: string) {
+  const summary = note.trim().split("\n")[0].slice(0, 120) || "no description";
+  devlog(
+    "warn",
+    `BUG REPORT: ${summary}`,
+    [note.trim() || "(nothing typed)", "", `build ${build}`, `phone ${JSON.stringify(context())}`, "", ...breadcrumbs()].join("\n"),
+    { level: "error", collapse: false },
+  );
+  await flush();
+  if (pending()) await flush();
+  return pending()
+    ? { ok: false, detail: `Saved on this phone (${pending()} lines waiting). It goes as soon as you're back online.` }
+    : { ok: true, detail: "Sent. Thank you." };
+}
+
+const pending = () => (carried?.rows.length ?? 0) + queue.length;
+
+/** Everything a report would carry, as plain text, for Copy and for email. */
+export function logSnapshot() {
+  return [
+    `OVOA log — ${new Date().toISOString()}`,
+    `build ${build}`,
+    `device ${deviceId ?? "?"} · session ${sessionId}`,
+    `phone ${JSON.stringify(context())}`,
+    "",
+    formatDevLog(recentLog()),
+  ].join("\n");
+}
+
+// --- Catching what nobody caught -------------------------------------------
+
+function describe(args: unknown[]) {
   return args
     .map((a) => (a instanceof Error ? `${a.message}\n${a.stack ?? ""}` : typeof a === "string" ? a : safe(a)))
     .join(" ");
@@ -64,20 +336,104 @@ function text(args: unknown[]) {
 
 function safe(value: unknown) {
   try {
-    return JSON.stringify(value);
+    return JSON.stringify(value) ?? String(value);
   } catch {
     return String(value);
   }
 }
 
+const message = (err: unknown) => (err instanceof Error ? err.message : safe(err));
+
+/**
+ * Console output into the log. Kept in release as well as dev: on a TestFlight
+ * phone the console goes nowhere at all, and a console.warn from a library is
+ * often the only clue there is. Nothing in src/ calls console directly, so this
+ * is purely what React Native and the libraries say.
+ */
+function captureConsole() {
+  for (const level of ["log", "info", "warn", "error"] as const) {
+    const original = console[level].bind(console);
+    console[level] = (...args: unknown[]) => {
+      original(...args);
+      // React Native routes an uncaught error back through console.error
+      // (ExceptionsManager.handleException); it has already been logged once.
+      if (inHandler) return;
+      try {
+        const [first, ...rest] = describe(args).split("\n");
+        const kind = level === "error" ? "err" : level === "warn" ? "warn" : "log";
+        devlog(kind, first.slice(0, 300), rest.length ? rest.join("\n") : undefined, {
+          level: level === "log" || level === "info" ? "debug" : undefined,
+        });
+      } catch {
+        // Never let the logger break console.
+      }
+    };
+  }
+}
+
+/**
+ * Uncaught errors and unhandled rejections.
+ *
+ * React Native installs its own ErrorUtils handler (setUpErrorHandling.js) and,
+ * in a dev build only, its own Hermes rejection tracker — polyfillPromise.js
+ * guards that call with __DEV__. So this wraps the handler that is already there
+ * and always calls it (dropping it is what stops iOS ever recording the crash),
+ * and installs a rejection tracker only in release, where nothing else has.
+ */
+function captureCrashes() {
+  const errorUtils = (
+    globalThis as {
+      ErrorUtils?: {
+        getGlobalHandler(): (e: Error, fatal?: boolean) => void;
+        setGlobalHandler(h: (e: Error, fatal?: boolean) => void): void;
+      };
+    }
+  ).ErrorUtils;
+  if (errorUtils) {
+    const previous = errorUtils.getGlobalHandler();
+    errorUtils.setGlobalHandler((error, fatal) => {
+      devlog("err", `${fatal ? "FATAL " : ""}uncaught JS error: ${error?.message ?? String(error)}`, error?.stack, {
+        level: fatal ? "fatal" : "error",
+        collapse: false,
+      });
+      // On disk first: the fetch below will not finish if this is really fatal.
+      spill(fatal ? "a fatal JS error" : "an uncaught JS error");
+      void flush();
+      inHandler = true;
+      try {
+        previous(error, fatal);
+      } finally {
+        inHandler = false;
+      }
+    });
+  }
+
+  if (!__DEV__) {
+    const hermes = (globalThis as { HermesInternal?: { enablePromiseRejectionTracker?: (o: object) => void } })
+      .HermesInternal;
+    hermes?.enablePromiseRejectionTracker?.({
+      allRejections: true,
+      onUnhandled: (id: number, error: unknown) =>
+        devlog("err", `unhandled promise rejection #${id}: ${message(error)}`, error instanceof Error ? error.stack : safe(error)),
+      // A rejection can be caught a moment late (a race whose loser settles second).
+      // Saying so beats leaving a red line behind that was never a problem.
+      onHandled: (id: number) => devlog("log", `promise rejection #${id} was handled after all`, undefined, { level: "debug" }),
+    });
+  }
+}
+
 /** Call once at startup. */
-export function startRemoteLog(devlog: (kind: LogEntry["kind"], text: string, detail?: unknown) => void) {
+export function startRemoteLog() {
   if (started) return;
   started = true;
 
+  setLogContext({ state: AppState.currentState });
+
   onDevLog((entry) => {
+    if (LEVEL_ORDER[entry.level] < LEVEL_ORDER[uploadFrom]) return;
     queue.push(entry);
-    if (queue.length > MAX_QUEUE) queue = queue.slice(-MAX_QUEUE);
+    if (queue.length > MAX_QUEUE) trim();
+    schedule(LEVEL_ORDER[entry.level] >= LEVEL_ORDER.error ? URGENT_MS : FLUSH_MS);
   });
 
   storage
@@ -85,46 +441,32 @@ export function startRemoteLog(devlog: (kind: LogEntry["kind"], text: string, de
     .then(async (saved) => {
       deviceId = saved || `${Platform.OS}-${Math.random().toString(36).slice(2, 12)}${Date.now().toString(36)}`;
       if (!saved) await storage.set(DEVICE_KEY, deviceId);
+      schedule(0);
     })
-    .catch(() => (deviceId = `${Platform.OS}-unsaved-${sessionId}`));
-
-  for (const level of ["log", "warn", "error"] as const) {
-    const original = console[level].bind(console);
-    console[level] = (...args: unknown[]) => {
-      original(...args);
-      const [first, ...rest] = text(args).split("\n");
-      devlog(level === "error" ? "err" : level, first.slice(0, 300), rest.length ? rest.join("\n") : undefined);
-    };
-  }
-
-  const errorUtils = (globalThis as {
-    ErrorUtils?: {
-      getGlobalHandler(): (e: Error, fatal?: boolean) => void;
-      setGlobalHandler(h: (e: Error, fatal?: boolean) => void): void;
-    };
-  }).ErrorUtils;
-  if (errorUtils) {
-    const previous = errorUtils.getGlobalHandler();
-    errorUtils.setGlobalHandler((error, fatal) => {
-      devlog("err", `${fatal ? "FATAL " : ""}JS error: ${error?.message}`, error?.stack);
-      flush();
-      previous(error, fatal);
+    .catch(() => {
+      deviceId = `${Platform.OS}-unsaved-${sessionId}`;
+      schedule(0);
     });
-  }
 
-  const hermes = (globalThis as {
-    HermesInternal?: { enablePromiseRejectionTracker?: (o: object) => void };
-  }).HermesInternal;
-  hermes?.enablePromiseRejectionTracker?.({
-    allRejections: true,
-    onUnhandled: (_id: number, error: unknown) =>
-      devlog("err", `unhandled promise rejection: ${error instanceof Error ? error.message : safe(error)}`, error instanceof Error ? error.stack : undefined),
-  });
+  captureConsole();
+  captureCrashes();
+  recoverSpill();
 
-  devlog("log", `app started (${build})`);
-  setInterval(flush, FLUSH_MS);
+  devlog("log", `app started (${build})`, `session ${sessionId}`);
+
   AppState.addEventListener("change", (state) => {
-    devlog("log", `app state: ${state}`);
-    flush();
+    setLogContext({ state });
+    devlog("log", `app state: ${state}`, undefined, { level: "debug" });
+    sweepLog();
+    if (state === "active") {
+      // Back from a dead radio or a long suspend: try again now, not after the backoff.
+      failures = 0;
+      schedule(0);
+      return;
+    }
+    // Going away: iOS may suspend or kill us. Push what we have, and keep a copy
+    // on disk in case we are frozen before the request lands.
+    spill(`the app went ${state}`);
+    void flush();
   });
 }

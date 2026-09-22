@@ -1,4 +1,5 @@
 import { logAction } from "./actionlog";
+import { say } from "./obs";
 import { agentBuzz, agentBuzzTool } from "./buzz";
 import { agentCommandsLastHour, enqueueCommand } from "./commands";
 import { contextAssistant, isContextTool } from "./context";
@@ -964,15 +965,16 @@ export async function maintenance(env: Env) {
   return purged;
 }
 
-/** The cron entry point. */
+/** The cron entry point. Returns what it did, so the tick can be written down. */
 export async function tick(env: Env, cron: string) {
   if (cron.startsWith("13 4")) {
-    await maintenance(env);
-    return;
+    const purged = await maintenance(env);
+    return { jobs: 0, pushed: 0, purged };
   }
   const jobs = await runDueJobs(env);
   const pushed = await drainNotes(env);
-  if (jobs || pushed) console.log(`agent tick: ${jobs} jobs, ${pushed} notes out`);
+  if (jobs || pushed) say("cron", { part: "agent", jobs, notes: pushed });
+  return { jobs, pushed, purged: 0 };
 }
 
 // ---------- Tools the user gets, in an ordinary conversation ----------

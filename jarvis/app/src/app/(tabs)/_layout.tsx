@@ -2,9 +2,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { Tabs } from "expo-router";
 import { useEffect, type ComponentProps } from "react";
 import { Image, View } from "react-native";
-import { AgentProvider } from "../../lib/agent";
 import { useAutoCapture } from "../../lib/capture";
-import { AssistantProvider } from "../../lib/assistant";
 import { startClip } from "../../lib/clip";
 import { useAuth } from "../../lib/auth";
 import { registerBackgroundPush } from "../../lib/background";
@@ -14,8 +12,6 @@ import { startHeartRate } from "../../lib/heart";
 import { startLocationTimeline } from "../../lib/location";
 import { prepareFillers, watchVoiceForFillers } from "../../lib/fillers";
 import { startAlarmSync } from "../../lib/nag";
-import { NagOverlay } from "../../components/NagOverlay";
-import { SafetyProvider } from "../../lib/safety";
 import { NotesBadge } from "../../components/NotesBadge";
 import { colors } from "../../lib/theme";
 
@@ -49,58 +45,56 @@ export default function TabsLayout() {
   // Anything recorded but not yet in the timeline gets filed, while it's on.
   useAutoCapture();
 
+  // SafetyProvider, AgentProvider, AssistantProvider and NagOverlay used to wrap
+  // these tabs. They live in app/_layout.tsx now: /agent, /transcripts, /live,
+  // /claude, /dev-tools, /es100 and /motion-lab are siblings of (tabs) in the
+  // root stack rather than children, so from here they sat outside the providers
+  // and /agent threw on every open (device_logs, 2026-09-21).
   return (
-    <SafetyProvider>
-      <AgentProvider>
-        <AssistantProvider>
-          <Tabs
-            screenOptions={{
-              headerStyle: { backgroundColor: colors.bg },
-              headerTintColor: colors.text,
-              headerShadowVisible: false,
-              sceneStyle: { backgroundColor: colors.bg },
-              headerTitleStyle: { fontWeight: "600", letterSpacing: 0.5 },
-              tabBarStyle: { backgroundColor: colors.bg, borderTopColor: colors.border },
-              tabBarActiveTintColor: colors.accent,
-              tabBarInactiveTintColor: colors.textDim,
-            }}
-          >
-            <Tabs.Screen name="index" options={{ title: "Activity", tabBarIcon: icon("walk") }} />
-            <Tabs.Screen
-              name="chat"
-              options={{
-                title: user?.settings.assistantName ?? "OVOA",
-                tabBarIcon: icon("mic"),
-                headerTitle: () => (
-                  <Image
-                    source={require("../../../assets/logo-wordmark.png")}
-                    style={{ width: 110, height: 30 }}
-                    resizeMode="contain"
-                    accessibilityLabel="OVOA"
-                  />
-                ),
-              }}
+    <Tabs
+      screenOptions={{
+        headerStyle: { backgroundColor: colors.bg },
+        headerTintColor: colors.text,
+        headerShadowVisible: false,
+        sceneStyle: { backgroundColor: colors.bg },
+        headerTitleStyle: { fontWeight: "600", letterSpacing: 0.5 },
+        tabBarStyle: { backgroundColor: colors.bg, borderTopColor: colors.border },
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textDim,
+      }}
+    >
+      <Tabs.Screen name="index" options={{ title: "Activity", tabBarIcon: icon("walk") }} />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: user?.settings.assistantName ?? "OVOA",
+          tabBarIcon: icon("mic"),
+          headerTitle: () => (
+            <Image
+              source={require("../../../assets/logo-wordmark.png")}
+              style={{ width: 110, height: 30 }}
+              resizeMode="contain"
+              accessibilityLabel="OVOA"
             />
-            <Tabs.Screen name="record" options={{ title: "Record", tabBarIcon: icon("radio-button-on") }} />
-            <Tabs.Screen
-              name="journal"
-              options={{
-                title: "Journal",
-                // The badge counts what OVOA said while the app was closed.
-                tabBarIcon: ({ color, size }) => (
-                  <View>
-                    <Ionicons name="book-outline" color={color} size={size} />
-                    <NotesBadge />
-                  </View>
-                ),
-              }}
-            />
-            <Tabs.Screen name="safety" options={{ title: "Safety", tabBarIcon: icon("shield-checkmark") }} />
-            <Tabs.Screen name="settings" options={{ title: "Settings", tabBarIcon: icon("settings") }} />
-          </Tabs>
-          <NagOverlay />
-        </AssistantProvider>
-      </AgentProvider>
-    </SafetyProvider>
+          ),
+        }}
+      />
+      <Tabs.Screen name="record" options={{ title: "Record", tabBarIcon: icon("radio-button-on") }} />
+      <Tabs.Screen
+        name="journal"
+        options={{
+          title: "Journal",
+          // The badge counts what OVOA said while the app was closed.
+          tabBarIcon: ({ color, size }) => (
+            <View>
+              <Ionicons name="book-outline" color={color} size={size} />
+              <NotesBadge />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen name="safety" options={{ title: "Safety", tabBarIcon: icon("shield-checkmark") }} />
+      <Tabs.Screen name="settings" options={{ title: "Settings", tabBarIcon: icon("settings") }} />
+    </Tabs>
   );
 }

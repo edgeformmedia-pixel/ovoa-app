@@ -18,6 +18,14 @@ export type LlmEnv = {
    * order for everything.
    */
   VOICE_PRIMARY?: string;
+  /**
+   * How long an engine has to send its first byte, and how long a stream may go
+   * quiet once it has started. Read from the environment so a model that is
+   * legitimately slow one week can be given more room with `wrangler secret`
+   * rather than a deploy. Defaults below.
+   */
+  MODEL_CONNECT_MS?: string;
+  MODEL_IDLE_MS?: string;
 };
 
 type Options = {
@@ -30,6 +38,8 @@ type Options = {
    * Gemini/DeepSeek quota, and every engine skips most of its thinking.
    */
   fast?: boolean;
+  /** Called once per engine tried or skipped. See EngineAttempt. */
+  onAttempt?: OnAttempt;
 };
 
 export type ToolSpec = { name: string; description: string; parameters: Record<string, unknown> };
@@ -55,6 +65,15 @@ export type ChatOutcome =
  */
 export type OnText = (delta: string) => boolean | void;
 
+/**
+ * One try at one engine, reported whether it worked or not -- including the
+ * ones that were skipped without being tried. The caller writes these down
+ * (obs.ts noteEngines); llm.ts stays free of the database.
+ */
+export type EngineAttempt = { engine: Engine; model: string; outcome: string; ms: number; error?: string };
+
+export type OnAttempt = (attempt: EngineAttempt) => void;
+
 type ToolLoopOptions = {
   model: string;
   system: string;
@@ -65,6 +84,8 @@ type ToolLoopOptions = {
   voice?: boolean;
   /** Stream the reply: called with each piece of text as the model writes it. */
   onText?: OnText;
+  /** Called once per engine tried or skipped, so the day's engine health is recordable. */
+  onAttempt?: OnAttempt;
 };
 
 export type Engine = "gemini" | OpenAiEngine;
@@ -154,6 +175,90 @@ export function coolingEngines() {
     .map(([engine]) => `${ENGINE_NAMES[engine]}: ${lastFailure.get(engine) ?? "unknown"}`);
 }
 
+/**
+ * What went wrong, in one word, so a day's failures group into a handful of
+ * rows instead of a thousand distinct strings. The status is read the same way
+ * coolDown reads it, because the messages are built as
+ * "DeepSeek deepseek-flash 402: …" a few functions below. The two text tests
+ * are the failures that carry no status: Workers AI's 4006 and DeepSeek's
+ * "Insufficient Balance".
+ */
+export function classifyEngineError(err: unknown): string {
+  const text = String(err instanceof Error ? err.message : err);
+  if (/4006|daily free allocation/.test(text)) return "out_of_free";
+  if (/Insufficient Balance/i.test(text)) return "no_credit";
+  if (/cooling down/.test(text)) return "skipped";
+  if (/returned no text|returned no JSON/.test(text)) return "empty";
+  if (/Too many tool rounds/.test(text)) return "too_many_rounds";
+  if (/aborted|Timed out|No output from the model/i.test(text)) return "timeout";
+  const status = Number(/ (\d{3}):/.exec(text)?.[1] ?? 0);
+  if (status === 429) return /quota/i.test(text) ? "quota" : "rate_limited";
+  if (status === 402) return "no_credit";
+  if (status === 401 || status === 403) return "bad_key";
+  if (status === 404) return "no_model";
+  if (status >= 500) return "upstream_5xx";
+  if (status) return `http_${status}`;
+  return "failed";
+}
+
+export type EngineDown = { engine: Engine; until: number; error: string };
+
+/**
+ * Why nothing could answer, as a sentence a person can read. Pure, so the
+ * wording is testable without faking a failed engine.
+ *
+ * The phone has no way to see the Worker's console, so when every engine is
+ * down this is the only place the reason can come from. The alternative is what
+ * 2026-09-21 looked like: 166 identical "couldn't get a reply" lines and no
+ * indication anywhere that the answer was "the DeepSeek account is empty".
+ */
+export function troubleFrom(down: EngineDown[], now: number): string | null {
+  if (!down.length) return null;
+  const why = (text: string) => {
+    if (/4006|daily free allocation/.test(text)) return "out of free usage until midnight UTC";
+    if (/Insufficient Balance/i.test(text) || / 402:/.test(text)) return "out of credit";
+    if (/ 429:/.test(text)) return /quota/i.test(text) ? "out of quota for today" : "rate limited";
+    if (/ 401:| 403:/.test(text)) return "not accepting its key";
+    if (/ 404:/.test(text)) return "missing its model";
+    return "failing";
+  };
+  const parts = down.map((d) => `${ENGINE_NAMES[d.engine]} is ${why(d.error)}`);
+  const wait = Math.max(0, Math.min(...down.map((d) => d.until)) - now);
+  const mins = Math.max(1, Math.round(wait / 60_000));
+  const when = mins >= 120 ? `${Math.round(mins / 60)} hours` : `${mins} minute${mins === 1 ? "" : "s"}`;
+  return `${parts.join(", and ")}. The soonest any of them is tried again is about ${when} from now.`;
+}
+
+/** troubleFrom, fed the live cooldown state. Null when nothing is down. */
+export function engineTrouble() {
+  const now = Date.now();
+  const down: EngineDown[] = [];
+  for (const [engine, until] of cooldownUntil) {
+    if (until > now) down.push({ engine, until, error: lastFailure.get(engine) ?? "" });
+  }
+  return troubleFrom(down, now);
+}
+
+/** Which model each engine is actually about to call, for the record. */
+function modelFor(env: LlmEnv, engine: Engine, model: string) {
+  return engine === "gemini" ? model : engine === "deepseek" ? env.DEEPSEEK_MODEL : env.FALLBACK_MODEL;
+}
+
+/**
+ * The engines that were not even tried this turn. Reported alongside the ones
+ * that were, so "which were dead" and "which answered" come out of the same
+ * table rather than one being a console line that expires in three days.
+ */
+function reportSkipped(env: LlmEnv, model: string, onAttempt?: OnAttempt) {
+  if (!onAttempt) return;
+  const now = Date.now();
+  for (const [engine, until] of cooldownUntil) {
+    if (until > now) {
+      onAttempt({ engine, model: modelFor(env, engine, model), outcome: "skipped", ms: 0, error: lastFailure.get(engine) });
+    }
+  }
+}
+
 /** The last engine's error, naming what the earlier ones failed with. */
 function finalError(err: unknown, failures: string[]) {
   const now = Date.now();
@@ -171,20 +276,29 @@ function logFallback(from: Engine, to: Engine, err: unknown) {
 }
 
 export async function generateText(env: LlmEnv, opts: Options): Promise<string> {
+  applyDeadlines(env);
   const all = engines(env);
   const order: Engine[] = opts.fast && all.includes("workers") ? ["workers", ...all.filter((e) => e !== "workers")] : all;
   const failures: string[] = [];
+  reportSkipped(env, opts.model, opts.onAttempt);
   for (const [i, engine] of order.entries()) {
+    const at = Date.now();
+    const model = modelFor(env, engine, opts.model);
     try {
-      return engine === "gemini"
-        ? await geminiGenerate({ apiKey: env.GEMINI_API_KEY!, ...opts })
-        : await openAiGenerate(env, engine, opts);
+      const text =
+        engine === "gemini"
+          ? await geminiGenerate({ apiKey: env.GEMINI_API_KEY!, ...opts })
+          : await openAiGenerate(env, engine, opts);
+      opts.onAttempt?.({ engine, model, outcome: "ok", ms: Date.now() - at });
+      return text;
     } catch (err) {
+      const brief = String(err instanceof Error ? err.message : err).slice(0, 300);
+      opts.onAttempt?.({ engine, model, outcome: classifyEngineError(err), ms: Date.now() - at, error: brief });
       if (i === order.length - 1) {
         coolDown(engine, err);
         throw finalError(err, failures);
       }
-      failures.push(`${ENGINE_NAMES[engine]}: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`);
+      failures.push(`${ENGINE_NAMES[engine]}: ${brief.slice(0, 200)}`);
       logFallback(engine, order[i + 1], err);
     }
   }
@@ -200,6 +314,7 @@ export async function chatWithTools(
   env: LlmEnv,
   opts: ToolLoopOptions & { resume?: { state: LoopState; results: Record<string, unknown> } },
 ): Promise<ChatOutcome> {
+  applyDeadlines(env);
   if (opts.resume) {
     const { state, results } = opts.resume;
     const result = (id: string) => results[id] ?? { error: "The app returned no result" };
@@ -246,22 +361,88 @@ export async function chatWithTools(
     : undefined;
   const order = engines(env, opts.voice);
   const failures: string[] = [];
+  reportSkipped(env, opts.model, opts.onAttempt);
   for (const [i, engine] of order.entries()) {
+    const at = Date.now();
+    const model = modelFor(env, engine, opts.model);
     try {
       const run = { ...opts, callTool: tracked, onText };
-      return engine === "gemini"
-        ? await geminiToolLoop(env.GEMINI_API_KEY!, run)
-        : await openAiToolLoop(env, engine, run);
+      const outcome =
+        engine === "gemini" ? await geminiToolLoop(env.GEMINI_API_KEY!, run) : await openAiToolLoop(env, engine, run);
+      opts.onAttempt?.({ engine, model, outcome: outcome.kind === "paused" ? "paused" : "ok", ms: Date.now() - at });
+      return outcome;
     } catch (err) {
+      const brief = String(err instanceof Error ? err.message : err).slice(0, 300);
+      opts.onAttempt?.({ engine, model, outcome: classifyEngineError(err), ms: Date.now() - at, error: brief });
       if (committed || i === order.length - 1) {
         coolDown(engine, err);
         throw finalError(err, failures);
       }
-      failures.push(`${ENGINE_NAMES[engine]}: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`);
+      failures.push(`${ENGINE_NAMES[engine]}: ${brief.slice(0, 200)}`);
       logFallback(engine, order[i + 1], err);
     }
   }
   throw new Error("No engines");
+}
+
+// ---------- Deadlines ----------
+//
+// Nothing here used to wait for anything. A model that accepted the request and
+// then said nothing held the turn open until the phone gave up at 60 s
+// ("POST /chat stalled after 60029 ms", device_logs 2026-09-21) and the Worker
+// never found out it had happened. Giving up at 20 s and losing the turn is
+// worse than a fast answer, but it is far better than silence: the error names
+// the engine, cools it down, and the next engine gets the turn.
+
+/** How long an engine has to send its first byte. */
+const DEFAULT_CONNECT_MS = 20_000;
+/** How long a stream may go quiet once it has started. */
+const DEFAULT_IDLE_MS = 25_000;
+
+let connectMs = DEFAULT_CONNECT_MS;
+let idleMs = DEFAULT_IDLE_MS;
+
+/**
+ * Both deadlines are read from the environment on every turn, so a model that
+ * turns out to need 30 s can be given it with `wrangler secret put` in half a
+ * minute. Hard-coding them would mean a deploy to undo a bad guess, with every
+ * turn failing until it landed.
+ */
+function applyDeadlines(env: LlmEnv) {
+  const read = (raw: string | undefined, fallback: number) => {
+    const ms = Number(raw);
+    return Number.isFinite(ms) && ms >= 1000 ? ms : fallback;
+  };
+  connectMs = read(env.MODEL_CONNECT_MS, DEFAULT_CONNECT_MS);
+  idleMs = read(env.MODEL_IDLE_MS, DEFAULT_IDLE_MS);
+}
+
+/**
+ * fetch with a deadline on the headers only. The timer is cleared once they
+ * arrive, because the same signal would otherwise abort a long reply midway
+ * through; the body is watched by withIdleDeadline instead.
+ */
+async function fetchWithDeadline(url: string, init: RequestInit) {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(new Error(`Timed out after ${connectMs / 1000} s waiting for the model`)), connectMs);
+  try {
+    return await fetch(url, { ...init, signal: abort.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Rejects if one read takes too long. A stream that goes quiet is the 60 s stall. */
+function withIdleDeadline<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return Promise.race([
+    work.finally(() => {
+      if (timer !== null) clearTimeout(timer);
+    }),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`No output from the model for ${idleMs / 1000} s`)), idleMs);
+    }),
+  ]);
 }
 
 // ---------- Streaming ----------
@@ -279,7 +460,7 @@ async function* sseData(body: ReadableStream<Uint8Array>) {
   };
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await withIdleDeadline(reader.read());
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       let nl: number;
@@ -308,7 +489,7 @@ function geminiResponse(result: unknown) {
 /** One model turn. Streamed when `onText` is set; either way returns the full turn. */
 async function geminiRound(apiKey: string, model: string, body: unknown, onText?: OnText): Promise<{ role: string; parts: any[] }> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:${onText ? "streamGenerateContent?alt=sse" : "generateContent"}`;
-  const res = await fetch(url, {
+  const res = await fetchWithDeadline(url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify(body),
@@ -448,9 +629,16 @@ function openAiBody(engine: OpenAiEngine, body: OpenAiBody): OpenAiBody {
 
 async function openAiCall(env: LlmEnv, engine: OpenAiEngine, body: OpenAiBody, stream: boolean): Promise<any> {
   if (engine === "workers") {
-    return env.AI.run(env.FALLBACK_MODEL as keyof AiModels, { ...openAiBody(engine, body), ...(stream && { stream: true }) } as never);
+    // AiOptions carries a signal, so the binding gets the same deadline the two
+    // raw fetches have. Without it a hung Workers AI call is invisible until the
+    // phone's own 60 s abort.
+    return env.AI.run(
+      env.FALLBACK_MODEL as keyof AiModels,
+      { ...openAiBody(engine, body), ...(stream && { stream: true }) } as never,
+      { signal: AbortSignal.timeout(connectMs) },
+    );
   }
-  const res = await fetch("https://api.deepseek.com/chat/completions", {
+  const res = await fetchWithDeadline("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${env.DEEPSEEK_API_KEY}` },
     body: JSON.stringify({ model: env.DEEPSEEK_MODEL, ...openAiBody(engine, body), ...(stream && { stream: true }) }),

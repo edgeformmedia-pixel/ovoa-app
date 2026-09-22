@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { devlog } from "./devlog";
+import { devlog, type LogKind } from "./devlog";
 
 // Where a turn's time goes.
 //
@@ -99,6 +99,64 @@ export function endTurn(reason?: string) {
       .join("\n    "),
   );
   changed();
+}
+
+/**
+ * A stopwatch for anything that isn't a whole turn: a Bluetooth fetch, a Health
+ * read, a screen's first paint. Every leg is timed, the whole thing writes one
+ * line, and while a turn is open the legs land on its breakdown too — so the
+ * next "why was that slow" has an answer without a one-off Date.now() being
+ * added to yet another file.
+ *
+ *   const s = span("clip fetch");
+ *   s.mark("first byte");
+ *   s.end(`${kb} KB`);
+ *   // perf  clip fetch 2.7 s — 412 KB
+ *   //       first byte 1.9 s · done 0.8 s
+ *
+ * `toTurn: false` for something that runs alongside a turn but isn't part of
+ * what the user is waiting for (a background sync), so it doesn't pad the
+ * breakdown with time nobody felt.
+ */
+export function span(name: string, { kind = "perf" as LogKind, toTurn = true } = {}) {
+  const startedAt = Date.now();
+  let last = startedAt;
+  let ended = false;
+  const legs: string[] = [];
+
+  const leg = (label: string) => {
+    const at = Date.now();
+    legs.push(`${label} ${seconds(at - last)}`);
+    last = at;
+    if (toTurn) mark(`${name}: ${label}`);
+  };
+
+  return {
+    /** Notes that the span reached a stage. */
+    mark: leg,
+    /** Closes the span and logs it. Calling it twice does nothing the second time. */
+    end: (detail?: string) => {
+      if (ended) return 0;
+      ended = true;
+      if (legs.length) leg("done");
+      const total = Date.now() - startedAt;
+      devlog(kind, `${name} ${seconds(total)}${detail ? ` — ${detail}` : ""}`, legs.length ? legs.join(" · ") : undefined);
+      return total;
+    },
+    /** Closes the span as a failure, with however far it got. */
+    fail: (err: unknown) => {
+      if (ended) return 0;
+      ended = true;
+      const total = Date.now() - startedAt;
+      devlog(
+        "err",
+        `${name} failed after ${seconds(total)}`,
+        [legs.join(" · "), err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err)].filter(Boolean).join("\n"),
+      );
+      return total;
+    },
+    elapsed: () => Date.now() - startedAt,
+  };
 }
 
 /** "band turn 8.4 s after you stopped speaking" — the number the user feels. */

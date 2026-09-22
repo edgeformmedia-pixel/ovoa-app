@@ -1,7 +1,8 @@
 import { AudioModule, type AudioStream } from "expo-audio";
 import { useEffect, useState } from "react";
 import { request } from "./api";
-import { devlog } from "./devlog";
+import { devlog, devlogRepeat, devlogSettled } from "./devlog";
+import { audioWhy, onScreen } from "./foreground";
 
 // Live transcription: the microphone streams straight to Deepgram over one
 // connection that stays open for as long as we're listening, through replies
@@ -34,6 +35,14 @@ const KEEPALIVE_MS = 4000;
 const MAX_RECONNECTS = 3;
 const RECONNECT_DELAYS_MS = [300, 1500, 4000];
 const MAX_PENDING_BUFFERS = 100; // ~10 s of audio kept while (re)connecting
+/**
+ * The app has been off screen with a halted mic this long: hand the ear back
+ * rather than hold a Deepgram connection open for a microphone that iOS has
+ * taken away. The caller reopens it when the app comes forward.
+ */
+const OFF_SCREEN_GIVE_UP_MS = 60_000;
+/** No PCM buffer for this long means the engine isn't really running, whatever isStreaming says. */
+const MIC_ALIVE_MS = 2000;
 
 /** Stops and starts the stream, so a mic engine iOS quietly halted comes back. */
 async function restart(stream: AudioStream) {
@@ -51,6 +60,41 @@ export function stopStream(stream: AudioStream | null | undefined) {
   } catch {}
 }
 
+/**
+ * When the last PCM buffer arrived. iOS halts the engine while expo-audio still
+ * reports isStreaming (see the note at the top), so "is the microphone actually
+ * running" can only be answered by audio having turned up recently.
+ */
+let lastBufferAt = 0;
+
+/**
+ * The microphone is really delivering audio, not merely flagged as started.
+ *
+ * Before the first buffer of a launch this falls back to isStreaming alone —
+ * exactly what the old code trusted. Being stricter there would park the voice
+ * loop before the listener had ever fired, which would take twist-from-standby
+ * with it.
+ */
+export function micAlive(stream: AudioStream | null | undefined) {
+  if (!stream?.isStreaming) return false;
+  return lastBufferAt === 0 || Date.now() - lastBufferAt < MIC_ALIVE_MS;
+}
+
+/**
+ * The ear gave up because iOS took the microphone away with the app off screen.
+ * Live transcription is fine; the caller waits for the app rather than counting
+ * this as a live-transcription failure and falling back to something that can't
+ * work off screen either.
+ */
+function offScreenError() {
+  return Object.assign(new Error("The microphone stopped while the app was off screen"), { offScreen: true });
+}
+
+/** True for the error above. */
+export function wasOffScreen(err: unknown) {
+  return err instanceof Error && (err as { offScreen?: boolean }).offScreen === true;
+}
+
 /** The native PCM stream, or null if this build doesn't have it. */
 export function useLiveStream(): AudioStream | null {
   const [stream] = useState(() => {
@@ -61,7 +105,16 @@ export function useLiveStream(): AudioStream | null {
       return null;
     }
   });
-  useEffect(() => () => stream?.release(), [stream]);
+  useEffect(() => {
+    if (!stream) return;
+    // One listener for the whole app, so anything can ask micAlive() whether the
+    // engine is really running without having to open the ear to find out.
+    const sub = stream.addListener("audioStreamBuffer", () => (lastBufferAt = Date.now()));
+    return () => {
+      sub.remove();
+      stream.release();
+    };
+  }, [stream]);
   return stream;
 }
 
@@ -110,6 +163,8 @@ export async function openEar(
   let failures = 0;
   /** Restarts in a row that achieved nothing. Resets the moment one works. */
   let restartFailures = 0;
+  /** When the mic went quiet with the app off screen. 0 while it's on screen. */
+  let offScreenAt = 0;
 
   const sub = stream.addListener("audioStreamBuffer", (buffer) => {
     events.onLevel(levelOf(buffer.data));
@@ -214,38 +269,79 @@ export async function openEar(
   const timer = setInterval(() => {
     const now = Date.now();
     const silentFor = now - lastAudioAt;
-    // The mic went quiet (not silence: no buffers at all). Bring it back, waiting
-    // longer after each failure rather than asking again on the same beat.
-    const gap = restartFailures ? (RESTART_BACKOFF_MS[restartFailures - 1] ?? 30_000) : MIN_RESTART_GAP_MS;
-    if (!restarting && silentFor > NO_AUDIO_RESTART_MS && now - lastRestartAt > gap) {
-      restarting = true;
-      lastRestartAt = now;
-      devlog("voice", `no audio from the mic for ${silentFor} ms; restarting it`);
-      restart(stream)
-        .then(() => {
-          restartFailures = 0;
-        })
-        .catch((err) => {
-          restartFailures++;
-          const spent = restartFailures >= MAX_RESTARTS;
-          devlog(
-            "err",
-            spent ? "mic restart failed; giving up on live transcription" : "mic restart failed",
-            `${restartFailures}/${MAX_RESTARTS}: ${String(err)}`,
-          );
-          // Some failures don't come right by being asked again. Hand back to the
-          // caller, which falls back to record-then-upload, instead of spinning.
-          if (spent) {
-            teardown();
-            events.onDown(new Error("The microphone wouldn't restart"));
-          }
-        })
-        .finally(() => {
-          lastAudioAt = Date.now();
-          restarting = false;
-        });
+    const quiet = silentFor > NO_AUDIO_RESTART_MS;
+    // No audio and the app is off screen: iOS has halted the engine and will not
+    // let it start again until the app is back in front. expo-audio still says
+    // isStreaming (see the note at the top), which is how the old build came to
+    // ask every three seconds and log 7,150 "mic restart failed" in a row
+    // (device_logs, 2026-09-21) — each one stopping a stream it couldn't restart,
+    // so the app lost the background audio that keeps it running at all.
+    if (quiet && !onScreen()) {
+      if (!offScreenAt) {
+        offScreenAt = now;
+        devlog(
+          "voice",
+          "no audio and the app is off screen; waiting for it to come forward",
+          `silent ${silentFor} ms, expo-audio says isStreaming ${stream.isStreaming}`,
+        );
+      } else if (now - offScreenAt > OFF_SCREEN_GIVE_UP_MS) {
+        devlog(
+          "voice",
+          `the app stayed off screen for ${Math.round((now - offScreenAt) / 1000)} s; closing live transcription until it's back`,
+        );
+        teardown();
+        events.onDown(offScreenError());
+        return;
+      }
+    } else {
+      if (offScreenAt) {
+        devlog("voice", `the app is back after ${Math.round((now - offScreenAt) / 1000)} s off screen`);
+        offScreenAt = 0;
+        // Refusals collected on the way out say nothing about the mic on the way in.
+        restartFailures = 0;
+        lastRestartAt = 0;
+      }
+      // The mic went quiet (not silence: no buffers at all). Bring it back, waiting
+      // longer after each failure rather than asking again on the same beat.
+      const gap = restartFailures ? (RESTART_BACKOFF_MS[restartFailures - 1] ?? 30_000) : MIN_RESTART_GAP_MS;
+      if (!restarting && quiet && now - lastRestartAt > gap) {
+        restarting = true;
+        lastRestartAt = now;
+        devlogRepeat("mic restart attempt", "voice", `no audio from the mic for ${silentFor} ms; restarting it`);
+        restart(stream)
+          .then(() => {
+            restartFailures = 0;
+            devlogSettled("mic restart");
+          })
+          .catch((err) => {
+            // The app left the screen mid-restart: iOS was never going to allow
+            // it, and it says nothing about the microphone, so it doesn't spend
+            // the budget. The branch above picks it up on the next tick.
+            if (!onScreen()) {
+              devlogRepeat("mic restart off screen", "voice", "the app left the screen while the mic was restarting", audioWhy(err));
+              return;
+            }
+            restartFailures++;
+            const where = audioWhy(err, { attempt: `${restartFailures}/${MAX_RESTARTS}`, silentFor: `${silentFor} ms` });
+            // Some failures don't come right by being asked again. Hand back to the
+            // caller, which falls back to record-then-upload, instead of spinning.
+            if (restartFailures >= MAX_RESTARTS) {
+              devlog("err", "mic restart failed; giving up on live transcription", where);
+              teardown();
+              events.onDown(new Error("The microphone wouldn't restart"));
+            } else {
+              devlogRepeat("mic restart", "err", "mic restart failed", where);
+            }
+          })
+          .finally(() => {
+            lastAudioAt = Date.now();
+            restarting = false;
+          });
+      }
     }
     // While there's no audio, tell Deepgram we're still here so it doesn't hang up.
+    // This keeps running while parked off screen: dropping the connection there
+    // would only add a reconnect loop to a microphone problem.
     if (silentFor > KEEPALIVE_MS / 2 && now - lastKeepAlive > KEEPALIVE_MS && ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "KeepAlive" }));
       lastKeepAlive = now;
@@ -269,7 +365,12 @@ export async function openEar(
   try {
     // Otherwise a fresh engine: one left "running" earlier may be dead. A reused one that is
     // dead is restarted by the no-audio check above.
-    if (!reuse || !stream.isStreaming) await restart(stream);
+    if (!reuse || !stream.isStreaming) {
+      // iOS won't open a microphone for an app that isn't on screen. Say so, so
+      // the caller waits for the app instead of blaming live transcription.
+      if (!onScreen()) throw offScreenError();
+      await restart(stream);
+    }
     lastAudioAt = Date.now();
     await connect();
     failures = 0;

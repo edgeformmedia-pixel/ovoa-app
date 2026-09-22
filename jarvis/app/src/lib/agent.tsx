@@ -1,9 +1,10 @@
 import { useRouter } from "expo-router";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AppState } from "react-native";
 import { api, type AgentNote } from "./api";
 import { useAuth } from "./auth";
 import { devlog, logFail } from "./devlog";
+import { useOptionalContext, useProviderLog } from "./context";
 import { clearBadge, onNotificationTapped, pushProblem, registerForPush, type PushSetup } from "./push";
 
 // What OVOA said while you weren't looking.
@@ -34,6 +35,7 @@ const AgentContext = createContext<AgentState | null>(null);
 
 export function AgentProvider({ children }: { children: ReactNode }) {
   const { token, user } = useAuth();
+  useProviderLog("agent");
   const router = useRouter();
   const [notes, setNotes] = useState<AgentNote[]>([]);
   const [unread, setUnread] = useState(0);
@@ -123,8 +125,23 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   return <AgentContext.Provider value={value}>{children}</AgentContext.Provider>;
 }
 
+/**
+ * What useAgent gives a screen with no provider above it: no notes, no actions.
+ * A throw here took the whole screen out — /agent did exactly that on every
+ * open, because it is a sibling of (tabs) in the root stack and the provider
+ * was mounted inside (tabs) (device_logs, 2026-09-21).
+ */
+const NO_AGENT: AgentState = {
+  notes: [],
+  unread: 0,
+  loading: false,
+  refresh: async () => {},
+  markRead: async () => {},
+  dismiss: async () => {},
+  push: null,
+  pushProblem: null,
+};
+
 export function useAgent() {
-  const ctx = useContext(AgentContext);
-  if (!ctx) throw new Error("useAgent must be used inside AgentProvider");
-  return ctx;
+  return useOptionalContext(AgentContext, "useAgent", NO_AGENT);
 }

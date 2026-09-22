@@ -6,6 +6,12 @@ import { renderSpeech, voicePref, type VoiceId } from "./voice";
 // "One second while I get that." Voiced once per voice and kept on the phone,
 // so it plays instantly with no network round trip, and picked at random so it
 // doesn't sound like a machine.
+//
+// Everything here is deliberately synchronous where a File is handed straight to
+// a player. In SDK 57 copy() and move() return promises, and the un-awaited
+// versions gave the player a file that had not been written yet: 11 of 19
+// addressed turns then sat in silence for the whole eight-second playback
+// watchdog — the one thing a filler exists to prevent (device_logs, 2026-09-21).
 
 export const FILLERS = [
   "One second while I get that.",
@@ -24,6 +30,8 @@ const dir = new Directory(Paths.document, "fillers");
 let ready: File[] = [];
 let voice: VoiceId | null = null;
 let preparing: Promise<void> | null = null;
+/** So two picks in the same millisecond can't collide on one cache filename. */
+let pickCount = 0;
 
 const fileFor = (v: VoiceId, i: number) => new File(dir, `${v}-${i}.mp3`);
 
@@ -34,18 +42,30 @@ export function prepareFillers(token: string) {
       const v = await voicePref.get();
       if (!dir.exists) dir.create({ intermediates: true });
       const files: File[] = [];
+      let voiced = 0;
       for (let i = 0; i < FILLERS.length; i++) {
         const target = fileFor(v, i);
         if (!target.exists) {
-          const made = await renderSpeech(token, FILLERS[i]).catch(() => null);
+          const made = await renderSpeech(token, FILLERS[i]).catch((err) => {
+            devlog("err", `couldn't voice filler ${i}`, err instanceof Error ? err.message : String(err));
+            return null;
+          });
           if (!made) continue;
-          made.move(target);
+          // Awaited: move() returns a promise in SDK 57, so the old un-awaited call
+          // could list a filler as ready before it had reached its final path.
+          try {
+            await made.move(target);
+          } catch (err) {
+            devlog("err", `couldn't save filler ${i}`, err instanceof Error ? err.message : String(err));
+            continue;
+          }
+          voiced++;
         }
         files.push(target);
       }
       voice = v;
       ready = files;
-      devlog("voice", `${files.length} fillers ready in ${v}`);
+      devlog("file", `${files.length} fillers ready in ${v} (${voiced} newly voiced)`, dir.uri);
     } catch (err) {
       devlog("err", "couldn't prepare the fillers", String(err));
     } finally {
@@ -63,10 +83,24 @@ export function pickFiller(): File | null {
   if (!ready.length) return null;
   const source = ready[Math.floor(Math.random() * ready.length)];
   try {
-    const copy = new File(Paths.cache, `ovoa-filler-${Date.now()}.mp3`);
-    source.copy(copy);
+    if (!source.exists) {
+      // Documents survives an update, but the list is built once per launch. The
+      // list is left alone: clearing it here would turn one missing file into no
+      // fillers at all until the voice changed, and nothing would re-voice them.
+      devlog("err", "a filler is missing from Documents/fillers; skipping it", source.uri);
+      return null;
+    }
+    const copy = new File(Paths.cache, `ovoa-filler-${Date.now()}-${pickCount++}.mp3`);
+    // copySync, not copy: copy() is async in SDK 57, and nothing awaited it, so
+    // the player was handed a file that hadn't been written yet.
+    source.copySync(copy, { overwrite: true });
+    if (!copy.size) {
+      devlog("err", "a filler copied as an empty file; skipping it", source.uri);
+      return null;
+    }
     return copy;
-  } catch {
+  } catch (err) {
+    devlog("err", "couldn't copy a filler to play", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

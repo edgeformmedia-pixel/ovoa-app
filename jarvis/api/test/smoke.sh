@@ -346,6 +346,91 @@ check "still off" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['settings']['cap
 check "turning it off is always allowed"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${A[@]}" "$API/me" -d '{"captureEverything":false}')" "200"
 
 echo
+echo "── signing up, and being told which box is wrong ──"
+BLANK=$(curl -s -X POST "$API/auth/signup" -H 'content-type: application/json' \
+  -d '{"email":"fields@example.com","password":"password123","name":"  "}')
+check "a blank name names the name"      "$(echo "$BLANK" | j "list(d['fields'])")" "['name']"
+SHORT=$(curl -s -X POST "$API/auth/signup" -H 'content-type: application/json' \
+  -d '{"email":"fields@example.com","password":"short","name":"Bob"}')
+check "a short password names the password" "$(echo "$SHORT" | j "list(d['fields'])")" "['password']"
+BADMAIL=$(curl -s -X POST "$API/auth/signup" -H 'content-type: application/json' \
+  -d '{"email":"not-an-email","password":"password123","name":"Bob"}')
+check "a bad address names the address"   "$(echo "$BADMAIL" | j "list(d['fields'])")" "['email']"
+# Login stays deliberately vague: it must not say whether an account exists.
+NOACC=$(curl -s -X POST "$API/auth/login" -H 'content-type: application/json' \
+  -d '{"email":"nobody-at-all@example.com","password":"password123"}')
+check "an unknown account says nothing more" "$(echo "$NOACC" | j "d['error']")" "Invalid email or password"
+check "and offers no per-field hint"         "$(echo "$NOACC" | j "'fields' in d")" "False"
+
+# Whitespace and case: the users table is already NOCASE, so this is the trim
+# and the fold, which is what turns " Bob@Example.com " from a wrong password
+# into a sign-in.
+CASE="case$(date +%s)@example.com"
+curl -s -o /dev/null -X POST "$API/auth/signup" -H 'content-type: application/json' \
+  -d "{\"email\":\"  ${CASE^^}  \",\"password\":\"password123\",\"name\":\"Case\"}"
+for FORM in "$CASE" "${CASE^^}" "  $CASE  "; do
+  check "signed up shouting, signs in as '$FORM'" \
+    "$(curl -s -X POST "$API/auth/login" -H 'content-type: application/json' \
+      -d "{\"email\":\"$FORM\",\"password\":\"password123\"}" | j "bool(d.get('token'))")" "True"
+done
+
+echo
+echo "── what the server knows about itself ─────────────"
+check "the log reader needs the key" "$(curl -s -o /dev/null -w '%{http_code}' "$API/debug/logs")" "404"
+check "and a wrong key is still not found" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -H 'x-debug-key: nope' "$API/debug/logs")" "404"
+
+# An older build's upload, with none of the new fields. Every tester's phone is
+# on one of those for at least a TestFlight cycle.
+check "an old-shape batch is still accepted" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/logs" -H 'content-type: application/json' \
+    -d "{\"deviceId\":\"smoke-old-build\",\"sessionId\":\"smoke0\",\"entries\":[{\"time\":$NOW,\"kind\":\"log\",\"text\":\"hello from build 44\"}]}")" "200"
+
+# A voice line, which is the worst case: the words are in the text AND the detail.
+curl -s -o /dev/null -X POST "$API/logs" -H 'content-type: application/json' \
+  -d "{\"deviceId\":\"smoke-device-01\",\"sessionId\":\"smoke1\",\"build\":\"smoke\",\"entries\":[{\"time\":$NOW,\"kind\":\"voice\",\"level\":\"info\",\"count\":1,\"seq\":1,\"text\":\"heard: \\\"call my mother at four\\\"\",\"detail\":\"call my mother at four\"}]}"
+LOGS=$(curl -s "${D[@]}" "$API/debug/logs?since=5m&kind=voice&detail=1")
+check "the phone's log is readable" "$(echo "$LOGS" | j "len(d['device']) >= 1")" "True"
+check "but not what was said"      "$(echo "$LOGS" | j "'my mother' not in json.dumps(d)")" "True"
+check "no detail on a voice line, even when asked for" \
+  "$(echo "$LOGS" | j "'detail' not in d['device'][0]")" "True"
+
+# Anything token-shaped, wherever it turns up.
+curl -s -o /dev/null -X POST "$API/logs" -H 'content-type: application/json' \
+  -d "{\"deviceId\":\"smoke-device-01\",\"sessionId\":\"smoke1\",\"entries\":[{\"time\":$NOW,\"kind\":\"err\",\"text\":\"401 GET /me Bearer 9f8e7d6c5b4a3928170655\"}]}"
+ERRS=$(curl -s "${D[@]}" "$API/debug/logs?since=5m&kind=err")
+check "tokens are masked" "$(echo "$ERRS" | j "'9f8e7d6c5b4a' not in json.dumps(d)")" "True"
+check "the shape survives" "$(echo "$ERRS" | j "any('401' in x['text'] for x in d['device'])")" "True"
+
+# Filters, so a real hunt is possible.
+check "kind filters"  "$(echo "$ERRS" | j "all(x['kind']=='err' for x in d['device'])")" "True"
+check "text filters"  "$(curl -s "${D[@]}" "$API/debug/logs?since=5m&text=zzzznomatch" | j "len(d['device'])")" "0"
+check "limit is honoured" "$(curl -s "${D[@]}" "$API/debug/logs?since=5m&limit=1" | j "len(d['device'])")" "1"
+
+# The beat. This is the one that answers "is the cron firing".
+check "a tick can be run by hand" "$(curl -s -m 60 -X POST "${D[@]}" "$API/debug/agent/tick?what=cron" | j "'decided' in d")" "True"
+HEALTH=$(curl -s "${D[@]}" "$API/debug/logs?since=5m")
+check "the tick was written down" "$(echo "$HEALTH" | j "d['health']['lastTickMs'] is not None")" "True"
+check "and it was just now"       "$(echo "$HEALTH" | j "d['health']['lastTickMs'] < 120000")" "True"
+curl -s -m 60 -o /dev/null -X POST "${D[@]}" "$API/debug/agent/tick?what=cron"
+check "a second tick is counted, not duplicated" \
+  "$(curl -s "${D[@]}" "$API/debug/logs?since=5m" | j "d['health']['ticksThisHour'] >= 2")" "True"
+
+# An engine failure is recorded even though the phone got a 200. A local worker
+# has no model key, so any turn that needs one fails -- which is the case worth
+# proving, because it is the case that used to leave no trace at all.
+curl -s -m 60 -o /dev/null -X POST "${A[@]}" "$API/chat" -d '{"message":"hello","timeZone":"America/New_York"}'
+check "a failed turn leaves a fingerprint" \
+  "$(curl -s "${D[@]}" "$API/debug/logs?since=5m" | j "len([e for e in d['errors'] if '/chat' in e['route']]) >= 1")" "True"
+check "and an engine attempt" \
+  "$(curl -s "${D[@]}" "$API/debug/logs?since=5m" | j "len(d['engines']) >= 1")" "True"
+# Read-only: there is no POST handler, so the request falls through to the
+# authed catch-all and is refused for want of a bearer token. 401 rather than
+# 404 is that catch-all answering, and it is the proof either way.
+check "the reader writes nothing" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${D[@]}" "$API/debug/logs")" "401"
+
+echo
 echo "───────────────────────────────────────────────────"
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ] || exit 1

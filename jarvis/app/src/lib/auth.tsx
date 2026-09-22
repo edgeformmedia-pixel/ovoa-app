@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { logFail } from "./devlog";
+import { devlog, logFail } from "./devlog";
 import { api, ApiError, type User } from "./api";
 import { unregisterPush } from "./push";
 import { setLogToken } from "./remoteLog";
@@ -7,6 +7,13 @@ import { storage } from "./storage";
 
 // Storage key kept from the original app name so existing sign-ins survive.
 const TOKEN_KEY = "jarvis.session";
+/**
+ * Set the first time this phone holds a session, and never cleared — signing
+ * out does not make the account stop existing. sign-in.tsx reads it to choose
+ * which form to open on: 36 of the 38 devices in device_logs only ever tried to
+ * sign in, never once tried to sign up, and left after 4-7 401s (2026-09-21).
+ */
+const HAS_ACCOUNT_KEY = "ovoa.hasAccount";
 
 /** The signed-in session, for code that runs outside React (a background push, say). */
 export const savedToken = () => storage.get(TOKEN_KEY).catch(() => null);
@@ -22,6 +29,8 @@ type AuthState = {
   /** True right after sign-up, until the "connect Google" step is finished or skipped. */
   onboarding: boolean;
   finishOnboarding: () => void;
+  /** This phone has been signed in before, so "Sign in" is the likelier form. */
+  hasAccountHere: boolean;
   /** Forget the session locally (e.g. after deleting the account). */
   clear: () => Promise<void>;
 };
@@ -33,6 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [onboarding, setOnboarding] = useState(false);
+  const [hasAccountHere, setHasAccountHere] = useState(false);
 
   // Server-side logs get tagged with whoever is signed in.
   useEffect(() => setLogToken(token), [token]);
@@ -46,15 +56,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     (async () => {
+      // Before setLoading(false), so the sign-in screen never renders the wrong form first.
+      const seen = await storage.get(HAS_ACCOUNT_KEY).catch(logFail("auth: reading hasAccount"));
+      setHasAccountHere(seen === "1");
       try {
         const saved = await storage.get(TOKEN_KEY);
-        if (!saved) return;
+        if (!saved) {
+          devlog("log", `auth: no saved session (this phone has ${seen === "1" ? "" : "never "}signed in before)`);
+          return;
+        }
         const { user } = await api.me(saved);
         setToken(saved);
         setUser(user);
+        devlog("log", `auth: session restored for ${user.name}`);
       } catch (err) {
         // Expired or revoked session: start signed out. Keep the token on network errors.
-        if (err instanceof ApiError && err.status === 401) await storage.remove(TOKEN_KEY);
+        const status = err instanceof ApiError ? err.status : 0;
+        devlog(
+          "warn",
+          `auth: couldn't use the saved session (${status || "no reply"})`,
+          err instanceof Error ? err.message : String(err),
+        );
+        if (status === 401) await storage.remove(TOKEN_KEY).catch(logFail("auth: clearing a dead token"));
       } finally {
         setLoading(false);
       }
@@ -62,9 +85,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const start = async ({ token, user }: { token: string; user: User }) => {
-    await storage.set(TOKEN_KEY, token);
+    // Signed in the moment the server says so. The keychain write comes after and
+    // cannot undo it: setItemAsync rejects when it can't write (Expo SDK 57 docs),
+    // and throwing from here threw away an account that had just been created.
     setToken(token);
     setUser(user);
+    setHasAccountHere(true);
+    await storage.set(TOKEN_KEY, token).catch(logFail("auth: saving the session"));
+    await storage.set(HAS_ACCOUNT_KEY, "1").catch(logFail("auth: remembering this phone has an account"));
   };
 
   const value: AuthState = {
@@ -78,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await start(session);
     },
     signOut: async () => {
+      devlog("log", "auth: signing out");
       // Before the token goes: otherwise the next person to sign in on this
       // phone gets the last one's notifications.
       if (token) {
@@ -89,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser,
     onboarding,
     finishOnboarding: () => setOnboarding(false),
+    hasAccountHere,
     clear,
   };
 

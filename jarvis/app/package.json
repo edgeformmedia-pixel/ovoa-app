@@ -7,6 +7,7 @@
     "@expo/vector-icons": "^15.0.2",
     "@kingstinct/react-native-healthkit": "^15.1.0",
     "expo": "~57.0.23",
+    "expo-application": "~57.0.3",
     "expo-audio": "~57.0.5",
     "expo-calendar": "~57.0.4",
     "expo-clipboard": "~57.0.2",

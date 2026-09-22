@@ -1,7 +1,7 @@
 import * as Clipboard from "expo-clipboard";
 import { useRef } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { clearDevLog, clock, formatDevLog, useDevLog, type LogKind } from "../lib/devlog";
+import { clearDevLog, clock, formatDevLog, useDevLog, type LogKind, type LogLevel } from "../lib/devlog";
 import { colors } from "../lib/theme";
 
 const KIND_COLORS: Record<LogKind, string> = {
@@ -16,6 +16,18 @@ const KIND_COLORS: Record<LogKind, string> = {
   push: colors.accent,
   agent: colors.warning,
   perf: colors.success,
+  file: colors.textDim,
+  nav: colors.text,
+};
+
+/** How bad it is, which is not the same question as which part of the app said it. */
+const LEVEL_COLORS: Record<LogLevel, string> = {
+  trace: colors.textDim,
+  debug: colors.textDim,
+  info: colors.text,
+  warn: colors.warning,
+  error: colors.danger,
+  fatal: colors.danger,
 };
 
 /** Live log of app ↔ API traffic and the voice engine, for debugging. */
@@ -51,7 +63,8 @@ export function DevLogPanel({ live, onClose }: { live: string; onClose: () => vo
             <Text style={styles.line} selectable>
               <Text style={styles.time}>{clock(e.time)} </Text>
               <Text style={{ color: KIND_COLORS[e.kind], fontWeight: "700" }}>{e.kind.toUpperCase()} </Text>
-              <Text style={{ color: e.kind === "err" ? colors.danger : colors.text }}>{e.text}</Text>
+              {e.count > 1 && <Text style={styles.count}>× {e.count} </Text>}
+              <Text style={{ color: LEVEL_COLORS[e.level] }}>{e.text}</Text>
             </Text>
             {e.detail && (
               <Text style={styles.detail} selectable>
@@ -87,5 +100,6 @@ const styles = StyleSheet.create({
   action: { color: colors.accent, fontSize: 14, fontWeight: "600" },
   line: { ...mono, lineHeight: 15 },
   time: { color: colors.textDim },
+  count: { color: colors.warning, fontWeight: "700" },
   detail: { ...mono, color: colors.textDim, marginLeft: 12, lineHeight: 15 },
 });

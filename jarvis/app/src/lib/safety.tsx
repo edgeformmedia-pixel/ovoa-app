@@ -1,9 +1,10 @@
 import * as Haptics from "expo-haptics";
-import { logFail } from "./devlog";
+import { useOptionalContext, useProviderLog } from "./context";
+import { devlog, logFail } from "./devlog";
 import * as Location from "expo-location";
 import { Accelerometer } from "expo-sensors";
 import * as SMS from "expo-sms";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Linking, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { api, type Contact } from "./api";
 import { useSession } from "./auth";
@@ -28,10 +29,20 @@ type SafetyState = {
 
 const SafetyContext = createContext<SafetyState | null>(null);
 
+/**
+ * What useSafety gives a screen with no provider above it. `trigger` shouting
+ * into the log is the point: a Safety tab that throws can't call for help
+ * either, so a live screen that records the failure beats a dead one.
+ */
+const NO_SAFETY: SafetyState = {
+  contacts: null,
+  setContacts: () => {},
+  trigger: (kind) => devlog("err", `safety: ${kind} with no SafetyProvider — nobody was alerted`),
+  detectorStatus: "off",
+};
+
 export function useSafety() {
-  const ctx = useContext(SafetyContext);
-  if (!ctx) throw new Error("useSafety must be used inside SafetyProvider");
-  return ctx;
+  return useOptionalContext(SafetyContext, "useSafety", NO_SAFETY);
 }
 
 async function currentLocation() {
@@ -47,6 +58,7 @@ async function currentLocation() {
 
 export function SafetyProvider({ children }: { children: ReactNode }) {
   const { token, user } = useSession();
+  useProviderLog("safety");
   const [contacts, setContacts] = useState<Contact[] | null>(null);
   const [pending, setPending] = useState<Kind | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(FALL_COUNTDOWN_S);

@@ -3,6 +3,12 @@
   "name": "jarvis-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
+  // Workers Logs: every console line and every invocation, kept 3 days on the
+  // free plan and 7 on paid, readable in the dashboard and by `wrangler tail`.
+  // Sampling is left at 1 (everything) because this Worker serves one person.
+  // It is not a substitute for the tables in migrations/0030: there is no query
+  // API, it cannot be reached from a phone, and a week is not long enough to
+  // answer "has this been happening since the build went out".
   "observability": { "enabled": true },
   // The agent's heartbeat. Every two minutes is what makes "at 7:30" mean 7:30
   // rather than somewhere in the next quarter hour; a tick with nothing due is

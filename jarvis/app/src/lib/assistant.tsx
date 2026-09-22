@@ -1,17 +1,18 @@
 import { usePathname, useRouter } from "expo-router";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as Notifications from "expo-notifications";
 import { AppState } from "react-native";
 import { api, type ChatResponse, type PendingAction, type PhoneResult } from "./api";
 import { useSession } from "./auth";
 import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type Approval } from "./phoneActions";
+import { useOptionalContext, useProviderLog } from "./context";
 import { devlog, logFail } from "./devlog";
 import { onPush } from "./background";
 import { FILLERS, pickFiller } from "./fillers";
 import { syncAlarms } from "./nag";
 import * as clip from "./clip";
 import { showIsland } from "./island";
-import { deleteRecording, type Recording } from "./recordings";
+import { deleteRecording, wavFile, type Recording } from "./recordings";
 import { micSourcePref, type MicSource } from "./storage";
 import { endTurn, failTurn, mark as markTurn, markStopTalking, noteServer, startTurn } from "./turnTimer";
 import {
@@ -62,14 +63,40 @@ type AssistantState = {
 
 const AssistantContext = createContext<AssistantState | null>(null);
 
+/**
+ * What useAssistant gives a screen with no provider above it: an assistant that
+ * is off, has nothing to approve, and ignores every switch. -160 is the same
+ * silence floor useConversation starts at (voice.ts).
+ */
+const NO_ASSISTANT: AssistantState = {
+  phase: "off",
+  level: -160,
+  error: null,
+  words: "",
+  status: null,
+  enabled: null,
+  toggleEnabled: () => {},
+  alwaysListen: false,
+  setAlwaysListen: () => {},
+  listenMode: "wake",
+  setListenMode: () => {},
+  micSource: "phone",
+  setMicSource: () => {},
+  interrupt: () => {},
+  approvals: [],
+  autoRunning: false,
+  approve: async () => {},
+  cancel: async () => {},
+  hold: async (fn) => fn(),
+};
+
 export function useAssistant() {
-  const ctx = useContext(AssistantContext);
-  if (!ctx) throw new Error("useAssistant must be used inside AssistantProvider");
-  return ctx;
+  return useOptionalContext(AssistantContext, "useAssistant", NO_ASSISTANT);
 }
 
 export function AssistantProvider({ children }: { children: ReactNode }) {
   const { token, user } = useSession();
+  useProviderLog("assistant");
   const pathname = usePathname();
   const router = useRouter();
   const onAssistantTab = pathname === ASSISTANT_PATH;
@@ -324,10 +351,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       let spoke = false;
       let filler: ReturnType<typeof setTimeout> | null = null;
       try {
-        if (!entry.wavUri) throw new Error(entry.decodeError ?? "the clip's recording couldn't be decoded");
+        // Resolved against Documents now, not from a uri stored when it was written:
+        // the container's UUID changes on every app update (device_logs 2026-09-20 23:18).
+        const audio = wavFile(entry);
+        if (!audio?.exists) throw new Error(entry.decodeError ?? "the clip's recording couldn't be decoded");
+        devlog("file", `band mic: sending ${audio.name}, ${Math.round(audio.size / 1024)} KB`, audio.uri);
         // transcribe() deletes the audio it sends, and a question isn't worth keeping,
         // so the clip's recording doesn't stay in the Recordings list either.
-        const text = await transcribe(token, entry.wavUri, "audio/wav");
+        const text = await transcribe(token, audio.uri, "audio/wav");
         deleteRecording(entry.id);
         if (entry.sessionId) clip.deleteFromClip(entry.sessionId).catch(logFail("assistant: clip.deleteFromClip"));
         if (!text) {

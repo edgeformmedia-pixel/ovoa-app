@@ -1,0 +1,409 @@
+# F34 — Food: calorie tracking by talking
+
+Spec only — nothing here is built yet. Server = `jarvis/api` (Worker + D1). App = `jarvis/app` (Expo).
+Reuses: `capabilities()` (`api/src/capabilities.ts`), the assistant tool pattern (`api/src/notes.ts` is the
+closest model), `profile` (0017), `daily_marks` (0019), HealthKit (`app/src/lib/health.ts`),
+`sendBuzz`/`push`, the morning brief and wind-down ticks (`api/src/rhythm.ts`).
+
+## The pitch
+
+Every calorie app is a search box. You eat a thing, then you go hunting for it in a database, then you
+argue with the serving size. OVOA already has a microphone on the user's chest and a model that knows
+what a chicken thigh weighs. So the interaction is:
+
+> "I'm making chicken for two, about a pound, with a tablespoon of olive oil and some rice."
+> — *"Got it. Chicken and rice, two servings, about 640 each. Say 'I had a plate' when you eat."*
+
+> "I had a plate."
+> — *"Logged, 640. You're at 1,480 for the day, about 700 left."*
+
+No search, no barcode, no serving-size dropdown. The whole feature is one voice turn plus a number the
+user can ask for.
+
+## What makes it hard (and what we do about it)
+
+| Problem | What OVOA does |
+|---|---|
+| Same meal logged twice gives two different numbers, so the totals feel fake | Every food the model estimates is written to a **catalog** keyed by a normalized name. Second time round, the catalog answers — the model doesn't re-guess. |
+| "Making" is not "eating" | Two states. `cooked` creates a **dish** with servings and logs nothing. `eaten` logs. A plate of a known dish is one serving of it. |
+| Models happily say 40 kcal for a tablespoon of oil | Server-side **sanity clamp** against a small hardcoded table of density bounds (kcal/g by category). Anything outside it is recomputed from grams × a category default, and the entry is flagged `estimated: "clamped"`. |
+| Asking 4 clarifying questions kills the feature | At most **one** question, and only when the answer moves the estimate by >25% (portion size, mainly). Otherwise assume, log, and *say the assumption out loud* so they can correct it. |
+| The user corrects after the fact | `food_amend` edits the last entry (or a named one) in place: "make that two tablespoons", "that was a small one", "I didn't finish it". |
+| Extra latency for a lookup | **None.** The model fills in grams and kcal as tool arguments in the same turn it's already taking. No food-database round trip, no second model call. |
+
+## Standalone rule
+
+| Needs | Improves it | Without the optional parts |
+|---|---|---|
+| app (voice or text) | Health (active energy → "calories left"), band (hands-free while cooking), profile (weight/height/age/sex → target) | Logs and totals still work; the target falls back to a flat number the user states ("keep me to 2,000"), and "left" is target − eaten with no burn credit. |
+
+Everything here works with no Google, no watch, no band, no HealthKit. That matches the zero-setup rule.
+
+---
+
+## Tables — `migrations/0028_food.sql`
+
+```sql
+-- Eating, tracked by talking about it.
+--
+-- Three tables for three different lifetimes. A catalog row is a fact about a
+-- food and is kept forever, so the same meal costs the same number every time.
+-- A log row is one thing eaten and is detailed; it's thinned after 90 days.
+-- A day row is the total and is never thinned, because a year of daily totals is
+-- the only part anyone looks back at.
+
+-- What a food costs, per 100 g, learned once.
+-- `key` is the name lowercased, stripped to letters and single spaces, so
+-- "Olive Oil" and "olive oil " are one row. `source`: model | user | health.
+CREATE TABLE food_catalog (
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key        TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  kcal_100g  REAL NOT NULL,
+  protein_g  REAL,
+  carbs_g    REAL,
+  fat_g      REAL,
+  -- fat | grain | protein | veg | fruit | dairy | drink | sweet | mixed —
+  -- picks the clamp bounds below.
+  category   TEXT NOT NULL,
+  -- A typical single portion in grams, so "a plate of rice" has a default.
+  serving_g  REAL,
+  source     TEXT NOT NULL,
+  uses       INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, key)
+);
+
+-- A dish cooked but not yet eaten: a pot of chili, a tray of chicken.
+-- Eating "a plate" of it draws down `servings_left`.
+CREATE TABLE food_dishes (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  -- JSON: the ingredients as logged, for "what's in it?" and for re-costing.
+  items         TEXT NOT NULL,
+  kcal_total    REAL NOT NULL,
+  protein_g     REAL,
+  carbs_g       REAL,
+  fat_g         REAL,
+  servings      REAL NOT NULL,
+  servings_left REAL NOT NULL,
+  cooked_at     INTEGER NOT NULL
+);
+CREATE INDEX food_dishes_open ON food_dishes (user_id, servings_left, cooked_at);
+
+-- One thing eaten.
+CREATE TABLE food_log (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- The user's local day, so a 1 a.m. snack lands where they'd put it (see below).
+  day        TEXT NOT NULL,
+  ts         INTEGER NOT NULL,
+  name       TEXT NOT NULL,
+  grams      REAL,
+  kcal       REAL NOT NULL,
+  protein_g  REAL,
+  carbs_g    REAL,
+  fat_g      REAL,
+  -- breakfast | lunch | dinner | snack — from the clock, overridable.
+  meal       TEXT,
+  -- catalog | model | dish | user | health
+  source     TEXT NOT NULL,
+  dish_id    TEXT REFERENCES food_dishes(id) ON DELETE SET NULL,
+  -- ok | clamped | assumed_portion — surfaced as "roughly" in speech.
+  estimated  TEXT,
+  -- What OVOA assumed, in words, so an amend knows what it's correcting.
+  assumption TEXT,
+  -- Set when it's been written to Apple Health, so it isn't written twice.
+  health_id  TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX food_log_day ON food_log (user_id, day, ts);
+
+-- The day's totals, rebuilt on every write. Cheap, and it makes every read
+-- ("how am I doing", the brief, the weekly report) a single-row lookup.
+CREATE TABLE food_days (
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  day        TEXT NOT NULL,
+  kcal       REAL NOT NULL DEFAULT 0,
+  protein_g  REAL NOT NULL DEFAULT 0,
+  carbs_g    REAL NOT NULL DEFAULT 0,
+  fat_g      REAL NOT NULL DEFAULT 0,
+  entries    INTEGER NOT NULL DEFAULT 0,
+  -- The target in force that day, copied in so history doesn't move when the
+  -- goal changes.
+  target     REAL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, day)
+);
+
+-- The numbers behind the target. On `profile` rather than a table of its own:
+-- they're the same kind of fact as wake_time.
+ALTER TABLE profile ADD COLUMN weight_kg     REAL;
+ALTER TABLE profile ADD COLUMN height_cm     REAL;
+ALTER TABLE profile ADD COLUMN birth_year    INTEGER;
+ALTER TABLE profile ADD COLUMN sex           TEXT;   -- male | female | null
+ALTER TABLE profile ADD COLUMN activity      TEXT;   -- sedentary | light | moderate | active
+ALTER TABLE profile ADD COLUMN goal          TEXT;   -- lose | maintain | gain
+ALTER TABLE profile ADD COLUMN kcal_target   REAL;   -- stated outright, wins over the computed one
+ALTER TABLE profile ADD COLUMN protein_target REAL;
+```
+
+**Day boundary.** A day runs from wake to wake, not midnight to midnight: anything logged before
+`wake_time` (default 4 a.m.) belongs to the previous day. Someone eating at 1 a.m. means it as last
+night's, and a tracker that disagrees is a tracker they stop trusting.
+
+---
+
+## Server — `api/src/food.ts`
+
+### The estimate path
+
+1. The model calls `food_log` with items it has already priced: `{name, grams, kcal, protein, carbs, fat, category}`.
+2. For each item, `key = normalize(name)`. If the catalog has it **and** the model's kcal/100g is within
+   ±30% of the stored value, the catalog wins (consistency beats freshness). Outside that band, the model
+   is probably talking about a different food with the same name — keep both by qualifying the key with
+   what the model said (`"chicken thigh skin on"`).
+3. Clamp: `kcal/100g` must sit inside the category's bounds.
+
+   ```ts
+   /** kcal per 100 g, low/high, per category. A model that says a tablespoon of
+    *  oil is 40 kcal is corrected, not believed. */
+   const BOUNDS = {
+     fat:     [700, 900],  grain: [100, 400],  protein: [80, 350],
+     veg:     [10, 120],   fruit: [25, 150],   dairy:   [30, 450],
+     drink:   [0, 250],    sweet: [250, 600],  mixed:   [40, 400],
+   };
+   ```
+   Out of bounds → recompute from the category midpoint, set `estimated = "clamped"`.
+4. Write the log rows, upsert the catalog, rebuild `food_days`, `logAction(… "food" …)`.
+5. Return the day's running total and what's left, so the model's spoken reply is one sentence with a
+   real number in it — never "logged!" with nothing after it.
+
+### The target
+
+```ts
+/** Mifflin-St Jeor, then activity, then the goal. Returns null when the profile
+ *  is too thin to compute one — the caller then asks, once, or does without. */
+export function dailyTarget(p: Profile): number | null
+```
+- BMR = `10·kg + 6.25·cm − 5·age + (sex === "male" ? 5 : −161)`; no sex on file → the mean of the two.
+- × activity (1.2 / 1.375 / 1.55 / 1.725).
+- goal `lose` → −500 (floored at 1,200 / 1,500 by sex), `gain` → +350.
+- `profile.kcal_target`, if the user just said a number, beats all of it.
+- Protein target: `1.6 g/kg` when lifting is in the picture, else `1.2 g/kg`.
+
+### "Calories left"
+
+`target − eaten + burnCredit`, where `burnCredit` is **only** the Health *active* energy for the day
+(never steps×factor on top of it — that's the classic double-count), and 0 when `caps.health` is false.
+Spoken as a range when the day is young ("about 900 left") and a number when it isn't.
+
+### Ticks (folded into the existing rhythm cron, no new schedule)
+
+| When | What |
+|---|---|
+| A meal window passes with nothing logged (>3 h after the usual time, learned from `food_log` history the way `expectations` are learned) | One nudge, at most twice a day: buzz + "Did you eat?" — and only after 5 days of history, so it never nags a new user. |
+| Wind-down | Adds one line to the existing recap: total, protein, whether they're over. |
+| Morning brief | Yesterday's total, but only when it was unusual (>15% off target). Nobody wants the number read to them every day. |
+| Weekly report (F28) | Daily average, protein average, the days they were over, the three foods they ate most. |
+| Nightly | Thin `food_log` rows older than 90 days (`food_days` stays). Catalog is kept. |
+
+### Apple Health
+
+When `caps.health`, the app writes each entry as `HKQuantityTypeIdentifierDietaryEnergyConsumed` (plus
+protein/carbs/fat) and reports back the sample id into `health_id`. Needs a HealthKit **write** scope,
+which `health.ts` doesn't request today — it's a one-line addition to a new `WRITE` list, and it's
+optional: refusing the permission costs nothing but the mirror.
+
+---
+
+## Tools
+
+Follows `notesAssistant`: `TOOLS`, `NAMES`, `isFoodTool`, `foodAssistant(env, userId, timeZone, {voice})`,
+wired into the two lists in `index.ts` and one `["food", foodTools.prompt]` section.
+
+```ts
+const TOOLS: ToolSpec[] = [
+  {
+    name: "food_log",
+    description:
+      "Records what they ate or cooked, when they say it in passing: 'I had a bowl of oatmeal', 'making chicken with a tablespoon of oil', 'just had a coffee with milk'. YOU supply the grams and the calories — you know what food weighs, so don't ask them to look anything up. Use state 'cooked' when they're making it and haven't eaten yet; 'eaten' when they've had it. Assume an ordinary portion rather than asking, and say what you assumed.",
+    parameters: {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "The food, plainly: 'olive oil', 'chicken thigh', 'white rice, cooked'." },
+              grams: { type: "number", description: "Your best estimate of the weight eaten, in grams." },
+              kcal: { type: "number", description: "Calories for that weight." },
+              protein: { type: "number" }, carbs: { type: "number" }, fat: { type: "number" },
+              category: { type: "string", enum: ["fat","grain","protein","veg","fruit","dairy","drink","sweet","mixed"] },
+            },
+            required: ["name", "grams", "kcal", "category"],
+          },
+        },
+        state: { type: "string", enum: ["eaten", "cooked"], description: "Default eaten." },
+        dishName: { type: "string", description: "What the cooked thing is called, when state is cooked." },
+        servings: { type: "number", description: "How many portions it makes, when state is cooked." },
+        meal: { type: "string", enum: ["breakfast","lunch","dinner","snack"], description: "Only if the clock would get it wrong." },
+        assumed: { type: "string", description: "What you assumed about the portion, in a few words: 'a cup of rice', 'a medium banana'." },
+        at: { type: "string", description: "Local YYYY-MM-DDTHH:MM, if it wasn't just now ('I had a sandwich at noon')." },
+      },
+      required: ["items"],
+    },
+  },
+  {
+    name: "food_eat_dish",
+    description: "They're eating something they already told you they cooked: 'I had a plate of that chili', 'another bowl'. Draws down the servings left.",
+    parameters: { type: "object", properties: { dish: { type: "string" }, servings: { type: "number", description: "Default 1. Half a plate is 0.5." } } },
+  },
+  {
+    name: "food_amend",
+    description: "Corrects what was just logged: 'make that two tablespoons', 'I only ate half', 'that wasn't me', 'it was the large one'. Defaults to the last entry.",
+    parameters: {
+      type: "object",
+      properties: {
+        which: { type: "string", description: "Words from the entry, if it isn't the last one." },
+        fraction: { type: "number", description: "They ate this much of what was logged: 0.5 for half, 0 to remove it." },
+        grams: { type: "number", description: "The corrected weight, if they gave one." },
+        kcal: { type: "number", description: "The corrected calories, if you're re-estimating." },
+      },
+    },
+  },
+  {
+    name: "food_today",
+    description: "How they're doing today: eaten, left, protein, and what they've had. For 'how many calories have I had', 'what's left', 'what did I eat today'. Also takes a past day.",
+    parameters: { type: "object", properties: { day: { type: "string", description: "Local YYYY-MM-DD, default today." } } },
+  },
+  {
+    name: "food_target",
+    description: "Sets or changes the goal: 'keep me under 2000', 'I want to lose a bit', 'I'm 82 kilos'. Saves whichever of weight, height, age, sex, activity and goal they mentioned, and works out the target from them.",
+    parameters: {
+      type: "object",
+      properties: {
+        kcal: { type: "number" }, protein: { type: "number" },
+        weightKg: { type: "number" }, heightCm: { type: "number" }, age: { type: "number" },
+        sex: { type: "string", enum: ["male","female"] },
+        activity: { type: "string", enum: ["sedentary","light","moderate","active"] },
+        goal: { type: "string", enum: ["lose","maintain","gain"] },
+      },
+    },
+  },
+];
+```
+
+**Prompt section** (the `["food", …]` entry):
+
+> When they mention eating or cooking anything at all, log it with food_log without being asked to —
+> "grabbed a bagel" is a log, not small talk. Estimate the weight and calories yourself; never ask them
+> to weigh or look something up, and ask at most one question, only when the portion would change the
+> number a lot. Say the total afterwards in one short sentence with the number in it, and name what you
+> assumed so they can correct you. "Making" is not "eating": use state cooked, and log it properly when
+> they say they've had some.
+
+**Voice filter.** All five stay in a spoken turn — this is a voice-first feature. `food_today` returns at
+most the last 6 items when `voice`, since the rest can't be heard anyway.
+
+---
+
+## App — `app/src/lib/food.ts` + a card
+
+- **No new capture path.** The band double-click already opens a turn (`liveListen.ts`), which is exactly
+  what you want with raw chicken on your hands.
+- `writeDietaryEnergy(entries)` — the HealthKit mirror, called after a successful log, plus a backfill
+  sweep on foreground for anything with a null `health_id`.
+- A **card in the feed**: a ring (eaten / target), a protein bar under it, and today's entries as rows.
+  Tapping a row opens an amend sheet with a grams stepper — the one place where touching beats talking,
+  because "make it 140 grams" is fiddly by voice.
+- **Offline**: queue logs in `storage.ts` the way the existing queues work and flush on reconnect. Eating
+  happens in basements.
+
+---
+
+## Phases
+
+| Phase | What ships | Why here |
+|---|---|---|
+| **1** | migration, `food.ts`, `food_log` / `food_today` / `food_amend`, catalog + clamp, day rollup, one line in the wind-down | This alone is the whole pitch. Usable on day one with no profile, no Health, no band. |
+| **2** | `food_target` + Mifflin-St Jeor, "calories left", Health active-energy credit, the feed card | Turns a log into a number that means something. |
+| **3** | dishes (`food_eat_dish`), missed-meal nudge, brief + weekly report lines | The cooking flow and the habit loop. |
+| **4** | Health write-back, photo logging (camera → vision model → the same `food_log` arguments), restaurant-menu lookup via `web.ts` | Nice; none of it is load-bearing. |
+
+## What Cal AI does, and what we take from it
+
+Cal AI is the app that defined this category: built by two teenagers in 2024, ~5M users, $30M revenue in
+2025, sold to MyFitnessPal in early 2026. Worth copying deliberately, and worth *not* copying in one
+specific place.
+
+**Their pipeline.** Photo → the phone's depth sensor estimates food volume → image models from Anthropic
+and OpenAI, several of them, because "different models are better with different foods" → RAG over food
+calorie/image databases (open-source sets off GitHub) → calories and macros in a few seconds. They
+fine-tuned on top of that. The app also takes barcodes, nutrition labels, and a typed description.
+
+**The number that should change our plan: only ~30% of their logs are photos.** The rest are barcodes and
+manual/described entry. Their flagship feature is the marketing, not the workhorse. A voice-first logger
+is not a compromised version of Cal AI — it's aimed at the 70%.
+
+**The accuracy reality.** A controlled study (102 meals from a metabolic kitchen, presented at NUTRITION
+2026, abstract not yet peer-reviewed) ran MyFitnessPal, Lose It!, Appediet and Cal AI against the true
+values. Every app underestimated, by about a third:
+
+| App | Energy underestimated by |
+|---|---|
+| Appediet | 252 kcal |
+| MyFitnessPal | 327 kcal |
+| Lose It! | 333 kcal |
+| **Cal AI** | **345 kcal** |
+
+All four missed **~30 g of fat per meal**. That's the whole story: fat is 9 kcal/g and *invisible in a
+photograph* — the oil in the pan, the butter on the pan-fried fish, the dressing, the marbling in the cut.
+A camera cannot see what a cook knows. Cal AI's own site says "about 80% accurate"; their marketing says
+90%+; the controlled test says ~67%.
+
+**So the design above is pointed at exactly their weak spot.** "Making chicken with a tablespoon of olive
+oil" *states the fat*. No depth sensor can recover that number, and the user hands it over for free
+because they're the one holding the bottle. Two concrete consequences for our spec:
+
+- The `fat` category clamp (700–900 kcal/100g) isn't paranoia about the model — it's guarding the single
+  variable the whole category gets wrong. Keep it.
+- The prompt should actively ask about cooking fat when a cooked dish is logged without any: *"any oil or
+  butter?"* is the one clarifying question worth the user's patience, because it's worth ~200 kcal.
+  This is the exception to the one-question rule, and it should be the question we spend it on.
+
+**Worth stealing from their product:**
+- **Photo as a *supplement*, not the spine** — our phase 4 placement is right, and it should route into
+  the same `food_log` arguments rather than becoming a second system.
+- **Barcode scanning** is cheap, boring, and more accurate than any AI path. If phase 4 ships anything,
+  ship this before photos.
+- **A stated accuracy number in the UI.** They say "about 80%" out loud and it defuses complaints. We
+  should say something equally plain rather than implying precision we don't have.
+- **Mixed dishes are where everything fails** (errors 50–70% worse than single plates). Our dish/servings
+  model helps here for once: a pot of chili priced from stated ingredients and divided by 6 beats
+  photographing a bowl of it.
+
+**Worth not stealing:** the 32-screen onboarding with a hidden price and a mid-flow rating prompt. It's
+well-optimised funnel design for a standalone $30/yr app, and it's the wrong shape for a feature inside an
+assistant the user already set up. Our onboarding is one sentence: *"How many calories do you want to
+stay under?"* — or nothing at all, because phase 1 works with no target.
+
+> Source note: the accuracy figures above come from the NUTRITION 2026 abstract and TechCrunch. Most other
+> "AI calorie app accuracy" results on the web are content marketing published by competing apps — one
+> such benchmark claims ±1.1% for its own product, which is not a believable number for photo estimation.
+> Treat anything not from the study or the founders' own statements as advertising.
+
+## Open questions
+
+1. **Retention.** The 14-day rule was set for transcripts. Food wants 90 days of detail and forever for
+   daily totals — the point of the feature is the trend line. Confirm that's acceptable.
+2. **Under-eating.** If a logged day comes in implausibly low (<1,000 kcal) more than twice in a week,
+   does OVOA say something? A tracker that cheerfully congratulates 700 kcal is doing harm. Proposal: it
+   says "that's lower than usual — did I miss anything?" once, and never moralizes about the number.
+3. **Eating disorder guardrails.** No streaks, no "under budget!" praise, no red numbers for going over.
+   The target is a target, not a score. Worth writing into the prompt explicitly.
+4. **Accuracy expectation.** Should the app say "roughly" everywhere, or state numbers flatly? Flat numbers
+   feel better and are equally wrong; "roughly" is honest and gets annoying. Proposal: flat in the feed,
+   "about" in speech, and "roughly" only when `estimated` isn't `ok`.

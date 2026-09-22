@@ -3,7 +3,7 @@ import * as Calendar from "expo-calendar/legacy";
 import * as Contacts from "expo-contacts";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
-import { useRouter } from "expo-router";
+import { useRouter, type Href } from "expo-router";
 import {
   Accelerometer,
   Barometer,
@@ -21,6 +21,7 @@ import { useSession } from "../lib/auth";
 import * as clip from "../lib/clip";
 import * as ute from "../../modules/ute-ble";
 import { devlog, logFail } from "../lib/devlog";
+import { logStatus, setUploadLevel } from "../lib/remoteLog";
 import { createFallDetector } from "../lib/fallDetector";
 import {
   calibrate,
@@ -202,6 +203,18 @@ export default function DevTools() {
           <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
         </Pressable>
 
+        {/* Cast because .expo/types is generated from the routes that existed at the
+            last build; it catches up on the next expo start. */}
+        <Pressable style={styles.link} onPress={() => router.push("/report-bug" as Href)}>
+          <View style={styles.linkLeft}>
+            <Ionicons name="bug" size={18} color={colors.accent} />
+            <Text style={styles.itemText}>Report a problem — send the log now</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+        </Pressable>
+
+        <LogUploads />
+
         <ClipInputs state={clipState} />
 
         <TurnTimings />
@@ -317,6 +330,51 @@ const yesNo = (value: boolean | null | undefined) => (value === undefined || val
  * then each leg of it. "answer" is from the moment they stopped talking to the
  * first word out of the speaker — the only number that decides whether it feels fast.
  */
+/**
+ * What the uploader is doing, and the one knob worth having on the phone:
+ * everything the app writes is kept in memory, but only `info` and above is
+ * uploaded. Turning trace on sends the Bluetooth and console chatter too —
+ * useful for an hour, expensive for a day.
+ */
+function LogUploads() {
+  const [trace, setTrace] = useState(false);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 2000);
+    return () => clearInterval(t);
+  }, []);
+  const status = logStatus();
+  return (
+    <>
+      <Text style={styles.section}>Log uploads</Text>
+      <Card title="To the server" available={true}>
+        <Row label="build" value={status.build} mono />
+        <Row label="device" value={status.deviceId ?? "—"} mono />
+        <Row label="session" value={status.sessionId} mono />
+        <Row label="reachable" value={status.net} good={status.net === "up"} />
+        <Row label="last upload" value={status.sinceOkS === null ? "never" : `${status.sinceOkS} s ago`} />
+        <Row label="waiting" value={`${status.queued} lines`} />
+        <Row label="dropped" value={String(status.droppedTotal)} good={status.droppedTotal === 0} />
+        <Row label="free disk" value={status.diskMB === null ? "—" : `${status.diskMB} MB`} />
+        <View style={styles.toggleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.itemText}>Upload trace lines too</Text>
+            <Text style={styles.dim}>Sends the Bluetooth and console chatter. Turn it off again afterwards.</Text>
+          </View>
+          <Switch
+            value={trace}
+            onValueChange={(on) => {
+              setTrace(on);
+              setUploadLevel(on ? "trace" : "info");
+            }}
+            trackColor={{ true: colors.warning, false: colors.border }}
+          />
+        </View>
+      </Card>
+    </>
+  );
+}
+
 function TurnTimings() {
   const turns = useTurns();
   const recent = [...turns].reverse();

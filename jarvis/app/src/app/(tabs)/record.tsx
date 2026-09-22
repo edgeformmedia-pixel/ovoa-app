@@ -7,7 +7,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View
 import { useSession } from "../../lib/auth";
 import { retryCapture } from "../../lib/capture";
 import * as clip from "../../lib/clip";
-import { deleteRecording, renameRecording, useRecordings, type Recording } from "../../lib/recordings";
+import { deleteRecording, markLost, renameRecording, useRecordings, wavFile, type Recording } from "../../lib/recordings";
 import { colors, shadow } from "../../lib/theme";
 
 // Record on the ES100 clip with buttons, bring the audio over to the phone, and
@@ -278,6 +278,18 @@ function TimelineState({ recording, onRetry }: { recording: Recording; onRetry: 
       </View>
     );
   }
+  // Lost first: it is also a captureError, but retrying it can never work, so it
+  // must not be offered as something to tap (device_logs 2026-09-20 23:18).
+  if (recording.lost) {
+    return (
+      <View style={styles.timelineRow}>
+        <Ionicons name="alert-circle-outline" size={12} color={colors.warning} />
+        <Text style={[styles.dim, { color: colors.warning, flex: 1 }]} numberOfLines={2}>
+          {recording.lost}
+        </Text>
+      </View>
+    );
+  }
   if (recording.captureError) {
     return (
       <Pressable style={styles.timelineRow} onPress={onRetry} hitSlop={6}>
@@ -306,8 +318,12 @@ function RecordingList({ recordings }: { recordings: Recording[] }) {
   }, [status.didJustFinish, player]);
 
   const toggle = (recording: Recording) => {
-    if (!recording.wavUri) {
-      Alert.alert("Can't play this one", recording.decodeError ?? "It has no playable audio.");
+    const audio = wavFile(recording);
+    if (!audio?.exists) {
+      // Checked here and not from a stored uri, so "it's gone" is a fact about the
+      // folder we are in now rather than about the one the app used to live in.
+      if (audio && !recording.lost) markLost(recording.id, "The audio for this one is no longer on the phone.");
+      Alert.alert("Can't play this one", recording.lost ?? recording.decodeError ?? "It has no playable audio.");
       return;
     }
     if (current === recording.id) {
@@ -315,7 +331,7 @@ function RecordingList({ recordings }: { recordings: Recording[] }) {
       else player.play();
       return;
     }
-    player.replace({ uri: recording.wavUri });
+    player.replace({ uri: audio.uri });
     setCurrent(recording.id);
     player.play();
   };
@@ -371,9 +387,9 @@ function RecordingList({ recordings }: { recordings: Recording[] }) {
           <View key={recording.id} style={styles.item}>
             <Pressable style={styles.play} onPress={() => toggle(recording)} accessibilityLabel={playing ? "Pause" : "Play"}>
               <Ionicons
-                name={playing ? "pause" : recording.wavUri ? "play" : "alert"}
+                name={playing ? "pause" : recording.wavName && !recording.lost ? "play" : "alert"}
                 size={18}
-                color={recording.wavUri ? colors.accent : colors.warning}
+                color={recording.wavName && !recording.lost ? colors.accent : colors.warning}
               />
             </Pressable>
             <Pressable style={styles.itemMain} onPress={() => toggle(recording)} onLongPress={() => options(recording)}>
@@ -383,7 +399,7 @@ function RecordingList({ recordings }: { recordings: Recording[] }) {
               <Text style={styles.dim}>
                 {active ? `${clock(status.currentTime)} / ` : ""}
                 {clock(duration)}
-                {recording.decodeError ? " · not playable" : ""}
+                {recording.lost ? " · audio gone" : recording.decodeError ? " · not playable" : ""}
               </Text>
               {user.settings.contextEnabled && <TimelineState recording={recording} onRetry={() => retryCapture(token, recording)} />}
               {active && (

@@ -3,7 +3,7 @@ import * as TaskManager from "expo-task-manager";
 import { AppState, Platform } from "react-native";
 import { api } from "./api";
 import { savedToken } from "./auth";
-import { devlog, logFail } from "./devlog";
+import { devlog, devlogRepeat, logFail } from "./devlog";
 import { storage } from "./storage";
 
 // The location timeline, the phone's half (server: api/src/location.ts).
@@ -40,10 +40,12 @@ async function send(points: typeof pending) {
 TaskManager.defineTask<{ locations: Location.LocationObject[] }>(LOCATION_TASK, async ({ data, error }) => {
   if (error) {
     // kCLErrorLocationUnknown (code 0) is iOS saying "not yet" -- a tunnel, a cold
-    // GPS -- and it fixes itself. It isn't worth a line in the error log.
+    // GPS -- and it fixes itself. It isn't worth a line in the error log, and a
+    // GPS that stays cold repeats it, so those are counted rather than written out.
     const why = String(error.message ?? error);
     const transient = /Code=0\b/.test(why) || /kCLErrorDomain.*\(null\)/.test(why);
-    return devlog(transient ? "log" : "err", "location task error", why);
+    if (!transient) return devlog("err", "location task error", why);
+    return devlogRepeat("location no fix", "log", "location task: iOS has no fix yet (kCLErrorLocationUnknown)", why);
   }
   if (!data?.locations?.length) return;
   devlog("log", `location task: ${data.locations.length} point(s)`);

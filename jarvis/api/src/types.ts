@@ -9,6 +9,14 @@ export type Env = {
   PRIMARY_ENGINE?: string;
   /** Which engine answers spoken turns first. "workers" by default; "keyed" restores the usual order. */
   VOICE_PRIMARY?: string;
+  /**
+   * How long an engine has to answer before the turn moves on: time to the first
+   * byte, and the longest a started stream may go quiet (llm.ts, 20 s / 25 s by
+   * default). Set as vars so a model that turns out to need longer can be given
+   * it without a deploy.
+   */
+  MODEL_CONNECT_MS?: string;
+  MODEL_IDLE_MS?: string;
   CHAT_MODEL: string;
   /** Secret for the /debug routes; unset turns them off. */
   DEBUG_KEY?: string;
@@ -29,4 +37,9 @@ export type Env = {
   ANTHROPIC_API_KEY?: string;
 };
 
-export type Vars = { userId: string; token: string };
+/**
+ * `requestId` is Cloudflare's own cf-ray, set by observe() before anything else
+ * runs. It is the id the Workers Logs entry carries, so a row in error_events
+ * can be looked up in the dashboard while it is still retained there.
+ */
+export type Vars = { userId: string; token: string; requestId: string };
