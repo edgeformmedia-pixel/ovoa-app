@@ -58,6 +58,7 @@ import { askClaude, askClaudeTool, claude } from "./claude";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
 import { isMoneyTool, moneyAssistant, moneyRoutes, moneyTick } from "./money";
+import { MORE_TOOLS, toolbelt } from "./toolbelt";
 
 /**
  * Tools left out of spoken turns: reviewing and editing things people do while
@@ -626,7 +627,7 @@ async function runTurn(
         spoken.push(delta);
       }
     : undefined;
-  const tools = [
+  const allTools = [
     ...phone.tools,
     ...shortcuts.tools,
     ...google.tools,
@@ -650,6 +651,14 @@ async function runTurn(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
     (t) => (!fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name)) && (!voice || !NOT_SPOKEN.has(t.name)),
   );
+  // Spoken turns carry the everyday handful and send for the rest only when a
+  // turn needs them: the tool JSON is read before the first word, and on the
+  // wrist that reading was most of the wait (toolbelt.ts).
+  const belt = voice ? toolbelt(allTools) : null;
+  const tools = belt ? belt.tools : allTools;
+  // Before anything more_tools brings in: this is the number that was actually
+  // read before the first word, which is the one worth watching on the phone.
+  const carriedTools = tools.length;
   // What each tool cost. A turn that felt slow is usually either the model thinking or one
   // slow lookup (a Google round trip, say), and the meta says which without guessing.
   const toolTimings: { name: string; ms: number }[] = [];
@@ -662,6 +671,13 @@ async function runTurn(
       const call = Date.now();
       if (fromAgent && FORBIDDEN_FOR_COMMANDS.has(name)) return { error: "Not available to the agent's commands." };
       try {
+        if (belt && name === MORE_TOOLS) {
+          const asked = String(args.need ?? "");
+          const got = belt.load(asked);
+          toolTimings.push({ name, ms: Date.now() - call });
+          console.log(`more_tools: "${asked}" -> ${got.loaded.join(", ") || "nothing"}`);
+          return got;
+        }
         const result = await (isPhoneTool(name)
           ? phone.callTool
           : isShortcutTool(name)
@@ -724,7 +740,8 @@ async function runTurn(
     firstSentenceMs,
     // Prefill is most of the wait before the first word, and the tool list is the bulk of it.
     promptChars: system.length + JSON.stringify(tools).length + turns.reduce((n, t) => n + t.text.length, 0),
-    toolCount: tools.length,
+    toolCount: carriedTools,
+    ...(belt?.loaded.length && { toolsLoaded: belt.loaded }),
     tools: toolTimings,
     // Only when something is being skipped: a slow turn usually means a faster
     // engine is in cooldown, and from the phone there's no other way to see it.

@@ -534,9 +534,12 @@ async function openAiToolLoop(
     { role: "system", content: system },
     ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
   ];
-  const toolDefs = tools.map((t) => ({ type: "function", function: t }));
-
   for (let round = paused?.round ?? 0; round <= MAX_TOOL_ROUNDS; round++) {
+    // Built each round rather than once: a spoken turn starts with a handful of
+    // tools and sends for more mid-turn (toolbelt.ts), and those have to be in
+    // front of the model on the step after it asked for them. Gemini's loop
+    // already re-read the array; this one used to freeze it.
+    const toolDefs = tools.map((t) => ({ type: "function", function: t }));
     const message = await openAiRound(
       env,
       engine,
