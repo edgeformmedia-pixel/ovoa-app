@@ -4,6 +4,7 @@ import * as Notifications from "expo-notifications";
 import { AppState } from "react-native";
 import { api, type ChatResponse, type PendingAction, type PhoneResult, type ServerSpeech } from "./api";
 import { useSession } from "./auth";
+import { setKeepsHeard } from "./heard";
 import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type Approval } from "./phoneActions";
 import { useOptionalContext, useProviderLog } from "./context";
 import { devlog, logFail } from "./devlog";
@@ -304,6 +305,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   ambientRef.current = alwaysListen;
   const alwaysListenRef = useRef(alwaysListen);
   alwaysListenRef.current = alwaysListen;
+  // Room talk is only ever sent (to be kept) by a development account with
+  // capture-everything on; for everyone else it stays on the phone.
+  useEffect(() => {
+    setKeepsHeard(!!user?.settings.captureEverything);
+  }, [user?.settings.captureEverything]);
   const twistOn = listenMode !== "wake";
   const clipPaired = clip.useClipPaired();
   // Twist mode without Always listen: keep the mic (and the app) running so a twist works from other apps.

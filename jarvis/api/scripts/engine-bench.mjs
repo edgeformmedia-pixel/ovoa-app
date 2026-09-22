@@ -20,7 +20,9 @@
 // thrown away with the account.
 
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((acc, a, i, all) => {
@@ -143,12 +145,21 @@ function settingsRows(userId, prefs, remove = false) {
           `INSERT INTO server_settings (key, value, updated_at) VALUES ('${k}:${userId}', '${v.replace(/'/g, "")}', ${now}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
       );
   if (!statements.length) return;
-  const r = spawnSync("npx", ["wrangler", "d1", "execute", "jarvis-db", "--remote", "-y", "--command", statements.join("; ")], {
-    shell: true,
-    encoding: "utf8",
-    env: process.env,
-  });
-  if (r.status !== 0) throw new Error(`wrangler d1 execute failed: ${(r.stderr || r.stdout).slice(-400)}`);
+  // From a file, not --command: on Windows the shell splits a quoted statement
+  // into one argument per word.
+  const dir = mkdtempSync(join(tmpdir(), "ovoa-bench-"));
+  const file = join(dir, "settings.sql");
+  writeFileSync(file, `${statements.join(";\n")};\n`);
+  try {
+    const r = spawnSync("npx", ["wrangler", "d1", "execute", "jarvis-db", "--remote", "-y", "--file", file], {
+      shell: true,
+      encoding: "utf8",
+      env: process.env,
+    });
+    if (r.status !== 0) throw new Error(`wrangler d1 execute failed: ${(r.stderr || r.stdout).slice(-400)}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 async function runTurn(token, turn, voice) {

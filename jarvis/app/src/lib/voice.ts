@@ -16,8 +16,20 @@ import { API_URL, ApiError, noteDeadSession, type ServerSpeech } from "./api";
 import { devlog, devlogRepeat, devlogSettled, logFail } from "./devlog";
 import { pickFiller } from "./fillers";
 import { audioWhy, onScreen, whenOnScreen } from "./foreground";
-import { flushHeard, keepHeard } from "./heard";
-import { micAlive, openEar, stopStream, useLiveStream, wasOffScreen } from "./liveListen";
+import { flushHeard, keepHeard, keepsHeard } from "./heard";
+import {
+  canHearName,
+  earAlive,
+  micAlive,
+  openEar,
+  stopStream,
+  useLiveStream,
+  wasAutoOff,
+  wasCapped,
+  wasNameEarFailure,
+  wasOffScreen,
+  type Ear,
+} from "./liveListen";
 import { onSignOut } from "./signOut";
 import { storage } from "./storage";
 import { onlyStop, saidOverReply, TurnGate, type GateResult, type Turn } from "./turnGate";
@@ -916,10 +928,25 @@ export function useConversation(
   // A twist or the clip's button: what's said until then counts as addressed.
   const summonedUntil = useRef(0);
   const gateRef = useRef<TurnGate | null>(null);
+  /** The open ear, so a button press can wake it. */
+  const earRef = useRef<Ear | null>(null);
+  /**
+   * Whether the phone's own ear (modules/name-ear) can be used this session. It
+   * starts as "yes if the build has it" and turns false the first time the ear
+   * refuses (no on-device recognition, permission denied), after which the old
+   * way is used with its time limits.
+   */
+  const nameEarOk = useRef(canHearName);
   const standbyRef = useRef(standby);
   standbyRef.current = standby;
   /** Audio stays up in the background: Always listen, or the twist standby. */
   const keepsAudio = () => background || standbyRef.current;
+  /**
+   * Wake mode with nothing sent until the name: the phone's ear, when the
+   * build has it and nothing else needs the microphone kept running between
+   * turns (the twist standby and Always listen both do, and keep the old way).
+   */
+  const useNameEar = () => nameEarOk.current && !keepsAudio();
 
   useEffect(() => {
     speaker.current = createSpeaker(token);
@@ -1058,8 +1085,13 @@ export function useConversation(
      * words go through the turn gate as they arrive, and a request is sent the
      * moment it's complete. Returns when cancelled; throws if the connection is lost.
      */
-    const runLive = async (s: NonNullable<typeof stream>) => {
-      const gate = new TurnGate(nameRef.current, background, bargeIn.current);
+    const runLive = async (s: typeof stream) => {
+      // With the phone's ear, the gate works the way it does in room mode: the
+      // name (in the pre-roll) or a follow-up counts, and room talk is dropped.
+      // Nothing streams until then anyway, so the drop is cheap; it is there for
+      // the follow-up window, when the connection is open and the room may talk.
+      const wakeWord = useNameEar() ? { name: nameRef.current } : null;
+      const gate = new TurnGate(nameRef.current, background || !!wakeWord, bargeIn.current);
       gateRef.current = gate;
       if (Date.now() < summonedUntil.current) gate.summon(summonedUntil.current);
       const state = { down: null as Error | null, waiting: null as ((turn: Turn | null) => void) | null };
@@ -1071,19 +1103,26 @@ export function useConversation(
       const handle = (r: GateResult) => {
         if (!r) return;
         if (r.kind === "ignored") {
-          devlog("voice", `ignored: ${r.why}`, r.text);
-          // Not answered is not the same as not heard. The server keeps these only
-          // for an account with capture-everything on, and drops them otherwise.
-          keepHeard(token, r.text);
+          // Only why, never what: room talk stays on the phone. devlog collapses
+          // repeats, so the count is still there ("× 40 more").
+          devlog("voice", `ignored: ${r.why}`);
+          // Kept only by a development account that turned capture-everything on;
+          // for everyone else it isn't even sent.
+          if (keepsHeard()) keepHeard(token, r.text);
         } else if (r.kind === "interrupt") {
           devlog("voice", r.stopOnly ? "told to stop" : "that was you: interrupting");
           speaker.current.stop();
-        } else wake(r.turn);
+        } else {
+          earRef.current?.wake("turn");
+          wake(r.turn);
+        }
       };
       const showWords = () => {
         if (phaseRef.current === "listening") setWords(gate.live());
       };
-      const ear = await openEar(s, token, {
+      // The phone's ear owns the microphone; the old stream must not be holding it.
+      if (wakeWord) stopStream(s);
+      const ear = await openEar(wakeWord ? null : s, token, {
         onLevel: setLevel,
         onInterim: (text) => {
           gate.onInterim(text, Date.now());
@@ -1098,14 +1137,19 @@ export function useConversation(
           state.down = err;
           wake(null);
         },
-      }, { reuse: keepsAudio() });
+        onWake: (why) => {
+          if (why === "name") devlog("voice", "heard its name; streaming what's said now");
+        },
+        onSleep: () => setWords(""),
+      }, { reuse: keepsAudio(), wakeWord });
+      earRef.current = ear;
       const timer = setInterval(() => {
         if (cancelled()) wake(null);
         else handle(gate.tick(Date.now()));
       }, 150);
       devlog(
         "voice",
-        `listening live (${background ? `room mode: waiting for "${nameRef.current}"` : "every sentence"}${bargeIn.current ? ", talk-over on" : ""})`,
+        `listening live (${ear.native ? `on the phone until "${nameRef.current}" is said` : background ? `room mode: waiting for "${nameRef.current}"` : "every sentence"}${bargeIn.current ? ", talk-over on" : ""})`,
       );
       try {
         while (!cancelled() && !state.down) {
@@ -1117,11 +1161,18 @@ export function useConversation(
           });
           if (!turn || cancelled()) break;
           gate.think();
+          ear.wake("turn");
           let spoke: boolean;
           try {
             // The microphone keeps streaming while the reply plays; the gate hears
             // the reply so far, to tell its echo from the user talking over it.
-            spoke = await answerAloud(turn.text, turn.addressed, { keepMic: true, onSpeaking: (soFar) => gate.speak(soFar) });
+            spoke = await answerAloud(turn.text, turn.addressed, {
+              keepMic: true,
+              onSpeaking: (soFar) => {
+                gate.speak(soFar);
+                ear.wake("reply");
+              },
+            });
           } catch (err) {
             if (cancelled()) break;
             devlog("err", "couldn't get a reply", err instanceof Error ? err.message : String(err));
@@ -1130,10 +1181,13 @@ export function useConversation(
           }
           if (cancelled() || !spoke) continue;
           gate.spoke(Date.now());
+          // An answer without the name still counts for a moment; the connection stays open for it.
+          ear.wake("follow-up");
         }
       } finally {
         clearInterval(timer);
         if (gateRef.current === gate) gateRef.current = null;
+        if (earRef.current === ear) earRef.current = null;
         state.waiting = null;
         ear.close();
       }
@@ -1211,7 +1265,7 @@ export function useConversation(
         // turn from the background, so a mic that really is running carries on —
         // but the flag stays true for an engine iOS halted (liveListen.ts), and
         // trusting it is what let the loop through to be refused over and over.
-        if (!onScreen() && !micAlive(stream)) {
+        if (!onScreen() && !micAlive(stream) && !earAlive()) {
           // Say so: parking used to leave the phase on "listening", so the Lock
           // Screen, the Dynamic Island and the clip's light all claimed the app
           // was listening while it was waiting for the user to open it.
@@ -1223,7 +1277,7 @@ export function useConversation(
           devlog("voice", "trying live transcription again");
           liveFailures.current = 0;
         }
-        if (stream && liveFailures.current < 2) {
+        if ((stream || useNameEar()) && liveFailures.current < 2) {
           try {
             await runLive(stream);
             liveFailures.current = 0;
@@ -1235,6 +1289,20 @@ export function useConversation(
             if (wasOffScreen(err)) {
               await whenOnScreen(BACKGROUND_WAIT_MS);
               continue;
+            }
+            // The phone can't hear its name (an older iPhone, no on-device
+            // recognition, permission refused): the old way, with its limits.
+            if (wasNameEarFailure(err)) {
+              nameEarOk.current = false;
+              devlog("voice", "can't hear the name on the phone; listening the old way, with a time limit", err instanceof Error ? err.message : String(err));
+              continue;
+            }
+            // The old way stopped itself: ten quiet minutes, or the hour for the
+            // day. Say so on screen and stop, rather than starting again.
+            if (wasAutoOff(err) || wasCapped(err)) {
+              setError(err instanceof Error ? err.message : String(err));
+              setPhase("off");
+              break;
             }
             liveFailures.current++;
             liveFailedAt.current = Date.now();
@@ -1351,6 +1419,8 @@ export function useConversation(
     const until = Date.now() + SUMMON_MS;
     summonedUntil.current = until;
     gateRef.current?.summon(until);
+    // The button is as good as the name: the phone's ear starts streaming now.
+    earRef.current?.wake("summon");
     devlog("voice", "summoned", `phase ${phaseRef.current}`);
     if (phaseRef.current === "speaking") speaker.current.stop();
     if (phaseRef.current === "off") return start();

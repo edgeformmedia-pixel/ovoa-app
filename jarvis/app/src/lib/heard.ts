@@ -17,10 +17,20 @@ const MAX_PENDING = 200;
 let pending: { ts: number; text: string }[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Whether this account keeps what it overhears (capture-everything, a
+ * development-only setting the server enforces). Off, nothing is buffered and
+ * nothing is sent: the server would drop it anyway, and room talk should not
+ * make the trip to be dropped. assistant.tsx sets this from the account.
+ */
+let enabled = false;
+export const setKeepsHeard = (on: boolean) => (enabled = on);
+export const keepsHeard = () => enabled;
+
 /** Remembers one overheard line. Sent with the others a few seconds later. */
 export function keepHeard(token: string, text: string) {
   const clean = text.trim();
-  if (!token || !clean) return;
+  if (!enabled || !token || !clean) return;
   pending.push({ ts: Date.now(), text: clean });
   if (pending.length >= MAX_PENDING) {
     void flushHeard(token);

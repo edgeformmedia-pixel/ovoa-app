@@ -74,10 +74,16 @@ voice.post("/voice/transcribe", async (c) => {
  */
 voice.post("/voice/token", async (c) => {
   if (!c.env.DEEPGRAM_API_KEY) return c.json({ error: "Voice isn't set up on the server yet" }, 503);
+  // The phone now fetches a token ahead of time and holds it until the name is
+  // heard, so opening the connection costs no round trip (liveListen.ts). That
+  // needs a token that lasts longer than the 30 s default; Deepgram allows up
+  // to an hour, and ten minutes is plenty. The token only has to be valid at
+  // the moment the connection opens.
+  const ttl = Math.min(600, Math.max(30, Math.round(Number(c.req.query("ttl")) || 30)));
   const res = await fetch(`${DEEPGRAM}/auth/grant`, {
     method: "POST",
     headers: { authorization: `Token ${c.env.DEEPGRAM_API_KEY}`, "content-type": "application/json" },
-    body: JSON.stringify({ ttl_seconds: 30 }),
+    body: JSON.stringify({ ttl_seconds: ttl }),
   });
   if (!res.ok) {
     console.error("deepgram grant", res.status, await res.text());
