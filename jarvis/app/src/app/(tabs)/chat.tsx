@@ -1,14 +1,19 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { useEffect, useRef, useState } from "react";
+import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { ApprovalCard } from "../../components/ApprovalCard";
 import { DevLogPanel } from "../../components/DevLogPanel";
+import { TopBar } from "../../components/ui";
 import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
-import { colors, shadow } from "../../lib/theme";
+import { colors, lift, space, type } from "../../lib/theme";
 import type { VoicePhase } from "../../lib/voice";
 
-/** The assistant, by voice only. Listening itself runs in AssistantProvider. */
+// The assistant, by voice only. Listening itself runs in AssistantProvider.
+// One thing on the screen at a time: the orb, the word for what it is doing,
+// and what it heard. Anything that needs an answer comes in underneath with a
+// teal rail, the same way a moment on the spine does.
+
 export default function Assistant() {
   const { user } = useSession();
   const a = useAssistant();
@@ -26,24 +31,28 @@ export default function Assistant() {
   };
 
   return (
-    <View style={styles.screen}>
-      <Pressable style={styles.logsToggle} hitSlop={10} onPress={() => setShowLogs((s) => !s)}>
-        <Ionicons name="terminal-outline" size={16} color={showLogs ? colors.accent : colors.textDim} />
-        <Text style={[styles.logsText, showLogs && { color: colors.accent }]}>Logs</Text>
-      </Pressable>
+    <View style={styles.page}>
+      <TopBar
+        right={
+          <Pressable style={styles.logs} hitSlop={10} onPress={() => setShowLogs((s) => !s)}>
+            <Ionicons name="terminal-outline" size={15} color={showLogs ? colors.ink : colors.inkMute} />
+            <Text style={[styles.logsText, showLogs && { color: colors.ink }]}>Logs</Text>
+          </Pressable>
+        }
+      />
 
       {a.alwaysListen && (
         <Pressable style={styles.alwaysBar} onPress={() => a.setAlwaysListen(false)}>
-          <Ionicons name="ear" size={16} color={colors.bg} />
+          <Ionicons name="ear" size={16} color={colors.stop} />
           <Text style={styles.alwaysText}>Always listen is on · tap to turn off</Text>
         </Pressable>
       )}
 
-      <View style={styles.center}>
+      <View style={[styles.voice, showLogs && styles.voiceSmall]}>
         <Pressable
           onPress={onOrb}
           disabled={a.enabled === null}
-          style={[styles.orbWrap, showLogs && styles.orbWrapSmall]}
+          style={styles.orbWrap}
           accessibilityRole="button"
           accessibilityLabel={on ? `Stop listening to ${assistantName}` : `Start listening to ${assistantName}`}
         >
@@ -51,42 +60,33 @@ export default function Assistant() {
             <View
               style={[
                 styles.halo,
-                a.phase === "speaking" && { backgroundColor: colors.success },
-                { transform: [{ scale: 1 + loudness * 0.35 }], opacity: 0.12 + loudness * 0.35 },
+                { transform: [{ scale: 1 + loudness * 0.3 }], opacity: 0.35 + loudness * 0.5 },
+                a.phase === "speaking" && { backgroundColor: colors.agentWash },
               ]}
             />
           )}
-          {/* The logo's white ring is the orb; the glow behind it shows what it's doing. */}
           <View style={[styles.orb, !on && styles.orbOff]}>
-            <Image source={require("../../../assets/orb-ring.png")} style={styles.ring} resizeMode="cover" />
-            <View style={styles.orbIcon}>
-              {a.phase === "thinking" ? (
-                <ActivityIndicator size="large" color={colors.accent} />
-              ) : (
-                <Ionicons
-                  name={!on ? "mic-off" : a.phase === "speaking" ? "volume-high" : "mic"}
-                  size={34}
-                  color={!on ? colors.textDim : a.phase === "speaking" ? colors.success : colors.accent}
-                />
-              )}
-            </View>
+            <Ring spinning={a.phase === "thinking"} lit={on} />
+            <Ionicons
+              name={!on ? "mic-off-outline" : a.phase === "speaking" ? "volume-high" : "mic-outline"}
+              size={40}
+              color={on ? colors.ink : colors.inkMute}
+            />
           </View>
         </Pressable>
-        <Text style={styles.label}>{label(on, a.phase, a.status)}</Text>
-        {!!a.words && (
-          <Text style={styles.words} numberOfLines={4}>
-            {a.words}
-          </Text>
-        )}
+
+        <Text style={styles.phase}>{label(on, a.phase, a.status)}</Text>
+        <Text style={styles.words} numberOfLines={4}>
+          {a.words || " "}
+        </Text>
         <Text style={styles.hint}>{hint(on, a.alwaysListen, a.phase)}</Text>
-        {a.error && <Text style={styles.error}>{a.error}</Text>}
+        {!!a.error && <Text style={styles.error}>{a.error}</Text>}
       </View>
 
       {(a.approvals.length > 0 || a.autoRunning) && (
-        <ScrollView style={styles.cards} contentContainerStyle={{ paddingBottom: 8 }}>
+        <ScrollView style={styles.answers} contentContainerStyle={{ paddingBottom: space.s2 }}>
           {a.autoRunning && (
             <View style={styles.autoRow}>
-              <ActivityIndicator size="small" color={colors.accent} />
               <Text style={styles.hint}>Doing it for you…</Text>
             </View>
           )}
@@ -111,8 +111,40 @@ export default function Assistant() {
   );
 }
 
+/**
+ * The orb's ring. Two arcs rather than the study's conic gradient — nothing
+ * here draws one without react-native-svg, and a border gives the two colours
+ * that matter and can be spun, which is what Thinking needs it to do.
+ */
+function Ring({ spinning, lit }: { spinning: boolean; lit: boolean }) {
+  const turn = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!spinning) {
+      turn.stopAnimation();
+      turn.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.timing(turn, { toValue: 1, duration: 1600, easing: Easing.linear, useNativeDriver: true }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [spinning, turn]);
+
+  return (
+    <Animated.View
+      style={[
+        styles.ring,
+        !lit && { borderColor: colors.line, borderTopColor: colors.line, borderRightColor: colors.line },
+        { transform: [{ rotate: turn.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] }) }] },
+      ]}
+    />
+  );
+}
+
 function label(on: boolean, phase: VoicePhase, status: string | null) {
-  if (!on) return "Tap to start listening";
+  if (!on) return "Tap to talk";
   if (phase === "thinking") return status ?? "Thinking…";
   if (phase === "speaking") return "Speaking";
   return "Listening";
@@ -120,62 +152,73 @@ function label(on: boolean, phase: VoicePhase, status: string | null) {
 
 function hint(on: boolean, always: boolean, phase: VoicePhase) {
   if (!on) return "";
-  if (always) return phase === "speaking" ? "Talk or tap to interrupt" : "Always listen is on · tap the orb to turn it off";
+  if (always) return phase === "speaking" ? "Talk or tap to interrupt" : "Tap the orb to turn it off";
   return phase === "speaking" ? "Tap to interrupt" : "Tap to stop listening";
 }
 
+const ORB = 172;
+const HALO = 208;
+
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
-  logsToggle: {
-    position: "absolute",
-    top: 10,
-    right: 14,
-    zIndex: 1,
+  page: { flex: 1, backgroundColor: colors.paper },
+
+  logs: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-  },
-  logsText: { color: colors.textDim, fontSize: 13, fontWeight: "600" },
-  alwaysBar: {
-    position: "absolute",
-    top: 10,
-    left: 14,
-    zIndex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
+    gap: space.s1,
+    paddingHorizontal: space.s3,
     paddingVertical: 6,
     borderRadius: 14,
-    backgroundColor: colors.danger,
+    backgroundColor: colors.wash,
   },
-  alwaysText: { color: colors.bg, fontSize: 13, fontWeight: "700" },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 24 },
-  orbWrap: { width: 240, height: 240, alignItems: "center", justifyContent: "center", marginBottom: 12 },
-  orbWrapSmall: { transform: [{ scale: 0.6 }], marginVertical: -60 },
-  halo: { position: "absolute", width: 210, height: 210, borderRadius: 105, backgroundColor: colors.accent },
+  logsText: { ...type.meta, fontWeight: "600", color: colors.inkMute },
+
+  alwaysBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.s2,
+    marginHorizontal: space.s5,
+    paddingHorizontal: space.s4,
+    paddingVertical: 11,
+    borderRadius: 14,
+    backgroundColor: colors.stopWash,
+  },
+  alwaysText: { ...type.meta, fontWeight: "600", color: colors.stop, flex: 1 },
+
+  voice: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.s3, paddingHorizontal: space.s5 },
+  voiceSmall: { flex: 0, paddingVertical: space.s5, gap: space.s2 },
+
+  orbWrap: { width: HALO, height: HALO, alignItems: "center", justifyContent: "center", marginBottom: space.s3 },
+  halo: { position: "absolute", width: HALO, height: HALO, borderRadius: HALO / 2, backgroundColor: colors.nowWash },
   orb: {
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: colors.bg,
+    width: ORB,
+    height: ORB,
+    borderRadius: ORB / 2,
+    backgroundColor: colors.paper,
     alignItems: "center",
     justifyContent: "center",
-    ...shadow,
+    ...lift,
   },
-  orbOff: { opacity: 0.55 },
-  ring: { position: "absolute", width: 180, height: 180, borderRadius: 90 },
-  orbIcon: { alignItems: "center", justifyContent: "center" },
-  label: { color: colors.text, fontSize: 22, fontWeight: "300", letterSpacing: 1 },
-  hint: { color: colors.textDim, fontSize: 14 },
-  words: { color: colors.text, fontSize: 18, lineHeight: 25, textAlign: "center", opacity: 0.85 },
-  error: { color: colors.danger, textAlign: "center", marginTop: 8 },
-  cards: { maxHeight: "45%", flexGrow: 0 },
-  autoRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
+  orbOff: { opacity: 0.6 },
+  ring: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: ORB / 2,
+    borderWidth: 3,
+    // Teal into violet, the two ends of the study's gradient.
+    borderColor: colors.agent,
+    borderTopColor: colors.now,
+    borderRightColor: colors.now,
+  },
+
+  phase: { ...type.phase, color: colors.ink },
+  words: { ...type.body, color: colors.inkDim, textAlign: "center", minHeight: 48, maxWidth: 320 },
+  hint: { ...type.sub, color: colors.inkMute },
+  error: { ...type.meta, color: colors.stop, textAlign: "center" },
+
+  answers: { maxHeight: "45%", flexGrow: 0 },
+  autoRow: { paddingHorizontal: space.s5, paddingBottom: space.s2 },
 });

@@ -6,7 +6,8 @@ import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { DrawerHost, DrawerPanel } from "../components/Drawer";
 import { Answer, Spine, type Moment } from "../components/Spine";
 import { Btn, Empty, GroupLabel, IconTile, Row, Screen, Tile, Tiles, Toggle, TopBar, text } from "../components/ui";
-import { colors, space } from "../lib/theme";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { colors, lift, space } from "../lib/theme";
 
 const RECENT = [
   { id: "1", title: "Text Sarah — running 15 late" },
@@ -83,6 +84,20 @@ function Parts() {
       <TopBar title="Day" when="Sun 21 Sep" />
       <Screen>
         <Spine moments={MOMENTS} now={NOW} />
+
+        <GroupLabel>The orb</GroupLabel>
+        <View style={{ alignItems: "center", gap: 12, paddingVertical: 16 }}>
+          <View style={{ width: 208, height: 208, alignItems: "center", justifyContent: "center" }}>
+            <View style={{ position: "absolute", width: 208, height: 208, borderRadius: 104, backgroundColor: colors.nowWash, opacity: 0.6 }} />
+            <View style={{ width: 172, height: 172, borderRadius: 86, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center", ...lift }}>
+              <View style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, borderRadius: 86, borderWidth: 3, borderColor: colors.agent, borderTopColor: colors.now, borderRightColor: colors.now }} />
+              <Ionicons name="mic-outline" size={40} color={colors.ink} />
+            </View>
+          </View>
+          <Text style={{ fontSize: 28, lineHeight: 32, fontWeight: "400", color: colors.ink }}>Listening</Text>
+          <Text style={[text.body, { color: colors.inkDim, textAlign: "center" }]}>text Sarah I'm running about fifteen minutes late</Text>
+          <Text style={text.sub}>Tap the orb to turn it off</Text>
+        </View>
 
         <GroupLabel>Background tiles</GroupLabel>
         <Tiles>

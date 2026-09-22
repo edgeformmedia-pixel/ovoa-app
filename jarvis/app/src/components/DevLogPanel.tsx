@@ -2,32 +2,32 @@ import * as Clipboard from "expo-clipboard";
 import { useRef } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { clearDevLog, clock, formatDevLog, useDevLog, type LogKind, type LogLevel } from "../lib/devlog";
-import { colors } from "../lib/theme";
+import { colors, mono as monoFont, space, type } from "../lib/theme";
 
 const KIND_COLORS: Record<LogKind, string> = {
-  req: colors.accent,
-  res: colors.success,
-  err: colors.danger,
-  voice: colors.textDim,
-  log: colors.textDim,
-  warn: colors.danger,
-  ble: colors.accent,
-  probe: colors.warning,
-  push: colors.accent,
-  agent: colors.warning,
-  perf: colors.success,
-  file: colors.textDim,
-  nav: colors.text,
+  req: colors.blue,
+  res: colors.done,
+  err: colors.stop,
+  voice: colors.inkMute,
+  log: colors.inkMute,
+  warn: colors.stop,
+  ble: colors.blue,
+  probe: colors.late,
+  push: colors.agent,
+  agent: colors.agent,
+  perf: colors.done,
+  file: colors.inkMute,
+  nav: colors.ink,
 };
 
 /** How bad it is, which is not the same question as which part of the app said it. */
 const LEVEL_COLORS: Record<LogLevel, string> = {
-  trace: colors.textDim,
-  debug: colors.textDim,
-  info: colors.text,
-  warn: colors.warning,
-  error: colors.danger,
-  fatal: colors.danger,
+  trace: colors.inkMute,
+  debug: colors.inkMute,
+  info: colors.ink,
+  warn: colors.late,
+  error: colors.stop,
+  fatal: colors.stop,
 };
 
 /** Live log of app ↔ API traffic and the voice engine, for debugging. */
@@ -78,28 +78,29 @@ export function DevLogPanel({ live, onClose }: { live: string; onClose: () => vo
   );
 }
 
-const mono = { fontFamily: "Menlo", fontSize: 11 } as const;
+// 11px is the floor the type scale sets, and a log is the one place it earns it.
+const mono = { ...monoFont, fontSize: 11 } as const;
 
 const styles = StyleSheet.create({
   panel: {
     flex: 1.3,
-    backgroundColor: colors.surface,
-    borderTopColor: colors.border,
+    backgroundColor: colors.wash,
+    borderTopColor: colors.line,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   bar: {
     flexDirection: "row",
     alignItems: "center",
     gap: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderBottomColor: colors.border,
+    paddingHorizontal: space.s3,
+    paddingVertical: space.s2,
+    borderBottomColor: colors.line,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  live: { ...mono, flex: 1, color: colors.textDim },
-  action: { color: colors.accent, fontSize: 14, fontWeight: "600" },
+  live: { ...mono, flex: 1, color: colors.inkDim },
+  action: { ...type.meta, fontWeight: "600", color: colors.ink },
   line: { ...mono, lineHeight: 15 },
-  time: { color: colors.textDim },
-  count: { color: colors.warning, fontWeight: "700" },
-  detail: { ...mono, color: colors.textDim, marginLeft: 12, lineHeight: 15 },
+  time: { color: colors.inkMute },
+  count: { color: colors.late, fontWeight: "600" },
+  detail: { ...mono, color: colors.inkMute, marginLeft: 12, lineHeight: 15 },
 });

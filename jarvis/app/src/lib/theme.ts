@@ -62,6 +62,12 @@ export const space = { s1: 4, s2: 8, s3: 12, s4: 16, s5: 20, s6: 24, s8: 32, s10
 
 export const type = {
   display: { fontSize: 44, lineHeight: 46, fontWeight: "600", letterSpacing: -1.5 },
+  /**
+   * The voice screen's one word — Listening, Thinking…, Speaking. The study
+   * sets it at 28/400, lighter than anything else at that size, because it is
+   * a state and not a heading. It is the only place this is used.
+   */
+  phase: { fontSize: 28, lineHeight: 32, fontWeight: "400", letterSpacing: -0.3 },
   title: { fontSize: 22, lineHeight: 28, fontWeight: "600" },
   /** A moment that is due now — the one thing on the screen that is bigger. */
   lead: { fontSize: 19, lineHeight: 26, fontWeight: "600" },

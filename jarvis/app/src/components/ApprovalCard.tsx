@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { PendingAction } from "../lib/api";
 import { preparePhoneAction, type Approval, type Prep } from "../lib/phoneActions";
-import { colors } from "../lib/theme";
+import { colors, space, type } from "../lib/theme";
+import { Btn, text } from "./ui";
+
+// The one thing on the voice screen that asks something of you, in the shape
+// the rest of the app asks in: a 2px teal rail and an indent. Deliberately not
+// a card — a card is what the old app made everything look like, and this is
+// the one moment that has to stand out from the rest of the screen.
 
 type Props = {
   action: PendingAction;
@@ -28,31 +34,19 @@ export function ApprovalCard({ action, onApprove, onCancel }: Props) {
   const approve = () => onApprove({ contactId: prep.selected ?? undefined, prep: prep.data ?? undefined });
 
   return (
-    <View style={styles.card}>
-      <Text style={styles.heading}>Needs your approval</Text>
+    <View style={styles.answer}>
+      <Text style={styles.eyebrow}>Send this?</Text>
       <ScrollView style={styles.summaryBox} nestedScrollEnabled>
-        <Text style={styles.summary} selectable>
+        <Text style={styles.said} selectable>
           {action.summary}
         </Text>
       </ScrollView>
 
       {prep.needed && <PhoneDetails prep={prep} />}
 
-      <View style={styles.row}>
-        <Pressable style={[styles.button, styles.cancel]} onPress={run("cancel", onCancel)} disabled={!!busy}>
-          {busy === "cancel" ? <ActivityIndicator color={colors.text} /> : <Text style={styles.cancelText}>Cancel</Text>}
-        </Pressable>
-        <Pressable
-          style={[styles.button, styles.approve, !canApprove && { opacity: 0.4 }]}
-          onPress={run("approve", approve)}
-          disabled={!canApprove}
-        >
-          {busy === "approve" ? (
-            <ActivityIndicator color={colors.bg} />
-          ) : (
-            <Text style={styles.approveText}>Approve</Text>
-          )}
-        </Pressable>
+      <View style={styles.acts}>
+        <Btn label="Approve" kind="go" onPress={run("approve", approve)} disabled={!canApprove} busy={busy === "approve"} />
+        <Btn label="Cancel" kind="quiet" onPress={run("cancel", onCancel)} disabled={!!busy} busy={busy === "cancel"} />
       </View>
     </View>
   );
@@ -91,14 +85,14 @@ function usePhonePrep(action: PendingAction) {
 
 function PhoneDetails({ prep }: { prep: PhonePrep }) {
   const { data, error, selected, setSelected } = prep;
-  if (error) return <Text style={styles.note}>{error}</Text>;
-  if (!data) return <ActivityIndicator color={colors.accent} />;
+  if (error) return <Text style={styles.problem}>{error}</Text>;
+  if (!data) return <ActivityIndicator color={colors.now} />;
 
   if (data.kind === "recipients") {
     return (
       <View style={{ gap: 2 }}>
         {data.recipients.map((r) => (
-          <Text key={r.input} style={[styles.note, !r.value && { color: colors.danger }]}>
+          <Text key={r.input} style={[text.meta, !r.value && styles.problem]}>
             {r.value ? "To: " : ""}
             {r.label}
           </Text>
@@ -109,26 +103,22 @@ function PhoneDetails({ prep }: { prep: PhonePrep }) {
   if (data.kind !== "contact") return null;
 
   const { matches, name } = data;
-  if (!matches.length) return <Text style={styles.note}>No contact on this iPhone matches "{name}".</Text>;
+  if (!matches.length) return <Text style={styles.problem}>No contact on this iPhone matches &ldquo;{name}&rdquo;.</Text>;
   if (matches.length === 1) {
     return (
-      <Text style={styles.note}>
-        Contact: {matches[0].name}
+      <Text style={text.meta}>
+        {matches[0].name}
         {matches[0].detail ? ` · ${matches[0].detail}` : ""}
       </Text>
     );
   }
   return (
-    <View style={{ gap: 6 }}>
-      <Text style={styles.note}>Which contact?</Text>
+    <View style={{ gap: space.s1 }}>
+      <Text style={text.meta}>Which contact?</Text>
       {matches.map((m) => (
-        <Pressable
-          key={m.id}
-          style={[styles.choice, selected === m.id && styles.choiceOn]}
-          onPress={() => setSelected(m.id)}
-        >
-          <Text style={styles.choiceName}>{m.name}</Text>
-          {!!m.detail && <Text style={styles.choiceDetail}>{m.detail}</Text>}
+        <Pressable key={m.id} style={[styles.choice, selected === m.id && styles.choiceOn]} onPress={() => setSelected(m.id)}>
+          <Text style={[text.body, selected === m.id && { color: colors.paper }]}>{m.name}</Text>
+          {!!m.detail && <Text style={[text.meta, selected === m.id && { color: colors.wash2 }]}>{m.detail}</Text>}
         </Pressable>
       ))}
     </View>
@@ -136,34 +126,19 @@ function PhoneDetails({ prep }: { prep: PhonePrep }) {
 }
 
 const styles = StyleSheet.create({
-  card: {
-    marginHorizontal: 12,
-    marginBottom: 8,
-    padding: 12,
-    gap: 8,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.warning,
-    backgroundColor: colors.surface,
+  answer: {
+    marginHorizontal: space.s5,
+    marginBottom: space.s3,
+    paddingLeft: space.s4,
+    borderLeftWidth: 2,
+    borderLeftColor: colors.now,
+    gap: space.s2,
   },
-  heading: { color: colors.warning, fontSize: 12, fontWeight: "700", letterSpacing: 0.5 },
-  summaryBox: { maxHeight: 140 },
-  summary: { color: colors.text, fontSize: 14, lineHeight: 20 },
-  note: { color: colors.textDim, fontSize: 13 },
-  choice: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  choiceOn: { borderColor: colors.accent, backgroundColor: colors.surfaceHigh },
-  choiceName: { color: colors.text, fontSize: 14, fontWeight: "600" },
-  choiceDetail: { color: colors.textDim, fontSize: 12, marginTop: 2 },
-  row: { flexDirection: "row", gap: 8 },
-  button: { flex: 1, borderRadius: 10, paddingVertical: 11, alignItems: "center" },
-  cancel: { backgroundColor: colors.surfaceHigh },
-  cancelText: { color: colors.text, fontWeight: "600" },
-  approve: { backgroundColor: colors.accent },
-  approveText: { color: colors.bg, fontWeight: "700" },
+  eyebrow: { ...type.micro, color: colors.now, textTransform: "uppercase" },
+  summaryBox: { maxHeight: 140, flexGrow: 0 },
+  said: { ...type.body, color: colors.ink },
+  problem: { ...type.meta, color: colors.stop },
+  acts: { flexDirection: "row", alignItems: "center", gap: space.s2 },
+  choice: { borderRadius: 12, paddingHorizontal: space.s3, paddingVertical: space.s2, backgroundColor: colors.wash },
+  choiceOn: { backgroundColor: colors.ink },
 });
