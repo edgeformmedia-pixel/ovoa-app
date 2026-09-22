@@ -20,8 +20,21 @@ workflows:
       node: 22
       xcode: latest
       cocoapods: default
+    # Pushes to main build on their own — but only when something the app is
+    # made of actually changed. A server-only commit reaches the phone through
+    # a worker deploy, not a build, and an iOS build is ~25 minutes of the
+    # monthly allowance to produce a byte-identical app.
     triggering:
-      events: []
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+    when:
+      changeset:
+        includes:
+          - "jarvis/app"
+          - "codemagic.yaml"
     scripts:
       - name: Install dependencies
         working_directory: jarvis/app

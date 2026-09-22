@@ -1,5 +1,5 @@
 OVOA/Jarvis: Expo iOS app (jarvis/app) + Cloudflare Worker (jarvis/api, D1 jarvis-db). Ships via Codemagic -> TestFlight.
-Last: money feature added (src/money.ts, migration 0028) — balance/pay/bills/plans, "can I afford this" with the trade-off named.
-BLOCKED: `npm run db:migrate` fails — the wrangler OAuth token has no d1 scope. Run `npx wrangler login`, then migrate + deploy.
-Not deployed yet; worker still on the pre-money build. Tests and the 157-check smoke pass locally.
-Next: re-auth, migrate + deploy, then build #58 on Codemagic for the pending app-side voice fixes.
+Done since 57e75a3: money feature (src/money.ts, migration 0028); spoken turns now carry 17 tools not ~70 (src/toolbelt.ts, more_tools loads the rest mid-turn); setup is a voice call (app/src/app/onboarding.tsx); codemagic auto-builds on push to main when jarvis/app changes.
+BLOCKED 1: wrangler OAuth token has no d1 scope -> can't migrate, deploy, or read device_logs. Run `npx wrangler login` then migrate + deploy.
+BLOCKED 2: Codemagic is out of build minutes (#58 failed on an Apple 500 in Publishing, not our code). Needs billing enabled.
+Next: after login, read device_logs perf lines to see whether the smaller prompt moved "think" time; the app-side voice fixes are still untested on device.
