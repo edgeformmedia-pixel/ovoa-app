@@ -1,14 +1,15 @@
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { devlog } from "../lib/devlog";
 import { HEART_WINDOW_HOURS, healthAvailable, healthPermission, todayHealth, type TodayHealth } from "../lib/health";
-import { colors } from "../lib/theme";
+import { colors, mono, numeric, radius, space, type } from "../lib/theme";
+import { Btn, GroupLabel, IconTile, Tile, Tiles, text } from "./ui";
 
-// Apple Health on the Activity tab: heart rate (with the last few hours as a
-// graph), sleep, energy, exercise and today's workouts. Everything is optional —
-// a phone with no watch has steps and little else, so each card hides itself
-// when Health has nothing for it, rather than showing a row of dashes.
+// Apple Health on the Activity screen: heart, sleep, energy and today's
+// workouts. Everything is optional — a phone with no watch has steps and little
+// else — so each tile hides itself when Health has nothing for it rather than
+// showing a row of dashes.
 
 /**
  * HealthKit hands back an XPC failure when its privacy daemon is busy or the
@@ -76,34 +77,27 @@ export function HealthCards() {
 
   if (state === "unavailable") {
     return (
-      <View style={styles.card}>
-        <Text style={styles.label}>HEART & SLEEP</Text>
-        <Text style={styles.dim}>
+      <>
+        <GroupLabel>Heart &amp; sleep</GroupLabel>
+        <Text style={text.sub}>
           Apple Health needs the installed OVOA app (a development build). In Expo Go only steps are available.
         </Text>
-      </View>
+      </>
     );
   }
 
   if (state === "error") {
     return (
-      <View style={styles.card}>
-        <Text style={styles.label}>HEART & SLEEP</Text>
-        <Text style={styles.dim}>{error}</Text>
-        <Pressable style={styles.retry} onPress={() => void load()}>
-          <Text style={styles.retryText}>Try again</Text>
-        </Pressable>
-      </View>
+      <>
+        <GroupLabel>Heart &amp; sleep</GroupLabel>
+        <Text style={text.sub}>{error}</Text>
+        <Btn label="Try again" onPress={() => void load()} style={{ alignSelf: "flex-start" }} />
+      </>
     );
   }
 
   if (state === "loading" || !health) {
-    return (
-      <View style={[styles.card, { alignItems: "center" }]}>
-        <ActivityIndicator color={colors.accent} />
-        <Text style={styles.dim}>Reading Apple Health…</Text>
-      </View>
-    );
+    return <ActivityIndicator color={colors.now} style={{ marginVertical: space.s6 }} />;
   }
 
   const { heartRate, heart, restingHeartRate, heartRateMin, heartRateMax } = health;
@@ -112,143 +106,133 @@ export function HealthCards() {
 
   if (nothing) {
     return (
-      <View style={styles.card}>
-        <Text style={styles.label}>HEART & SLEEP</Text>
-        <Text style={styles.dim}>
+      <>
+        <GroupLabel>Heart &amp; sleep</GroupLabel>
+        <Text style={text.sub}>
           Apple Health has nothing for today yet. Wear a watch or band that writes to Health, and allow OVOA to read
           Heart Rate and Sleep in Settings → Health → Data Access.
         </Text>
-        <Pressable style={styles.retry} onPress={() => void load()}>
-          <Text style={styles.retryText}>Refresh</Text>
-        </Pressable>
-      </View>
+        <Btn label="Refresh" onPress={() => void load()} style={{ alignSelf: "flex-start" }} />
+      </>
     );
   }
 
   return (
     <>
-      {(heartRate || restingHeartRate) && (
-        <View style={styles.card}>
-          <View style={styles.cardHead}>
-            <Text style={styles.label}>HEART RATE</Text>
-            {!!heartRate && <Text style={styles.dim}>{ago(heartRate.at)}</Text>}
-          </View>
-          <View style={styles.bpmRow}>
-            <Text style={styles.bpm}>{heartRate ? heartRate.bpm : "—"}</Text>
-            <Text style={styles.bpmUnit}>bpm</Text>
-            {!!restingHeartRate && (
-              <View style={styles.resting}>
-                <Text style={styles.restingValue}>{restingHeartRate}</Text>
-                <Text style={styles.dimSmall}>resting</Text>
-              </View>
-            )}
-          </View>
-          {heart.length > 1 ? (
-            <>
-              <HeartGraph points={heart} />
-              <View style={styles.cardHead}>
-                <Text style={styles.dimSmall}>
-                  {`last ${HEART_WINDOW_HOURS} h · ${heart.length} readings`}
-                </Text>
-                <Text style={styles.dimSmall}>
-                  {heartRateMin && heartRateMax ? `today ${heartRateMin}–${heartRateMax} bpm` : ""}
-                </Text>
-              </View>
-            </>
-          ) : (
-            <Text style={styles.dimSmall}>Not enough readings today to draw a graph.</Text>
-          )}
-        </View>
-      )}
-
-      <View style={styles.row}>
-        <Tile label="Sleep" value={health.sleepHours !== undefined ? `${health.sleepHours} h` : "—"} />
-        <Tile
-          label="Active"
-          value={health.activeEnergyKcal !== undefined ? `${Math.round(health.activeEnergyKcal)} kcal` : "—"}
-        />
-        <Tile
-          label="Exercise"
-          value={health.exerciseMinutes !== undefined ? `${Math.round(health.exerciseMinutes)} min` : "—"}
-        />
-      </View>
-
-      {(health.hrvMs !== undefined || health.standHours !== undefined) && (
-        <View style={styles.row}>
-          {health.hrvMs !== undefined && <Tile label="HRV (SDNN)" value={`${Math.round(health.hrvMs)} ms`} />}
-          {health.standHours !== undefined && <Tile label="Stand" value={`${Math.round(health.standHours)} h`} />}
-        </View>
+      <GroupLabel>Heart &amp; sleep</GroupLabel>
+      <Tiles>
+        {!!heartRate && (
+          <Tile icon="heart-outline" tone="coral" label={`Heart · ${ago(heartRate.at)}`} value={`${heartRate.bpm}`} suffix=" bpm">
+            {heart.length > 1 && <HeartGraph points={heart} />}
+          </Tile>
+        )}
+        {!!restingHeartRate && <Tile icon="bed-outline" tone="violet" label="Resting" value={`${restingHeartRate}`} suffix=" bpm" />}
+        {health.sleepHours !== undefined && <Tile icon="moon-outline" tone="blue" label="Sleep" value={`${health.sleepHours}`} suffix=" h" />}
+        {health.activeEnergyKcal !== undefined && (
+          <Tile icon="flame-outline" tone="amber" label="Active" value={`${Math.round(health.activeEnergyKcal)}`} suffix=" kcal" />
+        )}
+        {health.exerciseMinutes !== undefined && (
+          <Tile icon="timer-outline" tone="green" label="Exercise" value={`${Math.round(health.exerciseMinutes)}`} suffix=" min" />
+        )}
+        {health.hrvMs !== undefined && <Tile icon="analytics-outline" tone="pink" label="HRV (SDNN)" value={`${Math.round(health.hrvMs)}`} suffix=" ms" />}
+        {health.standHours !== undefined && <Tile icon="walk-outline" tone="teal" label="Stand" value={`${Math.round(health.standHours)}`} suffix=" h" />}
+      </Tiles>
+      {heart.length > 1 && (
+        <Text style={styles.foot}>
+          {`last ${HEART_WINDOW_HOURS} h · ${heart.length} readings`}
+          {heartRateMin && heartRateMax ? ` · today ${heartRateMin}–${heartRateMax} bpm` : ""}
+        </Text>
       )}
 
       {health.workouts.length > 0 && (
-        <View style={styles.card}>
-          <Text style={styles.label}>TODAY'S WORKOUTS</Text>
+        <>
+          <GroupLabel>Today&apos;s workouts</GroupLabel>
           {health.workouts.map((w) => (
-            <View key={w.start} style={styles.workout}>
-              <Text style={styles.workoutName}>{spaced(w.type)}</Text>
-              <Text style={styles.dimSmall}>
-                {[
-                  new Date(w.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-                  w.minutes !== undefined ? `${w.minutes} min` : null,
-                  w.energy,
-                  w.distance,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </Text>
-            </View>
+            <Workout key={w.start} workout={w} heart={heart} />
           ))}
-        </View>
+        </>
       )}
     </>
   );
 }
 
-/** The heart-rate readings as bars, scaled to the range they cover (plus a little room). */
+/**
+ * One workout, with its own slice of the heart-rate readings under it.
+ *
+ * The design has a smooth bpm line and a "where you were" address. Neither is
+ * in the data: HealthKit workout samples here carry no route, and nothing draws
+ * a polyline without react-native-svg, which would be a new native dependency.
+ * So the trace is the readings that fall inside the workout, as bars — the same
+ * shape the app has always drawn heart rate in.
+ */
+function Workout({
+  workout,
+  heart,
+}: {
+  workout: TodayHealth["workouts"][number];
+  heart: TodayHealth["heart"];
+}) {
+  const start = workout.start;
+  const end = start + (workout.minutes ?? 0) * 60_000;
+  const during = workout.minutes ? heart.filter((p) => p.at >= start && p.at <= end) : [];
+  const peak = during.length ? Math.max(...during.map((p) => p.bpm)) : null;
+
+  return (
+    <View style={styles.workout}>
+      <View style={styles.workoutHead}>
+        <IconTile name="barbell-outline" tone="coral" />
+        <Text style={[text.body, { flex: 1, fontWeight: "600" }]} numberOfLines={1}>
+          {spaced(workout.type)}
+        </Text>
+        <Text style={styles.stamp}>
+          {clock(start)}
+          {workout.minutes ? ` – ${clock(end)}` : ""}
+        </Text>
+      </View>
+      {during.length > 1 && <HeartGraph points={during} />}
+      <View style={styles.workoutFoot}>
+        {workout.minutes !== undefined && <Stat value={`${workout.minutes}`} unit="min" />}
+        {!!workout.energy && <Stat value={workout.energy} unit="" />}
+        {!!workout.distance && <Stat value={workout.distance} unit="" />}
+        {peak !== null && <Stat value={`${peak}`} unit="peak" />}
+      </View>
+    </View>
+  );
+}
+
+const Stat = ({ value, unit }: { value: string; unit: string }) => (
+  <Text style={styles.stat}>
+    <Text style={styles.statValue}>{value}</Text>
+    {unit ? ` ${unit}` : ""}
+  </Text>
+);
+
+/** The readings as bars, scaled to the range they cover plus a little room. */
 function HeartGraph({ points }: { points: { at: number; bpm: number }[] }) {
   const values = points.map((p) => p.bpm);
   const low = Math.max(30, Math.min(...values) - 5);
   const high = Math.max(...values) + 5;
   const span = Math.max(1, high - low);
-  const first = points[0];
-  const last = points[points.length - 1];
   return (
-    <>
-      <View style={styles.graph}>
-        {points.map((p, i) => (
-          <View
-            key={`${p.at}-${i}`}
-            style={[
-              styles.graphBar,
-              {
-                height: `${Math.max(4, ((p.bpm - low) / span) * 100)}%`,
-                // The newest reading is the one being read as "now".
-                backgroundColor: i === points.length - 1 ? colors.accent : colors.danger,
-                opacity: i === points.length - 1 ? 1 : 0.55,
-              },
-            ]}
-          />
-        ))}
-      </View>
-      <View style={styles.cardHead}>
-        <Text style={styles.dimSmall}>{clock(first.at)}</Text>
-        <Text style={styles.dimSmall}>{`${Math.round(low)}–${Math.round(high)} bpm`}</Text>
-        <Text style={styles.dimSmall}>{clock(last.at)}</Text>
-      </View>
-    </>
-  );
-}
-
-function Tile({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={[styles.card, styles.tile]}>
-      <Text style={styles.tileValue}>{value}</Text>
-      <Text style={styles.dimSmall}>{label}</Text>
+    <View style={styles.graph}>
+      {points.map((p, i) => (
+        <View
+          key={`${p.at}-${i}`}
+          style={[
+            styles.graphBar,
+            {
+              height: `${Math.max(6, ((p.bpm - low) / span) * 100)}%`,
+              // The newest reading is the one being read as "now".
+              backgroundColor: i === points.length - 1 ? colors.stop : colors.wash2,
+            },
+          ]}
+        />
+      ))}
     </View>
   );
 }
 
-const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
 /** "12 min ago", for how fresh a reading is. */
 function ago(at: number) {
@@ -263,30 +247,15 @@ function ago(at: number) {
 const spaced = (name: string) => name.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 16,
-    gap: 6,
-  },
-  cardHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  label: { color: colors.textDim, fontSize: 12, fontWeight: "600", letterSpacing: 1 },
-  dim: { color: colors.textDim, fontSize: 14 },
-  dimSmall: { color: colors.textDim, fontSize: 11 },
-  bpmRow: { flexDirection: "row", alignItems: "flex-end", gap: 6 },
-  bpm: { color: colors.text, fontSize: 44, fontWeight: "800", fontVariant: ["tabular-nums"] },
-  bpmUnit: { color: colors.textDim, fontSize: 16, paddingBottom: 8 },
-  resting: { marginLeft: "auto", alignItems: "flex-end" },
-  restingValue: { color: colors.text, fontSize: 20, fontWeight: "700", fontVariant: ["tabular-nums"] },
-  graph: { flexDirection: "row", alignItems: "flex-end", gap: 2, height: 64, marginTop: 10 },
+  foot: { ...type.meta, ...mono, color: colors.inkMute, ...numeric },
+
+  workout: { backgroundColor: colors.wash, borderRadius: radius.tile, padding: space.s4, gap: space.s2 },
+  workoutHead: { flexDirection: "row", alignItems: "center", gap: space.s3 },
+  stamp: { ...type.micro, ...mono, ...numeric, color: colors.inkMute, letterSpacing: 0 },
+  workoutFoot: { flexDirection: "row", gap: space.s5, flexWrap: "wrap" },
+  stat: { ...type.meta, color: colors.inkDim, ...numeric },
+  statValue: { color: colors.ink, fontWeight: "600" },
+
+  graph: { flexDirection: "row", alignItems: "flex-end", gap: 2, height: 46, marginTop: space.s2 },
   graphBar: { flex: 1, minHeight: 2, borderRadius: 2 },
-  row: { flexDirection: "row", gap: 12 },
-  tile: { flex: 1, alignItems: "center", paddingHorizontal: 8 },
-  tileValue: { color: colors.text, fontSize: 18, fontWeight: "700" },
-  workout: { paddingVertical: 6, borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth },
-  workoutName: { color: colors.text, fontSize: 15, fontWeight: "600" },
-  retry: { alignSelf: "flex-start", paddingVertical: 8 },
-  retryText: { color: colors.accent, fontWeight: "600" },
 });

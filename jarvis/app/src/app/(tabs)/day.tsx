@@ -1,230 +1,127 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter, type Href } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import {
-  Alert,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import { api, type AgentNote, type Commitment, type ContextDay, type ContextWeek } from "../../lib/api";
+import { Alert, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from "react-native";
+import { Answer, Settled, Spine, type Moment, type MomentState } from "../../components/Spine";
+import { Btn, Empty, GroupLabel, Screen, TopBar, text } from "../../components/ui";
+import { api, type Commitment, type ContextDay, type FeedCard } from "../../lib/api";
 import { useAgent } from "../../lib/agent";
 import { useSession } from "../../lib/auth";
-import { colors } from "../../lib/theme";
-import Transcripts from "../transcripts";
+import { logFail } from "../../lib/devlog";
+import { colors, space, type } from "../../lib/theme";
 
-// Two things that are both "what happened", from two directions: what OVOA went
-// and found out, and what the day was actually made of. They share a screen
-// because that is how they get read — you check what came in, then you look
-// back at the day it came from.
-
-type Tab = "notes" | "days" | "transcripts";
-
-const NOTE_ICON: Record<AgentNote["kind"], { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
-  brief: { icon: "sunny-outline", color: colors.accent },
-  nudge: { icon: "alarm-outline", color: colors.warning },
-  finding: { icon: "search-outline", color: colors.accent },
-  done: { icon: "checkmark-circle-outline", color: colors.success },
-  question: { icon: "help-circle-outline", color: colors.warning },
-};
+// The day, as one spine. Everything that is a moment goes on it in the order
+// it happened or will happen: what repeats, what OVOA said on its own, and what
+// the day was actually made of. The things that are not moments — a list, what
+// you still owe, the box for adding something — sit under it.
+//
+// This replaces both halves of the old Journal and the card stack that used to
+// sit on top of Activity. They were three different shapes for the same
+// question, and the point of the spine is that there is one.
 
 const today = () => new Date().toLocaleDateString("en-CA");
 
-const short = (date: string) =>
-  new Date(`${date}T12:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-
-/** "Sep 14 – Sep 20", once the week has come back; its number until then. */
-function weekLabel(week: ContextWeek | null) {
-  if (!week) return "This week";
-  return "days" in week && week.days ? `${short(week.from)} – ${short(week.to)}` : week.week;
+/** A routine's status, as the server words it, to how the spine draws it. */
+function routineState(status: string, dueAt: number, now: number): MomentState {
+  if (status === "done") return "kept";
+  if (status === "missed") return "missed";
+  if (status === "skipped") return "done";
+  return dueAt <= now ? "now" : "next";
 }
 
-export default function Journal() {
-  const [tab, setTab] = useState<Tab>("notes");
-  const { user } = useSession();
-
-  return (
-    <View style={styles.screen}>
-      <View style={styles.segment}>
-        {(
-          [
-            ["notes", `From ${user.settings.assistantName || "OVOA"}`],
-            ["days", "Your days"],
-            ["transcripts", "Transcripts"],
-          ] as const
-        ).map(([key, label]) => (
-          <Pressable key={key} onPress={() => setTab(key)} style={[styles.segmentItem, tab === key && styles.segmentOn]}>
-            <Text style={[styles.segmentText, tab === key && styles.segmentTextOn]}>{label}</Text>
-          </Pressable>
-        ))}
-      </View>
-      {tab === "notes" ? <Notes /> : tab === "days" ? <Days /> : <Transcripts />}
-    </View>
-  );
+/** "09:15" on a given day, back to a moment in time, for ordering. */
+function clockToEpoch(at: string, date: string) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(at.trim());
+  const base = Date.parse(`${date}T12:00:00`);
+  if (!m) return base;
+  const d = new Date(base);
+  d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  return d.getTime();
 }
 
-// ---------- What OVOA has been doing ----------
-
-function Notes() {
+export default function Day() {
   const router = useRouter();
-  const { user } = useSession();
-  const { notes, unread, loading, refresh, markRead, dismiss, pushProblem } = useAgent();
+  const { token, user } = useSession();
+  const { notes, unread, markRead, pushProblem } = useAgent();
+  const [date, setDate] = useState(today());
+  const [cards, setCards] = useState<FeedCard[]>([]);
+  const [day, setDay] = useState<ContextDay | null>(null);
+  const [commitments, setCommitments] = useState<Commitment[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [settledFavors, setSettledFavors] = useState<Record<string, string>>({});
+
+  const isToday = date === today();
   const name = user.settings.assistantName || "OVOA";
 
-  // Opening the screen is reading them — but the notes may not have arrived
-  // when it mounts, so this waits for a count rather than firing once on the
-  // way in. markRead sets the count to zero, so it runs once and settles; a
-  // note arriving while the screen is open is read as it lands, which is true.
+  const load = useCallback(
+    async (alive: () => boolean = () => true) => {
+      setLoading(true);
+      try {
+        // The feed is only ever about today; a past day is whatever was recorded.
+        const [feed, context, owed] = await Promise.all([
+          isToday ? api.feed(token).catch(() => ({ cards: [] as FeedCard[] })) : Promise.resolve({ cards: [] as FeedCard[] }),
+          user.settings.contextEnabled ? api.contextDay(token, date).catch(() => null) : Promise.resolve(null),
+          api.commitments(token).catch(() => ({ commitments: [] as Commitment[] })),
+        ]);
+        if (!alive()) return;
+        setCards(feed.cards);
+        setDay(context);
+        setCommitments(owed.commitments ?? []);
+      } finally {
+        if (alive()) setLoading(false);
+      }
+    },
+    [token, date, isToday, user.settings.contextEnabled],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void load(() => !cancelled);
+      return () => {
+        cancelled = true;
+      };
+    }, [load]),
+  );
+
+  // Opening the screen is reading what OVOA said. It waits for a count rather
+  // than firing once on mount, because the notes may not have arrived yet.
   useEffect(() => {
     if (unread) markRead();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unread]);
 
-  if (!user.settings.agentEnabled) {
-    return (
-      <Empty
-        icon="moon-outline"
-        title={`${name} isn't working in the background`}
-        body={`Turn on Background work in Settings and ${name} will check things while you're away — what's actually on today, what you said you'd do — and tell you only when it's worth it.`}
-        action={{ label: "Open Settings", onPress: () => router.push("/settings") }}
-      />
+  const tickTodo = async (id: string) => {
+    setCards((all) =>
+      all.map((c) => (c.kind === "todos" ? { ...c, items: c.items.map((i) => (i.id === id ? { ...i, done: true } : i)) } : c)),
     );
-  }
+    await api.todoDone(token, id).catch(logFail("day: api.todoDone"));
+    void load();
+  };
 
-  return (
-    <ScrollView
-      contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.accent} />}
-    >
-      {!!pushProblem && (
-        <View style={[styles.card, styles.warnCard]}>
-          <Text style={styles.warnText}>
-            Notifications aren't set up, so these only appear here. {pushProblem}
-          </Text>
-        </View>
-      )}
+  const confirmRoutine = async (id: string, dueAt: number) => {
+    await api.confirmRoutine(token, id, { dueAt, via: "app" }).catch(logFail("day: api.confirmRoutine"));
+    void load();
+  };
 
-      {notes.length === 0 ? (
-        <Empty
-          icon="checkmark-done-outline"
-          title="Nothing to report"
-          body={`${name} checks on its own and stays quiet unless something's worth interrupting you for. An empty screen means nothing needed you.`}
-        />
-      ) : (
-        notes.map((note) => <NoteCard key={note.id} note={note} onDismiss={() => dismiss(note.id)} />)
-      )}
-
-      <Pressable style={styles.linkRow} onPress={() => router.push("/agent")}>
-        <Ionicons name="options-outline" size={16} color={colors.accent} />
-        <Text style={styles.link}>What {name} is set up to do</Text>
-      </Pressable>
-    </ScrollView>
-  );
-}
-
-function NoteCard({ note, onDismiss }: { note: AgentNote; onDismiss: () => void }) {
-  const router = useRouter();
-  const { icon, color } = NOTE_ICON[note.kind];
-  const when = new Date(note.created_at);
-  const stamp =
-    when.toLocaleDateString("en-CA") === today()
-      ? when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
-      : when.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-
-  return (
-    <View style={[styles.card, !note.read_at && styles.unreadCard]}>
-      <View style={styles.noteHead}>
-        <Ionicons name={icon} size={18} color={color} />
-        <Text style={styles.noteTitle}>{note.title}</Text>
-        <Text style={styles.stamp}>{stamp}</Text>
-      </View>
-      <Text style={styles.noteBody}>{note.body}</Text>
-      <View style={styles.noteFoot}>
-        {!!note.job && <Text style={styles.meta}>{note.job}</Text>}
-        {!!note.action_id && (
-          // The approval card itself lives on the assistant tab, with the rest
-          // of them; this is the way there rather than a second place to tap
-          // Approve.
-          <Pressable onPress={() => router.push("/chat")} hitSlop={6}>
-            <Text style={[styles.meta, { color: colors.warning }]}>Waiting for you to approve something →</Text>
-          </Pressable>
-        )}
-        <View style={{ flex: 1 }} />
-        <Pressable onPress={onDismiss} hitSlop={10}>
-          <Text style={styles.dismiss}>Dismiss</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-// ---------- What the day was made of ----------
-
-function Days() {
-  const router = useRouter();
-  const { token, user } = useSession();
-  const [date, setDate] = useState(today());
-  const [grain, setGrain] = useState<"day" | "week">("day");
-  const [day, setDay] = useState<ContextDay | null>(null);
-  const [week, setWeek] = useState<ContextWeek | null>(null);
-  const [commitments, setCommitments] = useState<Commitment[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [note, setNote] = useState("");
-  const [saving, setSaving] = useState(false);
-  const enabled = user.settings.contextEnabled;
-
-  const load = useCallback(async () => {
-    if (!enabled) return;
-    setLoading(true);
-    try {
-      const [shown, c] = await Promise.all([
-        grain === "day" ? api.contextDay(token, date) : api.contextWeek(token, date),
-        api.commitments(token),
-      ]);
-      if (grain === "day") setDay(shown as ContextDay);
-      else setWeek(shown as ContextWeek);
-      setCommitments(c.commitments ?? []);
-    } catch {
-      if (grain === "day") setDay(null);
-      else setWeek(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [token, date, grain, enabled]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  if (!enabled) {
-    return (
-      <Empty
-        icon="book-outline"
-        title="No timeline yet"
-        body="Turn on Timeline in Settings and what you record gets summarised into a day you can ask about later — 'what did I do Tuesday', 'did I ever call Sarah back'. The words themselves are never stored on the server."
-        action={{ label: "Open Settings", onPress: () => router.push("/settings") }}
-      />
-    );
-  }
-
-  const shift = (steps: number) => {
-    const days = steps * (grain === "week" ? 7 : 1);
-    setDate(new Date(Date.parse(`${date}T12:00:00Z`) + days * 86_400_000).toLocaleDateString("en-CA"));
+  const settleFavor = async (id: string, how: "keep" | "done" | "drop") => {
+    setSettledFavors((s) => ({ ...s, [id]: how === "drop" ? "Dropped" : how === "keep" ? "Kept" : "Done" }));
+    if (how === "keep") await api.confirmFavor(token, id).catch(logFail("day: api.confirmFavor"));
+    else await api.setCommitment(token, id, how === "done" ? "done" : "dropped").catch(logFail("day: api.setCommitment"));
+    void load();
   };
 
   const add = async () => {
-    const text = note.trim();
-    if (!text) return;
+    const body = note.trim();
+    if (!body) return;
     setSaving(true);
     try {
-      const now = Date.now();
-      await api.addContextBlock(token, { startedAt: now, endedAt: now, source: "chat", note: text });
+      const at = Date.now();
+      await api.addContextBlock(token, { startedAt: at, endedAt: at, source: "chat", note: body });
       setNote("");
-      if (date === today()) await load();
+      if (isToday) await load();
       else Alert.alert("Added to today", "Jump to today to see it.");
     } catch (err) {
       Alert.alert("Couldn't add that", (err as Error).message);
@@ -233,218 +130,208 @@ function Days() {
     }
   };
 
-  const isToday = date === today();
-  const label = new Date(`${date}T12:00:00Z`).toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-  });
+  // ---------- the spine ----------
+
+  const now = Date.now();
+  const moments: Moment[] = [];
+
+  for (const card of cards) {
+    if (card.kind === "routines") {
+      for (const item of card.items) {
+        const state = routineState(item.status, item.dueAt, now);
+        moments.push({
+          id: `routine:${item.id}:${item.dueAt}`,
+          at: item.at,
+          sortAt: item.dueAt,
+          title: item.title,
+          state,
+          // Due now is the one moment on the screen that asks something of you.
+          answer:
+            state === "now" ? (
+              // No eyebrow: the NOW marker is directly above it.
+              <Answer>
+                <Btn label="Done" kind="go" onPress={() => confirmRoutine(item.id, item.dueAt)} />
+              </Answer>
+            ) : undefined,
+          onDone: state === "next" ? () => confirmRoutine(item.id, item.dueAt) : undefined,
+        });
+      }
+    }
+    if (card.kind === "favor") {
+      const done = settledFavors[card.commitmentId];
+      moments.push({
+        id: `favor:${card.commitmentId}`,
+        at: "",
+        sortAt: now - 1,
+        title: "",
+        state: "agent",
+        answer: done ? (
+          <Settled>{done}</Settled>
+        ) : (
+          <Answer eyebrow={card.unsure ? "Did they ask?" : "Asked of you"} said={card.body} who={card.title}>
+            <Btn
+              label={card.unsure ? "Keep it" : "Done"}
+              onPress={() => settleFavor(card.commitmentId, card.unsure ? "keep" : "done")}
+            />
+            <Btn label={card.unsure ? "No" : "Not needed"} kind="quiet" onPress={() => settleFavor(card.commitmentId, "drop")} />
+          </Answer>
+        ),
+      });
+    }
+  }
+
+  // What OVOA said on its own, today. Read ones go quiet rather than away.
+  if (isToday) {
+    for (const n of notes) {
+      if (new Date(n.created_at).toLocaleDateString("en-CA") !== date) continue;
+      moments.push({
+        id: `note:${n.id}`,
+        at: new Date(n.created_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }),
+        sortAt: n.created_at,
+        title: n.title,
+        detail: n.body,
+        state: n.read_at ? "agentQuiet" : "agent",
+        answer: n.action_id ? (
+          <Answer eyebrow="Waiting on you">
+            <Btn label="Open it" kind="go" onPress={() => router.navigate("/chat")} />
+          </Answer>
+        ) : undefined,
+      });
+    }
+  }
+
+  // What the day was actually made of.
+  for (const block of day?.blocks ?? []) {
+    moments.push({
+      id: `block:${block.at}:${block.title}`,
+      at: block.at,
+      sortAt: clockToEpoch(block.at, date),
+      title: block.title,
+      detail: block.summary,
+      state: "done",
+    });
+  }
+
+  const todos = cards.find((c) => c.kind === "todos");
+  const summary = day?.summary ?? cards.find((c) => c.kind === "summary")?.body;
+  const label = new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  const shift = (by: number) =>
+    setDate(new Date(Date.parse(`${date}T12:00:00`) + by * 86_400_000).toLocaleDateString("en-CA"));
 
   return (
-    <ScrollView
-      contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={colors.accent} />}
-      keyboardShouldPersistTaps="handled"
-    >
-      <View style={styles.grainRow}>
-        {(["day", "week"] as const).map((g) => (
-          <Pressable key={g} onPress={() => setGrain(g)} hitSlop={6}>
-            <Text style={[styles.grain, grain === g && styles.grainOn]}>{g === "day" ? "Day" : "Week"}</Text>
+    <View style={styles.page}>
+      <TopBar title="Day" when={isToday ? "Today" : label} />
+      <Screen
+        keyboardShouldPersistTaps="handled"
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void load()} tintColor={colors.now} />}
+      >
+        <View style={styles.nav}>
+          <Pressable onPress={() => shift(-1)} hitSlop={12}>
+            <Ionicons name="chevron-back" size={20} color={colors.inkDim} />
           </Pressable>
-        ))}
-      </View>
+          <Pressable onPress={() => setDate(today())}>
+            <Text style={text.head}>{isToday ? "Today" : label}</Text>
+          </Pressable>
+          <Pressable onPress={() => shift(1)} hitSlop={12} disabled={isToday}>
+            <Ionicons name="chevron-forward" size={20} color={isToday ? colors.line : colors.inkDim} />
+          </Pressable>
+        </View>
 
-      <View style={styles.dayNav}>
-        <Pressable onPress={() => shift(-1)} hitSlop={12}>
-          <Ionicons name="chevron-back" size={22} color={colors.accent} />
-        </Pressable>
-        <Pressable onPress={() => setDate(today())}>
-          <Text style={styles.dayLabel}>
-            {grain === "week" ? weekLabel(week) : isToday ? "Today" : label}
-          </Text>
-        </Pressable>
-        <Pressable onPress={() => shift(1)} hitSlop={12} disabled={isToday}>
-          <Ionicons name="chevron-forward" size={22} color={isToday ? colors.border : colors.accent} />
-        </Pressable>
-      </View>
+        {!!pushProblem && <Text style={styles.warn}>Notifications aren't set up, so these only appear here. {pushProblem}</Text>}
+        {!!summary && <Text style={styles.summary}>{summary}</Text>}
 
-      {grain === "week" ? (
-        week && "nothing" in week && week.nothing ? (
-          <Empty icon="ellipse-outline" title="Nothing recorded" body={week.nothing} />
+        {moments.length > 0 ? (
+          <Spine moments={moments} now={now} />
         ) : (
-          week && (
-            <>
-              {!!week.title && (
-                <View style={styles.card}>
-                  <Text style={styles.dayTitle}>{week.title}</Text>
-                  {!!week.summary && <Text style={styles.noteBody}>{week.summary}</Text>}
-                </View>
-              )}
-              {week.days?.map((d) => (
-                <Pressable
-                  key={d.date}
-                  style={styles.blockRow}
-                  onPress={() => {
-                    setDate(d.date);
-                    setGrain("day");
-                  }}
-                >
-                  <Text style={styles.blockTime}>{d.weekday.slice(0, 3)}</Text>
-                  <View style={styles.blockBody}>
-                    <Text style={styles.meta}>{d.happened.join(" · ")}</Text>
-                  </View>
-                </Pressable>
-              ))}
-            </>
-          )
-        )
-      ) : day && "nothing" in day && day.nothing ? (
-        <Empty icon="ellipse-outline" title="Nothing recorded" body={day.nothing} />
-      ) : (
-        day && (
+          <Empty
+            icon="ellipse-outline"
+            title={isToday ? "Nothing on today" : "Nothing recorded"}
+            body={
+              user.settings.contextEnabled
+                ? `${name} stays quiet unless something is worth interrupting you for. An empty day means nothing needed you.`
+                : "Turn on Timeline in Settings and what you record gets summarised into a day you can ask about later. The words themselves are never stored on the server."
+            }
+            action={
+              user.settings.contextEnabled ? undefined : { label: "Open Settings", onPress: () => router.navigate("/settings") }
+            }
+          />
+        )}
+
+        {!!todos && todos.kind === "todos" && todos.items.length > 0 && (
           <>
-            {!!day.title && (
-              <View style={styles.card}>
-                <Text style={styles.dayTitle}>{day.title}</Text>
-                {!!day.summary && <Text style={styles.noteBody}>{day.summary}</Text>}
-              </View>
-            )}
-            {day.blocks?.map((b, i) => (
-              <View key={`${b.at}-${i}`} style={styles.blockRow}>
-                <Text style={styles.blockTime}>{b.at}</Text>
-                <View style={styles.blockBody}>
-                  <Text style={styles.blockTitle}>{b.title}</Text>
-                  <Text style={styles.meta}>{b.summary}</Text>
-                </View>
+            <GroupLabel>{todos.title}</GroupLabel>
+            {todos.items.map((item) => (
+              <Pressable
+                key={item.id}
+                style={styles.todo}
+                onPress={() => !item.done && tickTodo(item.id)}
+                disabled={item.done}
+              >
+                <Ionicons
+                  name={item.done ? "checkmark-circle" : "ellipse-outline"}
+                  size={20}
+                  color={item.done ? colors.done : colors.inkMute}
+                />
+                <Text style={[text.body, { flex: 1 }, item.done && styles.struck]}>{item.text}</Text>
+              </Pressable>
+            ))}
+          </>
+        )}
+
+        {commitments.length > 0 && (
+          <>
+            <GroupLabel>Still owed</GroupLabel>
+            {commitments.map((c, i) => (
+              <View key={i} style={styles.owed}>
+                <Text style={text.body}>{c.text}</Text>
+                {!!c.theirWords && <Text style={styles.quote}>“{c.theirWords}”</Text>}
+                <Text style={text.meta}>{[c.said, c.who, c.when].filter(Boolean).join(" · ")}</Text>
               </View>
             ))}
           </>
-        )
-      )}
+        )}
 
-      {commitments.length > 0 && (
-        <View style={{ gap: 8 }}>
-          <Text style={styles.sectionTitle}>STILL OWED</Text>
-          {commitments.map((c, i) => (
-            <View key={i} style={styles.card}>
-              <Text style={styles.noteTitle}>{c.text}</Text>
-              {!!c.theirWords && <Text style={styles.quote}>"{c.theirWords}"</Text>}
-              <Text style={styles.meta}>
-                {c.said}
-                {c.who ? ` · ${c.who}` : ""}
-                {c.when ? ` · ${c.when}` : ""}
-              </Text>
-            </View>
-          ))}
-        </View>
-      )}
-
-      <View style={styles.card}>
-        <Text style={styles.label}>Add something to the timeline</Text>
-        <TextInput
-          style={styles.input}
-          value={note}
-          onChangeText={setNote}
-          placeholder="What just happened?"
-          placeholderTextColor={colors.textDim}
-          multiline
-        />
-        <Pressable onPress={add} disabled={!note.trim() || saving} style={({ pressed }) => [styles.button, (pressed || !note.trim() || saving) && { opacity: 0.5 }]}>
-          <Text style={styles.buttonText}>{saving ? "Adding…" : "Add"}</Text>
-        </Pressable>
-      </View>
-    </ScrollView>
-  );
-}
-
-function Empty({
-  icon,
-  title,
-  body,
-  action,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  body: string;
-  action?: { label: string; onPress: () => void };
-}) {
-  return (
-    <View style={styles.empty}>
-      <Ionicons name={icon} size={38} color={colors.textDim} />
-      <Text style={styles.emptyTitle}>{title}</Text>
-      <Text style={styles.emptyBody}>{body}</Text>
-      {action && (
-        <Pressable onPress={action.onPress} style={({ pressed }) => [styles.button, pressed && { opacity: 0.7 }]}>
-          <Text style={styles.buttonText}>{action.label}</Text>
-        </Pressable>
-      )}
+        {user.settings.contextEnabled && (
+          <>
+            <GroupLabel>Add to the timeline</GroupLabel>
+            <TextInput
+              style={styles.input}
+              value={note}
+              onChangeText={setNote}
+              placeholder="What just happened?"
+              placeholderTextColor={colors.inkMute}
+              multiline
+            />
+            <Btn
+              label={saving ? "Adding…" : "Add"}
+              onPress={add}
+              disabled={!note.trim() || saving}
+              style={{ alignSelf: "flex-start" }}
+            />
+          </>
+        )}
+      </Screen>
     </View>
   );
 }
 
-
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: 16, paddingBottom: 48, gap: 12 },
-  segment: {
-    flexDirection: "row",
-    backgroundColor: colors.surfaceHigh,
-    borderRadius: 10,
-    padding: 3,
-    gap: 3,
-    margin: 16,
-    marginBottom: 0,
-  },
-  segmentItem: { flex: 1, borderRadius: 8, paddingVertical: 8, alignItems: "center" },
-  segmentOn: { backgroundColor: colors.surface },
-  segmentText: { color: colors.textDim, fontSize: 14, fontWeight: "600" },
-  segmentTextOn: { color: colors.text },
-  card: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 14,
-    gap: 8,
-  },
-  unreadCard: { borderColor: colors.accentDim, backgroundColor: colors.surfaceHigh },
-  warnCard: { borderColor: colors.warning },
-  warnText: { color: colors.warning, fontSize: 13, lineHeight: 19 },
-  noteHead: { flexDirection: "row", alignItems: "center", gap: 8 },
-  noteTitle: { color: colors.text, fontSize: 15, fontWeight: "600", flex: 1 },
-  noteBody: { color: colors.text, fontSize: 14, lineHeight: 21 },
-  noteFoot: { flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" },
-  stamp: { color: colors.textDim, fontSize: 12 },
-  meta: { color: colors.textDim, fontSize: 13, lineHeight: 19 },
-  quote: { color: colors.textDim, fontSize: 13, fontStyle: "italic" },
-  dismiss: { color: colors.textDim, fontSize: 13 },
-  grainRow: { flexDirection: "row", gap: 16, justifyContent: "center" },
-  grain: { color: colors.textDim, fontSize: 13, fontWeight: "600" },
-  grainOn: { color: colors.accent },
-  dayNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4 },
-  dayLabel: { color: colors.text, fontSize: 16, fontWeight: "600" },
-  dayTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
-  blockRow: { flexDirection: "row", gap: 12, paddingHorizontal: 4 },
-  blockTime: { color: colors.textDim, fontSize: 12, width: 62, paddingTop: 2 },
-  blockBody: { flex: 1, gap: 2 },
-  blockTitle: { color: colors.text, fontSize: 14, fontWeight: "600" },
-  sectionTitle: { color: colors.textDim, fontSize: 12, fontWeight: "600", letterSpacing: 1, marginLeft: 4, marginTop: 8 },
-  label: { color: colors.text, fontSize: 15 },
+  page: { flex: 1, backgroundColor: colors.paper },
+  nav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: space.s2 },
+  summary: { ...type.sub, color: colors.inkDim, paddingBottom: space.s3 },
+  warn: { ...type.meta, color: colors.late },
+  todo: { flexDirection: "row", alignItems: "center", gap: space.s3, paddingVertical: space.s2 },
+  struck: { color: colors.inkMute, textDecorationLine: "line-through" },
+  owed: { paddingVertical: space.s2, gap: 2 },
+  quote: { ...type.sub, color: colors.inkMute, fontStyle: "italic" },
   input: {
-    backgroundColor: colors.surfaceHigh,
-    borderRadius: 10,
-    color: colors.text,
-    fontSize: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    minHeight: 60,
+    backgroundColor: colors.wash,
+    borderRadius: 14,
+    color: colors.ink,
+    ...type.body,
+    paddingHorizontal: space.s3,
+    paddingVertical: space.s3,
+    minHeight: 64,
     textAlignVertical: "top",
   },
-  button: { backgroundColor: colors.surfaceHigh, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
-  buttonText: { color: colors.accent, fontSize: 15, fontWeight: "600" },
-  empty: { alignItems: "center", gap: 10, padding: 24, paddingTop: 48 },
-  emptyTitle: { color: colors.text, fontSize: 16, fontWeight: "600", textAlign: "center" },
-  emptyBody: { color: colors.textDim, fontSize: 14, lineHeight: 21, textAlign: "center" },
-  linkRow: { flexDirection: "row", alignItems: "center", gap: 6, justifyContent: "center", paddingVertical: 14 },
-  link: { color: colors.accent, fontSize: 14, fontWeight: "600" },
 });

@@ -4,6 +4,7 @@
 import { useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { DrawerHost, DrawerPanel } from "../components/Drawer";
+import { Answer, Spine, type Moment } from "../components/Spine";
 import { Btn, Empty, GroupLabel, IconTile, Row, Screen, Tile, Tiles, Toggle, TopBar, text } from "../components/ui";
 import { colors, space } from "../lib/theme";
 
@@ -31,12 +32,59 @@ export default function UiCheck() {
   );
 }
 
+const T = (h: number, m: number) => {
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.getTime();
+};
+const NOW = T(14, 41);
+
+const MOMENTS: Moment[] = [
+  { id: "a", at: "09:15", sortAt: T(9, 15), title: "Strength training", state: "kept" },
+  { id: "b", at: "11:45", sortAt: T(11, 45), title: "Dentist", state: "done" },
+  { id: "c", at: "12:40", sortAt: T(12, 40), title: "Inbox — nothing to say", state: "agentQuiet" },
+  { id: "d", at: "13:05", sortAt: T(13, 5), title: "Call with Priya", state: "done" },
+  {
+    id: "e",
+    at: "13:10",
+    sortAt: T(13, 10),
+    title: "",
+    state: "agent",
+    answer: (
+      <Answer eyebrow="Did they ask?" said="“can you bring the charger”" who="Priya Raman">
+        <Btn label="Keep it" onPress={() => {}} />
+        <Btn label="No" kind="quiet" onPress={() => {}} />
+      </Answer>
+    ),
+  },
+  { id: "f", at: "13:20", sortAt: T(13, 20), title: "Stretch break", state: "missed" },
+  {
+    id: "g",
+    at: "14:45",
+    sortAt: T(14, 45),
+    title: "Afternoon meds",
+    state: "now",
+    answer: (
+      <Answer>
+        <Btn label="Done" kind="go" onPress={() => {}} />
+        <Btn label="Snooze" kind="quiet" onPress={() => {}} />
+      </Answer>
+    ),
+  },
+  { id: "h", at: "17:30", sortAt: T(17, 30), title: "Prescription", state: "next", onDone: () => {} },
+  { id: "i", at: "18:40", sortAt: T(18, 40), title: "Priya's train", state: "next", onDone: () => {} },
+  { id: "j", at: "22:00", sortAt: T(22, 0), title: "Quiet hours", state: "next" },
+];
+
 function Parts() {
   const [on, setOn] = useState(true);
   return (
     <View style={{ flex: 1, backgroundColor: colors.paper }}>
-      <TopBar title="Background" when="Sun 21 Sep" />
+      <TopBar title="Day" when="Sun 21 Sep" />
       <Screen>
+        <Spine moments={MOMENTS} now={NOW} />
+
+        <GroupLabel>Background tiles</GroupLabel>
         <Tiles>
           <Tile icon="sparkles-outline" tone="violet" label="Autonomy" value="Suggest" small />
           <Tile icon="moon-outline" tone="blue" label="Quiet" value="22 – 07" small />

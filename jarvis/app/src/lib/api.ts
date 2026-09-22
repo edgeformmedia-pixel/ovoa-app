@@ -203,7 +203,10 @@ export type ContextBlock = {
 };
 
 export type ContextDay =
-  | { date: string; nothing: string; title?: undefined; blocks?: undefined }
+  // The absent fields are spelled out so a component can read `day.summary`
+  // without narrowing first, the same way ContextWeek works. `summary` was the
+  // one that got left out.
+  | { date: string; nothing: string; title?: undefined; summary?: undefined; blocks?: undefined }
   | { date: string; title?: string; summary?: string; blocks: ContextBlock[]; nothing?: undefined };
 
 export type ContextWeek =
