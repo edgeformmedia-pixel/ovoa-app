@@ -1,7 +1,5 @@
-import Ionicons from "@expo/vector-icons/Ionicons";
 import { Tabs } from "expo-router";
-import { useEffect, type ComponentProps } from "react";
-import { Image, View } from "react-native";
+import { useEffect } from "react";
 import { useAutoCapture } from "../../lib/capture";
 import { startClip } from "../../lib/clip";
 import { useAuth } from "../../lib/auth";
@@ -12,17 +10,10 @@ import { startHeartRate } from "../../lib/heart";
 import { startLocationTimeline } from "../../lib/location";
 import { prepareFillers, watchVoiceForFillers } from "../../lib/fillers";
 import { startAlarmSync } from "../../lib/nag";
-import { NotesBadge } from "../../components/NotesBadge";
 import { colors } from "../../lib/theme";
 
-type IconProps = ComponentProps<typeof Ionicons>;
-
-const icon =
-  (name: IconProps["name"]) =>
-  ({ color, size }: { color: IconProps["color"]; size: number }) => <Ionicons name={name} color={color} size={size} />;
-
 export default function TabsLayout() {
-  const { user, token } = useAuth();
+  const { token } = useAuth();
 
   // Reconnect to the ES100 as soon as the app is open, not only once Record is visited.
   useEffect(() => startClip(), []);
@@ -45,56 +36,33 @@ export default function TabsLayout() {
   // Anything recorded but not yet in the timeline gets filed, while it's on.
   useAutoCapture();
 
-  // SafetyProvider, AgentProvider, AssistantProvider and NagOverlay used to wrap
-  // these tabs. They live in app/_layout.tsx now: /agent, /transcripts, /live,
-  // /claude, /dev-tools, /es100 and /motion-lab are siblings of (tabs) in the
-  // root stack rather than children, so from here they sat outside the providers
-  // and /agent threw on every open (device_logs, 2026-09-21).
+  // Still a tab navigator, and deliberately so: every screen here keeps its own
+  // state when you leave it, and the drawer can never stack two copies of one.
+  // It just doesn't draw a bar any more — navigation is the drawer, and each
+  // screen carries its own TopBar with the hamburger in it.
+  //
+  // SafetyProvider, AgentProvider, AssistantProvider and NagOverlay live in
+  // app/_layout.tsx: /agent, /transcripts, /live, /claude, /dev-tools, /es100
+  // and /motion-lab are siblings of (tabs) in the root stack rather than
+  // children, so from here they sat outside the providers and /agent threw on
+  // every open (device_logs, 2026-09-21).
   return (
     <Tabs
+      tabBar={() => null}
       screenOptions={{
-        headerStyle: { backgroundColor: colors.bg },
-        headerTintColor: colors.text,
-        headerShadowVisible: false,
-        sceneStyle: { backgroundColor: colors.bg },
-        headerTitleStyle: { fontWeight: "600", letterSpacing: 0.5 },
-        tabBarStyle: { backgroundColor: colors.bg, borderTopColor: colors.border },
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.textDim,
+        headerShown: false,
+        sceneStyle: { backgroundColor: colors.paper },
+        // Without this the vendored tab bar still reserves its height.
+        tabBarStyle: { display: "none" },
       }}
     >
-      <Tabs.Screen name="index" options={{ title: "Activity", tabBarIcon: icon("walk") }} />
-      <Tabs.Screen
-        name="chat"
-        options={{
-          title: user?.settings.assistantName ?? "OVOA",
-          tabBarIcon: icon("mic"),
-          headerTitle: () => (
-            <Image
-              source={require("../../../assets/logo-wordmark.png")}
-              style={{ width: 110, height: 30 }}
-              resizeMode="contain"
-              accessibilityLabel="OVOA"
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen name="record" options={{ title: "Record", tabBarIcon: icon("radio-button-on") }} />
-      <Tabs.Screen
-        name="journal"
-        options={{
-          title: "Journal",
-          // The badge counts what OVOA said while the app was closed.
-          tabBarIcon: ({ color, size }) => (
-            <View>
-              <Ionicons name="book-outline" color={color} size={size} />
-              <NotesBadge />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen name="safety" options={{ title: "Safety", tabBarIcon: icon("shield-checkmark") }} />
-      <Tabs.Screen name="settings" options={{ title: "Settings", tabBarIcon: icon("settings") }} />
+      <Tabs.Screen name="index" options={{ title: "Activity" }} />
+      <Tabs.Screen name="chat" options={{ title: "Talk" }} />
+      <Tabs.Screen name="brief" options={{ title: "Brief" }} />
+      <Tabs.Screen name="day" options={{ title: "Day" }} />
+      <Tabs.Screen name="record" options={{ title: "Record" }} />
+      <Tabs.Screen name="safety" options={{ title: "Safety" }} />
+      <Tabs.Screen name="settings" options={{ title: "Settings" }} />
     </Tabs>
   );
 }

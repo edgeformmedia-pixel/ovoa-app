@@ -1,5 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useRouter, type Href } from "expo-router";
 import { useCallback, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { api, type FeedCard } from "../lib/api";
@@ -124,7 +124,7 @@ export function Feed() {
             );
           case "agent":
             return (
-              <Pressable key={i} style={styles.card} onPress={() => router.push("/journal")}>
+              <Pressable key={i} style={styles.card} onPress={() => router.push("/day" as Href)}>
                 <Text style={styles.label}>🤖 {card.title.toUpperCase()}</Text>
                 {card.items.map((item, j) => (
                   <View key={j} style={styles.row}>

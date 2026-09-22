@@ -2,6 +2,8 @@ import { Stack, usePathname, type ErrorBoundaryProps } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { AppDrawer } from "../components/Drawer";
 import { NagOverlay } from "../components/NagOverlay";
 import { AgentProvider } from "../lib/agent";
 import { AssistantProvider } from "../lib/assistant";
@@ -17,7 +19,7 @@ import "../lib/nag";
 import { devlog, setLogContext } from "../lib/devlog";
 import { sendBugReport, startRemoteLog } from "../lib/remoteLog";
 import { SafetyProvider } from "../lib/safety";
-import { colors } from "../lib/theme";
+import { colors, space, type } from "../lib/theme";
 
 // Release builds close the app on an uncaught JS error; show it instead so it
 // can be reported. React Native's own handler still runs afterwards: it is what
@@ -53,16 +55,22 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   useEffect(() => devlog("err", `screen crashed: ${error.message}`, error.stack), [error]);
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: 24, paddingTop: 80 }}>
-      <Text style={{ color: colors.text, fontSize: 20, fontWeight: "600", marginBottom: 12 }}>Something broke</Text>
-      <Text selectable style={{ color: colors.text, marginBottom: 12 }}>
+    <ScrollView
+      style={{ flex: 1, backgroundColor: colors.paper }}
+      contentContainerStyle={{ padding: space.s6, paddingTop: 80, gap: space.s3 }}
+    >
+      <Text style={{ ...type.title, color: colors.ink }}>Something broke</Text>
+      <Text selectable style={{ ...type.body, color: colors.ink }}>
         {error.message}
       </Text>
-      <Text selectable style={{ color: colors.textDim, fontSize: 12 }}>
+      <Text selectable style={{ ...type.meta, color: colors.inkMute }}>
         {error.stack}
       </Text>
-      <Pressable onPress={retry} style={{ marginTop: 24, padding: 14, borderRadius: 10, backgroundColor: colors.accent }}>
-        <Text style={{ color: colors.bg, textAlign: "center", fontWeight: "600" }}>Try again</Text>
+      <Pressable
+        onPress={retry}
+        style={{ marginTop: space.s5, padding: 14, borderRadius: 22, backgroundColor: colors.now }}
+      >
+        <Text style={{ ...type.body, color: colors.paper, textAlign: "center", fontWeight: "600" }}>Try again</Text>
       </Pressable>
     </ScrollView>
   );
@@ -82,27 +90,30 @@ function RootStack() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator color={colors.accent} />
+      <View style={{ flex: 1, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center" }}>
+        <ActivityIndicator color={colors.now} />
       </View>
     );
   }
 
   const stack = (
-    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
+    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.paper } }}>
       {/* Older servers don't send `onboarded`; only an explicit false shows setup. */}
       <Stack.Protected guard={!!user && !onboarding && user.onboarded === false}>
         <Stack.Screen name="onboarding" />
       </Stack.Protected>
       <Stack.Protected guard={signedIn}>
         <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="dev-tools" options={{ headerShown: true, title: "Dev tools" }} />
-        <Stack.Screen name="es100" options={{ headerShown: true, title: "ES100" }} />
-        <Stack.Screen name="motion-lab" options={{ headerShown: true, title: "Motion lab" }} />
-        <Stack.Screen name="agent" options={{ headerShown: true, title: "Background work" }} />
-        <Stack.Screen name="transcripts" options={{ headerShown: true, title: "Transcripts" }} />
-        <Stack.Screen name="live" options={{ headerShown: true, title: "Live" }} />
-        <Stack.Screen name="claude" options={{ headerShown: true, title: "Ask Claude" }} />
+        {/* These carry a header because they are pushed over a screen and the
+            back arrow is how you leave them; the drawer screens have a
+            hamburger of their own instead. */}
+        <Stack.Screen name="dev-tools" options={{ ...pushed, title: "Dev tools" }} />
+        <Stack.Screen name="es100" options={{ ...pushed, title: "ES100" }} />
+        <Stack.Screen name="motion-lab" options={{ ...pushed, title: "Motion lab" }} />
+        <Stack.Screen name="agent" options={{ ...pushed, title: "Background work" }} />
+        <Stack.Screen name="transcripts" options={{ ...pushed, title: "Transcripts" }} />
+        <Stack.Screen name="live" options={{ ...pushed, title: "Live" }} />
+        <Stack.Screen name="claude" options={{ ...pushed, title: "Ask Claude" }} />
       </Stack.Protected>
       <Stack.Protected guard={!!user && onboarding}>
         <Stack.Screen name="connect-google" />
@@ -111,7 +122,9 @@ function RootStack() {
         <Stack.Screen name="sign-in" />
       </Stack.Protected>
       {/* Outside every guard: a crash before sign-in is the one most worth hearing about. */}
-      <Stack.Screen name="report-bug" options={{ headerShown: true, title: "Report a problem" }} />
+      <Stack.Screen name="report-bug" options={{ ...pushed, title: "Report a problem" }} />
+      {/* TEMPORARY verification scaffold — removed before hand-over. */}
+      <Stack.Screen name="ui-check" options={{ ...pushed, title: "UI check" }} />
     </Stack>
   );
 
@@ -130,15 +143,25 @@ function RootStack() {
     <SafetyProvider>
       <AgentProvider>
         <AssistantProvider>
-          {stack}
-          {/* The alarm overlay was stuck inside the tabs too: one going off
-              while Transcripts or Background work was open had nowhere to show. */}
+          {/* The drawer is inside the providers because its rows read from them,
+              and outside the Stack because it has to sit over every route. */}
+          <AppDrawer>{stack}</AppDrawer>
+          {/* After the drawer, so an alarm going off covers the menu too. */}
           <NagOverlay />
         </AssistantProvider>
       </AgentProvider>
     </SafetyProvider>
   );
 }
+
+/** Shared by the screens that are pushed over another one rather than opened from the menu. */
+const pushed = {
+  headerShown: true,
+  headerStyle: { backgroundColor: colors.paper },
+  headerTintColor: colors.ink,
+  headerShadowVisible: false,
+  headerTitleStyle: { ...type.head, color: colors.ink },
+} as const;
 
 /**
  * Every screen change in the log, and on every row written from then on. Nothing
@@ -160,10 +183,13 @@ function RouteWatch() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <StatusBar style="light" />
-      <RootStack />
-      <RouteWatch />
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        {/* Dark glyphs: the app is white now. */}
+        <StatusBar style="dark" />
+        <RootStack />
+        <RouteWatch />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }

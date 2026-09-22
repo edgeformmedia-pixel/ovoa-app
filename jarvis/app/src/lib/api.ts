@@ -123,6 +123,28 @@ export type DeviceState = {
 /** suggest: it looks and tells you. act: it may also make reversible changes. */
 export type Autonomy = "off" | "suggest" | "act";
 
+/**
+ * The morning brief, as `buildMorningBrief` assembles it (api/src/rhythm.ts):
+ * `text` is what gets spoken, `facts` is what it was written from. The app
+ * renders both and composes neither.
+ */
+export type MorningBrief = {
+  text: string;
+  facts: {
+    name: string | null;
+    weather: { summary: string; highF: number; lowF: number } | null;
+    /** Already formatted "09:15 Dentist". */
+    events: string[];
+    medsToday: string[];
+    topOfList: string[];
+    askedOfYou: string[];
+    /** Only present when money is actually tight; otherwise the brief stays off it. */
+    money: string | null;
+    readiness: { summary?: string } | null;
+    importantEmail: { subject?: string; from?: string }[];
+  };
+};
+
 /** Something the agent decided was worth saying. */
 export type AgentNote = {
   id: string;
@@ -536,6 +558,12 @@ export const api = {
     }),
 
   feed: (token: string) => request<{ cards: FeedCard[] }>("/feed", token),
+
+  /**
+   * This morning's brief, built fresh. The same thing the server reads aloud —
+   * the screen shows it, it does not compose its own.
+   */
+  brief: (token: string) => request<MorningBrief>("/brief", token),
 
   // ---------- Alarms, urgent reminders, Claude ----------
 

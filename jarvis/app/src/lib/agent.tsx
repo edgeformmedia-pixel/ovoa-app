@@ -1,4 +1,4 @@
-import { useRouter } from "expo-router";
+import { useRouter, type Href } from "expo-router";
 import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AppState } from "react-native";
 import { api, type AgentNote } from "./api";
@@ -98,7 +98,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     return onNotificationTapped((data) => {
       devlog("push", "notification tapped", JSON.stringify(data));
       refresh();
-      router.push("/journal");
+      router.push("/day" as Href);
     });
   }, [token, refresh, router]);
 
