@@ -100,8 +100,12 @@ export default function SignIn() {
       }
       devlog("err", `sign-in: ${mode} refused with ${err.status}`, err.message);
       // Signup now says which box is wrong; put the message under that box.
-      if (Object.keys(err.fields).length) return setFields(err.fields);
+      // 409 first: it now carries a `fields` of its own, and checking fields
+      // before it made this branch unreachable — the returning person stayed on
+      // the create-account form reading "an account with that email exists",
+      // which is the exact dead end this screen exists to remove.
       if (err.status === 409) return switchTo("signin", "You already have an account here. Sign in instead.");
+      if (Object.keys(err.fields).length) return setFields(err.fields);
       // Login's 401 stays deliberately vague — the server will not say whether the
       // account exists — so the way out is offered here instead of in the reply.
       if (!isSignup && err.status === 401) {

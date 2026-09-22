@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { isMeantForAssistant } from "./ambient";
 import { sessionForToken } from "./auth";
-import { scrub, sinceFrom, SPEECH_KINDS } from "./obs";
+import { scrub, sinceFrom, withholdsDetail } from "./obs";
 import type { Env } from "./types";
 
 // The app uploads its log here every few seconds. Public on purpose, so crashes
@@ -17,8 +17,13 @@ export const KEEP_MS = 7 * 24 * 60 * 60 * 1000;
  * them wrote 7,150 copies of a single line in a day (device_logs, 2026-09-21).
  * This is the only thing standing between that build and the table until every
  * tester updates.
+ *
+ * 600, not the 2,000 this started at: the flood being defended against ran at
+ * about 1,200 rows an hour, so a 2,000 cap would never once have fired. A
+ * healthy phone does not come close to 600, and one that does is worth cutting
+ * off — it says so in the reply, and the phone writes a line about it.
  */
-const MAX_ROWS_PER_HOUR = 2000;
+const MAX_ROWS_PER_HOUR = 600;
 
 /**
  * Devices being throttled, and until when. Per isolate, which is enough: it
@@ -87,7 +92,10 @@ logs.post("/logs", async (c) => {
     return c.json({ ok: true, stored: 0, throttled: true, cap: MAX_ROWS_PER_HOUR });
   }
   await db.batch([
-    ...entries.map((e) =>
+    // The batch context goes on the first row only. It is the same 1,000-character
+    // string for every entry, and writing it 200 times made the upload several
+    // times bigger on disk than the lines it was describing.
+    ...entries.map((e, i) =>
       db
         .prepare(
           "INSERT INTO device_logs (device_id, user_id, session_id, app_build, time, kind, text, detail, received_at, level, count, seq, route, app_state, context) " +
@@ -108,7 +116,7 @@ logs.post("/logs", async (c) => {
           e.seq ?? null,
           e.route ?? null,
           e.state ?? null,
-          context ?? null,
+          i === 0 ? (context ?? null) : null,
         ),
     ),
     // Roughly 1 upload in 50 also clears out old rows.
@@ -139,13 +147,17 @@ logs.post("/debug/ambient", async (c) => {
  * right Cloudflare login, which on 2026-09-21 was the only way to learn that
  * 166 "couldn't get a reply" meant every engine was out of credit at once.
  *
- * SELECT only, and nothing here writes. What it will not return: the words.
- * device_logs carries what the user said out loud -- `heard: "..."` in `text`,
- * and the whole reply in `detail` (app/src/lib/voice.ts) -- so text is scrubbed
- * of anything quoted, `detail` is withheld unless asked for, and it is never
- * returned at all for the kinds that carry speech. Token-shaped strings and
- * long unbroken runs (session tokens, password hashes, salts) are masked
- * wherever they appear.
+ * SELECT only, and nothing here writes.
+ *
+ * What it will not return: anything the app quoted (`heard: "..."`), anything
+ * token-shaped, whole email addresses, and the `detail` of any kind not on the
+ * allowlist in obs.ts -- which is every kind that has ever carried a sentence.
+ *
+ * What it can still return, and the reason DEBUG_KEY is a secret rather than a
+ * formality: `text` is whatever the app interpolated into it. The obvious
+ * offenders were moved off it (a reminder's label, the signed-in name, the
+ * agent's command text), but the boundary is the key, not the scrubber. Treat
+ * this endpoint as giving away the log, and keep the key accordingly.
  */
 logs.get("/debug/logs", async (c) => {
   if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
@@ -209,6 +221,7 @@ logs.get("/debug/logs", async (c) => {
   // The beat, in one number. A lastTickMs over a few minutes on the two-minute
   // cron means it stopped, which nothing in device_logs would ever show.
   const beat = cron.results.find((r) => r.cron.startsWith("*/2"));
+  const loudest = [...errors.results].sort((a, b) => b.count - a.count)[0];
   return c.json({
     now: Date.now(),
     since,
@@ -216,7 +229,9 @@ logs.get("/debug/logs", async (c) => {
       lastTickMs: beat ? Date.now() - beat.last_at : null,
       ticksThisHour: beat?.ticks ?? 0,
       errorKinds: errors.results.length,
-      loudest: errors.results.slice().sort((a, b) => b.count - a.count)[0] ?? null,
+      // Scrubbed like the list below it. This was handing back the raw row —
+      // message and full stack — while the same row two fields down was masked.
+      loudest: loudest ? { ...loudest, message: scrub(loudest.message), stack: wantDetail ? scrub(loudest.stack) : undefined } : null,
     },
     device: device.results.map((r) => ({
       time: r.time,
@@ -224,9 +239,10 @@ logs.get("/debug/logs", async (c) => {
       level: r.level,
       count: r.count,
       text: scrub(r.text),
-      // Only when asked for, and never for a kind that carries speech:
-      // "asking the assistant" puts the whole sentence in detail.
-      ...(wantDetail && !SPEECH_KINDS.has(r.kind) && r.detail ? { detail: scrub(r.detail) } : {}),
+      // Only when asked for, and only for the kinds whose detail is known to be
+      // machinery rather than words: "asking the assistant" puts the whole
+      // sentence in detail, and so do half a dozen others.
+      ...(wantDetail && !withholdsDetail(r.kind) && r.detail ? { detail: scrub(r.detail) } : {}),
       build: r.app_build,
       session: r.session_id,
       device: r.device,

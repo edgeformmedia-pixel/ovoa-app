@@ -182,8 +182,10 @@ and detail lines.
 cron should never be more than a couple of minutes stale, and nothing else in
 the system says whether it is still beating.
 
-What it will not return is the words. `device_logs` carries what was said out
-loud, so anything quoted is replaced, `detail` is withheld unless asked for and
-never returned at all for the kinds that carry speech, and anything
-token-shaped is masked wherever it appears (`scrub()` in `src/obs.ts`).
-Without `DEBUG_KEY` set the route 404s, which is how production stays shut.
+Anything the app quoted (`heard: "…"`), anything token-shaped and whole email
+addresses are masked, and `detail` comes back only for the kinds on the
+allowlist in `src/obs.ts` — every kind that has ever carried a sentence is
+withheld. `text`, though, is whatever the app interpolated into it: the obvious
+offenders were moved off it, but the real boundary is the key, not the
+scrubber. Treat the key as giving away the log. Without `DEBUG_KEY` set the
+route 404s, which is how production stays shut.

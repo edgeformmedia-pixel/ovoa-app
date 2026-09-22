@@ -395,6 +395,15 @@ check "but not what was said"      "$(echo "$LOGS" | j "'my mother' not in json.
 check "no detail on a voice line, even when asked for" \
   "$(echo "$LOGS" | j "'detail' not in d['device'][0]")" "True"
 
+# The two kinds that carry words without ever quoting them: an agent row's detail
+# is a reminder label or the agent's own command, and a req row's detail is the
+# request body — which on /chat is the sentence the user just spoke.
+curl -s -o /dev/null -X POST "$API/logs" -H 'content-type: application/json' \
+  -d "{\"deviceId\":\"smoke-device-01\",\"sessionId\":\"smoke1\",\"entries\":[{\"time\":$NOW,\"kind\":\"agent\",\"text\":\"reminder going off\",\"detail\":\"Take methotrexate 15mg Sunday\"},{\"time\":$NOW,\"kind\":\"req\",\"text\":\"POST /chat\",\"detail\":\"{\\\"message\\\":\\\"tell my sister I am running late\\\"}\"}]}"
+WORDS=$(curl -s "${D[@]}" "$API/debug/logs?since=5m&detail=1&limit=200")
+check "an agent line's detail is withheld" "$(echo "$WORDS" | j "'methotrexate' not in json.dumps(d)")" "True"
+check "a request body is withheld"         "$(echo "$WORDS" | j "'running late' not in json.dumps(d)")" "True"
+
 # Anything token-shaped, wherever it turns up.
 curl -s -o /dev/null -X POST "$API/logs" -H 'content-type: application/json' \
   -d "{\"deviceId\":\"smoke-device-01\",\"sessionId\":\"smoke1\",\"entries\":[{\"time\":$NOW,\"kind\":\"err\",\"text\":\"401 GET /me Bearer 9f8e7d6c5b4a3928170655\"}]}"

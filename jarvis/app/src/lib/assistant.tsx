@@ -11,7 +11,7 @@ import { onPush } from "./background";
 import { FILLERS, pickFiller } from "./fillers";
 import { syncAlarms } from "./nag";
 import * as clip from "./clip";
-import { showIsland } from "./island";
+import { showIsland, type IslandStatus } from "./island";
 import { deleteRecording, wavFile, type Recording } from "./recordings";
 import { micSourcePref, type MicSource } from "./storage";
 import { endTurn, failTurn, mark as markTurn, markStopTalking, noteServer, startTurn } from "./turnTimer";
@@ -262,7 +262,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     try {
       const { commands } = await api.pendingCommands(token);
       for (const command of commands) {
-        devlog("agent", `running a command from the agent`, command.text);
+        // The length, not the sentence: a command is something the agent decided
+        // to say or do about this person, and device_logs is read back over HTTP.
+        devlog("agent", `running a command from the agent (${command.text.length} chars)`);
         try {
           const reply = await ask(command.text, true, undefined, undefined, "agent");
           await api.commandDone(token, command.id, true, reply ?? "");
@@ -631,7 +633,16 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   // Listening on or off, in the Dynamic Island: while a conversation runs, or twist standby is on.
   // Retried when the app comes to the front (a Live Activity can only start from there).
-  const islandStatus = bandPhase ?? (conversation.phase !== "off" ? conversation.phase : standby ? "off" : null);
+  // "waiting" shows as off: the loop is parked because the app isn't on screen,
+  // which is exactly when the island must not claim to be listening.
+  const onIsland = (phase: VoicePhase): IslandStatus => (phase === "waiting" ? "off" : phase);
+  const islandStatus = bandPhase
+    ? onIsland(bandPhase)
+    : conversation.phase !== "off" && conversation.phase !== "waiting"
+      ? onIsland(conversation.phase)
+      : standby
+        ? "off"
+        : null;
   useEffect(() => showIsland(islandStatus), [islandStatus, inForeground]);
   // And green on the clip while listening.
   const clipListening = bandPhase ? bandPhase === "listening" : conversation.phase === "listening";

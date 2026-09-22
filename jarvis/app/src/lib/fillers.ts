@@ -49,6 +49,15 @@ export function prepareFillers(token: string) {
       let voiced = 0;
       for (let i = 0; i < FILLERS.length; i++) {
         const target = fileFor(v, i);
+        // A slot that exists but is empty poisons itself for good: `exists` skips
+        // re-voicing it, and pickFiller then throws that pick away every time it
+        // comes up. One failed TTS response should cost one attempt, not the slot.
+        if (target.exists && !target.size) {
+          devlog("file", `filler ${i} was saved empty; voicing it again`, target.uri);
+          try {
+            target.delete();
+          } catch {}
+        }
         if (!target.exists) {
           const made = await renderSpeech(token, FILLERS[i]).catch((err) => {
             devlog("err", `couldn't voice filler ${i}`, err instanceof Error ? err.message : String(err));

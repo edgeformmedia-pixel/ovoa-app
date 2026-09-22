@@ -229,8 +229,14 @@ export function troubleFrom(down: EngineDown[], now: number): string | null {
   return `${parts.join(", and ")}. The soonest any of them is tried again is about ${when} from now.`;
 }
 
-/** troubleFrom, fed the live cooldown state. Null when nothing is down. */
-export function engineTrouble() {
+/**
+ * troubleFrom, fed the live cooldown state — but only when there is nothing left
+ * to try. One engine cooling down while another answers is not trouble, it is
+ * the fallback working; saying otherwise turned every unrelated 500 on every
+ * route into "OVOA can't reach an AI model right now".
+ */
+export function engineTrouble(env: LlmEnv) {
+  if (engines(env).length) return null;
   const now = Date.now();
   const down: EngineDown[] = [];
   for (const [engine, until] of cooldownUntil) {

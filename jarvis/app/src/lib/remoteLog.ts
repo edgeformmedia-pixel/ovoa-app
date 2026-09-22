@@ -39,6 +39,8 @@ const MAX_BATCH = 200;
 /** 200 rows × a 4000-character detail is an 800 KB body; a phone on one bar never lands it. */
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_QUEUE = 2000;
+/** A trim goes down to here, so the next line isn't over the cap again straight away. */
+const TRIM_TO = 1500;
 /** Waits after a failure, then two minutes forever. */
 const BACKOFF_MS = [3_000, 8_000, 20_000, 45_000, 120_000];
 /** How many rows a crash is allowed to write to disk. A synchronous write during a crash must be small. */
@@ -163,11 +165,14 @@ function fit(rows: LogEntry[]) {
 export async function flush() {
   if (flushing || !deviceId) return;
   sweepLog();
+  const fromSpill = !!carried;
   const sending = carried ?? { sessionId, rows: queue };
   if (!sending.rows.length) return;
   flushing = true;
-  const batch = fit(sending.rows);
+  // fit() inside the try: a throw between `flushing = true` and the try would
+  // leave it stuck true and nothing would ever upload again for this launch.
   try {
+    const batch = fit(sending.rows);
     // Plain fetch, not request(): request() logs, which would log the upload forever.
     const res = await fetch(`${API_URL}/logs`, {
       method: "POST",
@@ -193,16 +198,38 @@ export async function flush() {
     online = true;
     // Drop the batch if the server took it, or rejected it as malformed (retrying won't help).
     if (res.ok || res.status === 400) {
-      const rest = sending.rows.slice(batch.length);
-      if (carried) carried = rest.length ? { ...carried, rows: rest } : null;
-      else queue = rest;
+      // By identity, not by index: trim() can have rewritten `queue` while the
+      // request was in flight, and slicing the old length off the new array
+      // resurrected rows that had already been dropped and lost ones that hadn't.
+      const sent = new Set(batch.map((e) => e.seq));
+      if (fromSpill) {
+        const rest = (carried?.rows ?? []).filter((e) => !sent.has(e.seq));
+        carried = rest.length ? { sessionId: carried!.sessionId, rows: rest } : null;
+        // Everything the last run saved is up: the file must go, or every cold
+        // launch from here on re-uploads the same 300 rows.
+        if (!carried) clearSpill();
+      } else {
+        queue = queue.filter((e) => !sent.has(e.seq));
+        // Nothing left to lose, so nothing left on disk to send twice.
+        if (!queue.length) clearSpill();
+      }
       failures = 0;
       lastOkAt = Date.now();
-      if (res.status === 400 && !badShapeLogged) {
-        badShapeLogged = true;
+      if (res.status === 400) {
+        // Every time, not just the first: each one shreds up to 200 rows, and a
+        // silent second occurrence is a hole in the sequence with no explanation.
         devlog("warn", `the server refused a log batch as malformed (400); ${batch.length} rows are gone`, undefined, {
-          collapse: false,
+          key: "log batch refused",
         });
+      }
+      if (res.status === 200) {
+        // A throttled batch is accepted and dropped on purpose (api/src/logs.ts).
+        const body = (await res.json().catch(() => null)) as { throttled?: boolean; cap?: number } | null;
+        if (body?.throttled) {
+          devlog("warn", `the server is throttling this device's logs (${body.cap ?? "?"}/hour); ${batch.length} rows were dropped`, undefined, {
+            key: "log throttled",
+          });
+        }
       }
     } else {
       failures++;
@@ -227,22 +254,29 @@ function trim() {
   if (trimming) return;
   trimming = true;
   try {
-    const over = queue.length - MAX_QUEUE;
-    if (over <= 0) return;
+    if (queue.length <= MAX_QUEUE) return;
+    const before = queue.length;
+    // Down to TRIM_TO, not to the cap: trimming to exactly MAX_QUEUE left no
+    // headroom, so the very next line was over it again and every single line
+    // from then on wrote another "queue full" warning of its own.
     const bad = queue.filter((e) => LEVEL_ORDER[e.level] >= LEVEL_ORDER.warn);
-    if (bad.length > MAX_QUEUE) {
-      queue = bad.slice(-MAX_QUEUE);
+    if (bad.length >= TRIM_TO) {
+      queue = bad.slice(-TRIM_TO);
     } else {
-      const room = MAX_QUEUE - bad.length - 1;
-      const chatter = queue.filter((e) => LEVEL_ORDER[e.level] < LEVEL_ORDER.warn).slice(-Math.max(0, room));
+      const room = TRIM_TO - bad.length;
+      // slice(-0) is slice(0), which keeps the whole array — the one case where
+      // "keep the last `room`" silently means "keep everything".
+      const chatter = room > 0 ? queue.filter((e) => LEVEL_ORDER[e.level] < LEVEL_ORDER.warn).slice(-room) : [];
       queue = [...bad, ...chatter].sort((a, b) => a.seq - b.seq);
     }
-    droppedTotal += over;
+    const dropped = before - queue.length;
+    if (!dropped) return;
+    droppedTotal += dropped;
     devlog(
       "warn",
-      `log queue full: ${over} lines dropped before they could be uploaded`,
+      `log queue full: ${dropped} lines dropped before they could be uploaded`,
       `${queue.length} still waiting; last upload ${lastOkAt ? `${Math.round((Date.now() - lastOkAt) / 60_000)} min ago` : "never"}`,
-      { collapse: false },
+      { key: "log queue full" },
     );
   } finally {
     trimming = false;
@@ -259,11 +293,24 @@ function trim() {
 function spill(why: string) {
   try {
     const rows = [...(carried?.rows ?? []), ...queue].slice(-SPILL_ROWS);
-    if (!rows.length) return;
+    if (!rows.length) return clearSpill();
     new File(Paths.cache, SPILL_FILE).write(JSON.stringify({ why, at: Date.now(), sessionId, rows }));
   } catch {
     // A full disk, or the file is locked. Nothing useful to do about it from here.
   }
+}
+
+/**
+ * Everything the spill was holding has since gone up. The file has to go with
+ * it: a spill written when the app went to the background, uploaded a moment
+ * later and then left on disk, is re-uploaded whole on the next cold launch —
+ * 300 duplicate rows for something that already arrived.
+ */
+function clearSpill() {
+  try {
+    const file = new File(Paths.cache, SPILL_FILE);
+    if (file.exists) file.delete();
+  } catch {}
 }
 
 /** Picks up what the last run never sent. Those rows keep their own session id and go first. */
@@ -273,7 +320,12 @@ function recoverSpill() {
     if (!file.exists) return;
     const saved = JSON.parse(file.textSync()) as { why?: string; at?: number; sessionId?: string; rows?: LogEntry[] };
     file.delete();
-    const rows = Array.isArray(saved.rows) ? saved.rows.slice(-SPILL_ROWS) : [];
+    // Shape-checked: a spill written by a different build of this file is still
+    // JSON, and a row missing `text` would throw inside the uploader instead.
+    const rows = (Array.isArray(saved.rows) ? saved.rows : [])
+      .filter((e): e is LogEntry => !!e && typeof e.text === "string" && typeof e.time === "number")
+      .map((e) => ({ ...e, count: e.count ?? 1, level: e.level ?? "info", seq: e.seq ?? 0 }))
+      .slice(-SPILL_ROWS);
     if (!rows.length) return;
     carried = { sessionId: saved.sessionId ?? `lost-${sessionId}`, rows };
     devlog(

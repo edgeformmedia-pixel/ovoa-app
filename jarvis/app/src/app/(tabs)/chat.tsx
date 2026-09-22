@@ -147,6 +147,9 @@ function label(on: boolean, phase: VoicePhase, status: string | null) {
   if (!on) return "Tap to talk";
   if (phase === "thinking") return status ?? "Thinking…";
   if (phase === "speaking") return "Speaking";
+  // Parked: iOS won't open a microphone for an app that isn't on screen, so it
+  // is waiting for this one. Saying "Listening" there was simply untrue.
+  if (phase === "waiting") return "Waiting for you to open the app";
   return "Listening";
 }
 

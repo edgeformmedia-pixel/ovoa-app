@@ -68,7 +68,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { user } = await api.me(saved);
         setToken(saved);
         setUser(user);
-        devlog("log", `auth: session restored for ${user.name}`);
+        // A restored session never goes through start(), so without this every
+        // phone that signed in before this shipped would still open on "Create
+        // account" the next time it was signed out.
+        if (seen !== "1") {
+          setHasAccountHere(true);
+          await storage.set(HAS_ACCOUNT_KEY, "1").catch(logFail("auth: remembering this phone has an account"));
+        }
+        devlog("log", "auth: session restored");
       } catch (err) {
         // Expired or revoked session: start signed out. Keep the token on network errors.
         const status = err instanceof ApiError ? err.status : 0;

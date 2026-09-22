@@ -258,6 +258,13 @@ const CLIP_START_MS = 3000;
  * measurement precision, not a faster first word.
  */
 const STATUS_MS = 250;
+/**
+ * A clip that started and then stopped making progress for this long has been
+ * paused by something outside the app and is not coming back on its own.
+ * Generous, because a long sentence between status updates is normal and cutting
+ * a reply short is worse than waiting.
+ */
+const CLIP_STALL_MS = 4000;
 
 /** Plays one file to the end, or until `stop` is called. */
 function playFile(file: File, onStop: (stop: () => void) => void, onStart?: () => void) {
@@ -297,11 +304,43 @@ function playFile(file: File, onStop: (stop: () => void) => void, onStart?: () =
         finish();
       }
     }, CLIP_START_MS);
+    /**
+     * And a second watchdog for a clip that started and then stopped part-way.
+     * iOS pauses every player when a route goes away — unplug the earbuds mid-reply
+     * and expo-audio's handleAudioSessionRouteChange pauses this one with nothing
+     * to resume it. Neither didJustFinish nor the end-of-clip test below can ever
+     * be true after that, so the promise would never settle and the whole voice
+     * loop would sit in `await playFile` for good.
+     */
+    let progressAt = Date.now();
+    let farthest = -1;
+    const stalled = setInterval(() => {
+      if (done || !started) return;
+      const at = last?.currentTime ?? 0;
+      if (at > farthest) {
+        farthest = at;
+        progressAt = Date.now();
+        return;
+      }
+      if (Date.now() - progressAt < CLIP_STALL_MS) return;
+      devlog(
+        "err",
+        `a clip stopped ${farthest.toFixed(1)} s in and never resumed; moving on`,
+        `${last ? status(last) : "no status"}\n    ${bytes} bytes · ${uri}`,
+      );
+      finish();
+    }, STATUS_MS * 2);
     const finish = () => {
       if (done) return;
       done = true;
       clearTimeout(watchdog);
+      clearInterval(stalled);
       sub.remove();
+      // remove() does not stop playback, and a clip abandoned by a watchdog is
+      // still making a noise the next one would talk over.
+      try {
+        player.pause();
+      } catch {}
       player.remove();
       try {
         file.delete();
@@ -456,7 +495,10 @@ export function createSpeaker(token: string) {
     };
 
     const end = () => {
-      if (pending) addPiece(pending);
+      // The generation guard every other entry point has: without it a short
+      // sentence held in `pending` was still voiced and played after the user
+      // had talked over the reply and stopped it.
+      if (pending && mine === generation) addPiece(pending);
       pending = "";
       ended = true;
       wake();
@@ -703,7 +745,13 @@ async function speakInterruptible(
   return state.said;
 }
 
-export type VoicePhase = "off" | "listening" | "thinking" | "speaking";
+/**
+ * "waiting": on, but parked — iOS will not open a microphone for an app that
+ * isn't on screen, so the loop is holding until it comes forward. Its own phase
+ * because saying "Listening" while nothing is listening is a lie the Lock
+ * Screen, the Dynamic Island and the clip's light all repeated.
+ */
+export type VoicePhase = "off" | "waiting" | "listening" | "thinking" | "speaking";
 
 const RETRY_MS = 3000;
 /** The voice loop backs off to this between failures rather than asking every 3 s forever. */
@@ -1050,6 +1098,10 @@ export function useConversation(
         // but the flag stays true for an engine iOS halted (liveListen.ts), and
         // trusting it is what let the loop through to be refused over and over.
         if (!onScreen() && !micAlive(stream)) {
+          // Say so: parking used to leave the phase on "listening", so the Lock
+          // Screen, the Dynamic Island and the clip's light all claimed the app
+          // was listening while it was waiting for the user to open it.
+          setPhase("waiting");
           await whenOnScreen(BACKGROUND_WAIT_MS);
           continue;
         }

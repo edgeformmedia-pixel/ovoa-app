@@ -365,7 +365,10 @@ export async function openEar(
   try {
     // Otherwise a fresh engine: one left "running" earlier may be dead. A reused one that is
     // dead is restarted by the no-audio check above.
-    if (!reuse || !stream.isStreaming) {
+    // micAlive, not isStreaming: reusing a "streaming" engine iOS had already
+    // halted is what left the ear listening to a microphone that was sending
+    // nothing, waiting on the no-audio check to notice.
+    if (!reuse || !micAlive(stream)) {
       // iOS won't open a microphone for an app that isn't on screen. Say so, so
       // the caller waits for the app instead of blaming live transcription.
       if (!onScreen()) throw offScreenError();

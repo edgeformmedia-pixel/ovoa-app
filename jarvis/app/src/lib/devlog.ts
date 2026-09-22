@@ -392,10 +392,8 @@ function report(group: Group, now: number, tense: "stopped" | "so far") {
   ]
     .filter(Boolean)
     .join("\n");
-  group.reported = group.count;
   const window = now - group.reportedAt;
-  group.reportedAt = now;
-  emit({
+  const row = emit({
     time: now,
     kind: group.kind,
     level: group.level,
@@ -404,6 +402,12 @@ function report(group: Group, now: number, tense: "stopped" | "so far") {
     count: more,
     ...(LEVEL_ORDER[group.level] >= LEVEL_ORDER.warn ? where() : null),
   });
+  // Only once the row is really out. Marking them reported first meant a row the
+  // ceiling refused took its occurrences with it, and the counts in D1 no longer
+  // added up to what happened — which is the one thing this is for.
+  if (!row) return;
+  group.reported = group.count;
+  group.reportedAt = now;
 }
 
 /**
@@ -470,6 +474,9 @@ const tail = (text: string, max: number) => (text.length <= max ? text : `…${t
 const SECRET_FIELD =
   /"(password|currentPassword|newPassword|token|pushToken|accessToken|refreshToken|idToken|apiKey|authorization|secret|siriKey)"\s*:\s*"[^"]*"/gi;
 const BEARER = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
+// Encoding-blind: in a url the brackets arrive as %5B/%5D, which is how one of
+// these reached D1 whole. An Expo push token is a bearer credential on its own.
+const PUSH_TOKEN = /Expo(?:nent)?PushToken(?:\[|%5B)[^\]%]*(?:\]|%5D)/gi;
 const EMAIL = /\b([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
 
 /**
@@ -483,6 +490,7 @@ function redact(text: string) {
     out = out.replace(SECRET_FIELD, (m) => `${m.slice(0, m.indexOf(":") + 1)}"…"`);
   }
   if (/Bearer |Basic /.test(out)) out = out.replace(BEARER, (_m, scheme: string) => `${scheme} …`);
+  if (/PushToken/i.test(out)) out = out.replace(PUSH_TOKEN, "ExponentPushToken[…]");
   if (out.includes("@")) out = out.replace(EMAIL, (_m, first: string, domain: string) => `${first}***@${domain}`);
   return out;
 }

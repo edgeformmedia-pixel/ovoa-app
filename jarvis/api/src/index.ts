@@ -156,9 +156,12 @@ app.onError((err, c) => {
   // Recording here as well would count every failure twice.
   say("err", { rid: c.get("requestId"), route: labelFor(c), why: classifyEngineError(err) });
   console.error(err);
-  // When no engine can answer, say which one and why. "Something went wrong"
-  // 166 times in a day is what the alternative looked like (2026-09-21).
-  const trouble = engineTrouble();
+  // When no engine can answer at all, say which one and why. "Something went
+  // wrong" 166 times in a day is what the alternative looked like (2026-09-21).
+  // Only when every engine is down — otherwise a failure on a route that never
+  // goes near a model answered 503 "can't reach an AI model" for the duration
+  // of some other engine's cooldown.
+  const trouble = engineTrouble(c.env);
   if (trouble) return c.json({ error: `OVOA can't reach an AI model right now. ${trouble}` }, 503);
   // Still here for a 4006 raised somewhere outside the engine loop, where
   // nothing was cooled down and engineTrouble has nothing to report.
@@ -1029,22 +1032,35 @@ function streamTurn(
       gone = true;
     });
   let sentences = 0;
-  const stall = setTimeout(() => {
-    say("stall", { rid, route, ms: Date.now() - started, sentences });
-    void recordError(c.env, {
-      kind: "stall",
-      route,
-      requestId: rid,
-      userId: userId ?? null,
-      ms: Date.now() - started,
-      message: `no sentence after ${STALL_MS} ms`,
-    });
-  }, STALL_MS);
+  // Re-armed on every sentence, so this measures silence rather than length. As
+  // a total-duration timer it called a healthy four-minute reply a stall.
+  let stall: ReturnType<typeof setTimeout> | null = null;
+  const watchForStall = () => {
+    if (stall) clearTimeout(stall);
+    stall = setTimeout(() => {
+      stall = null;
+      say("stall", { rid, route, ms: Date.now() - started, sentences });
+      // Tracked, not fire-and-forget: the isolate can be torn down the moment
+      // the turn finishes, and an untracked write is dropped exactly then.
+      c.executionCtx.waitUntil(
+        recordError(c.env, {
+          kind: "stall",
+          route,
+          requestId: rid,
+          userId: userId ?? null,
+          ms: Date.now() - started,
+          message: `no sentence for ${STALL_MS} ms`,
+        }),
+      );
+    }, STALL_MS);
+  };
+  watchForStall();
   c.executionCtx.waitUntil(
     (async () => {
       try {
         const result = await run((text) => {
           sentences++;
+          watchForStall();
           void send({ type: "sentence", text });
         });
         await send("ignored" in result ? { type: "done", ...IGNORED } : { type: "done", ...turnResponse(result) });
@@ -1052,7 +1068,7 @@ function streamTurn(
         // This catch is why no 5xx ever reached the phone: the Response went out
         // as a 200 before any of this ran, so app.onError never sees it. The
         // record has to be written here or it is written nowhere.
-        const trouble = engineTrouble();
+        const trouble = engineTrouble(c.env);
         say("err", { rid, route, ms: Date.now() - started, sentences, why: classifyEngineError(err) });
         console.error("ovoa.err streamed turn failed", err);
         await recordError(c.env, {
@@ -1061,7 +1077,10 @@ function streamTurn(
           requestId: rid,
           userId: userId ?? null,
           ms: Date.now() - started,
-          message: trouble ?? (err instanceof Error ? err.message : String(err)),
+          // The real error, always. Recording the countdown instead made every
+          // engines-down turn a brand new fingerprint (the minutes change), so
+          // the one failure that mattered most was the one that never grouped.
+          message: err instanceof Error ? err.message : String(err),
           stack: err instanceof Error ? err.stack : undefined,
         });
         await send({
@@ -1073,7 +1092,7 @@ function streamTurn(
               : "The assistant failed",
         });
       } finally {
-        clearTimeout(stall);
+        if (stall) clearTimeout(stall);
         if (gone) {
           say("gone", { rid, route, ms: Date.now() - started, sentences });
           await recordError(c.env, {
@@ -1434,8 +1453,17 @@ authed.post("/push/token", async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * The token goes in the body, not the query string. An Expo push token is a
+ * bearer credential — anyone holding it can push to that phone with no auth —
+ * and in a query string it lands in Cloudflare's access logs and in the app's
+ * own `devlog("req", "DELETE /push/token?token=…")`, where neither the client
+ * redactor nor the server scrubber could match it once it was percent-encoded.
+ * The query form is still read, so a build already on a phone can still sign out.
+ */
 authed.delete("/push/token", async (c) => {
-  const token = c.req.query("token");
+  const body = (await c.req.json().catch(() => null)) as { token?: unknown } | null;
+  const token = typeof body?.token === "string" ? body.token : c.req.query("token");
   if (!token) return c.json({ error: "token is required" }, 400);
   await forgetPushToken(c.env.DB, c.var.userId, token);
   return c.json({ ok: true });
@@ -1759,19 +1787,22 @@ async function runTick(env: Env, cron: string) {
   };
 
   const nightlyRun = cron.startsWith("13 4");
-  await part("agent", tick(env, cron));
   if (nightlyRun) {
+    await part("agent", tick(env, cron));
     await part("nightly", nightly(env));
   } else {
-    // The same order as before. Sequential on purpose: a Worker has one CPU.
+    // Sequential on purpose: a Worker has one CPU, and two concurrent waitUntils
+    // only interleave. The clock-sensitive ones go first, though — the agent's
+    // part can make a model call, and an alarm waiting behind it goes off late.
+    await part("alarms", nagTick(env));
     await part("routines", fireDueRoutines(env));
     await part("escalate", escalate(env));
     await part("notes", fireDueNotes(env));
+    await part("agent", tick(env, cron));
     await part("evening", eveningTick(env));
     await part("transcripts", titleTranscripts(env));
     await part("rhythm", rhythmTick(env));
     await part("extras", extrasTick(env));
-    await part("alarms", nagTick(env));
     await part("money", moneyTick(env));
   }
 

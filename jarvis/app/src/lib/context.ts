@@ -20,10 +20,16 @@ const complained = new Set<string>();
  */
 export function useOptionalContext<T>(context: Context<T | null>, hook: string, fallback: T): T {
   const value = useContext(context);
-  if (!value && !complained.has(hook)) {
+  // The stack is taken here, where the render is, but the log happens in an
+  // effect: writing during render is a side effect React is allowed to run
+  // twice, discard, or replay, and the logger is not the place to find that out.
+  const missing = !value;
+  const stack = missing ? new Error(`${hook} outside its provider`).stack : undefined;
+  useEffect(() => {
+    if (!missing || complained.has(hook)) return;
     complained.add(hook);
-    devlog("err", `${hook}() with no provider above it — using an inert one`, new Error(`${hook} outside its provider`).stack);
-  }
+    devlog("err", `${hook}() with no provider above it — using an inert one`, stack);
+  }, [missing, hook, stack]);
   return value ?? fallback;
 }
 

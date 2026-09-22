@@ -72,7 +72,9 @@ let phrase: { text: string; file: File | null } | null = null;
 export function startNag(n: Omit<Nag, "startedAt" | "steps">) {
   if (nags.some((x) => x.key === n.key)) return;
   nags = [...nags, { ...n, startedAt: Date.now(), steps: 0 }];
-  devlog("agent", `${n.kind === "alarm" ? (n.hard ? "hard alarm" : "alarm") : "urgent reminder"} going off`, n.label);
+  // The key, not the label: a reminder label is "Take methotrexate 15mg", and
+  // device_logs is read back over HTTP.
+  devlog("agent", `${n.kind === "alarm" ? (n.hard ? "hard alarm" : "alarm") : "urgent reminder"} going off`, n.key);
   emit();
   void holdAwake(true);
   if (!buzzTimer) {
@@ -89,7 +91,7 @@ export function stopNag(key: string, why = "stopped") {
   const had = nags.find((n) => n.key === key);
   if (!had) return;
   nags = nags.filter((n) => n.key !== key);
-  devlog("agent", `${had.label}: ${why}`);
+  devlog("agent", `${had.kind === "alarm" ? "alarm" : "reminder"} ${key}: ${why}`);
   emit();
   void cancelFallbacks(key);
   if (!nags.length) {
@@ -138,7 +140,9 @@ async function sayLine(text: string) {
       devlog("err", "wake-up line: no audio (no network when it was voiced?)");
       return;
     }
-    devlog("agent", "saying the wake-up line", text);
+    // The words themselves stay on the phone: this uploads to device_logs, which
+    // is read back over HTTP, and the wake-up line carries the user's name.
+    devlog("agent", `saying the wake-up line (${text.length} chars)`);
     const copy = new File(Paths.cache, `ovoa-wake-${Date.now()}.mp3`);
     // copySync, not copy: copy() is async in SDK 57, and an un-awaited one hands
     // the player a file that hasn't been written yet — the same race that silenced
@@ -147,9 +151,19 @@ async function sayLine(text: string) {
     phrase.file.copySync(copy, { overwrite: true });
     devlog("file", `wake-up line copied to cache, ${Math.round(copy.size / 1024)} KB`, copy.uri);
     await new Promise<void>((resolve) => {
-      const player = createAudioPlayer(copy.uri);
+      // keepAudioSessionActive, as in voice.ts: without it expo-audio deactivates
+      // the session when the clip ends, and this runs while a standby mic may be
+      // holding the app alive.
+      const player = createAudioPlayer(copy.uri, { keepAudioSessionActive: true });
+      let finished = false;
       const done = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
         sub.remove();
+        try {
+          player.pause();
+        } catch {}
         player.remove();
         try {
           copy.delete();
@@ -157,11 +171,20 @@ async function sayLine(text: string) {
         resolve();
       };
       const sub = player.addListener("playbackStatusUpdate", (s) => {
-        if (s.didJustFinish) done();
+        if (s.didJustFinish || s.error) done();
       });
       player.volume = 1;
-      player.play();
-      setTimeout(done, 15_000);
+      const timer = setTimeout(done, 15_000);
+      // play() throws outright when iOS won't activate the session. Un-guarded and
+      // inside this executor, that threw straight past done(): the player, its
+      // listener and the cache file were all stranded, and a hard alarm retries
+      // every 1.5 s until twenty steps are counted. Same guard as voice.ts.
+      try {
+        player.play();
+      } catch (err) {
+        devlog("err", "the player refused to start the wake-up line", String(err));
+        done();
+      }
     });
   } catch (err) {
     devlog("err", "couldn't say the wake-up line", String(err));

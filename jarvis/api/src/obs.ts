@@ -145,7 +145,9 @@ export function labelFor(c: Context) {
   } catch {
     path = "";
   }
-  if (path && path !== "*") return path;
+  // Hono reports a wildcard middleware's own route as "/*", not "*", so the
+  // original test never fired and every pre-route failure was filed under "/*".
+  if (path && path !== "*" && path !== "/*") return path;
   return c.req.path.replace(UUID, ":id").replace(/\/\d+(?=\/|$)/g, "/:n").slice(0, 120);
 }
 
@@ -267,8 +269,23 @@ export async function noteTick(env: Env, cron: string, ms: number, decided: Reco
 
 // ---------- Reading it back ----------
 
-/** Kinds whose text or detail carries what somebody said out loud. */
-export const SPEECH_KINDS = new Set(["voice", "log"]);
+/**
+ * Kinds whose `detail` may be returned. An allowlist, not a denylist: the first
+ * version named the two kinds that happened to carry speech that week, and
+ * `agent` (a reminder's label, the agent's own command), `res` (a whole reply
+ * sentence) and `perf` (a turn's `heard "…"`) all walked straight past it. A
+ * kind that is not named here is withheld, so the next one added is too.
+ *
+ * `req` is deliberately absent: the app puts the request body in a req row's
+ * detail, and on /chat the request body is the sentence the user just spoke.
+ */
+const DETAIL_OK = new Set(["err", "warn", "file", "ble", "probe", "nav"]);
+
+/** True when this kind's detail must not leave the server. */
+export const withholdsDetail = (kind: string) => !DETAIL_OK.has(kind);
+
+/** The kinds that carry what somebody said. Kept for the tests that name them. */
+export const SPEECH_KINDS = new Set(["voice", "log", "agent", "res", "perf"]);
 
 const SECRETS: [RegExp, string][] = [
   [/\bBearer\s+[\w.\-]+/gi, "Bearer …"],

@@ -23,6 +23,9 @@ const MAX_BYTES = 10 * 1024 * 1024;
 /** In flight right now, so two passes can't send the same recording twice. */
 const working = new Set<string>();
 
+/** A pass is walking the list. Module scope, so a remount can't start a second one. */
+let passRunning = false;
+
 /**
  * Transcribes one saved recording and files it in the timeline. The outcome is
  * written back onto the recording, so a failure is visible in the Record tab
@@ -105,19 +108,42 @@ export function useAutoCapture() {
   const on = !!token && !!user?.settings.contextEnabled;
 
   useEffect(() => {
-    if (!on) return;
+    if (!on || passRunning) return;
     let stopped = false;
+    // One pass at a time. Every capture writes the list, which re-runs this
+    // effect, which used to start a second pass that skipped straight past the
+    // one still working (it is in `working`) and began the next recording — so
+    // "one at a time" quietly became all of them at once, which is exactly what
+    // the fourteen recovered recordings would have done on first launch.
+    passRunning = true;
     (async () => {
       let tried = 0;
-      // Read fresh each time: a capture rewrites the list as it goes.
-      for (const recording of getRecordings()) {
-        if (stopped) return;
-        const current = getRecordings().find((r) => r.id === recording.id);
-        if (!current?.wavName || current.blockId || current.captureError || current.lost) continue;
-        tried++;
-        await captureRecording(token!, current);
+      // Attempted in this pass, whatever came of it. Without this the sweep below
+      // could spin on a recording the band path is already holding in `working`,
+      // which returns without marking it either way.
+      const seen = new Set<string>();
+      try {
+        // Keep sweeping until one finds nothing new. The pass therefore also picks
+        // up whatever arrived while it was working, which the effect can no longer
+        // do for it now that a second pass is refused.
+        for (let swept = 1; swept && !stopped; ) {
+          swept = 0;
+          // Read fresh each time: a capture rewrites the list as it goes.
+          for (const recording of getRecordings()) {
+            if (stopped) return;
+            const current = getRecordings().find((r) => r.id === recording.id);
+            if (!current?.wavName || current.blockId || current.captureError || current.lost) continue;
+            if (seen.has(current.id)) continue;
+            seen.add(current.id);
+            swept++;
+            tried++;
+            await captureRecording(token!, current);
+          }
+        }
+      } finally {
+        passRunning = false;
+        if (tried) devlog("log", `timeline: pass over ${tried} unfiled recording${tried === 1 ? "" : "s"} finished`);
       }
-      if (tried) devlog("log", `timeline: pass over ${tried} unfiled recording${tried === 1 ? "" : "s"} finished`);
     })();
     return () => {
       stopped = true;

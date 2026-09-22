@@ -59,6 +59,12 @@ const GONE = "The audio for this one is no longer on the phone.";
 
 let list: Recording[] = [];
 let loaded = false;
+/**
+ * The index was there but could not be read. Nothing may be written over it:
+ * one bad parse followed by any save() would replace a real list with an empty
+ * one, which is the whole library gone for a transient read error.
+ */
+let unreadable = false;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -163,11 +169,13 @@ function load() {
     // One write covers both the migration and anything the audit marked lost.
     if (moved.changed || checked.missing) save();
   } catch (err) {
-    devlog("err", "couldn't read the recordings list", `${file.uri}\n${String(err)}`);
+    unreadable = true;
+    devlog("err", "couldn't read the recordings list; it will not be written over", `${file.uri}\n${String(err)}`);
   }
 }
 
 function save() {
+  if (unreadable) return emit();
   const file = indexFile();
   try {
     const folder = dir();
@@ -196,8 +204,13 @@ export function useRecordings() {
   );
 }
 
+/**
+ * Used to decide whether a clip session still needs downloading. A row whose
+ * audio is gone does not count as having it — otherwise "Import from clip"
+ * answers "up to date" about a recording the phone cannot play.
+ */
 export function hasClipSession(sessionId: number) {
-  return getRecordings().some((r) => r.sessionId === sessionId);
+  return getRecordings().some((r) => r.sessionId === sessionId && !r.lost);
 }
 
 /** Adds a recording, replacing an earlier copy of the same clip session. */

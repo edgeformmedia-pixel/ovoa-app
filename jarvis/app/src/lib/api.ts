@@ -404,7 +404,9 @@ async function streamedTurn(
       if (!line.trim()) return;
       const msg = JSON.parse(line) as StreamLine;
       if (msg.type === "sentence") {
-        if (!sentences++) devlog("res", `first sentence after ${Date.now() - started} ms`, msg.text);
+        // The timing is the point of this line; the sentence is the reply itself,
+        // and it used to ride up to device_logs with it whenever trace was on.
+        if (!sentences++) devlog("res", `first sentence after ${Date.now() - started} ms`, `${msg.text.length} chars`);
         onSentence(msg.text);
       } else if (msg.type === "error") {
         throw new ApiError(msg.error, 500);
@@ -671,7 +673,10 @@ export const api = {
   registerPush: (token: string, pushToken: string, platform?: string) =>
     request("/push/token", token, { method: "POST", body: JSON.stringify({ token: pushToken, platform }) }),
   unregisterPush: (token: string, pushToken: string) =>
-    request(`/push/token?token=${encodeURIComponent(pushToken)}`, token, { method: "DELETE" }),
+    // In the body, not the query string: a push token is a credential, and in the
+    // path it went into device_logs (and Cloudflare's access logs) percent-encoded,
+    // where nothing masking ExponentPushToken[…] could match it.
+    request("/push/token", token, { method: "DELETE", body: JSON.stringify({ token: pushToken }) }),
 
   agentNotes: (token: string) => request<{ notes: AgentNote[]; unread: number }>("/agent/notes", token),
   /** No ids means "the screen was opened": everything showing is read. */
