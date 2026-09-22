@@ -26,21 +26,25 @@ export const FILLERS = [
   "Let me see.",
 ];
 
-const dir = new Directory(Paths.document, "fillers");
+// Built on demand, not at import: expo-file-system throws when the module is
+// merely loaded on a platform it does not support, which took the whole app
+// down before the first screen rendered. recordings.ts is lazy for the same reason.
+const dir = () => new Directory(Paths.document, "fillers");
 let ready: File[] = [];
 let voice: VoiceId | null = null;
 let preparing: Promise<void> | null = null;
 /** So two picks in the same millisecond can't collide on one cache filename. */
 let pickCount = 0;
 
-const fileFor = (v: VoiceId, i: number) => new File(dir, `${v}-${i}.mp3`);
+const fileFor = (v: VoiceId, i: number) => new File(dir(), `${v}-${i}.mp3`);
 
 /** Voices every filler in the chosen voice, once; later calls only pick up what's on disk. */
 export function prepareFillers(token: string) {
   preparing ??= (async () => {
     try {
       const v = await voicePref.get();
-      if (!dir.exists) dir.create({ intermediates: true });
+      const folder = dir();
+      if (!folder.exists) folder.create({ intermediates: true });
       const files: File[] = [];
       let voiced = 0;
       for (let i = 0; i < FILLERS.length; i++) {
@@ -65,7 +69,7 @@ export function prepareFillers(token: string) {
       }
       voice = v;
       ready = files;
-      devlog("file", `${files.length} fillers ready in ${v} (${voiced} newly voiced)`, dir.uri);
+      devlog("file", `${files.length} fillers ready in ${v} (${voiced} newly voiced)`, folder.uri);
     } catch (err) {
       devlog("err", "couldn't prepare the fillers", String(err));
     } finally {
