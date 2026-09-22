@@ -1,18 +1,19 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { logFail } from "../../lib/devlog";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
-import { useRouter } from "expo-router";
-import { useEffect, useState, type ComponentProps } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useRouter, type Href } from "expo-router";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Btn, GroupLabel, Row, Screen, TopBar, text } from "../../components/ui";
 import { useSession } from "../../lib/auth";
 import { retryCapture } from "../../lib/capture";
 import * as clip from "../../lib/clip";
+import { logFail } from "../../lib/devlog";
 import { deleteRecording, markLost, renameRecording, useRecordings, wavFile, type Recording } from "../../lib/recordings";
-import { colors, shadow } from "../../lib/theme";
+import { colors, mono, numeric, space, type } from "../../lib/theme";
 
 // Record on the ES100 clip with buttons, bring the audio over to the phone, and
-// play it back. The clip's own button works too: whatever it records is pulled in
-// when it stops.
+// play it back. The clip's own button works too: whatever it records is pulled
+// in when it stops.
 
 const phaseText: Record<clip.ClipPhase, string> = {
   unavailable: "Needs the installed OVOA app",
@@ -42,7 +43,7 @@ export default function RecordScreen() {
   const recordings = useRecordings();
   const router = useRouter();
 
-  // Keep battery, signal and the button state fresh while this tab is open.
+  // Keep battery, signal and the button state fresh while this screen is open.
   useEffect(() => {
     if (state.phase !== "connected") return;
     const timer = setInterval(() => clip.pollLive().catch(logFail("record: clip.pollLive")), 5000);
@@ -53,147 +54,128 @@ export default function RecordScreen() {
   const working = state.phase === "connecting" || state.phase === "pairing" || state.phase === "scanning";
 
   return (
-    <ScrollView style={styles.safe} contentContainerStyle={styles.body}>
-      <ClipCard state={state} onInputs={() => router.push("/dev-tools")} />
+    <View style={styles.page}>
+      <TopBar
+        title="Record"
+        when={connected && state.battery ? `Clip ${state.battery.percent}%` : phaseText[state.phase]}
+      />
+      <Screen>
+        <Recorder state={state} />
 
-      {state.problem && (
-        <View style={styles.problem}>
-          <Ionicons name="alert-circle" size={18} color={colors.warning} />
-          <Text style={styles.problemText}>{state.problem}</Text>
-        </View>
-      )}
-
-      {!connected && state.phase !== "unavailable" && (
-        <View style={styles.row}>
-          {state.savedDeviceId ? (
-            <Button
-              label={working ? phaseText[state.phase] : "Connect"}
-              icon="bluetooth"
-              onPress={() => act("Connect", () => clip.connect(state.savedDeviceId!))}
-              disabled={working || state.phase === "starting"}
-            />
-          ) : null}
-          <Button
-            label={state.phase === "scanning" ? "Scanning…" : "Find clips"}
-            icon="search"
-            onPress={() => act("Scan", clip.scan)}
-            disabled={working || state.phase === "starting"}
-            quiet={!!state.savedDeviceId}
-          />
-        </View>
-      )}
-
-      {!connected && state.devices.length > 0 && (
-        <View style={styles.list}>
-          {[...state.devices]
-            .sort((a, b) => b.rssi - a.rssi)
-            .map((device) => (
-              <Pressable
-                key={device.id}
-                style={styles.item}
-                onPress={() => act("Connect", () => clip.connect(device.id))}
-                disabled={working}
-              >
-                <View>
-                  <Text style={styles.itemTitle}>{device.name || "(no name)"}</Text>
-                  <Text style={styles.dim}>
-                    {device.id === state.savedDeviceId ? "your clip · " : ""}
-                    {device.rssi ? `${device.rssi} dBm` : "linked to this iPhone"}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
-              </Pressable>
-            ))}
-        </View>
-      )}
-
-      <Recorder state={state} />
-
-      <View style={styles.sectionHead}>
-        <Text style={styles.heading}>Recordings</Text>
-        {connected && (
-          <Pressable
-            onPress={() =>
-              act("Import", async () => {
-                const count = await clip.importAll();
-                if (!count) Alert.alert("Up to date", "Every recording on the clip is already on your phone.");
-              })
-            }
-            disabled={state.busy !== null || !!state.recording}
-            hitSlop={8}
-          >
-            <Text style={[styles.link, (state.busy !== null || !!state.recording) && styles.dim]}>Import from clip</Text>
-          </Pressable>
-        )}
-      </View>
-
-      {state.download && (
-        <View style={styles.download}>
-          <Text style={styles.dim}>
-            Downloading from the clip… {Math.round(state.download.received / 1024)} /{" "}
-            {Math.round(state.download.total / 1024)} KB
-          </Text>
-          <View style={styles.bar}>
-            <View
-              style={[
-                styles.barFill,
-                { width: `${Math.min(100, (state.download.received / Math.max(1, state.download.total)) * 100)}%` },
-              ]}
-            />
+        {!!state.problem && (
+          <View style={styles.problem}>
+            <Ionicons name="alert-circle" size={16} color={colors.late} />
+            <Text style={styles.problemText}>{state.problem}</Text>
           </View>
-        </View>
-      )}
-
-      <RecordingList recordings={recordings} />
-    </ScrollView>
-  );
-}
-
-function ClipCard({ state, onInputs }: { state: clip.ClipState; onInputs: () => void }) {
-  const connected = state.phase === "connected";
-  const dot = connected ? colors.success : state.phase === "idle" || state.phase === "unavailable" ? colors.textDim : colors.warning;
-  return (
-    <View style={[styles.card, shadow]}>
-      <View style={styles.cardTop}>
-        <View style={styles.cardLeft}>
-          <View style={[styles.dot, { backgroundColor: dot }]} />
-          <View>
-            <Text style={styles.itemTitle}>{state.device?.name || "ES100 clip"}</Text>
-            <Text style={styles.dim}>{phaseText[state.phase]}</Text>
-          </View>
-        </View>
-        {connected && (
-          <Pressable onPress={() => act("Disconnect", clip.disconnect)} hitSlop={8}>
-            <Text style={styles.link}>Disconnect</Text>
-          </Pressable>
         )}
-      </View>
-      {connected && (
-        <View style={styles.stats}>
-          <Stat
-            icon={state.battery?.charging ? "battery-charging" : "battery-half"}
-            text={state.battery ? `${state.battery.percent}%` : "—"}
-          />
-          <Stat icon="cellular" text={state.rssi !== null ? `${state.rssi} dBm` : "—"} />
-          <Stat
-            icon="save-outline"
-            text={state.storageInfo ? `${Math.round(state.storageInfo.freeKB / 1024)} MB free` : "—"}
-          />
-          <Pressable onPress={onInputs} hitSlop={8} style={styles.inputsLink}>
-            <Text style={styles.link}>Inputs</Text>
-            <Ionicons name="chevron-forward" size={14} color={colors.accent} />
-          </Pressable>
-        </View>
-      )}
-    </View>
-  );
-}
 
-function Stat({ icon, text }: { icon: ComponentProps<typeof Ionicons>["name"]; text: string }) {
-  return (
-    <View style={styles.stat}>
-      <Ionicons name={icon} size={14} color={colors.textDim} />
-      <Text style={styles.dim}>{text}</Text>
+        {connected ? (
+          <>
+            <GroupLabel>The clip</GroupLabel>
+            <Row icon="bluetooth-outline" tone="blue" title={state.device?.name || "ES100 clip"} value="Connected" first />
+            <Row
+              icon={state.battery?.charging ? "battery-charging-outline" : "battery-half-outline"}
+              tone="green"
+              title="Battery"
+              value={state.battery ? `${state.battery.percent}%` : "—"}
+            />
+            <Row
+              icon="cellular-outline"
+              tone="violet"
+              title="Signal"
+              value={state.rssi !== null ? `${state.rssi} dBm` : "—"}
+            />
+            <Row
+              icon="save-outline"
+              tone="amber"
+              title="Free space"
+              value={state.storageInfo ? `${Math.round(state.storageInfo.freeKB / 1024)} MB` : "—"}
+            />
+            <Row
+              icon="options-outline"
+              tone="pink"
+              title="Inputs, sensors & twist"
+              onPress={() => router.navigate("/dev-tools" as Href)}
+              right={<Ionicons name="chevron-forward" size={16} color={colors.inkMute} />}
+            />
+            <View style={styles.buttons}>
+              <Btn
+                label="Import from clip"
+                onPress={() =>
+                  act("Import", async () => {
+                    const count = await clip.importAll();
+                    if (!count) Alert.alert("Up to date", "Every recording on the clip is already on your phone.");
+                  })
+                }
+                disabled={state.busy !== null || !!state.recording}
+              />
+              <Btn label="Disconnect" kind="quiet" onPress={() => act("Disconnect", clip.disconnect)} />
+            </View>
+          </>
+        ) : (
+          state.phase !== "unavailable" && (
+            <>
+              <GroupLabel>The clip</GroupLabel>
+              <Text style={text.sub}>{phaseText[state.phase]}</Text>
+              <View style={styles.buttons}>
+                {!!state.savedDeviceId && (
+                  <Btn
+                    label={working ? phaseText[state.phase] : "Connect"}
+                    kind="go"
+                    onPress={() => act("Connect", () => clip.connect(state.savedDeviceId!))}
+                    disabled={working || state.phase === "starting"}
+                  />
+                )}
+                <Btn
+                  label={state.phase === "scanning" ? "Scanning…" : "Find clips"}
+                  kind={state.savedDeviceId ? "plain" : "go"}
+                  onPress={() => act("Scan", clip.scan)}
+                  disabled={working || state.phase === "starting"}
+                />
+              </View>
+              {[...state.devices]
+                .sort((a, b) => b.rssi - a.rssi)
+                .map((device, i) => (
+                  <Row
+                    key={device.id}
+                    icon="bluetooth-outline"
+                    tone="blue"
+                    title={device.name || "(no name)"}
+                    value={
+                      device.id === state.savedDeviceId
+                        ? "your clip"
+                        : device.rssi
+                          ? `${device.rssi} dBm`
+                          : "linked to this iPhone"
+                    }
+                    first={i === 0}
+                    onPress={() => act("Connect", () => clip.connect(device.id))}
+                  />
+                ))}
+            </>
+          )
+        )}
+
+        {!!state.download && (
+          <>
+            <Text style={text.meta}>
+              Downloading from the clip… {Math.round(state.download.received / 1024)} /{" "}
+              {Math.round(state.download.total / 1024)} KB
+            </Text>
+            <View style={styles.bar}>
+              <View
+                style={[
+                  styles.barFill,
+                  { width: `${Math.min(100, (state.download.received / Math.max(1, state.download.total)) * 100)}%` },
+                ]}
+              />
+            </View>
+          </>
+        )}
+
+        <GroupLabel>Recordings</GroupLabel>
+        <RecordingList recordings={recordings} />
+      </Screen>
     </View>
   );
 }
@@ -213,21 +195,21 @@ function Recorder({ state }: { state: clip.ClipState }) {
   const canStart = connected && !rec && !busy;
 
   return (
-    <View style={[styles.recorder, shadow]}>
+    <View style={styles.recorder}>
       <Pressable
-        style={[styles.recordButton, rec && styles.recordButtonOn, !canStart && !rec && styles.recordButtonOff]}
+        style={[styles.big, !!rec && styles.bigOn, !canStart && !rec && styles.bigOff]}
         onPress={() => (rec ? act("Stop", clip.stopRecording) : act("Record", clip.startRecording))}
         disabled={rec ? busy : !canStart}
         accessibilityLabel={rec ? "Stop and save" : "Start recording"}
       >
         {busy && !rec ? (
-          <ActivityIndicator color={colors.bg} />
+          <ActivityIndicator color={colors.paper} />
         ) : (
-          <View style={rec ? styles.stopGlyph : styles.recGlyph} />
+          <Ionicons name={rec ? "square" : "mic"} size={44} color={canStart || rec ? colors.paper : colors.inkMute} />
         )}
       </Pressable>
       <Text style={styles.timer}>{rec ? clock((now - rec.startedAt) / 1000) : "0:00"}</Text>
-      <Text style={styles.dim}>
+      <Text style={styles.hint}>
         {!connected
           ? "Connect the clip to record"
           : rec
@@ -236,18 +218,16 @@ function Recorder({ state }: { state: clip.ClipState }) {
               : `Recording on the clip${rec.byDevice ? " (started with its button)" : ""}`
             : state.busy
               ? `${state.busy}…`
-              : "Tap to record on the clip"}
+              : "Press the clip's button, or tap here"}
       </Text>
-      {rec && (
-        <View style={styles.row}>
-          <Button
+      {!!rec && (
+        <View style={styles.buttons}>
+          <Btn
             label={rec.paused ? "Resume" : "Pause"}
-            icon={rec.paused ? "play" : "pause"}
             onPress={() => act(rec.paused ? "Resume" : "Pause", rec.paused ? clip.resumeRecording : clip.pauseRecording)}
             disabled={busy || rec.sessionId === 0}
-            quiet
           />
-          <Button label="Stop & save" icon="stop" onPress={() => act("Stop", clip.stopRecording)} disabled={busy} />
+          <Btn label="Stop & save" kind="go" onPress={() => act("Stop", clip.stopRecording)} disabled={busy} />
         </View>
       )}
     </View>
@@ -261,40 +241,28 @@ function Recorder({ state }: { state: clip.ClipState }) {
  */
 function TimelineState({ recording, onRetry }: { recording: Recording; onRetry: () => void }) {
   if (recording.capturing) {
-    return (
-      <View style={styles.timelineRow}>
-        <ActivityIndicator size="small" color={colors.textDim} />
-        <Text style={styles.dim}>Adding to your timeline…</Text>
-      </View>
-    );
+    return <Text style={text.meta}>Adding to your timeline…</Text>;
   }
   if (recording.blockTitle) {
     return (
-      <View style={styles.timelineRow}>
-        <Ionicons name="book-outline" size={12} color={colors.success} />
-        <Text style={styles.dim} numberOfLines={1}>
-          {recording.blockTitle}
-        </Text>
-      </View>
+      <Text style={[text.meta, { color: colors.done }]} numberOfLines={1}>
+        {recording.blockTitle}
+      </Text>
     );
   }
   // Lost first: it is also a captureError, but retrying it can never work, so it
   // must not be offered as something to tap (device_logs 2026-09-20 23:18).
   if (recording.lost) {
     return (
-      <View style={styles.timelineRow}>
-        <Ionicons name="alert-circle-outline" size={12} color={colors.warning} />
-        <Text style={[styles.dim, { color: colors.warning, flex: 1 }]} numberOfLines={2}>
-          {recording.lost}
-        </Text>
-      </View>
+      <Text style={[text.meta, { color: colors.late }]} numberOfLines={2}>
+        {recording.lost}
+      </Text>
     );
   }
   if (recording.captureError) {
     return (
-      <Pressable style={styles.timelineRow} onPress={onRetry} hitSlop={6}>
-        <Ionicons name="refresh" size={12} color={colors.warning} />
-        <Text style={[styles.dim, { color: colors.warning, flex: 1 }]} numberOfLines={1}>
+      <Pressable onPress={onRetry} hitSlop={6}>
+        <Text style={[text.meta, { color: colors.late }]} numberOfLines={1}>
           {recording.captureError} Tap to try again.
         </Text>
       </Pressable>
@@ -368,166 +336,103 @@ function RecordingList({ recordings }: { recordings: Recording[] }) {
     deleteRecording(recording.id);
   };
 
-  if (!recordings.length) {
-    return (
-      <View style={styles.empty}>
-        <Ionicons name="mic-outline" size={30} color={colors.textDim} />
-        <Text style={styles.dim}>Your recordings will show up here.</Text>
-      </View>
-    );
-  }
+  if (!recordings.length) return <Text style={text.sub}>Your recordings will show up here.</Text>;
 
   return (
-    <View style={styles.list}>
-      {recordings.map((recording) => {
+    <>
+      {recordings.map((recording, i) => {
         const active = current === recording.id;
         const playing = active && status.playing;
         const duration = active && status.duration > 0 ? status.duration : (recording.seconds ?? 0);
+        const broken = !recording.wavName || !!recording.lost;
         return (
-          <View key={recording.id} style={styles.item}>
-            <Pressable style={styles.play} onPress={() => toggle(recording)} accessibilityLabel={playing ? "Pause" : "Play"}>
+          <View key={recording.id} style={[styles.rec, i === 0 && { borderTopWidth: 0 }]}>
+            <Pressable
+              style={styles.play}
+              onPress={() => toggle(recording)}
+              accessibilityLabel={playing ? "Pause" : "Play"}
+            >
               <Ionicons
-                name={playing ? "pause" : recording.wavName && !recording.lost ? "play" : "alert"}
-                size={18}
-                color={recording.wavName && !recording.lost ? colors.accent : colors.warning}
+                name={playing ? "pause" : broken ? "alert" : "play"}
+                size={16}
+                color={broken ? colors.late : colors.now}
               />
             </Pressable>
-            <Pressable style={styles.itemMain} onPress={() => toggle(recording)} onLongPress={() => options(recording)}>
-              <Text style={styles.itemTitle} numberOfLines={1}>
+            <Pressable style={styles.recMain} onPress={() => toggle(recording)} onLongPress={() => options(recording)}>
+              <Text style={text.body} numberOfLines={1}>
                 {recording.title}
               </Text>
-              <Text style={styles.dim}>
+              <Text style={styles.stamp}>
                 {active ? `${clock(status.currentTime)} / ` : ""}
                 {clock(duration)}
                 {recording.lost ? " · audio gone" : recording.decodeError ? " · not playable" : ""}
               </Text>
-              {user.settings.contextEnabled && <TimelineState recording={recording} onRetry={() => retryCapture(token, recording)} />}
+              {user.settings.contextEnabled && (
+                <TimelineState recording={recording} onRetry={() => retryCapture(token, recording)} />
+              )}
               {active && (
                 <View style={styles.bar}>
-                  <View style={[styles.barFill, { width: `${Math.min(100, (status.currentTime / Math.max(0.1, duration)) * 100)}%` }]} />
+                  <View
+                    style={[
+                      styles.barFill,
+                      { width: `${Math.min(100, (status.currentTime / Math.max(0.1, duration)) * 100)}%` },
+                    ]}
+                  />
                 </View>
               )}
             </Pressable>
             <Pressable onPress={() => options(recording)} hitSlop={10} accessibilityLabel="More">
-              <Ionicons name="ellipsis-horizontal" size={18} color={colors.textDim} />
+              <Ionicons name="ellipsis-horizontal" size={18} color={colors.inkMute} />
             </Pressable>
           </View>
         );
       })}
-    </View>
+    </>
   );
 }
 
-function Button({
-  label,
-  icon,
-  onPress,
-  disabled,
-  quiet,
-}: {
-  label: string;
-  icon?: ComponentProps<typeof Ionicons>["name"];
-  onPress: () => void;
-  disabled?: boolean;
-  quiet?: boolean;
-}) {
-  return (
-    <Pressable
-      style={[styles.button, quiet && styles.buttonQuiet, disabled && styles.buttonOff]}
-      onPress={onPress}
-      disabled={disabled}
-    >
-      {icon && <Ionicons name={icon} size={16} color={disabled ? colors.textDim : quiet ? colors.accent : "#fff"} />}
-      <Text style={[styles.buttonText, quiet && styles.buttonTextQuiet, disabled && styles.dim]}>{label}</Text>
-    </Pressable>
-  );
-}
+const BIG = 132;
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
-  body: { padding: 20, gap: 12, paddingBottom: 48 },
-  dim: { color: colors.textDim, fontSize: 13 },
-  heading: { color: colors.text, fontSize: 17, fontWeight: "600" },
-  sectionHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12 },
-  link: { color: colors.accent, fontSize: 14, fontWeight: "600" },
-  row: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
-  card: { backgroundColor: colors.bg, borderColor: colors.border, borderWidth: 1, borderRadius: 16, padding: 16, gap: 12 },
-  cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  cardLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
-  stats: { flexDirection: "row", alignItems: "center", gap: 14, flexWrap: "wrap" },
-  stat: { flexDirection: "row", alignItems: "center", gap: 4 },
-  inputsLink: { flexDirection: "row", alignItems: "center", marginLeft: "auto" },
-  problem: {
-    flexDirection: "row",
-    gap: 8,
-    backgroundColor: colors.surfaceHigh,
-    borderRadius: 12,
-    padding: 12,
-    alignItems: "flex-start",
-  },
-  problemText: { color: colors.text, fontSize: 13, flex: 1, lineHeight: 18 },
-  recorder: {
-    backgroundColor: colors.bg,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 20,
-    paddingVertical: 28,
-    paddingHorizontal: 16,
-    alignItems: "center",
-    gap: 10,
-  },
-  recordButton: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    backgroundColor: colors.danger,
+  page: { flex: 1, backgroundColor: colors.paper },
+
+  recorder: { alignItems: "center", gap: space.s2, paddingVertical: space.s4 },
+  big: {
+    width: BIG,
+    height: BIG,
+    borderRadius: BIG / 2,
+    backgroundColor: colors.stop,
     alignItems: "center",
     justifyContent: "center",
+    marginBottom: space.s3,
+    shadowColor: colors.stop,
+    shadowOpacity: 0.45,
+    shadowRadius: 26,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 6,
   },
-  recordButtonOn: { backgroundColor: colors.text },
-  recordButtonOff: { backgroundColor: colors.surfaceHigh },
-  recGlyph: { width: 30, height: 30, borderRadius: 15, backgroundColor: "#fff" },
-  stopGlyph: { width: 26, height: 26, borderRadius: 5, backgroundColor: "#fff" },
-  timer: { color: colors.text, fontSize: 34, fontWeight: "300", fontVariant: ["tabular-nums"] },
-  download: { gap: 6 },
-  bar: { height: 4, backgroundColor: colors.surfaceHigh, borderRadius: 2, overflow: "hidden", marginTop: 6 },
-  barFill: { height: 4, backgroundColor: colors.accent },
-  list: { gap: 8 },
-  item: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
+  bigOn: { backgroundColor: colors.ink, shadowOpacity: 0, transform: [{ scale: 0.94 }] },
+  bigOff: { backgroundColor: colors.wash2, shadowOpacity: 0 },
+  timer: { ...type.display, fontWeight: "400", color: colors.ink, ...numeric },
+  hint: { ...type.sub, color: colors.inkMute, textAlign: "center" },
+
+  buttons: { flexDirection: "row", gap: space.s2, flexWrap: "wrap", paddingTop: space.s2 },
+
+  problem: { flexDirection: "row", gap: space.s2, alignItems: "flex-start" },
+  problemText: { ...type.meta, color: colors.late, flex: 1 },
+
+  bar: { height: 4, borderRadius: 2, backgroundColor: colors.wash2, overflow: "hidden", marginTop: 6 },
+  barFill: { height: 4, backgroundColor: colors.ink },
+
+  rec: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
+    gap: space.s3,
+    paddingVertical: space.s3,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.line,
   },
-  itemMain: { flex: 1, gap: 2 },
-  timelineRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 2 },
-  itemTitle: { color: colors.text, fontSize: 15, fontWeight: "500" },
-  play: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.accentDim,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  empty: { alignItems: "center", gap: 8, paddingVertical: 28 },
-  button: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: colors.accent,
-    borderRadius: 12,
-    paddingVertical: 11,
-    paddingHorizontal: 16,
-  },
-  buttonQuiet: { backgroundColor: colors.accentDim },
-  buttonOff: { backgroundColor: colors.surface },
-  buttonText: { color: colors.bg, fontWeight: "600", fontSize: 14 },
-  buttonTextQuiet: { color: colors.accent },
+  recMain: { flex: 1, gap: 2 },
+  play: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.wash, alignItems: "center", justifyContent: "center" },
+  stamp: { ...type.meta, ...mono, ...numeric, color: colors.inkMute },
 });

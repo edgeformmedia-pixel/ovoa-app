@@ -62,6 +62,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="day" options={{ title: "Day" }} />
       <Tabs.Screen name="record" options={{ title: "Record" }} />
       <Tabs.Screen name="safety" options={{ title: "Safety" }} />
+      <Tabs.Screen name="agent" options={{ title: "Background work" }} />
       <Tabs.Screen name="settings" options={{ title: "Settings" }} />
     </Tabs>
   );

@@ -110,7 +110,6 @@ function RootStack() {
         <Stack.Screen name="dev-tools" options={{ ...pushed, title: "Dev tools" }} />
         <Stack.Screen name="es100" options={{ ...pushed, title: "ES100" }} />
         <Stack.Screen name="motion-lab" options={{ ...pushed, title: "Motion lab" }} />
-        <Stack.Screen name="agent" options={{ ...pushed, title: "Background work" }} />
         <Stack.Screen name="transcripts" options={{ ...pushed, title: "Transcripts" }} />
         <Stack.Screen name="live" options={{ ...pushed, title: "Live" }} />
         <Stack.Screen name="claude" options={{ ...pushed, title: "Ask Claude" }} />
