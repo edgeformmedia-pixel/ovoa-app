@@ -1550,6 +1550,10 @@ async function runTurn(
       `Personality: ${settings.personality}`,
       `You are talking with ${user!.name}. Their time zone is ${timeZone}.`,
       "Each of their messages starts with the current time, and sometimes their step counts or where they are, in square brackets. The app adds that, not them: use it, but don't mention it unless it's relevant.",
+      // Both engines answered "Add milk and eggs to my notes" with "Noted — milk and
+      // eggs." and "remind me Friday at 9" with "Done — I'll remind you" without
+      // calling a tool (engine-bench against production, 2026-09-23).
+      "Nothing is saved, set, added, sent or scheduled unless you call its tool in this reply. Never say \"noted\", \"done\", \"set\" or \"I'll remind you\" for something no tool did: call the tool.",
       // Out loud the voice section says how to talk, and markdown is never read out (voice.ts speakable).
       ...(voice
         ? []

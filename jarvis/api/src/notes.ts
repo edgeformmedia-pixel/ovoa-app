@@ -137,7 +137,7 @@ const TOOLS: ToolSpec[] = [
     name: "note_add",
     // Short on purpose: a spoken turn carries it before every reply (toolbelt.ts SPOKEN_CORE).
     description:
-      "Keeps something word for word ('remember that…', 'make a note…'). Tag 'todo' for tomorrow's list. A plain 'remind me to…' is a phone reminder, not a note.",
+      "Keeps something word for word ('remember that…', 'make a note…', 'add X to my notes'). Tag 'todo' for tomorrow's list. A plain 'remind me to… at…' is reminder_set, not a note.",
     parameters: {
       type: "object",
       properties: {
@@ -216,7 +216,7 @@ export function notesAssistant(env: Env, userId: string, timeZone: string, opts:
   };
 
   // "Reminded at a time" left this (2026-09-23): a plain "remind me" is the
-  // phone's Reminders everywhere else in the prompt. Out loud it names only
+  // band's own reminder (reminder_set, alarms.ts). Out loud it names only
   // note_add, the one a spoken turn carries (toolbelt.ts SPOKEN_CORE).
   return {
     tools: opts.voice ? TOOLS.filter((t) => t.name !== "note_list") : TOOLS,

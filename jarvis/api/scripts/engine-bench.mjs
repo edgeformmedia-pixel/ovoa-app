@@ -56,7 +56,7 @@ const PHONE = { lookups: true, capabilities: ["calendar", "reminders", "contacts
 const SPOKEN = [
   { text: "What time is it?" },
   { text: "Set an alarm for seven tomorrow morning.", expect: ["alarm_set"] },
-  { text: "Remind me to call Mom at four this afternoon.", expect: ["phone_reminder_create"] },
+  { text: "Remind me to call Mom at four this afternoon.", expect: ["reminder_set"] },
   { text: "What's on my calendar tomorrow?", expect: ["phone_calendar_events"] },
   { text: "Add milk and eggs to my notes.", expect: ["note_add"] },
   { text: "Can I afford a sixty dollar dinner this week?", expect: ["money_afford", "money_status"] },
@@ -68,7 +68,7 @@ const SPOKEN = [
 const TYPED = [
   { text: "What's today's date?" },
   { text: "Set an alarm for 6:30 tomorrow.", expect: ["alarm_set"] },
-  { text: "Remind me to submit the report on Friday at 9am.", expect: ["phone_reminder_create"] },
+  { text: "Remind me to submit the report on Friday at 9am.", expect: ["reminder_set"] },
   { text: "What's on my calendar this week?", expect: ["phone_calendar_events"] },
   { text: "Note: the wifi password is on the fridge.", expect: ["note_add"] },
   { text: "Do I have any alarms set?", expect: ["alarm_list"] },
