@@ -134,14 +134,28 @@ export async function checkCode(db: D1Database, email: string, given: string, no
 
 // ---------- Signup tickets ----------
 
-/** For a proven address with no account yet. Only its hash is stored. */
-export async function issueTicket(db: D1Database, email: string, name: string | null, now = Date.now()) {
+/**
+ * For a proven address with no account yet. Only its hash is stored.
+ * `appleSub`: proven by Sign in with Apple (signin.ts), whose id the account
+ * it makes keeps (migrations/0040_app_signin.sql).
+ */
+export async function issueTicket(
+  db: D1Database,
+  email: string,
+  name: string | null,
+  now = Date.now(),
+  appleSub: string | null = null,
+) {
   const ticket = randomHex(24);
   await db.batch([
     db.prepare("DELETE FROM signup_tickets WHERE expires_at <= ?").bind(now),
-    db
-      .prepare("INSERT INTO signup_tickets (ticket_hash, email, name, expires_at) VALUES (?, ?, ?, ?)")
-      .bind(await sha256(ticket), email, name, now + TICKET_TTL_MS),
+    appleSub
+      ? db
+          .prepare("INSERT INTO signup_tickets (ticket_hash, email, name, expires_at, apple_sub) VALUES (?, ?, ?, ?, ?)")
+          .bind(await sha256(ticket), email, name, now + TICKET_TTL_MS, appleSub)
+      : db
+          .prepare("INSERT INTO signup_tickets (ticket_hash, email, name, expires_at) VALUES (?, ?, ?, ?)")
+          .bind(await sha256(ticket), email, name, now + TICKET_TTL_MS),
   ]);
   return ticket;
 }
@@ -157,13 +171,18 @@ export async function readTicket(db: D1Database, ticket: string, now = Date.now(
     .first<Ticket>();
 }
 
-/** Spends a ticket: good once. */
-export async function spendTicket(db: D1Database, ticket: string, now = Date.now()): Promise<Ticket | null> {
+/** Spends a ticket: good once. `appleSub` is only there for one from Sign in with Apple. */
+export async function spendTicket(
+  db: D1Database,
+  ticket: string,
+  now = Date.now(),
+): Promise<(Ticket & { appleSub?: string }) | null> {
   if (!/^[0-9a-f]{48}$/.test(ticket)) return null;
   return db
-    .prepare("DELETE FROM signup_tickets WHERE ticket_hash = ? AND expires_at > ? RETURNING email, name")
+    .prepare("DELETE FROM signup_tickets WHERE ticket_hash = ? AND expires_at > ? RETURNING *")
     .bind(await sha256(ticket), now)
-    .first<Ticket>();
+    .first<{ email: string; name: string | null; apple_sub?: string | null }>()
+    .then((row) => row && { email: row.email, name: row.name, ...(row.apple_sub && { appleSub: row.apple_sub }) });
 }
 
 /** For the nightly tidy-up: codes and tickets nobody can use any more. */

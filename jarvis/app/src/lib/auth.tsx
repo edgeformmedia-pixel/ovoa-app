@@ -37,6 +37,10 @@ type AuthState = {
   user: User | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name: string) => Promise<void>;
+  /** Google or Apple found the account: signed in, as with a password. */
+  signInWithSession: (session: { token: string; user: User }) => Promise<void>;
+  /** Google or Apple proved an address with no account: the name + password step makes it. */
+  signUpWithTicket: (ticket: string, name: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   setUser: (user: User) => void;
   /** True right after sign-up, until the "connect Google" step is finished or skipped. */
@@ -185,6 +189,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signIn: async (email, password) => start(await api.login(email, password)),
     signUp: async (email, password, name) => {
       const session = await api.signup(email, password, name);
+      setOnboarding(true);
+      await start(session);
+    },
+    signInWithSession: start,
+    signUpWithTicket: async (ticket, name, password) => {
+      const session = await api.ticketSignup(ticket, name, password);
       setOnboarding(true);
       await start(session);
     },

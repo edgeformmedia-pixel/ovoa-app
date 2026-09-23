@@ -4,6 +4,9 @@
 #     npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest
 #     npm run smoke
 #
+# Add --var GOOGLE_CLIENT_SECRET:x to the worker to check the app's Google
+# sign-in URL as well (any value: nothing here reaches Google).
+#
 # Everything here runs against real D1 and the real routes, which is what makes
 # it worth having: the unit tests cover the clock arithmetic, and this covers
 # the things only a running worker can show — that the migrations apply, that
@@ -591,6 +594,43 @@ check "the debug view says why" "$(curl -s "${D[@]}" "$API/debug/plan?userId=$PI
 check "clearing the override" "$(setplan null)" "200"
 check "puts them back to what the site (here: no key) says" "$(curl -s "${P[@]}" "$API/me" | j "d['plan']['tier']")" "pro"
 curl -s -o /dev/null -X DELETE "${P[@]}" "$API/me"
+
+echo
+echo "── the app's Google and Apple sign-ins ────────────"
+# What runs without Google or Apple: the start, the way back when someone
+# cancels, and every refusal. The rest is test/signin.test.ts, with stand-ins.
+jpost() { curl -s -m 30 -X POST "$API$1" -H 'content-type: application/json' -d "$2"; }
+# One query parameter of the Google URL in $GS.
+gq() { echo "$GS" | python -c "import sys,json,urllib.parse as u;print(dict(u.parse_qsl(u.urlsplit(json.load(sys.stdin)['url']).query))['$1'])"; }
+hex() { printf "$1%.0s" $(seq "$2"); }
+check "a web page can't be the return URL" \
+  "$(code -X POST "$API/auth/google/start" -H 'content-type: application/json' -d '{"returnUrl":"https://evil.example"}')" "400"
+GS=$(jpost /auth/google/start '{"returnUrl":"ovoa://google-signin"}')
+if [ "$(echo "$GS" | j "d.get('error','')")" = "Google sign-in isn't set up on the server yet" ]; then
+  echo "     (no GOOGLE_CLIENT_SECRET: start the worker with --var GOOGLE_CLIENT_SECRET:x to check the URL too)"
+  check "without the secret it says so" "yes" "yes"
+else
+  check "start gives Google's page" "$(echo "$GS" | j "d['url'].split('?')[0]")" "https://accounts.google.com/o/oauth2/v2/auth"
+  check "asking only who they are" "$(gq scope)" "openid email profile"
+  check "with PKCE" "$(gq code_challenge_method)" "S256"
+  check "back through /google/callback" "$(gq redirect_uri | sed 's#.*/google/callback$#yes#')" "yes"
+  check "and a key for the app" "$(echo "$GS" | j "len(d['key'])")" "64"
+  STATE=$(gq state)
+  # The header itself: curl's %{redirect_url} adds a slash to ovoa://google-signin.
+  check "cancelling on Google's page goes back to the app" \
+    "$(curl -s -D - -o /dev/null "$API/google/callback?state=$STATE&error=access_denied" | tr -d '\r' | sed -n 's/^[Ll]ocation: //p')" \
+    "ovoa://google-signin?error=cancelled"
+  check "and that state is spent" "$(code "$API/google/callback?state=$STATE&error=access_denied")" "200"
+fi
+check "a made-up code redeems nothing" \
+  "$(jpost /auth/google/redeem "{\"code\":\"$(hex a 48)\",\"key\":\"$(hex b 64)\"}" | j "d['expired']")" "True"
+NONCE=$(jpost /auth/apple/start '{}' | j "d['nonce']")
+check "Apple's start gives a nonce" "${#NONCE}" "48"
+check "a bad Apple token is refused" \
+  "$(code -X POST "$API/auth/apple" -H 'content-type: application/json' -d "{\"identityToken\":\"not.a.real.token.at.all\",\"nonce\":\"$NONCE\"}")" "401"
+check "no token at all is a 400" "$(code -X POST "$API/auth/apple" -H 'content-type: application/json' -d '{}')" "400"
+check "a made-up ticket makes no account" \
+  "$(jpost /auth/email/signup "{\"ticket\":\"$(hex c 48)\",\"name\":\"X\",\"password\":\"password123\",\"session\":\"app\"}" | j "d['expired']")" "True"
 
 echo
 echo "───────────────────────────────────────────────────"

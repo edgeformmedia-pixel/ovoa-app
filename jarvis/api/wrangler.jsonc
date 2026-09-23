@@ -77,8 +77,10 @@
     // The only accounts allowed the dev-only capture-everything flag (always-listening
     // experiments, ruled out for the product on 2026-09-20). Comma-separated.
     "DEV_EMAILS": "tlanch2006@gmail.com",
-    // Google OAuth web client (not secret). GOOGLE_CLIENT_SECRET and TOKEN_ENC_KEY are secrets.
-    "GOOGLE_CLIENT_ID": "736336639952-r4qknf5arp9e6m0tj8hvecsjjhauhouq.apps.googleusercontent.com"
+    // Google OAuth web client "OVOA" in Google Cloud project ovoa-509511 (not secret). It connects
+    // Gmail and Calendar and signs people in to the app, both through /google/callback.
+    // GOOGLE_CLIENT_SECRET (ovoa-team/google/.env) and TOKEN_ENC_KEY are secrets.
+    "GOOGLE_CLIENT_ID": "681579233268-eegju2n5qcpg6ja35np11vpl9fic51pf.apps.googleusercontent.com"
   },
   "ai": { "binding": "AI" },
   // Per-person and per-address limits on the routes that spend shared quota

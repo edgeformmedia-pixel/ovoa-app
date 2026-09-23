@@ -45,9 +45,47 @@ workflows:
       - name: Set up code signing
         # Creates the App Store certificate and profiles at Apple on the first run, reuses them after.
         # The Live Activity (Dynamic Island) widget is an app extension with its own bundle ID and profile.
+        #
+        # Sign in with Apple (expo-apple-authentication, app.json ios.usesAppleSignIn) puts the
+        # com.apple.developer.applesignin entitlement in the app, so the App ID com.ovoa.app needs the
+        # "Sign In with Apple" capability (API name APPLE_ID_AUTH) or no profile can sign it. The block
+        # before fetch-signing-files turns it on once and never fails the build. Commands checked against
+        # codemagic-cli-tools 0.69.0's --help:
+        #   app-store-connect bundle-ids list --bundle-id-identifier ID --strict-match-identifier --platform IOS --json
+        #   app-store-connect bundle-ids capabilities RESOURCE_ID --json
+        #   app-store-connect bundle-ids enable-capabilities RESOURCE_ID --capability "Sign In with Apple"
+        #   app-store-connect bundle-ids profiles --bundle-ids RESOURCE_ID --type IOS_APP_STORE --state ACTIVE --json
+        #   app-store-connect profiles delete PROFILE_ID --ignore-not-found
+        # A profile made before the capability doesn't carry the entitlement. Apple marks those INVALID
+        # and fetch-signing-files only reuses ACTIVE ones, so --create makes a new one; any still ACTIVE
+        # are deleted too, on the one build that turns the capability on. If this can't turn it on, tick
+        # "Sign In with Apple" on com.ovoa.app at developer.apple.com (Identifiers) and build again.
         script: |
           keychain initialize
           app-store-connect bundle-ids create com.ovoa.app.LiveActivity --name "OVOA LiveActivity" --platform IOS || echo "LiveActivity bundle ID already exists"
+          APP_ID_RESOURCE=$(app-store-connect bundle-ids list --bundle-id-identifier com.ovoa.app \
+            --strict-match-identifier --platform IOS --json \
+            | python3 -c 'import sys, json; ids = json.load(sys.stdin); print(ids[0]["id"] if ids else "")') || APP_ID_RESOURCE=""
+          CAPABILITIES=""
+          if [ -n "$APP_ID_RESOURCE" ]; then
+            CAPABILITIES=$(app-store-connect bundle-ids capabilities "$APP_ID_RESOURCE" --json) || CAPABILITIES=""
+          fi
+          # Read into a variable first: a pipe into grep -q can end the writer early, which
+          # pipefail would count as a failure and read as "not on yet".
+          if [ -z "$CAPABILITIES" ]; then
+            echo "Couldn't read com.ovoa.app's capabilities; leaving Sign In with Apple as it is"
+          elif grep -q '"APPLE_ID_AUTH"' <<< "$CAPABILITIES"; then
+            echo "Sign In with Apple is already on for com.ovoa.app"
+          elif app-store-connect bundle-ids enable-capabilities "$APP_ID_RESOURCE" --capability "Sign In with Apple"; then
+            echo "Turned on Sign In with Apple for com.ovoa.app; replacing its App Store profiles"
+            STALE=$(app-store-connect bundle-ids profiles --bundle-ids "$APP_ID_RESOURCE" --type IOS_APP_STORE --state ACTIVE --json \
+              | python3 -c 'import sys, json; print(" ".join(p["id"] for p in json.load(sys.stdin)))') || STALE=""
+            for PROFILE in $STALE; do
+              app-store-connect profiles delete "$PROFILE" --ignore-not-found || echo "Couldn't delete profile $PROFILE"
+            done
+          else
+            echo "Couldn't turn on Sign In with Apple: tick it on com.ovoa.app at developer.apple.com (Identifiers)"
+          fi
           app-store-connect fetch-signing-files com.ovoa.app --type IOS_APP_STORE --create
           app-store-connect fetch-signing-files com.ovoa.app.LiveActivity --type IOS_APP_STORE --create
           keychain add-certificates

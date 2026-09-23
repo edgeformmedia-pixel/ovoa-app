@@ -147,12 +147,21 @@ accounts**.
   Every Google tool then takes an optional `account` (tag or email), so
   "what's on my work calendar" hits the right one; for questions that name no
   account, the assistant checks each and says where each result came from.
-- **How it connects:** OAuth web client `736336639952-…` in Google Cloud
-  project `ovoaappios`, with redirect URI
-  `https://jarvis-api.edgeformmedia.workers.dev/google/callback`. The app
-  opens `POST /google/connect`'s URL in an auth session. The Worker swaps the
-  code for tokens (with PKCE) and sends the browser back to `exp://…` (Expo
-  Go) or `ovoa://…` (installed app).
+- **How it connects:** OAuth web client `681579233268-…` ("OVOA") in Google
+  Cloud project `ovoa-509511`, with redirect URI `<PUBLIC_URL>/google/callback`.
+  The app opens `POST /google/connect`'s URL in an auth session. The Worker
+  swaps the code for tokens (with PKCE) and sends the browser back to
+  `exp://…` (Expo Go) or `ovoa://…` (installed app).
+- **Signing in with Google or Apple** (`api/src/signin.ts`): the sign-in
+  screen's "Continue with Google" uses the same client and the same callback
+  (a sign-in's state lives in `signin_states`, so the callback knows which it
+  is), asks only `openid email profile`, and comes back to the app with a
+  one-time code that only the phone's key redeems. "Sign in with Apple" sends
+  Apple's identity token, checked against Apple's published keys, for
+  audience `com.ovoa.app`, with a nonce the server issued. Either signs in to
+  the account with that address, or hands back a ticket for a name and
+  password. Apple's `sub` is kept on the account so a returning Apple ID is
+  found even if its address changes.
 - **Token storage:** refresh and access tokens are AES-GCM encrypted in
   `google_accounts` (one row per connected account, unique per user + email)
   using the `TOKEN_ENC_KEY` secret. Google drops testing-mode grants after
@@ -429,8 +438,12 @@ agent's due work and its outbox, and 04:13 UTC for retention and log trimming.
 | POST | /auth/signup, /auth/login | `{ email, password, name? }` → `{ token, user }` |
 | POST | /auth/email/code | `{ email }` → emails a 6-digit code from no-reply@ovoa.ai (ovoa.ai's sign-in; `src/emailauth.ts`) |
 | POST | /auth/email/verify | `{ email, code }` → `{ token, user }` for an existing account, else `{ ticket, email, name }` |
-| POST | /auth/email/signup | `{ ticket, name, password }` → `{ token, user }` |
+| POST | /auth/email/signup | `{ ticket, name, password, session? }` → `{ token, user }`; `session: "app"` from the app, else a web session |
 | POST | /auth/google | `{ idToken }` (checked with Google) → same as /auth/email/verify |
+| POST | /auth/google/start | `{ returnUrl }` (`ovoa://` or `exp://`) → `{ url, key }`: the app's "Continue with Google" (`src/signin.ts`) |
+| POST | /auth/google/redeem | `{ code, key }` (the one-time code /google/callback sent back, 60 s, once) → `{ token, user }` (app session) or `{ ticket, email, name }` |
+| POST | /auth/apple/start | → `{ nonce }`, good once for ten minutes |
+| POST | /auth/apple | `{ identityToken, nonce, fullName? }` (Sign in with Apple, checked against Apple's keys) → same as /auth/google/redeem |
 | POST | /auth/logout | |
 | GET / PATCH / DELETE | /me | profile + settings (incl. `stepGoal`, `fallDetection`) |
 | POST | /me/password | `{ currentPassword, newPassword }` |
@@ -445,7 +458,7 @@ agent's due work and its outbox, and 04:13 UTC for retention and log trimming.
 | GET / POST | /safety-events | POST `{ kind: "fall"\|"sos", status: "ok"\|"alerted", latitude?, longitude? }` |
 
 | POST | /google/connect | `{ returnUrl, accountId? }` → `{ url }` to open; `accountId` reconnects that account |
-| GET | /google/callback | Google redirect target (public) |
+| GET | /google/callback | Google redirect target (public), for connecting an account and for the app's Google sign-in |
 | GET | /google/status | default account's details plus `accounts` |
 | PATCH / DELETE | /google/accounts/:id | `{ label?, isDefault? }` / disconnect and revoke one account |
 | DELETE | /google | disconnect and revoke every account |

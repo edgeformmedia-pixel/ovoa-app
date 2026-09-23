@@ -9,6 +9,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.ovoa.app",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSBluetoothAlwaysUsageDescription": "OVOA connects to your ES100 recorder over Bluetooth to pull in what it captured.",
@@ -96,6 +97,7 @@
       "expo-mail-composer",
       "expo-font",
       "expo-web-browser",
+      "expo-apple-authentication",
       [
         "expo-audio",
         {

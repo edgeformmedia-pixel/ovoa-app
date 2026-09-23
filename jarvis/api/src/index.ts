@@ -10,6 +10,7 @@ import {
   sessionForToken,
   touchSession,
   verifyPassword,
+  type SessionKind,
 } from "./auth";
 import { isMeantForAssistant } from "./ambient";
 import {
@@ -91,6 +92,18 @@ import {
   unsendCode,
   verifyGoogleIdToken,
 } from "./emailauth";
+import {
+  appleName,
+  appReturnUrl,
+  issueAppleNonce,
+  linkAppleSub,
+  pruneSignin,
+  redeemSigninCode,
+  spendAppleNonce,
+  startGoogleSignin,
+  userForAppleSub,
+  verifyAppleIdentityToken,
+} from "./signin";
 import { sliceFor } from "./sweep";
 import { engineStatus, ENGINES, isEngine, setRuntimeEngines, setUsageSink, type Engine, type EnginePrefs, type LlmUsage } from "./llm";
 import { glmPriceFrom, usd } from "./pricing";
@@ -325,7 +338,7 @@ function emailShape(body: unknown) {
  * 38 devices, 123 failed logins, 2 accounts, and not one line saying why
  * (2026-09-21). observability is on in wrangler.jsonc, so `wrangler tail` sees these.
  */
-function logAuth(route: "signup" | "login" | "code" | "google", outcome: string, email: string | null, extra?: Record<string, unknown>) {
+function logAuth(route: "signup" | "login" | "code" | "google" | "apple", outcome: string, email: string | null, extra?: Record<string, unknown>) {
   say("auth", {
     route,
     outcome,
@@ -515,6 +528,10 @@ app.post("/auth/login", async (c) => {
 //                            the site): signed in, with a "web" session
 //   { ticket, email, name }  it hasn't: POST /auth/email/signup spends the ticket
 //                            with a name and the password the app will ask for
+//
+// The app's own "Continue with Google" and "Sign in with Apple" (signin.ts,
+// further down) end the same two ways, with an "app" session, and their
+// tickets are spent with `session: "app"`.
 
 const codeSchema = z.object({ email: emailField });
 const verifySchema = z.object({ email: emailField, code: z.string().max(20) });
@@ -522,15 +539,28 @@ const ticketSignupSchema = z.object({
   ticket: z.string().max(100),
   name: signupSchema.shape.name,
   password: signupSchema.shape.password,
+  // The app's sign-up after Google or Apple: a session like /auth/login's. The
+  // site leaves it out and gets its "web" one.
+  session: z.enum(["app", "web"]).optional(),
 });
 const BAD_EMAIL = "That email doesn't look right. Check it for a typo.";
 
-/** Signed in, or a ticket to make the account. Either way the address is now proven. */
-async function afterProven(env: Env, email: string, name: string | null) {
+/**
+ * Signed in, or a ticket to make the account. Either way the address is now
+ * proven. `kind`: "app" from the app's own sign-ins (signin.ts). `appleSub`:
+ * proven by Sign in with Apple, whose id the account keeps.
+ */
+async function afterProven(
+  env: Env,
+  email: string,
+  name: string | null,
+  { kind = "web", appleSub = null }: { kind?: SessionKind; appleSub?: string | null } = {},
+) {
   const user = await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first<{ id: string }>();
-  if (!user) return { ticket: await issueTicket(env.DB, email, name), email, name };
+  if (!user) return { ticket: await issueTicket(env.DB, email, name, Date.now(), appleSub), email, name };
   await env.DB.prepare("UPDATE users SET email_verified_at = ? WHERE id = ?").bind(Date.now(), user.id).run();
-  const token = await createSession(env.DB, user.id, { kind: "web" });
+  if (appleSub) await linkAppleSub(env.DB, user.id, appleSub);
+  const token = await createSession(env.DB, user.id, { kind });
   return { token, user: await publicUser(env, user.id) };
 }
 
@@ -616,7 +646,16 @@ app.post("/auth/email/signup", async (c) => {
   const ticket = await spendTicket(c.env.DB, parsed.data.ticket);
   if (!ticket) {
     logAuth("signup", "ticket expired", null);
-    return c.json({ error: "This sign-up has run out of time. Start again with your email.", expired: true }, 400);
+    return c.json(
+      {
+        error:
+          parsed.data.session === "app"
+            ? "This sign-up has run out of time. Start again."
+            : "This sign-up has run out of time. Start again with your email.",
+        expired: true,
+      },
+      400,
+    );
   }
   const { email } = ticket;
   // Made in the app since the address was proven: it's theirs, so this signs
@@ -634,8 +673,10 @@ app.post("/auth/email/signup", async (c) => {
       if (!id) throw err;
     }
   }
-  const token = await createSession(c.env.DB, id, { kind: "web" });
-  logAuth("signup", created ? "created, email proven" : "proven, already exists", email, { user: id });
+  if (ticket.appleSub) await linkAppleSub(c.env.DB, id, ticket.appleSub);
+  const kind = parsed.data.session === "app" ? "app" : "web";
+  const token = await createSession(c.env.DB, id, { kind });
+  logAuth("signup", created ? "created, email proven" : "proven, already exists", email, { user: id, kind });
   return c.json({ token, user: await publicUser(c.env, id) }, created ? 201 : 200);
 });
 
@@ -654,6 +695,94 @@ app.post("/auth/google", async (c) => {
   }
   const result = await afterProven(c.env, who.email, who.name);
   logAuth("google", "token" in result ? "signed in" : "proven, no account yet", who.email);
+  return c.json(result);
+});
+
+// ---------- The app's own Google and Apple sign-ins (signin.ts) ----------
+//
+// Each ends like the routes above, { token, user } or { ticket, email, name },
+// but with an "app" session, and a ticket is spent with `session: "app"`. They
+// come from the phone itself, so the per-address limit counts phones.
+
+const googleStartSchema = z.object({ returnUrl: z.string().max(500) });
+const googleRedeemSchema = z.object({ code: z.string().max(100), key: z.string().max(100) });
+const appleSchema = z.object({
+  identityToken: z.string().min(20).max(8192),
+  nonce: z.string().max(100),
+  // Apple sends the name the first time someone signs in to the app, never again.
+  fullName: z
+    .object({ givenName: z.string().max(80).nullish(), familyName: z.string().max(80).nullish() })
+    .nullish(),
+});
+
+/** "Continue with Google": the URL to open in an auth session, and the key that redeems what comes back. */
+app.post("/auth/google/start", async (c) => {
+  if (!(await allowed(c.env, "RL_AUTH", `ip:${clientIp(c)}`))) {
+    logAuth("google", "rate limited", null);
+    return tooMany(c, "attempts");
+  }
+  if (!c.env.GOOGLE_CLIENT_SECRET) return c.json({ error: "Google sign-in isn't set up on the server yet" }, 503);
+  const parsed = googleStartSchema.safeParse(await c.req.json().catch(() => null));
+  const returnUrl = parsed.success ? appReturnUrl(parsed.data.returnUrl) : null;
+  if (!returnUrl) return c.json({ error: "Only the OVOA app can use this sign-in" }, 400);
+  return c.json(await startGoogleSignin(c.env, returnUrl));
+});
+
+/** The one-time code /google/callback sent back to the app, with the key from /auth/google/start. */
+app.post("/auth/google/redeem", async (c) => {
+  if (!(await allowed(c.env, "RL_AUTH", `ip:${clientIp(c)}`))) {
+    logAuth("google", "rate limited", null);
+    return tooMany(c, "attempts");
+  }
+  const parsed = googleRedeemSchema.safeParse(await c.req.json().catch(() => null));
+  const who = parsed.success ? await redeemSigninCode(c.env.DB, parsed.data.code, parsed.data.key) : null;
+  if (!who) {
+    logAuth("google", "code refused", null);
+    return c.json({ error: "That Google sign-in has run out of time. Try again.", expired: true }, 400);
+  }
+  const result = await afterProven(c.env, who.email, who.name, { kind: "app" });
+  logAuth("google", "token" in result ? "signed in (app)" : "proven in the app, no account yet", who.email);
+  return c.json(result);
+});
+
+/** A nonce for Sign in with Apple, good once: the app hands it to Apple, which signs it into the token. */
+app.post("/auth/apple/start", async (c) => {
+  if (!(await allowed(c.env, "RL_AUTH", `ip:${clientIp(c)}`))) {
+    logAuth("apple", "rate limited", null);
+    return tooMany(c, "attempts");
+  }
+  return c.json({ nonce: await issueAppleNonce(c.env.DB) });
+});
+
+/** Sign in with Apple: the identity token Apple gave the app, checked here (signin.ts). */
+app.post("/auth/apple", async (c) => {
+  if (!(await allowed(c.env, "RL_AUTH", `ip:${clientIp(c)}`))) {
+    logAuth("apple", "rate limited", null);
+    return tooMany(c, "attempts");
+  }
+  const parsed = appleSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "No Apple sign-in to check" }, 400);
+  const { identityToken, nonce, fullName } = parsed.data;
+  const who = await verifyAppleIdentityToken(identityToken);
+  // The token has to carry the nonce this server issued, and a nonce works once.
+  if (!who || who.nonce !== nonce || !(await spendAppleNonce(c.env.DB, nonce))) {
+    logAuth("apple", who ? "nonce refused" : "rejected", who?.email ?? null);
+    return c.json({ error: "Apple didn't confirm that sign-in. Try again." }, 401);
+  }
+  // Their Apple ID first: the address behind it can change, and the account
+  // it signed in to before is still theirs.
+  const linked = await userForAppleSub(c.env.DB, who.sub);
+  if (linked) {
+    // Only proven if it's still the address on the account.
+    if (linked.email.toLowerCase() === who.email) {
+      await c.env.DB.prepare("UPDATE users SET email_verified_at = ? WHERE id = ?").bind(Date.now(), linked.id).run();
+    }
+    const token = await createSession(c.env.DB, linked.id);
+    logAuth("apple", "signed in (app)", who.email, { user: linked.id });
+    return c.json({ token, user: await publicUser(c.env, linked.id) });
+  }
+  const result = await afterProven(c.env, who.email, appleName(fullName), { kind: "app", appleSub: who.sub });
+  logAuth("apple", "token" in result ? "signed in (app)" : "proven in the app, no account yet", who.email);
   return c.json(result);
 });
 
@@ -2538,6 +2667,7 @@ async function nightly(env: Env) {
     env.DB.prepare("DELETE FROM command_queue WHERE created_at < ?").bind(now - 30 * 86_400_000),
     env.DB.prepare("DELETE FROM daily_marks WHERE at < ?").bind(now - 30 * 86_400_000),
     ...pruneEmailAuth(env.DB, now),
+    ...pruneSignin(env.DB, now),
   ]);
   return { places, expectations, accounts };
 }
