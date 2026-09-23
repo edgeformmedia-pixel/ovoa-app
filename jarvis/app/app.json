@@ -12,6 +12,7 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSBluetoothAlwaysUsageDescription": "OVOA connects to your ES100 recorder over Bluetooth to pull in what it captured.",
+        "NSPhotoLibraryUsageDescription": "OVOA doesn't look at your photos. iOS asks for this line because the file tools OVOA uses can save to your photo library.",
         "NSSpeechRecognitionUsageDescription": "OVOA uses your iPhone's speech recognition to turn your recordings into notes and to hear its name. It runs on the phone itself whenever your iPhone can; recordings are never sent to OVOA for this.",
         "UIBackgroundModes": [
           "audio",
