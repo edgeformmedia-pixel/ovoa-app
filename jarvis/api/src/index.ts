@@ -70,6 +70,7 @@ import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
 import { askClaude, askClaudeTool, claude } from "./claude";
+import { appFor, myApps } from "./myapps";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
 import { capVerdict, monthKey, overCapMessage, turnCapFrom, warnMessage } from "./cap";
@@ -778,6 +779,8 @@ const chatSchema = z.object({
   // A command the background agent queued (commands.ts), run by the app. Such a
   // turn gets no send or delete tools and never auto-approves.
   source: z.literal("agent").optional(),
+  // A made app open in Talk (myapps.ts): its instructions ride on this message.
+  app: z.string().max(64).optional(),
 });
 
 const resumeSchema = z.object({
@@ -804,6 +807,8 @@ type TurnInput = {
   onSentence?: (sentence: string) => void;
   /** The cf-ray from observe(), so this turn's line can be joined to its request's. */
   requestId?: string;
+  /** A made app open in Talk: followed for this message only (myapps.ts). */
+  app?: { name: string; instructions: string } | null;
 };
 
 /**
@@ -813,7 +818,7 @@ type TurnInput = {
 async function runTurn(
   env: Env,
   ctx: Pick<ExecutionContext, "waitUntil">,
-  { userId, text, timeZone, caps, voice, source, tier, resume, onSentence, requestId }: TurnInput,
+  { userId, text, timeZone, caps, voice, source, tier, resume, onSentence, requestId, app }: TurnInput,
 ) {
   const fromAgent = source === "agent";
   const started = Date.now();
@@ -871,6 +876,13 @@ async function runTurn(
   const moment = [
     `It is now ${new Date().toLocaleString("en-US", { timeZone, dateStyle: "full", timeStyle: "short" })}.`,
     `Recent activity (steps per day, daily goal ${settings.step_goal}):\n${activity || "No step data yet."}`,
+    // A made app rides here too, for the same reason: it changes per message,
+    // and it must never be saved as something the user said.
+    ...(app
+      ? [
+          `They are using their own app "${app.name}", which they made in OVOA. Follow its instructions for this message, and stay yourself while doing it. Do what it asks with your tools, and never say something is done unless a tool did it:\n${app.instructions}`,
+        ]
+      : []),
   ].join("\n");
   turns.push({ role: "user", text: `[${moment}]\n\n${text}` });
 
@@ -1436,8 +1448,11 @@ async function chatTurn(
     ]),
   );
 
+  // Someone else's app, or one deleted since it was opened, is simply not there.
+  const app = data.app && !data.source ? await appFor(db, userId, data.app) : null;
   const result = await runTurn(env, ctx, {
     userId,
+    app,
     text: data.message,
     timeZone,
     caps: data.phone ?? ACTIONS_ONLY,
@@ -2290,6 +2305,7 @@ authed.post("/debug/commands", async (c) => {
 authed.route("/", commands);
 authed.route("/", routines);
 authed.route("/", onboarding);
+authed.route("/", myApps);
 authed.route("/", notes);
 authed.route("/", todos);
 authed.route("/", moneyRoutes);

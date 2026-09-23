@@ -90,6 +90,7 @@ export const ROUTE_TIERS: RouteRule[] = [
   { method: "*", path: /^\/(steps|contacts|safety-events)(\/[^/]+)?$/, tier: "free", why: "health and safety" },
   { method: "GET", path: /^\/feed$/, tier: "free", why: "the day spine, built from rows, no model" },
   { method: "GET", path: /^\/profile$/, tier: "free", why: "reading your own profile" },
+  { method: "GET", path: /^\/apps$/, tier: "free", why: "reading the apps you made" },
   { method: "GET", path: /^\/(chat\/messages|memories)$/, tier: "free", why: "reading your own history" },
   // The agent's outbox and controls: anyone can see what it did and stop it.
   { method: "GET", path: /^\/agent\/(notes|jobs|goals|runs)$/, tier: "free", why: "seeing what the agent did" },
@@ -105,6 +106,7 @@ export const ROUTE_TIERS: RouteRule[] = [
   { method: "POST", path: /^\/voice\/(transcribe|speak|token)$/, tier: "base", why: "speech: clips, voice, live listening" },
   { method: "*", path: /^\/context\//, tier: "base", why: "the timeline (summaries are a model)" },
   { method: "*", path: /^\/onboarding(\/.*)?$/, tier: "base", why: "the setup conversation (a model)" },
+  { method: "POST", path: /^\/apps(\/design)?$/, tier: "base", why: "making an app (a model designs it; it runs on chat)" },
   { method: "*", path: /^\/(google|actions)(\/.*)?$/, tier: "base", why: "email and calendar" },
   { method: "*", path: /^\/(routines|todos|money|alarms|nags|transcripts|people|favors|locations|places)(\/.*)?$/, tier: "base", why: "assistant features" },
 ];

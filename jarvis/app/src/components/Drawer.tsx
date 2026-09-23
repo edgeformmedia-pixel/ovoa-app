@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ADDONS } from "../lib/addons";
-import { DrawerContext, type DrawerHandle } from "../lib/drawer";
+import { DrawerContext, usePointedAt, type DrawerHandle } from "../lib/drawer";
 import { PLAN_NAMES, usePlan } from "../lib/plan";
 import { colors, lift, numeric, space, type } from "../lib/theme";
 import { IconTile, type IconName, type Tone } from "./ui";
@@ -81,6 +81,8 @@ export function DrawerPanel({
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  // The spoken tour pointing at a row to show how the menu works.
+  const pointed = usePointedAt();
   const on = (item: NavItem) =>
     current === item.href || (item.label === "Apps" && APP_ROUTES.has(current));
 
@@ -102,13 +104,22 @@ export function DrawerPanel({
               onPress={() => onGo(item.href)}
               accessibilityRole="button"
               accessibilityState={{ selected: on(item) }}
-              style={({ pressed }) => [styles.navRow, on(item) && styles.navRowOn, pressed && { opacity: 0.6 }]}
+              style={({ pressed }) => [
+                styles.navRow,
+                on(item) && styles.navRowOn,
+                pointed === item.label && styles.navRowPointed,
+                pressed && { opacity: 0.6 },
+              ]}
             >
               <IconTile name={item.icon} tone={item.tone} />
               <Text style={styles.navLabel} numberOfLines={1}>
                 {item.label}
               </Text>
-              {!!tail && <Text style={styles.navTail}>{tail}</Text>}
+              {pointed === item.label ? (
+                <Ionicons name="hand-left" size={20} color={colors.now} />
+              ) : (
+                !!tail && <Text style={styles.navTail}>{tail}</Text>
+              )}
             </Pressable>
           );
         })}
@@ -310,6 +321,8 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   navRowOn: { backgroundColor: colors.wash },
+  // Teal, because it means "here, this one": the tour is showing where to tap.
+  navRowPointed: { backgroundColor: colors.nowWash, borderWidth: 2, borderColor: colors.now, marginVertical: -2 },
   navLabel: { ...type.body, color: colors.ink, flex: 1 },
   navTail: { ...type.meta, color: colors.inkMute, ...numeric },
 });

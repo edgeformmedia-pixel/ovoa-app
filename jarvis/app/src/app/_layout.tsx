@@ -125,6 +125,7 @@ function RootStack() {
         <Stack.Screen name="transcripts" options={{ ...pushed, title: "Transcripts" }} />
         <Stack.Screen name="live" options={{ ...pushed, title: "Live" }} />
         <Stack.Screen name="claude" options={{ ...pushed, title: "Ask Claude" }} />
+        <Stack.Screen name="create" options={{ ...pushed, title: "Create an app" }} />
       </Stack.Protected>
       <Stack.Protected guard={!!user && googleStep}>
         <Stack.Screen name="connect-google" />
@@ -154,9 +155,13 @@ function RootStack() {
         <AssistantProvider>
           {/* The drawer is inside the providers because its rows read from them,
               and outside the Stack because it has to sit over every route. */}
-          <AppDrawer>{stack}</AppDrawer>
-          {/* Once, the first time the app opens past setup: what the menu is now. */}
-          <Tour />
+          <AppDrawer>
+            {stack}
+            {/* Once, the first time the app opens past setup: a spoken walk
+                through the menu. Inside the drawer so it can open it and
+                point at its rows, and drawn over it. */}
+            <Tour />
+          </AppDrawer>
           {/* After the drawer, so an alarm going off covers the menu too. */}
           <NagOverlay />
         </AssistantProvider>

@@ -5,6 +5,7 @@ import { ApprovalCard } from "../../components/ApprovalCard";
 import { DevLogPanel } from "../../components/DevLogPanel";
 import { PartOfPlan } from "../../components/Plan";
 import { TopBar } from "../../components/ui";
+import { setOpenApp, useOpenApp } from "../../lib/activeApp";
 import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
 import { useDevMode } from "../../lib/devMode";
@@ -34,6 +35,8 @@ export default function Assistant() {
 function Talk() {
   const { user } = useSession();
   const a = useAssistant();
+  // One of their own apps, opened from Apps: what they say now follows its instructions.
+  const openApp = useOpenApp();
   const [showLogs, setShowLogs] = useState(false);
   const devMode = useDevMode();
   const assistantName = user?.settings.assistantName ?? "OVOA";
@@ -60,6 +63,25 @@ function Talk() {
           ) : undefined
         }
       />
+
+      {openApp && (
+        <View style={styles.appBar}>
+          <Ionicons name="apps-outline" size={16} color={colors.agent} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.appName} numberOfLines={1}>
+              Using {openApp.name}
+            </Text>
+            {!!openApp.opener && (
+              <Text style={styles.appOpener} numberOfLines={2}>
+                {openApp.opener}
+              </Text>
+            )}
+          </View>
+          <Pressable onPress={() => setOpenApp(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={`Close ${openApp.name}`}>
+            <Ionicons name="close" size={18} color={colors.inkMute} />
+          </Pressable>
+        </View>
+      )}
 
       {a.alwaysListen && (
         <Pressable style={styles.alwaysBar} onPress={() => a.setAlwaysListen(false)}>
@@ -207,6 +229,21 @@ const styles = StyleSheet.create({
     backgroundColor: colors.stopWash,
   },
   alwaysText: { ...type.meta, fontWeight: "600", color: colors.stop, flex: 1 },
+
+  // Violet: the app is theirs, not something happening now.
+  appBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.s2,
+    marginHorizontal: space.s5,
+    marginBottom: space.s2,
+    paddingHorizontal: space.s4,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: colors.agentWash,
+  },
+  appName: { ...type.meta, fontWeight: "600", color: colors.agent },
+  appOpener: { ...type.meta, color: colors.inkDim },
 
   voice: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.s3, paddingHorizontal: space.s5 },
   voiceSmall: { flex: 0, paddingVertical: space.s5, gap: space.s2 },

@@ -1,4 +1,5 @@
 import { fetch as streamingFetch } from "expo/fetch";
+import { openAppId } from "./activeApp";
 import { devlog } from "./devlog";
 
 export const API_URL =process.env.EXPO_PUBLIC_API_URL ?? "https://jarvis-api.edgeformmedia.workers.dev";
@@ -296,6 +297,20 @@ export type PhoneCaps = { lookups: boolean; capabilities: string[]; autoSendText
 /** Something the assistant wants looked up on the phone before it can answer. */
 export type PhoneCall = { id: string; name: string; args: Record<string, any> };
 /** A chat turn either finishes, or pauses until the app sends lookup results to `resume`. */
+/** An app someone described, before it's saved: what the model made of it. */
+export type AppDraft = {
+  name: string;
+  about: string;
+  /** An Ionicons name from the server's list (myapps.ts APP_ICONS). */
+  icon: string;
+  tone: "teal" | "violet" | "green" | "amber" | "coral" | "blue" | "pink";
+  /** What the assistant does while it's open. */
+  instructions: string;
+  /** The first thing it says when opened. */
+  opener: string;
+};
+export type MyApp = AppDraft & { id: string; createdAt: number };
+
 export type ChatResponse = (
   | { messages: Message[]; pendingActions: PendingAction[]; paused?: undefined; ignored?: boolean }
   | { paused: { turnId: string; calls: PhoneCall[] }; pendingActions: PendingAction[]; messages?: undefined; ignored?: undefined }
@@ -666,7 +681,8 @@ export const api = {
   send: (token: string, message: string, phone: PhoneCaps, voice = false, ambient = false, source?: "agent") =>
     request<ChatResponse>("/chat", token, {
       method: "POST",
-      body: JSON.stringify({ message, timeZone: timeZone(), phone, voice, ambient, source }),
+      // An agent command is never run as one of the person's apps.
+      body: JSON.stringify({ message, timeZone: timeZone(), phone, voice, ambient, source, app: source ? undefined : openAppId() }),
     }),
   resume: (token: string, turnId: string, results: Record<string, unknown>) =>
     request<ChatResponse>("/chat/resume", token, { method: "POST", body: JSON.stringify({ turnId, results }) }),
@@ -679,7 +695,8 @@ export const api = {
     onSentence: (sentence: string) => void,
     signal?: AbortSignal,
     speech?: ServerSpeech,
-  ) => streamedTurn("/chat", token, { message, timeZone: timeZone(), phone, voice: true, ambient }, onSentence, signal, speech),
+  ) =>
+    streamedTurn("/chat", token, { message, timeZone: timeZone(), phone, voice: true, ambient, app: openAppId() }, onSentence, signal, speech),
   resumeStreamed: (
     token: string,
     turnId: string,
@@ -820,6 +837,14 @@ export const api = {
     request<{ understood: null; next: OnboardingNext }>("/onboarding/skip", token, { method: "POST", body: JSON.stringify({ step }) }),
   onboardingFinish: (token: string) => request("/onboarding/finish", token, { method: "POST" }),
   onboardingRestart: (token: string) => request<OnboardingNext>("/onboarding/restart", token, { method: "POST" }),
+
+  // Apps people make (Apps → Create; api/src/myapps.ts).
+  myApps: (token: string) => request<{ apps: MyApp[] }>("/apps", token),
+  designApp: (token: string, description: string) =>
+    request<{ draft: AppDraft }>("/apps/design", token, { method: "POST", body: JSON.stringify({ description }) }),
+  saveApp: (token: string, draft: AppDraft) =>
+    request<{ app: MyApp }>("/apps", token, { method: "POST", body: JSON.stringify(draft) }),
+  deleteApp: (token: string, id: string) => request<{ ok: true }>(`/apps/${encodeURIComponent(id)}`, token, { method: "DELETE" }),
 
   // ---------- Routines ----------
 
