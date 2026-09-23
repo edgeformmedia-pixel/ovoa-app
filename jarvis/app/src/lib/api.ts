@@ -13,7 +13,6 @@ export type Settings = {
   personality: string;
   memoryEnabled: boolean;
   stepGoal: number;
-  fallDetection: boolean;
   autoApprove: boolean;
   /** The timeline of the day. Off until asked for. */
   contextEnabled: boolean;
@@ -294,6 +293,7 @@ export type StepDay = { day: string; steps: number };
 export type Contact = { id: string; name: string; phone: string };
 export type SafetyEvent = {
   id: string;
+  /** Only SOS is sent now; "fall" is older history, gone after the 14-day purge. */
   kind: "fall" | "sos";
   status: "ok" | "alerted";
   latitude: number | null;
@@ -943,7 +943,7 @@ export const api = {
 
   logSafetyEvent: (
     token: string,
-    event: Pick<SafetyEvent, "kind" | "status"> & { latitude?: number; longitude?: number },
+    event: { kind: "sos"; status: SafetyEvent["status"]; latitude?: number; longitude?: number },
   ) =>
     request<{ event: SafetyEvent }>("/safety-events", token, { method: "POST", body: JSON.stringify(event) }),
   safetyEvents: (token: string) => request<{ events: SafetyEvent[] }>("/safety-events", token),

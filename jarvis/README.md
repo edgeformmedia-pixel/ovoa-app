@@ -61,10 +61,10 @@ installed; Safety, Background Work, Transcripts and Calorie are a tap away.
 - **Safety**:
   - **SOS:** press and hold for 1.5 s. The phone opens a text to your
     emergency contacts with your location. iOS always requires tapping Send.
-  - **Fall detection:** watches the accelerometer for free fall, then an
-    impact, then lying still. It shows a 30-second "Did you fall?" countdown,
-    then opens the same text. There's a button to test the alert.
   - **Call 911**, up to 5 emergency contacts, and a list of recent alerts.
+  - It watched for falls too until 2026-09-23, when that was cut. Its column
+    in `settings` is left in D1, unused, and the old fall rows in
+    `safety_events` go with the 14-day purge.
 - **Background Work** and **Day**: what the agent went and found out while
   you weren't looking, and what your days were made of. See
   [Background work](#background-work) and [Timeline](#timeline).
@@ -94,17 +94,9 @@ approval cards:
 - **Apple Health** (heart rate, sleep, workouts) needs a development build.
   See [Development build](#development-build). In Expo Go the assistant says
   so instead of answering.
-- **Fall detection only runs while the app is open on screen.** iOS doesn't
-  let third-party apps keep reading motion sensors in the background, even in a
-  development build. Workarounds like keeping location running drain the
-  battery and get rejected in App Store review. For fall detection while the
-  phone is locked, use an Apple Watch: its built-in Fall Detection calls
-  emergency services on its own.
 - **Texts always need a tap on Send.** iOS never lets an app send a text
   silently. Sending automatically would mean texting from the server (e.g.
   Twilio), which this app doesn't do.
-
-Fall detection is not a medical device.
 
 ## Voice
 
@@ -566,7 +558,7 @@ summaries, then the 14-day purge; `docs/retention.md`).
 | POST | /auth/apple/start | → `{ nonce }`, good once for ten minutes |
 | POST | /auth/apple | `{ identityToken, nonce, fullName? }` (Sign in with Apple, checked against Apple's keys) → `{ token, user, created }` (app session; 201 when it made the account), never a ticket |
 | POST | /auth/logout | |
-| GET / PATCH / DELETE | /me | profile + settings (incl. `stepGoal`, `fallDetection`), `plan`, `emailVerified`, `aiConsent`, `devTools` |
+| GET / PATCH / DELETE | /me | profile + settings (incl. `stepGoal`), `plan`, `emailVerified`, `aiConsent`, `devTools` |
 | POST | /me/password | `{ currentPassword, newPassword }` |
 | POST | /me/email/code | emails this account a code to prove its address (60 s between two, 5 an hour; `src/verify.ts`) |
 | POST | /me/email/verify | `{ code }` → proves the address, and a new account can use everything |
@@ -585,7 +577,7 @@ summaries, then the 14-day purge; `docs/retention.md`).
 | PATCH / DELETE | /food/log/:id | fix an entry `{ grams?, kcal?, fraction? }` / remove it |
 | GET / PUT | /steps | PUT `{ days: [{ day: "YYYY-MM-DD", steps }] }` |
 | GET / POST / DELETE | /contacts, /contacts/:id | POST `{ name, phone }` (max 5) |
-| GET / POST | /safety-events | POST `{ kind: "fall"\|"sos", status: "ok"\|"alerted", latitude?, longitude? }` |
+| GET / POST | /safety-events | POST `{ kind: "sos", status: "ok"\|"alerted", latitude?, longitude? }`; GET can still list older `"fall"` rows |
 | POST | /google/connect | `{ returnUrl, accountId? }` → `{ url }` to open; `accountId` reconnects that account |
 | GET | /google/callback | Google redirect target (public), for connecting an account and for the app's Google sign-in |
 | GET | /google/status | default account's details plus `accounts` |
@@ -632,5 +624,5 @@ npx expo start
 ```
 
 Scan the QR code with the iPhone camera, which opens it in Expo Go.
-`npx expo start --web` gives a browser preview; step counting and fall
-detection don't work there.
+`npx expo start --web` gives a browser preview; step counting doesn't work
+there.

@@ -54,7 +54,7 @@
       [
         "expo-sensors",
         {
-          "motionPermission": "OVOA counts your steps and detects falls using motion data."
+          "motionPermission": "OVOA counts your steps using motion data, for your daily total and to stop a wake-up alarm once you're up."
         }
       ],
       [

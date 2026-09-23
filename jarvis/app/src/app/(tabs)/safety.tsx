@@ -1,24 +1,16 @@
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { Btn, GroupLabel, Row, Screen, Tile, Tiles, Toggle, TopBar, text } from "../../components/ui";
+import { Btn, GroupLabel, Row, Screen, Tile, Tiles, TopBar, text } from "../../components/ui";
 import { api, type SafetyEvent } from "../../lib/api";
 import { useSession } from "../../lib/auth";
 import { logFail } from "../../lib/devlog";
-import { EMERGENCY_NUMBER, useSafety, type DetectorStatus } from "../../lib/safety";
+import { EMERGENCY_NUMBER, useSafety } from "../../lib/safety";
 import { colors, radius, space, type } from "../../lib/theme";
 
-const DETECTOR_TEXT: Record<DetectorStatus, string> = {
-  off: "Off",
-  starting: "Starting…",
-  on: "Watching for falls while the app is open.",
-  unavailable: "This device has no motion sensor.",
-  denied: "Allow Motion & Fitness access in the Settings app.",
-};
-
 export default function Safety() {
-  const { token, user, setUser } = useSession();
-  const { contacts, setContacts, trigger, detectorStatus } = useSafety();
+  const { token } = useSession();
+  const { contacts, setContacts, sos } = useSafety();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [adding, setAdding] = useState(false);
@@ -33,16 +25,7 @@ export default function Safety() {
     }, [token]),
   );
 
-  const fallOn = !!user?.settings.fallDetection;
-  const lastCheck = events[0];
-
-  const toggleFall = async (fallDetection: boolean) => {
-    try {
-      setUser((await api.updateMe(token, { fallDetection })).user);
-    } catch (err) {
-      Alert.alert("Couldn't update", (err as Error).message);
-    }
-  };
+  const lastAlert = events[0];
 
   const addContact = async () => {
     setAdding(true);
@@ -73,43 +56,23 @@ export default function Safety() {
 
   return (
     <View style={styles.page}>
-      <TopBar title="Safety" when={fallOn ? "Armed" : "Off"} />
+      {/* SOS can only reach someone once there's a contact to text. */}
+      <TopBar title="Safety" when={contacts === null ? undefined : contacts.length ? "Ready" : "No contacts"} />
       <Screen keyboardShouldPersistTaps="handled">
         <Tiles>
           <Tile
             icon="shield-checkmark-outline"
             tone="green"
-            label="Last check"
-            value={lastCheck ? stamp(lastCheck.created_at) : "—"}
+            label="Last alert"
+            value={lastAlert ? stamp(lastAlert.created_at) : "—"}
             small
           />
-          <Tile
-            icon="alert-circle-outline"
-            tone="coral"
-            label="Falls"
-            value={`${events.filter((e) => e.kind === "fall").length}`}
-          />
+          <Tile icon="people-outline" tone="coral" label="Contacts" value={`${contacts?.length ?? 0}`} />
         </Tiles>
-
-        <GroupLabel>Watching</GroupLabel>
-        <Row
-          icon="trending-down-outline"
-          tone="amber"
-          title="Fall detection"
-          first
-          right={<Toggle value={fallOn} onValueChange={toggleFall} label="Fall detection" />}
-        />
-        <Text style={text.meta}>{DETECTOR_TEXT[detectorStatus]}</Text>
-        <Text style={styles.warn}>
-          Fall detection only works while OVOA is open on screen. It is not a medical device. Don&apos;t rely on it
-          alone.
-        </Text>
-        <Btn label="Test the fall alert" onPress={() => trigger("fall")} style={{ alignSelf: "flex-start" }} />
 
         <GroupLabel>Emergency contacts</GroupLabel>
         <Text style={text.sub}>
-          They get a text with your location when you press SOS or don&apos;t respond after a fall. Your phone opens the
-          message; tap Send.
+          They get a text with your location when you press SOS. Your phone opens the message; tap Send.
         </Text>
         {contacts?.map((c, i) => (
           <Row
@@ -152,6 +115,8 @@ export default function Safety() {
         {events.length > 0 && (
           <>
             <GroupLabel>Recent alerts</GroupLabel>
+            {/* Rows from before Safety was SOS-only can still be kind "fall"; the
+                server's 14-day purge (retention.ts) clears the last of them. */}
             {events.slice(0, 5).map((e, i) => (
               <Row
                 key={e.id}
@@ -166,7 +131,7 @@ export default function Safety() {
         {/* Pinned to the end of the screen, and the one thing on it that is
             allowed to shout. Press and hold, so a pocket cannot fire it. */}
         <Pressable
-          onLongPress={() => trigger("sos")}
+          onLongPress={sos}
           delayLongPress={1500}
           style={({ pressed }) => [styles.sos, pressed && { opacity: 0.7 }]}
           accessibilityRole="button"
@@ -190,7 +155,6 @@ const stamp = (at: number) =>
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.paper },
-  warn: { ...type.meta, color: colors.late },
   remove: { ...type.meta, fontWeight: "600", color: colors.stop },
   input: {
     backgroundColor: colors.wash,

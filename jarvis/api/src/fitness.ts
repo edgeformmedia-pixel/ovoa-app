@@ -96,7 +96,10 @@ fitness.delete("/contacts/:id", async (c) => {
 // ---------- Safety events ----------
 
 const eventSchema = z.object({
-  kind: z.enum(["fall", "sos"]),
+  // SOS only since 2026-09-23. A "fall" from an older build gets the 400 (the
+  // phone logs it and moves on; its text to the contacts doesn't wait on this),
+  // and the fall rows already stored go with the 14-day purge (retention.ts).
+  kind: z.literal("sos"),
   status: z.enum(["ok", "alerted"]),
   latitude: z.number().min(-90).max(90).nullable().optional(),
   longitude: z.number().min(-180).max(180).nullable().optional(),

@@ -22,7 +22,6 @@ import * as clip from "../lib/clip";
 import * as ute from "../../modules/ute-ble";
 import { devlog, logFail } from "../lib/devlog";
 import { logStatus, sendRecentLogs, setUploadLevel, uploadLevel } from "../lib/remoteLog";
-import { createFallDetector } from "../lib/fallDetector";
 import { onDeviceSpeechBuilt, transcribeOnDevice } from "../lib/onDeviceTranscribe";
 import { getRecordings, wavFile } from "../lib/recordings";
 import {
@@ -107,8 +106,6 @@ export default function DevTools() {
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<Record<string, string>>({});
-  const [falls, setFalls] = useState(0);
-  const [lastFall, setLastFall] = useState<string | null>(null);
 
   // Live step counter.
   useEffect(() => {
@@ -124,23 +121,6 @@ export default function DevTools() {
       .catch(() => setStepsAvailable(false));
     return () => sub?.remove();
   }, []);
-
-  // Runs the real fall detector against live accelerometer samples, so the
-  // thresholds in fallDetector.ts can be checked by actually dropping the phone.
-  const detector = useRef(
-    createFallDetector(() => {
-      setFalls((count) => count + 1);
-      setLastFall(new Date().toLocaleTimeString());
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(logFail("dev-tools: Haptics.notificationAsync"));
-    }),
-  );
-
-  useEffect(() => {
-    if (!motionOn) return;
-    Accelerometer.setUpdateInterval(20); // the detector wants ~50 Hz
-    const sub = Accelerometer.addListener((sample) => detector.current(sample, Date.now()));
-    return () => sub.remove();
-  }, [motionOn]);
 
   const checkPermissions = useCallback(async () => {
     const next: Record<string, string> = {};
@@ -272,14 +252,6 @@ export default function DevTools() {
 
         <Card title="Pedometer" unit="steps" available={stepsAvailable}>
           <Axis label="since open" value={steps ?? undefined} digits={0} />
-        </Card>
-
-        <Card title="Fall detector" available={accelerometer.available}>
-          <Axis label="falls seen" value={falls} digits={0} />
-          <Row label="last" value={lastFall ?? "—"} />
-          <Text style={styles.hint}>
-            Drop the phone onto something soft: free fall, impact, then lying still for 1.5 s.
-          </Text>
         </Card>
 
         <Card title="Location" available={true}>

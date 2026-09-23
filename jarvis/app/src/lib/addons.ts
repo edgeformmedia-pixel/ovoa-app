@@ -12,7 +12,7 @@ import { storage } from "./storage";
 // what they installed is listed under "Your apps". Installing is a choice about
 // what to see, nothing more: the screens are already in the app, so installing
 // downloads nothing, and removing one only takes it off the list — whatever it
-// had switched on (fall detection, the location timeline) stays as it was, and
+// had switched on (the location timeline, say) stays as it was, and
 // is turned off on its own screen or in Settings. Calorie is the exception:
 // installing or removing it sets or clears the tracking level on the server
 // (profile.food_detail, through lib/food.ts), and the server can install it too
@@ -120,12 +120,12 @@ export const ADDONS: Addon[] = [
     id: "safety",
     name: "Safety",
     by: "OVOA",
-    about: "Fall detection that tells your emergency contacts.",
+    about: "An SOS button that tells your emergency contacts.",
     usage: "none",
     icon: "shield-checkmark-outline",
     tone: "green",
     href: "/safety",
-    keywords: "fall emergency contacts sos alert",
+    keywords: "emergency contacts sos alert help 911",
   },
   {
     id: "background",

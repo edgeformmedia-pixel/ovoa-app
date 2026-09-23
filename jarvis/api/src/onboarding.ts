@@ -16,7 +16,7 @@ import type { Env, Vars } from "./types";
 // by the model into a few structured fields and saved where the rest of OVOA
 // will look for it: wake and sleep times in the profile, medications as
 // routines (and from there into Apple Reminders), an emergency contact where
-// the fall detector already looks. Every question can be skipped, and every
+// the SOS button already looks. Every question can be skipped, and every
 // one can be asked again later by saying so.
 //
 // It runs the first time someone has Base (paid, or a Band's free days), not at
@@ -381,13 +381,13 @@ const STEP_SPECS: Record<Step, StepSpec> = {
     },
   },
   emergency: {
-    question: () => "Last one: who should I contact if you fall or need help? A name and phone number.",
+    question: () => "Last one: who should I contact if you need help? A name and phone number.",
     schema: { type: "object", properties: { name: { type: "string" }, phone: { type: "string" } } },
     apply: async (env, userId, d) => {
       const name = String(d.name ?? "").trim().slice(0, 80);
       const phone = String(d.phone ?? "").replace(/[^\d+]/g, "").slice(0, 20);
       if (!name || phone.length < 5) return "No emergency contact for now; you can add one on the Safety tab.";
-      // The same list the fall detector and SOS already use.
+      // The same list the SOS button texts.
       await env.DB.prepare("INSERT INTO emergency_contacts (id, user_id, name, phone, created_at) VALUES (?, ?, ?, ?, ?)")
         .bind(crypto.randomUUID(), userId, name, phone, Date.now())
         .run();

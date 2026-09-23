@@ -255,7 +255,6 @@ type Settings = {
   personality: string;
   memory_enabled: number;
   step_goal: number;
-  fall_detection: number;
   auto_approve: number;
   time_zone: string | null;
   context_enabled: number;
@@ -420,7 +419,7 @@ async function publicUser(env: Env, userId: string) {
   };
 }
 
-const SETTINGS_QUERY = `SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone,
+const SETTINGS_QUERY = `SELECT assistant_name, personality, memory_enabled, step_goal, auto_approve, time_zone,
               context_enabled, agent_enabled, agent_autonomy, quiet_start, quiet_end, agent_daily_runs,
               capture_everything
          FROM settings WHERE user_id = ?`;
@@ -446,7 +445,6 @@ function formatSettings(s: Settings) {
     personality: s.personality,
     memoryEnabled: !!s.memory_enabled,
     stepGoal: s.step_goal,
-    fallDetection: !!s.fall_detection,
     autoApprove: !!s.auto_approve,
     contextEnabled: !!s.context_enabled,
     // The "Forget summaries after" picker is gone (docs/retention.md): everything
@@ -1097,13 +1095,14 @@ async function planForMe(env: Env, userId: string, force = false) {
  */
 authed.post("/me/plan/refresh", async (c) => c.json({ plan: await planForMe(c.env, c.var.userId, true) }));
 
+// A key this doesn't list is dropped, not refused: builds from before Safety
+// went SOS-only (2026-09-23) still send their falls switch here, and get a 200.
 const updateMeSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   assistantName: z.string().trim().min(1).max(40).optional(),
   personality: z.string().trim().max(500).optional(),
   memoryEnabled: z.boolean().optional(),
   stepGoal: z.number().int().min(500).max(100_000).optional(),
-  fallDetection: z.boolean().optional(),
   autoApprove: z.boolean().optional(),
   contextEnabled: z.boolean().optional(),
   /** Ignored: sent by builds from before 14-day retention (retention.ts), which had a picker for it. */
@@ -1127,7 +1126,7 @@ const updateMeSchema = z.object({
 authed.patch("/me", async (c) => {
   const parsed = updateMeSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Invalid settings" }, 400);
-  const { name, assistantName, personality, memoryEnabled, stepGoal, fallDetection, autoApprove, contextEnabled } = parsed.data;
+  const { name, assistantName, personality, memoryEnabled, stepGoal, autoApprove, contextEnabled } = parsed.data;
   const { agentEnabled, agentAutonomy, quietStart, quietEnd, agentDailyRuns } = parsed.data;
   // Written before anything reads it below, so a job seeded in this same
   // request is scheduled against the right zone.
@@ -1150,7 +1149,6 @@ authed.patch("/me", async (c) => {
            personality    = COALESCE(?, personality),
            memory_enabled = COALESCE(?, memory_enabled),
            step_goal      = COALESCE(?, step_goal),
-           fall_detection = COALESCE(?, fall_detection),
            auto_approve   = COALESCE(?, auto_approve),
            context_enabled = COALESCE(?, context_enabled),
            agent_enabled  = COALESCE(?, agent_enabled),
@@ -1168,7 +1166,6 @@ authed.patch("/me", async (c) => {
         personality ?? null,
         memoryEnabled === undefined ? null : Number(memoryEnabled),
         stepGoal ?? null,
-        fallDetection === undefined ? null : Number(fallDetection),
         autoApprove === undefined ? null : Number(autoApprove),
         contextEnabled === undefined ? null : Number(contextEnabled),
         agentEnabled === undefined ? null : Number(agentEnabled),
