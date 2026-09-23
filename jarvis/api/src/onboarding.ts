@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { isFoodLevel, setCalorieInstalled, setFoodLevel, setFoodTarget } from "./food";
 import { listGoogleAccounts, setAccountLabel } from "./google/oauth";
 import type { CallTool, ToolSpec } from "./llm";
 import { AI_UNREACHABLE, generateText, isAiUnreachable, isModelRefused } from "./llm";
+import { designApp, saveApp } from "./myapps";
 import { refusedResponse } from "./plans";
 import { createRoutine, parseClock, routinesChanged, type NewRoutine } from "./routines";
 import { clockFromMinutes } from "./time";
@@ -10,15 +12,23 @@ import type { Env, Vars } from "./types";
 
 // Getting to know someone, once. See migrations/0017_profile.sql.
 //
-// Nine short questions, each answered in their own words. The answer is read
+// Ten short questions, each answered in their own words. The answer is read
 // by the model into a few structured fields and saved where the rest of OVOA
 // will look for it: wake and sleep times in the profile, medications as
 // routines (and from there into Apple Reminders), an emergency contact where
 // the fall detector already looks. Every question can be skipped, and every
 // one can be asked again later by saying so.
+//
+// It runs the first time someone has Base (paid, or a Band's free days), not at
+// sign-up: the app puts the consent screen and the voice picker in front of it
+// (app/onboarding.tsx), and a free account never sees it. Since v1 it also asks
+// about goals: for each fitness or health goal or habit they name, the model
+// designs one of their own apps (myapps.ts designApp, the same as Apps → Create)
+// and it's kept for them; an eating goal turns on the Calorie add-on and its
+// tracking level instead (food.ts), which the phone adds to its menu.
 
-export type Step = "name" | "nicknames" | "wake_sleep" | "work" | "meds" | "pets" | "gym" | "routines" | "emergency";
-export const STEPS: Step[] = ["name", "nicknames", "wake_sleep", "work", "meds", "pets", "gym", "routines", "emergency"];
+export type Step = "name" | "nicknames" | "wake_sleep" | "work" | "meds" | "pets" | "gym" | "goals" | "routines" | "emergency";
+export const STEPS: Step[] = ["name", "nicknames", "wake_sleep", "work", "meds", "pets", "gym", "goals", "routines", "emergency"];
 
 export type Profile = {
   nicknames: string[];
@@ -132,11 +142,18 @@ const timedThings = (what: string) => ({
 
 type Extracted = Record<string, unknown>;
 
+/**
+ * What a step did besides saving: `addons` for the phone to add to its menu
+ * (the server can't install one), `apps` it made for them (ids; the phone reads
+ * its list of apps again).
+ */
+type Applied = { facts: string; addons?: string[]; apps?: string[] };
+
 type StepSpec = {
   question: (ctx: { name: string; accounts: string[] }) => string;
   schema: Record<string, unknown>;
   /** Saves what was understood and returns it in a sentence, for the screen to confirm. */
-  apply: (env: Env, userId: string, data: Extracted) => Promise<string>;
+  apply: (env: Env, userId: string, data: Extracted) => Promise<string | Applied>;
 };
 
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -191,6 +208,7 @@ const NONE = {
   meds: "No medications to remind you about.",
   pets: "No pet reminders.",
   gym: "No workouts to plan around.",
+  goals: "No goals for now. You can make an app for one any time, in Apps.",
   routines: "Nothing else for now.",
 };
 const NOTHING_SAVED = new Set<string>([
@@ -320,6 +338,39 @@ const STEP_SPECS: Record<Step, StepSpec> = {
       return `${said}, noted.`;
     },
   },
+  goals: {
+    question: () => "Any fitness or health goals, or habits you want help with? I'll make you an app for each one.",
+    schema: {
+      type: "object",
+      properties: {
+        goals: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              goal: { type: "string", description: "The goal or habit, short, in their words" },
+              kind: {
+                type: "string",
+                enum: ["eating", "other"],
+                description:
+                  "eating: about what or how much they eat or drink (calories, protein, eating better). other: anything else (exercise, sleep, water, a habit to build or break)",
+              },
+              detail: { type: "string", description: "Everything they said about this goal, in their words" },
+              level: {
+                type: "string",
+                enum: ["quick", "normal", "strict"],
+                description:
+                  "eating only, and only if they said how closely to keep track: quick for a rough idea, strict for exact numbers; otherwise leave it out",
+              },
+              kcal: { type: "number", description: "eating only: a daily calorie target, only if they said a number" },
+            },
+            required: ["goal", "kind"],
+          },
+        },
+      },
+    },
+    apply: async (env, userId, d) => applyGoals(env, userId, d.goals),
+  },
   routines: {
     question: () => "Anything else you'd like a daily nudge for — water, stretching, anything at all?",
     schema: { type: "object", properties: { routines: timedThings("routine") } },
@@ -342,6 +393,80 @@ const STEP_SPECS: Record<Step, StepSpec> = {
     },
   },
 };
+
+/** At most this many apps from one answer: each is a model call, and they're made while the person waits. */
+const MAX_GOAL_APPS = 3;
+
+type Goal = { goal: string; kind: string; detail: string; level: unknown; kcal: number | null };
+
+/** "A", "A and B", "A, B and C". */
+const listed = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`);
+
+/**
+ * The goals step. Eating goals turn on Calorie (tracking level and target, if
+ * they said them); every other goal gets an app of its own, designed and kept
+ * the way Apps → Create does it. A design that fails is said, not hidden, and
+ * the rest still go ahead; only the gate saying no (plan, allowance, consent)
+ * stops the answer, and the route says why.
+ */
+async function applyGoals(env: Env, userId: string, raw: unknown): Promise<Applied> {
+  const goals: Goal[] = (Array.isArray(raw) ? raw : [])
+    .map((g) => g as Record<string, unknown>)
+    .map((g) => ({
+      goal: String(g.goal ?? "").trim().slice(0, 120),
+      kind: String(g.kind ?? "other"),
+      detail: String(g.detail ?? "").trim().slice(0, 600),
+      level: g.level,
+      kcal: typeof g.kcal === "number" && g.kcal > 0 ? g.kcal : null,
+    }))
+    .filter((g) => g.goal);
+  if (!goals.length) return { facts: NONE.goals };
+  const eating = goals.filter((g) => g.kind === "eating");
+  const others = goals.filter((g) => g.kind !== "eating");
+  const parts: string[] = [];
+  const addons: string[] = [];
+
+  const made = await Promise.all(
+    others.slice(0, MAX_GOAL_APPS).map(async (g) => {
+      try {
+        const draft = await designApp(env, userId, `An app to help me with this: ${g.goal}.${g.detail ? ` ${g.detail}` : ""}`);
+        const app = await saveApp(env.DB, userId, draft);
+        return app ? { goal: g.goal, app } : { goal: g.goal, full: true };
+      } catch (err) {
+        if (isModelRefused(err)) throw err;
+        console.error("onboarding: couldn't make an app for a goal", err);
+        return { goal: g.goal };
+      }
+    }),
+  );
+  const apps = made.flatMap((m) => ("app" in m && m.app ? [m.app] : []));
+  if (apps.length) {
+    parts.push(
+      `I made you ${apps.length === 1 ? "an app" : "an app for each"}: ${listed(apps.map((a) => a.name))}. ${apps.length === 1 ? "It's" : "They're"} in Apps, under Your apps.`,
+    );
+  }
+  const missed = made.filter((m) => !("app" in m)).map((m) => m.goal);
+  if (missed.length) {
+    parts.push(
+      made.some((m) => "full" in m)
+        ? "You already have as many apps as you can make, so I didn't make more."
+        : `I couldn't make one for ${listed(missed)} just now. You can make it yourself in Apps, with Create.`,
+    );
+  }
+  if (others.length > MAX_GOAL_APPS) parts.push("For the rest, make an app any time in Apps, with Create.");
+
+  if (eating.length) {
+    const level = eating.map((g) => g.level).find(isFoodLevel);
+    // A level they asked for is theirs; otherwise the add-on's own first open asks.
+    if (level) await setFoodLevel(env.DB, userId, level);
+    else await setCalorieInstalled(env.DB, userId, true);
+    const kcal = eating.map((g) => g.kcal).find((k): k is number => k !== null);
+    if (kcal) await setFoodTarget(env.DB, userId, { kcal });
+    addons.push("calorie");
+    parts.push("I've added Calorie: tell me what you eat and I'll keep track.");
+  }
+  return { facts: parts.join(" "), addons, apps: apps.map((a) => a.id) };
+}
 
 async function questionFor(env: Env, userId: string, step: Step) {
   const [user, accounts] = await Promise.all([
@@ -412,10 +537,12 @@ export async function onboardingAnswer(env: Env, userId: string, step: Step, tex
     }
   }
   if (!data) throw new Error("I didn't quite get that. Could you say it another way?");
-  const facts = await spec.apply(env, userId, data);
+  const applied = await spec.apply(env, userId, data);
+  const { facts, addons, apps } = typeof applied === "string" ? ({ facts: applied } as Applied) : applied;
   const ack = typeof data.ack === "string" && !NOTHING_SAVED.has(facts) ? data.ack.trim().slice(0, 200) : "";
   const understood = ack ? `${ack} ${facts}` : facts;
-  return { understood, next: await advance(env, userId, step) };
+  // addons: for the phone to add to its menu (Calorie); apps: made for them, for it to read again.
+  return { understood, next: await advance(env, userId, step), ...(addons?.length && { addons }), ...(apps?.length && { apps }) };
 }
 
 // ---------- Routes ----------

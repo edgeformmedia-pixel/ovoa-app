@@ -46,7 +46,7 @@ import type { Env, Vars } from "./types";
 //   GET  /google/callback         OAuth return
 //   GET  /shortcuts/file/:t/:name signed shortcut download
 //   POST /logs                    phone logs
-//   *    /debug/*                 DEBUG_KEY only (engines, usage, ticks, plan)
+//   *    /debug/*                 DEBUG_KEY only (engines, usage, ticks, plan, verify)
 //
 // Signed in: see ROUTE_TIERS just below; the `why` on each line is the reason.
 //
@@ -87,6 +87,8 @@ export const ROUTE_TIERS: RouteRule[] = [
   // Free: the account, the phone, health, notes.
   { method: "*", path: /^\/auth\/logout$/, tier: "free", why: "sign out" },
   { method: "*", path: /^\/me(\/password|\/plan\/refresh)?$/, tier: "free", why: "the account and its settings" },
+  { method: "POST", path: /^\/me\/email\/(code|verify)$/, tier: "free", why: "proving the account's address with the emailed code" },
+  { method: "POST", path: /^\/me\/consent$/, tier: "free", why: "agreeing to AI (taking it back is a DELETE)" },
   { method: "*", path: /^\/(device\/state|capabilities)$/, tier: "free", why: "what the phone and band have" },
   { method: "POST", path: /^\/buzz\/test$/, tier: "free", why: "band buzz test, no model" },
   { method: "*", path: /^\/push\/token$/, tier: "free", why: "push registration" },

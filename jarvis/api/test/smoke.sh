@@ -30,11 +30,62 @@ check() { # check <label> <got> <want>
 
 curl -s -m 3 "$API/" | grep -q jarvis-api || { echo "No worker on $API — start wrangler dev first."; exit 1; }
 
+# Proves a test account's address and agrees to AI, the two things the app's
+# first open does (verify.ts, consent.ts), so the sections below can use it.
+ready() { # ready <token>
+  local id; id=$(curl -s -H "authorization: Bearer $1" "$API/me" | j "d['user']['id']")
+  curl -s -o /dev/null -X POST -H "x-debug-key: $DEBUG_KEY" -H 'content-type: application/json' "$API/debug/verify" -d "{\"userId\":\"$id\"}"
+  curl -s -o /dev/null -X POST -H "authorization: Bearer $1" -H 'content-type: application/json' "$API/me/consent" -d '{"version":1}'
+}
+
 echo "── signup ─────────────────────────────────────────"
-TOKEN=$(curl -s -X POST "$API/auth/signup" -H 'content-type: application/json' \
-  -d "{\"email\":\"$EMAIL\",\"password\":\"password123\",\"name\":\"Smoke\"}" | j "d['token']")
+SIGNUP=$(curl -s -X POST "$API/auth/signup" -H 'content-type: application/json' \
+  -d "{\"email\":\"$EMAIL\",\"password\":\"password123\",\"name\":\"Smoke\"}")
+TOKEN=$(echo "$SIGNUP" | j "d['token']")
 [ -n "$TOKEN" ] && { echo "ok   got a token"; pass=$((pass+1)); } || { echo "FAIL no token"; exit 1; }
 A=(-H "authorization: Bearer $TOKEN" -H 'content-type: application/json')
+
+echo
+echo "── the code step: nothing until the address is proven ──"
+# verify.ts. A local worker has no RESEND_API_KEY, so with DEBUG_KEY set the
+# code goes to its own log instead of an inbox (emailauth.ts deliverCode), and
+# /debug/email/code hands the test a live one.
+check "sign-up sent the first code" "$(echo "$SIGNUP" | j "d['codeSent']")" "True"
+check "and says the address isn't proven" "$(echo "$SIGNUP" | j "d['user']['emailVerified']")" "False"
+ME=$(curl -s "${A[@]}" "$API/me")
+check "/me works before the code" "$(echo "$ME" | j "d['user']['emailVerified']")" "False"
+check "and says nothing else will" "$(echo "$ME" | j "d['user']['mustVerify']")" "True"
+check "nor has it agreed to AI" "$(echo "$ME" | j "d['user']['aiConsent']['given']")" "False"
+check "anything else is 403" "$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" "$API/agent/jobs")" "403"
+check "keyed on needs_verification" "$(curl -s "${A[@]}" "$API/routines" | j "d['error']")" "needs_verification"
+check "agreeing to AI waits for the code too" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/me/consent" -d '{"version":1}')" "403"
+AGAIN=$(curl -s -X POST "${A[@]}" "$API/me/email/code")
+check "another code straight away waits" "$(echo "$AGAIN" | j "0 < d['retryAfter'] <= 60")" "True"
+check "a live code needs the debug key" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' "$API/debug/email/code" -d "{\"email\":\"$EMAIL\"}")" "404"
+CODE=$(curl -s -X POST -H "x-debug-key: $DEBUG_KEY" -H 'content-type: application/json' "$API/debug/email/code" -d "{\"email\":\"$EMAIL\"}" | j "d['code']")
+WRONG=$([ "$CODE" = "000000" ] && echo 111111 || echo 000000)
+check "a wrong code is refused" "$(curl -s -X POST "${A[@]}" "$API/me/email/verify" -d "{\"code\":\"$WRONG\"}" | j "d['attemptsLeft']")" "4"
+check "the right one is taken" "$(curl -s -X POST "${A[@]}" "$API/me/email/verify" -d "{\"code\":\"$CODE\"}" | j "d['emailVerified']")" "True"
+check "and /me says so" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['emailVerified']")" "True"
+check "everything opens up" "$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" "$API/agent/jobs")" "200"
+
+echo
+echo "── consent: nothing to an AI company before it ────"
+# consent.ts. A turn and OVOA's voice are refused before anything is sent;
+# every other model call is refused by the gate on the call (plans.ts).
+check "a turn is 403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/chat" -d '{"message":"hello"}')" "403"
+check "keyed on needs_consent" "$(curl -s -X POST "${A[@]}" "$API/chat" -d '{"message":"hello"}' | j "d['error']")" "needs_consent"
+check "OVOA's voice too" "$(curl -s -X POST "${A[@]}" "$API/voice/speak" -d '{"text":"Hello there"}' | j "d['error']")" "needs_consent"
+check "and a model route that isn't a turn" "$(curl -s -X POST "${A[@]}" "$API/apps/design" -d '{"description":"A grocery helper for my list"}' | j "d['error']")" "needs_consent"
+check "Siri hears it as a sentence" "$(curl -s -X POST "${A[@]}" "$API/siri" -d '{"message":"hello"}' | head -c 20)" "Before I can answer,"
+AGREED=$(curl -s -X POST "${A[@]}" "$API/me/consent" -d '{"version":1}')
+check "agreeing" "$(echo "$AGREED" | j "d['aiConsent']['given']")" "True"
+check "/me says so" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['aiConsent']['given']")" "True"
+check "a turn gets past it (and finds no engine here)" "$(curl -s -X POST "${A[@]}" "$API/chat" -d '{"message":"hello"}' | j "d.get('error')!='needs_consent'")" "True"
+check "taking it back" "$(curl -s -X DELETE "${A[@]}" "$API/me/consent" | j "d['aiConsent']['given']")" "False"
+check "stops turns again" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/chat" -d '{"message":"hello"}')" "403"
+curl -s -o /dev/null -X POST "${A[@]}" "$API/me/consent" -d '{"version":1}'
 
 echo
 echo "── defaults: everything off ───────────────────────"
@@ -136,6 +187,7 @@ echo
 echo "── other people's data stays theirs ───────────────"
 OTHER=$(curl -s -X POST "$API/auth/signup" -H 'content-type: application/json' \
   -d "{\"email\":\"other$(date +%s)@example.com\",\"password\":\"password123\",\"name\":\"Other\"}" | j "d['token']")
+ready "$OTHER"
 check "another account sees no jobs" \
   "$(curl -s -H "authorization: Bearer $OTHER" "$API/agent/jobs" | j "len(d['jobs'])")" "0"
 check "another account sees no notes" \
@@ -222,10 +274,12 @@ check "a new account isn't onboarded" "$(curl -s "${A[@]}" "$API/me" | j "d['use
 ONB=$(curl -s "${A[@]}" "$API/onboarding")
 check "it starts with the name"  "$(echo "$ONB" | j "d['step']")" "name"
 check "the question uses it"     "$(echo "$ONB" | j "'Smoke' in d['question']")" "True"
-check "nine questions"           "$(echo "$ONB" | j "d['total']")" "9"
+check "ten questions"            "$(echo "$ONB" | j "d['total']")" "10"
+check "goals come after workouts" "$(curl -s -X POST "${A[@]}" "$API/onboarding/skip" -d '{"step":"gym"}' | j "d['next']['step']")" "goals"
+check "and ask about them"       "$(curl -s "${A[@]}" "$API/onboarding" | j "'goals' in d['question']")" "True"
 check "skipping moves on"        "$(curl -s -X POST "${A[@]}" "$API/onboarding/skip" -d '{"step":"name"}' | j "d['next']['step']")" "nicknames"
 check "an empty answer is refused"   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/onboarding/answer" -d '{"step":"nicknames","text":" "}')" "400"
-for s in nicknames wake_sleep work meds pets gym routines; do curl -s -o /dev/null -X POST "${A[@]}" "$API/onboarding/skip" -d "{\"step\":\"$s\"}"; done
+for s in nicknames wake_sleep work meds pets gym goals routines; do curl -s -o /dev/null -X POST "${A[@]}" "$API/onboarding/skip" -d "{\"step\":\"$s\"}"; done
 check "skipping the last one finishes" "$(curl -s -X POST "${A[@]}" "$API/onboarding/skip" -d '{"step":"emergency"}' | j "d['next']['done']")" "True"
 check "now onboarded"          "$(curl -s "${A[@]}" "$API/me" | j "d['user']['onboarded']")" "True"
 check "restart from Settings"  "$(curl -s -X POST "${A[@]}" "$API/onboarding/restart" | j "d['step']")" "name"

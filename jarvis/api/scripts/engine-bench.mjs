@@ -12,6 +12,12 @@
 // turn over, runs ten spoken and ten typed turns, prints one table row, saves
 // every turn to a JSON file, and deletes the account and its rows.
 //
+// A new account can do nothing until its address is proven (src/verify.ts),
+// and an example.com address can't receive the code. So the account is marked
+// proven: through POST /debug/verify when DEBUG_KEY is in the environment, or
+// otherwise with wrangler, like the settings rows. Then it agrees to AI, as the
+// app's consent screen would (src/consent.ts), or every turn is refused.
+//
 // Phone lookups (reminders, the calendar, contacts) pause the turn for the app;
 // this answers them with a plain made-up result and resumes, exactly as the
 // phone would, so a paused turn counts as a tool call that worked.
@@ -144,6 +150,24 @@ function settingsRows(userId, prefs, remove = false) {
         ([k, v]) =>
           `INSERT INTO server_settings (key, value, updated_at) VALUES ('${k}:${userId}', '${v.replace(/'/g, "")}', ${now}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
       );
+  d1Execute(statements);
+}
+
+/** Marks the throwaway account's address proven: the debug route when DEBUG_KEY is set, else wrangler. */
+async function proveAddress(userId) {
+  if (process.env.DEBUG_KEY) {
+    await json("/debug/verify", null, {
+      method: "POST",
+      headers: { "x-debug-key": process.env.DEBUG_KEY },
+      body: JSON.stringify({ userId }),
+    });
+    return;
+  }
+  d1Execute([`UPDATE users SET email_verified_at = ${Date.now()} WHERE id = '${userId.replace(/[^0-9a-f-]/gi, "")}'`]);
+}
+
+/** Runs statements on the remote database with wrangler. */
+function d1Execute(statements) {
   if (!statements.length) return;
   // From a file, not --command: on Windows the shell splits a quoted statement
   // into one argument per word.
@@ -208,6 +232,9 @@ const { token, user } = await json("/auth/signup", null, { method: "POST", body:
 console.error(`account ${user.id} created`);
 const turns = [];
 try {
+  await proveAddress(user.id);
+  await json("/me/consent", token, { method: "POST", body: JSON.stringify({ version: 1 }) });
+  console.error("address proven, AI agreed to");
   if (Object.keys(PREFS).length) {
     settingsRows(user.id, PREFS);
     console.error(`settings written: ${JSON.stringify(PREFS)}; waiting ${WAIT_S} s for the Worker's cache`);

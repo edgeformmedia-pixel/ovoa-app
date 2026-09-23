@@ -13,6 +13,8 @@ import {
   CODE_SENDS_PER_HOUR,
   CODE_TTL_MS,
   codeEmail,
+  codesAvailable,
+  deliverCode,
   googleAudiences,
   googleIdentityFrom,
   issueCode,
@@ -89,7 +91,7 @@ eq("spaces and dashes pasted from the email go", cleanCode(" 123-456 "), "123456
   const a = await issueCode(db, "a@example.com", t0, "111111");
   eq("the first code is issued", a, { code: "111111" });
   eq("a second one straight after waits", await issueCode(db, "a@example.com", t0 + 1000, "222222"), {
-    waitSeconds: 29,
+    waitSeconds: 59,
   });
   eq("another address isn't held up", await issueCode(db, "b@example.com", t0 + 1000, "333333"), { code: "333333" });
 
@@ -201,6 +203,9 @@ eq("spaces and dashes pasted from the email go", cleanCode(" 123-456 "), "123456
   eq("no name, no name", create.text.startsWith("Hi,"), true);
   eq("names can't write HTML", codeEmail({ to: "c@x.co", code: "1", name: "<b>x", existing: true }).html.includes("<b>x"), false);
   eq("no em dashes in the copy", /—/.test(signIn.text + create.text), false);
+  const confirm = codeEmail({ to: "d@example.com", code: "314159", name: "Sam", existing: true, confirm: true });
+  eq("the app's code step says it's to confirm the address", confirm.text.includes("confirm your email for OVOA"), true);
+  eq("and not that it's a sign-in", confirm.text.includes("sign in"), false);
 }
 
 {
@@ -235,6 +240,33 @@ eq("spaces and dashes pasted from the email go", cleanCode(" 123-456 "), "123456
     }),
     false,
   );
+}
+
+// ---------- Delivering a code: Resend, or a local worker's log ----------
+
+{
+  const sent: string[] = [];
+  const resend = async (url: string) => {
+    sent.push(url);
+    return new Response("{}", { status: 200 });
+  };
+  const email = codeEmail({ to: "e@example.com", code: "271828", name: null, existing: true, confirm: true });
+  const logged: string[] = [];
+  const log = console.log;
+  console.log = (...args: unknown[]) => void logged.push(args.join(" "));
+  const withKey = await deliverCode({ RESEND_API_KEY: "re_test", DEBUG_KEY: "localtest" }, email, "271828", resend);
+  const local = await deliverCode({ DEBUG_KEY: "localtest" }, email, "271828", resend);
+  const neither = await deliverCode({}, email, "271828", resend);
+  console.log = log;
+  eq("with a Resend key it's sent, debug key or not", withKey, "sent");
+  eq("once", sent.length, 1);
+  eq("no key but a debug key (a local worker): logged, not sent", local, "logged");
+  eq("the log line has the code", logged.some((l) => l.includes("271828")), true);
+  eq("and not the address", logged.some((l) => l.includes("e@example.com")), false);
+  eq("neither: it failed, and nothing was logged", [neither, logged.length], ["failed", 1]);
+  eq("codes can go out with a key", codesAvailable({ RESEND_API_KEY: "re_test" }), true);
+  eq("or a debug key", codesAvailable({ DEBUG_KEY: "x" }), true);
+  eq("but not with neither", codesAvailable({}), false);
 }
 
 // ---------- Google ----------

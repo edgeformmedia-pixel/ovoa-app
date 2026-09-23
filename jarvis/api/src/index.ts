@@ -85,15 +85,17 @@ import {
   checkCode,
   CODE_TTL_MS,
   codeEmail,
-  emailConfigured,
+  codesAvailable,
+  deliverCode,
   issueCode,
   issueTicket,
   pruneEmailAuth,
-  sendEmail,
   spendTicket,
   unsendCode,
   verifyGoogleIdToken,
 } from "./emailauth";
+import { emailVerifyRoutes, markVerified, mustVerifyNow, requireVerified, sendAccountCode, type VerifyRow } from "./verify";
+import { consentRoutes, consentView, requireConsent, type ConsentRow } from "./consent";
 import { sliceFor } from "./sweep";
 import {
   cleanOrder,
@@ -374,17 +376,25 @@ function logAuth(route: "signup" | "login" | "code" | "google", outcome: string,
 
 async function publicUser(env: Env, userId: string) {
   const db = env.DB;
-  const user = await db
-    .prepare("SELECT id, email, name, created_at FROM users WHERE id = ?")
+  const row = await db
+    .prepare(
+      `SELECT id, email, name, created_at, email_verified_at, must_verify, ai_consent_at, ai_consent_version
+         FROM users WHERE id = ?`,
+    )
     .bind(userId)
-    .first<{ id: string; email: string; name: string; created_at: number }>();
-  if (!user) return null;
+    .first<{ id: string; email: string; name: string; created_at: number } & VerifyRow & ConsentRow>();
+  if (!row) return null;
+  const { email_verified_at, must_verify, ai_consent_at, ai_consent_version, ...user } = row;
   const [settings, profile] = await Promise.all([getSettings(db, userId), getProfile(db, userId)]);
   // onboarded: the app shows the setup conversation until this is true.
   // devTools: a development account (DEV_EMAILS), so Dev tools shows the
   // switches only those accounts may use. The server checks again on every use.
   // ttsEngine: which engine voices replies for this person, so the app knows
   // when to speak on the phone itself and which voices to offer.
+  // emailVerified: the address has been proven with a code (or on ovoa.ai); the
+  // app asks for one while it's false. mustVerify: and nothing but that code
+  // works until then (verify.ts). aiConsent: whether they've agreed to AI, and
+  // to which wording of the screen (consent.ts).
   const mine = await settingsFor(env, userId);
   return {
     ...user,
@@ -392,6 +402,9 @@ async function publicUser(env: Env, userId: string) {
     onboarded: !!profile.onboardedAt,
     devTools: isDevEmail(env, user.email),
     ttsEngine: ttsEngineFrom(mine.tts_engine, env.TTS_ENGINE),
+    emailVerified: email_verified_at != null,
+    mustVerify: mustVerifyNow({ must_verify, email_verified_at }),
+    aiConsent: consentView({ ai_consent_at, ai_consent_version }),
   };
 }
 
@@ -466,15 +479,23 @@ app.post("/auth/signup", async (c) => {
   }
 
   const id = await insertUser(c.env.DB, { email, password, name, verified: false });
+  // The address isn't proven yet: until the emailed code is typed, the account
+  // reaches only /me, sign-out, deleting it, and the code routes (verify.ts).
+  // The first code goes now; the app's code step asks for another if it didn't.
+  await c.env.DB.prepare("UPDATE users SET must_verify = 1 WHERE id = ?").bind(id).run();
   const token = await createSession(c.env.DB, id);
-  logAuth("signup", "created", email, { user: id });
-  return c.json({ token, user: await publicUser(c.env, id) }, 201);
+  const code = await sendAccountCode(c.env, { email, name }).catch((err: unknown) => {
+    console.error("ovoa.err signup: couldn't send the first code", err);
+    return { sent: false as const };
+  });
+  logAuth("signup", "created", email, { user: id, code: code.sent ? code.via : "not sent" });
+  return c.json({ token, user: await publicUser(c.env, id), codeSent: code.sent }, 201);
 });
 
 /**
  * A new account and its settings row, in one batch. `verified`: the address
  * was proven first (emailauth.ts). The app's own signup leaves that column out
- * altogether, so it keeps working on a database without migration 0039.
+ * and proves the address afterwards, with a code (verify.ts).
  */
 async function insertUser(
   db: D1Database,
@@ -583,7 +604,9 @@ app.post("/auth/email/code", async (c) => {
     logAuth("code", "rejected", null, emailShape(body));
     return c.json({ error: BAD_EMAIL, fields: { email: BAD_EMAIL } }, 400);
   }
-  if (!emailConfigured(c.env)) {
+  // No Resend key: only a worker with DEBUG_KEY (a local one) goes on, and
+  // writes the code to its own log instead of sending it (deliverCode).
+  if (!codesAvailable(c.env)) {
     logAuth("code", "no RESEND_API_KEY", null);
     return c.json({ error: "Email codes aren't switched on yet. Write to support@ovoa.ai and we'll set you up." }, 503);
   }
@@ -607,13 +630,13 @@ app.post("/auth/email/code", async (c) => {
   // The email says "sign in" or "create your account"; the reply here is the
   // same either way, so the page can't be used to ask who has an account.
   const user = await c.env.DB.prepare("SELECT name FROM users WHERE email = ?").bind(email).first<{ name: string }>();
-  const sent = await sendEmail(c.env, codeEmail({ to: email, code: issued.code, name: user?.name ?? null, existing: !!user }));
-  if (!sent) {
+  const via = await deliverCode(c.env, codeEmail({ to: email, code: issued.code, name: user?.name ?? null, existing: !!user }), issued.code);
+  if (via === "failed") {
     await unsendCode(c.env.DB, email);
     logAuth("code", "send failed", email);
     return c.json({ error: "We couldn't send the email just now. Try again in a minute." }, 502);
   }
-  logAuth("code", "sent", email, { existing: Number(!!user) });
+  logAuth("code", via, email, { existing: Number(!!user) });
   return c.json({ ok: true, expiresInMinutes: CODE_TTL_MS / 60_000 });
 });
 
@@ -725,11 +748,24 @@ authed.use("*", async (c, next) => {
 // After sign-in, so the expensive routes count against the person (limits.ts).
 authed.use("*", limitByUser());
 
+// An account made by the app's sign-up since v1 reaches nothing but /me,
+// sign-out, deleting it and the code routes until its address is proven
+// (verify.ts): 403 needs_verification. Before the plan, so an unproven account
+// never costs a plan lookup; one proven (or from before) costs one read per
+// isolate, ever.
+authed.use("*", requireVerified());
+
 // After the rate limit, so a runaway is stopped before it costs a plan lookup.
 // Every signed-in route needs the plan ROUTE_TIERS gives it (plans.ts), and a
 // person without it gets the 402 the app knows how to show. Free routes pass
 // without reading anything.
 authed.use("*", requirePlan());
+
+// After the plan, so someone on the free plan hears "That's for Base users",
+// not "agree first": a turn and OVOA's voice need consent to AI before anything
+// is sent anywhere (consent.ts). Every other model call is refused by the gate
+// on the call itself (plans.ts modelGate).
+authed.use("*", requireConsent());
 
 authed.post("/auth/logout", async (c) => {
   await deleteSession(c.env.DB, c.var.token);
@@ -2599,6 +2635,36 @@ app.put("/debug/plan", async (c) => {
   return c.json({ userId: user.id, override: body.override, plan: await planForMe(c.env, user.id) });
 });
 
+/**
+ * Proving a test account's address without an inbox (verify.ts), for
+ * test/smoke.sh, scripts/engine-bench.mjs and throwaway production checks,
+ * whose example.com addresses can't receive a code. Needs DEBUG_KEY.
+ *
+ *   POST /debug/verify      {"email" or "userId"}   marks it proven
+ *   POST /debug/email/code  {"email" or "userId"}   a live code for it, not sent,
+ *                                                   so the code step itself can be tested
+ */
+app.post("/debug/verify", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const user = await debugPlanUser(c.env, ((await c.req.json().catch(() => null)) ?? {}) as { email?: unknown; userId?: unknown });
+  if (!user) return c.json({ error: "No such account" }, 404);
+  await markVerified(c.env, user.id);
+  say("verify", { outcome: "proven by debug key", user: user.id });
+  return c.json({ userId: user.id, emailVerified: true });
+});
+
+app.post("/debug/email/code", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const user = await debugPlanUser(c.env, ((await c.req.json().catch(() => null)) ?? {}) as { email?: unknown; userId?: unknown });
+  if (!user) return c.json({ error: "No such account" }, 404);
+  // Past the minute between codes, and without counting against the hour: the
+  // one already out is voided first, as when an email fails to send.
+  await unsendCode(c.env.DB, user.email);
+  const issued = await issueCode(c.env.DB, user.email);
+  if ("waitSeconds" in issued) return c.json({ error: "Too many codes this hour", retryAfter: issued.waitSeconds }, 429);
+  return c.json({ userId: user.id, code: issued.code });
+});
+
 /** Queues a command as if the agent had, so the channel can be tested without a model. Needs DEBUG_KEY. */
 authed.post("/debug/commands", async (c) => {
   if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
@@ -2619,6 +2685,8 @@ authed.post("/debug/food/log", async (c) => {
   return c.json(done, "error" in done ? 400 : 200);
 });
 
+authed.route("/", emailVerifyRoutes);
+authed.route("/", consentRoutes);
 authed.route("/", commands);
 authed.route("/", routines);
 authed.route("/", onboarding);

@@ -611,14 +611,14 @@ myApps.post("/apps/revise", async (c) => {
   }
 });
 
-myApps.post("/apps", async (c) => {
-  const parsed = draftSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "That app is missing something" }, 400);
-  const count = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM user_apps WHERE user_id = ?")
-    .bind(c.var.userId)
-    .first<{ n: number }>();
-  if ((count?.n ?? 0) >= MAX_APPS) return c.json({ error: `You can make up to ${MAX_APPS} apps. Delete one to make room.` }, 409);
-  const d = parsed.data;
+/**
+ * Keeps a designed app as theirs: the Save on the Create screen (POST /apps),
+ * and setup, which makes one for each goal they name (onboarding.ts). Null
+ * when they already have MAX_APPS.
+ */
+export async function saveApp(db: D1Database, userId: string, d: Omit<AppDraft, "blocks"> & { blocks: unknown[] }) {
+  const count = await db.prepare("SELECT COUNT(*) AS n FROM user_apps WHERE user_id = ?").bind(userId).first<{ n: number }>();
+  if ((count?.n ?? 0) >= MAX_APPS) return null;
   const now = Date.now();
   const row: Row = {
     id: crypto.randomUUID(),
@@ -634,12 +634,21 @@ myApps.post("/apps", async (c) => {
     created_at: now,
     updated_at: now,
   };
-  await c.env.DB.prepare(
-    "INSERT INTO user_apps (id, user_id, name, about, icon, tone, instructions, opener, blocks, state, speak, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  )
-    .bind(row.id, c.var.userId, row.name, row.about, row.icon, row.tone, row.instructions, row.opener, row.blocks, row.state, row.speak, now, now)
+  await db
+    .prepare(
+      "INSERT INTO user_apps (id, user_id, name, about, icon, tone, instructions, opener, blocks, state, speak, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(row.id, userId, row.name, row.about, row.icon, row.tone, row.instructions, row.opener, row.blocks, row.state, row.speak, now, now)
     .run();
-  return c.json({ app: shape(row) });
+  return shape(row);
+}
+
+myApps.post("/apps", async (c) => {
+  const parsed = draftSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "That app is missing something" }, 400);
+  const app = await saveApp(c.env.DB, c.var.userId, parsed.data);
+  if (!app) return c.json({ error: `You can make up to ${MAX_APPS} apps. Delete one to make room.` }, 409);
+  return c.json({ app });
 });
 
 /** Changes how the app looks and behaves. What's in its parts stays, except in parts taken away. */

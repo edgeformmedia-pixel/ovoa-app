@@ -3,7 +3,7 @@
 // arithmetic, and the gate every model call asks. Checked without a Worker;
 // the database and the site are small fakes that count what was asked of them.
 
-import { CONSENT_NEEDED } from "../src/consent";
+import { AI_CONSENT_VERSION, CONSENT_NEEDED, forgetConsent } from "../src/consent";
 import {
   ALLOWANCES,
   allowanceFor,
@@ -98,6 +98,10 @@ eq("pausing it is free", tierForRoute("PATCH", "/agent/jobs/j1"), "free");
 eq("/me is free", tierForRoute("GET", "/me"), "free");
 eq("settings are free", tierForRoute("PATCH", "/me"), "free");
 eq("refreshing the plan is free", tierForRoute("POST", "/me/plan/refresh"), "free");
+eq("the code step is free", tierForRoute("POST", "/me/email/code"), "free");
+eq("so is typing the code", tierForRoute("POST", "/me/email/verify"), "free");
+eq("agreeing to AI is free", tierForRoute("POST", "/me/consent"), "free");
+eq("and taking it back", tierForRoute("DELETE", "/me/consent"), "free");
 eq("notes are free", tierForRoute("POST", "/notes"), "free");
 eq("a note is free", tierForRoute("PATCH", "/notes/n1"), "free");
 eq("the Calorie screen is free (no model)", tierForRoute("GET", "/food"), "free");
@@ -330,9 +334,26 @@ eq("a development account has no daily number", planView({ tier: "pro", status: 
 
 // ---------- The gate every model call asks (modelGate) ----------
 
-/** A users row with an override (the tier), and today's spend, or an error in its place. */
-function gateEnv(opts: { tier?: PlanRow["plan_override"]; spend?: number | Error; users?: Error; missing?: boolean; email?: string; dev?: string }) {
-  const r = row({ plan_override: opts.tier ?? null, email: opts.email ?? "a@example.com" });
+/**
+ * A users row with an override (the tier), and today's spend, or an error in
+ * its place. They have agreed to AI unless `consent` is false.
+ */
+function gateEnv(opts: {
+  tier?: PlanRow["plan_override"];
+  spend?: number | Error;
+  users?: Error;
+  missing?: boolean;
+  email?: string;
+  dev?: string;
+  consent?: boolean;
+}) {
+  forgetConsent();
+  const agreed = opts.consent !== false;
+  const r = {
+    ...row({ plan_override: opts.tier ?? null, email: opts.email ?? "a@example.com" }),
+    ai_consent_at: agreed ? NOW : null,
+    ai_consent_version: agreed ? AI_CONSENT_VERSION : null,
+  };
   const reads = { users: 0, spend: 0 };
   const db = {
     prepare(sql: string) {
@@ -413,6 +434,25 @@ const call = (userId: string | null, continuing = false) => ({ userId, purpose: 
   eq("cron, base: runs", await blockedFor(gateEnv({ tier: "base" }).env, "b2", "base"), null);
   forgetPlan();
   eq("cron, base, day spent: allowance", await blockedFor(gateEnv({ tier: "base", spend: 300_000 }).env, "b3", "base"), "allowance");
+  forgetPlan();
+}
+
+// Consent (consent.ts): nothing goes to a model before they've agreed, on any plan that has AI.
+{
+  forgetPlan();
+  eq("base, not agreed to AI: needs_consent", await modelGate(gateEnv({ tier: "base", consent: false }).env, call("c1")), "needs_consent");
+  forgetPlan();
+  eq("free and not agreed: the plan is what's said", await modelGate(gateEnv({ tier: "free", consent: false }).env, call("c2")), "needs_plan");
+  forgetPlan();
+  eq("a resumed turn still needs it", await modelGate(gateEnv({ tier: "pro", consent: false }).env, call("c3", true)), "needs_consent");
+  forgetPlan();
+  eq(
+    "a development account still needs it",
+    await modelGate(gateEnv({ tier: "base", consent: false, email: "dev@example.com", dev: "dev@example.com" }).env, call("c4")),
+    "needs_consent",
+  );
+  forgetPlan();
+  eq("cron, base, not agreed: skipped for consent", await blockedFor(gateEnv({ tier: "base", consent: false }).env, "c5", "base"), "consent");
   forgetPlan();
 }
 
