@@ -8,6 +8,7 @@ import {
   AI_UNREACHABLE,
   AiUnreachable,
   chatCompletionsUrl,
+  chatWithTools,
   cleanOrder,
   engineOrder,
   generateText,
@@ -112,7 +113,8 @@ eq("the var can turn it up", thinkingLevelFor({ GLM_THINKING: "on" }, "glm", fal
 eq("the var can turn it off", thinkingLevelFor({ GLM_THINKING: "off" }, "glm", false), "off");
 eq("a garbage var keeps the default", thinkingLevelFor({ GLM_THINKING: "lots" }, "glm", false), "low");
 
-const fields = (model: string, level: "off" | "low" | "on", flavor: "zai" | "openrouter" | "openai") => JSON.stringify(thinkingFields(model, level, flavor));
+const fields = (model: string, level: "off" | "low" | "on", flavor: "zai" | "openrouter" | "openai" | "none") =>
+  JSON.stringify(thinkingFields(model, level, flavor));
 
 // Z.ai: 5.3 cannot be switched off, so off means low.
 eq("Z.ai GLM 5.3 off is really low", fields("glm-5.3-flash", "off", "zai"), '{"thinking":{"type":"enabled"},"reasoning_effort":"low"}');
@@ -126,6 +128,9 @@ eq("OpenRouter on", fields("z-ai/glm-5.3-flash", "on", "openrouter"), '{"reasoni
 // Anyone else: the plain field.
 eq("a plain host gets reasoning_effort", fields("glm-5.3-flash", "off", "openai"), '{"reasoning_effort":"low"}');
 eq("so does another provider's model there", fields("some-model", "on", "openai"), '{"reasoning_effort":"high"}');
+// A provider whose model doesn't think (OpenAiProvider.thinking "none"): nothing, whatever the level.
+eq("a non-thinking provider gets no field when off", fields("some-model", "off", "none"), "{}");
+eq("nor when thinking is on", fields("some-model", "on", "none"), "{}");
 
 // Gemini: the least thinking each model takes.
 eq("Flash-Lite goes down to minimal", quickThinking("gemini-3.5-flash-lite"), "minimal");
@@ -155,6 +160,48 @@ try {
 eq("no keys: AiUnreachable", thrown instanceof AiUnreachable, true);
 eq("which says which keys are missing", String((thrown as Error)?.message).includes("GLM_API_KEY"), true);
 eq("and each engine is written down as having no key", attempts.map((a) => `${a.engine}:${a.outcome}`).join(","), "glm:no_key,gemini:no_key");
+
+// A paused turn resumed with nothing to carry it on is the AI out of reach too
+// (/chat/resume answers it plainly), whichever engine it paused on.
+const resumed = async (state: any) => {
+  try {
+    await chatWithTools({}, {
+      model: "gemini-3.5-flash-lite",
+      system: "s",
+      turns: [{ role: "user", text: "what's on my calendar" }],
+      tools: [],
+      callTool: async () => ({}),
+      usage: { userId: "u1", purpose: "test" },
+      resume: { state, results: { c1: { events: [] } } },
+    });
+    return null;
+  } catch (err) {
+    return err;
+  }
+};
+const glmPaused = {
+  engine: "glm",
+  round: 1,
+  messages: [
+    { role: "user", content: "what's on my calendar" },
+    { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "calendar", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "c1", content: "" },
+  ],
+  slots: [{ id: "c1", index: 2 }],
+};
+const geminiPaused = {
+  engine: "gemini",
+  round: 1,
+  contents: [
+    { role: "user", parts: [{ text: "what's on my calendar" }] },
+    { role: "model", parts: [{ functionCall: { name: "calendar", args: {} } }] },
+    { role: "user", parts: [{ functionResponse: { name: "calendar", response: {} } }] },
+  ],
+  slots: [{ id: "c1", part: 0 }],
+};
+eq("resuming a GLM-paused turn with no engine: AiUnreachable", isAiUnreachable(await resumed(glmPaused)), true);
+eq("resuming a Gemini-paused turn with no engine: AiUnreachable", isAiUnreachable(await resumed(geminiPaused)), true);
+eq("resuming on a retired engine with none ready: AiUnreachable", isAiUnreachable(await resumed({ ...glmPaused, engine: "deepseek" })), true);
 
 console.log(fails ? `\n${fails} failed` : "\nall passed");
 process.exit(fails ? 1 : 0);

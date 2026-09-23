@@ -1724,9 +1724,11 @@ async function chatTurn(
     return unreachableReply(env, ctx, err, "/chat", { requestId, userId, started }, onSentence);
   });
   // Most of the month's replies are gone: said once, on the end of a reply
-  // they were getting anyway. A paused turn keeps it for the next one.
+  // they were getting anyway. A paused turn keeps it for the next one, and so
+  // does a reply no model wrote (refused, or the AI out of reach: engine
+  // "none"), which didn't count.
   const monthly = standing?.month;
-  if (monthly?.verdict === "warn" && result.kind === "reply") {
+  if (monthly?.verdict === "warn" && result.kind === "reply" && (result.meta.engine as string) !== "none") {
     const warning = warnMessage(monthly.used, monthly.cap);
     onSentence?.(warning);
     ctx.waitUntil(markWarned(db, userId, monthly.month));

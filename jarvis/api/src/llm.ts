@@ -29,14 +29,15 @@ import { generate as geminiGenerate, grounded as geminiGrounded, quickThinking, 
 // Adding an OpenAI-compatible provider is config plus a few lines:
 //   1. An entry in OPENAI_PROVIDERS: its name, the names of the vars that hold
 //      its key, base URL, model and thinking level, and defaults for the base
-//      URL and the model.
+//      URL and the model. A provider serving a model that doesn't think sets
+//      `thinking: "none"`, so no thinking field is sent at all.
 //   2. Its id in OpenAiEngine and in ENGINES, at the place in the order where
 //      it should be tried.
 //   3. Its vars in wrangler.jsonc (and in types.ts Env, for the record), its key
 //      as a secret, and its price in pricing.ts LLM_PRICES under its model id.
 // How much it thinks is spelled for its host (hostFlavor, thinkingFields): Z.ai
 // and OpenRouter have their own fields, and any other host gets the plain
-// OpenAI `reasoning_effort`.
+// OpenAI `reasoning_effort`, unless the provider's `thinking` says otherwise.
 
 export type { Turn };
 
@@ -394,6 +395,20 @@ function coolDown(engine: Engine, err: unknown) {
   cooldownUntil.set(engine, Date.now() + ms);
 }
 
+/**
+ * A failure that belongs to one request, not to the engine: an empty reply, a
+ * turn that went round too many times, a request the host refused (a 400 such
+ * as Z.ai's content filter). Cooling the engine down for those took it away
+ * from every other call on the isolate over one bad request, so they only move
+ * this request on to the next engine.
+ */
+const perRequest = (err: unknown) => ["empty", "too_many_rounds", "http_400", "http_413", "http_422"].includes(classifyEngineError(err));
+
+/** coolDown, except for a failure that belongs to the one request. */
+function coolDownAfter(engine: Engine, err: unknown) {
+  if (!perRequest(err)) coolDown(engine, err);
+}
+
 // ---------- Which engine, in what order ----------
 //
 // Three layers say what to try first, each overriding the one below:
@@ -661,7 +676,12 @@ function nothingToTry(env: LlmEnv, model: string, onAttempt?: OnAttempt) {
   for (const engine of ENGINES) {
     if (!available[engine]) onAttempt?.({ engine, model: modelFor(env, engine, model), outcome: "no_key", ms: 0 });
   }
-  return new AiUnreachable(engineTrouble(env) ?? `No AI engine has its key set (${ENGINES.map(keyVarOf).join(", ")}).`);
+  const exists = ENGINES.filter((e) => available[e]);
+  if (!exists.length) return new AiUnreachable(`No AI engine has its key set (${ENGINES.map(keyVarOf).join(", ")}).`);
+  // Every engine that exists is cooling down. The message is what each last failed with, and no countdown:
+  // it goes to error_events, where a minute-by-minute number made a new fingerprint every minute, and
+  // classifyEngineError reads the " 402:" / " 429:" in it. (engineTrouble's sentence rides along as the detail.)
+  return new AiUnreachable(`All engines unavailable: ${exists.map((e) => `${nameOf(e)}: ${lastFailure.get(e) ?? "unknown"}`).join("; ")}`);
 }
 
 /** Which model each engine is actually about to call, for the record. Gemini's is the caller's (CHAT_MODEL or MEMORY_MODEL). */
@@ -704,7 +724,7 @@ function unreachable(err: unknown, failures: string[], tried: Engine[]) {
 }
 
 function logFallback(from: Engine, to: Engine, err: unknown) {
-  coolDown(from, err);
+  coolDownAfter(from, err);
   console.error(`${nameOf(from)} failed, using ${nameOf(to)} fallback`, err);
 }
 
@@ -733,7 +753,7 @@ export async function generateText(env: LlmEnv, opts: Options): Promise<string> 
       const brief = String(err instanceof Error ? err.message : err).slice(0, 300);
       opts.onAttempt?.({ engine, model, outcome: classifyEngineError(err), ms: Date.now() - at, error: brief });
       if (i === order.length - 1) {
-        coolDown(engine, err);
+        coolDownAfter(engine, err);
         throw unreachable(err, failures, order);
       }
       failures.push(`${nameOf(engine)}: ${brief.slice(0, 200)}`);
@@ -761,45 +781,85 @@ export async function chatWithTools(
     // Where a paused turn goes when its own engine can't carry on: the first
     // OpenAI-style engine that is ready now. Its messages are OpenAI-style.
     const openAiNow = () => engines(env, !!opts.voice, opts.prefer).find((e) => isOpenAiEngine(e)) as OpenAiEngine | undefined;
+    // As for a new turn: a failure after something was said or done is the
+    // turn failing; before that, with nothing left to carry it on, the AI is
+    // out of reach (AiUnreachable, which /chat/resume answers plainly).
+    let committed = false;
+    const callTool: CallTool = (name, args) => {
+      committed = true;
+      return opts.callTool(name, args);
+    };
+    const onText: OnText | undefined = opts.onText
+      ? (delta) => {
+          committed = true;
+          return opts.onText!(delta);
+        }
+      : undefined;
+    const run = { ...opts, callTool, onText };
+    const failures: string[] = [];
+    const tried: Engine[] = [];
+    /** One engine's go at carrying the turn on: its outcome, or the error to move on with. */
+    const attempt = async (engine: Engine, go: () => Promise<ChatOutcome>): Promise<{ outcome: ChatOutcome } | { err: unknown }> => {
+      tried.push(engine);
+      const at = Date.now();
+      const model = modelFor(env, engine, opts.model);
+      try {
+        const outcome = await go();
+        opts.onAttempt?.({ engine, model, outcome: outcome.kind === "paused" ? "paused" : "ok", ms: Date.now() - at });
+        return { outcome };
+      } catch (err) {
+        const brief = String(err instanceof Error ? err.message : err).slice(0, 300);
+        opts.onAttempt?.({ engine, model, outcome: classifyEngineError(err), ms: Date.now() - at, error: brief });
+        coolDownAfter(engine, err);
+        if (committed) throw finalError(err, failures, tried);
+        return { err };
+      }
+    };
     if (state.engine === "gemini") {
       const last = state.contents[state.contents.length - 1];
       for (const slot of state.slots) {
         last.parts[slot.part].functionResponse.response = geminiResponse(result(slot.id));
       }
-      let streamed = false;
-      const onText: OnText | undefined = opts.onText
-        ? (delta) => {
-            streamed = true;
-            return opts.onText!(delta);
-          }
-        : undefined;
-      try {
-        if ((cooldownUntil.get("gemini") ?? 0) > Date.now()) throw new Error("Gemini is cooling down");
-        return await geminiToolLoop(env, { ...opts, onText }, state);
-      } catch (err) {
-        // Out of quota halfway through: finish the turn on an OpenAI-style
-        // engine with what's been looked up, if one is ready.
-        const next = openAiNow();
-        if (streamed || !next) {
-          coolDown("gemini", err);
-          throw err;
-        }
-        logFallback("gemini", next, err);
-        const messages = geminiToOpenAi(opts.system, state.contents);
-        return openAiToolLoop(env, next, opts, { engine: next, round: state.round, messages, slots: [] });
+      // Gemini cooling down (or without its key now) isn't tried, and isn't cooled
+      // down again either: that would cut a long quota or credit cooldown to 15 seconds.
+      const cooling = !availableEngines(env).gemini || (cooldownUntil.get("gemini") ?? 0) > Date.now();
+      let err: unknown = null;
+      if (!cooling) {
+        const got = await attempt("gemini", () => geminiToolLoop(env, run, state));
+        if ("outcome" in got) return got.outcome;
+        err = got.err;
       }
+      // Out of quota halfway through: finish the turn on an OpenAI-style
+      // engine with what's been looked up, if one is ready.
+      const next = openAiNow();
+      if (!next) throw cooling ? nothingToTry(env, opts.model, opts.onAttempt) : unreachable(err, failures, tried);
+      if (!cooling) {
+        failures.push(`Gemini: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`);
+        console.error(`Gemini failed, using ${nameOf(next)} fallback`, err);
+      }
+      const messages = geminiToOpenAi(opts.system, state.contents);
+      const got = await attempt(next, () => openAiToolLoop(env, next, run, { engine: next, round: state.round, messages, slots: [] }));
+      if ("outcome" in got) return got.outcome;
+      throw unreachable(got.err, failures, tried);
     }
     const paused = state as Extract<LoopState, { engine: OpenAiEngine }>;
     for (const slot of paused.slots) paused.messages[slot.index].content = toolResultText(result(slot.id));
     // Paused on an engine retired since (DeepSeek or Workers AI, before v1; a
-    // paused turn keeps for ten minutes): the one there is now carries on.
-    if (!isOpenAiEngine(paused.engine as string)) {
+    // paused turn keeps for ten minutes), or one whose key is gone: the one
+    // there is now carries on.
+    if (!isOpenAiEngine(paused.engine as string) || !availableEngines(env)[paused.engine]) {
       const next = openAiNow();
-      if (!next) throw new Error("That turn was paused on an engine OVOA no longer uses. Ask again.");
+      if (!next) throw unreachable(new Error(`That turn was paused on ${paused.engine}, which can't carry it on now, and no other engine is ready.`), failures, tried);
       const messages = paused.messages.map(({ reasoning_content: _, ...message }) => message);
-      return openAiToolLoop(env, next, opts, { ...paused, engine: next, messages });
+      const got = await attempt(next, () => openAiToolLoop(env, next, run, { ...paused, engine: next, messages }));
+      if ("outcome" in got) return got.outcome;
+      throw unreachable(got.err, failures, tried);
     }
-    return openAiToolLoop(env, paused.engine, opts, paused);
+    // Paused on GLM: its messages carry its own reasoning, and there's no
+    // converter to Gemini's shape, so nothing else can take the turn over.
+    const got = await attempt(paused.engine, () => openAiToolLoop(env, paused.engine, run, paused));
+    if ("outcome" in got) return got.outcome;
+    throw unreachable(got.err, failures, tried);
   }
 
   let committed = false;
@@ -830,11 +890,11 @@ export async function chatWithTools(
       opts.onAttempt?.({ engine, model, outcome: classifyEngineError(err), ms: Date.now() - at, error: brief });
       if (committed) {
         // Something was already said or done: this turn failed, the AI was reachable.
-        coolDown(engine, err);
+        coolDownAfter(engine, err);
         throw finalError(err, failures, order);
       }
       if (i === order.length - 1) {
-        coolDown(engine, err);
+        coolDownAfter(engine, err);
         throw unreachable(err, failures, order);
       }
       failures.push(`${nameOf(engine)}: ${brief.slice(0, 200)}`);
@@ -1117,6 +1177,11 @@ type OpenAiProvider = {
   defaultModel: string;
   /** The var saying how much it thinks on a typed turn: "off", "low" (the default) or "on". */
   thinkingVar: string;
+  /**
+   * How this provider is told how much to think. Unset: the flavor of its base URL (hostFlavor).
+   * "none" sends no thinking field, for a model that doesn't think and rejects `reasoning_effort`.
+   */
+  thinking?: HostFlavor | "none";
 };
 
 export const OPENAI_PROVIDERS: Record<OpenAiEngine, OpenAiProvider> = {
@@ -1150,6 +1215,11 @@ function keyVarOf(engine: Engine) {
 /** Where a provider is: its base URL var, else its default. */
 function baseUrlOf(env: LlmEnv, engine: OpenAiEngine) {
   return varOf(env, OPENAI_PROVIDERS[engine].baseUrlVar) ?? OPENAI_PROVIDERS[engine].defaultBaseUrl;
+}
+
+/** How a provider is told how much to think: its own `thinking`, else its host's flavor. */
+function thinkingFlavorOf(env: LlmEnv, engine: OpenAiEngine): HostFlavor | "none" {
+  return OPENAI_PROVIDERS[engine].thinking ?? hostFlavor(baseUrlOf(env, engine));
 }
 
 type OpenAiOut = {
@@ -1212,7 +1282,9 @@ export function thinkingLevelFor(env: LlmEnv, engine: OpenAiEngine, voiceOrFast:
  * of this flavor. Pure, so every host's spelling is checked by a test rather
  * than by a 400 in production.
  */
-export function thinkingFields(model: string, level: ThinkingLevel, flavor: HostFlavor): Record<string, unknown> {
+export function thinkingFields(model: string, level: ThinkingLevel, flavor: HostFlavor | "none"): Record<string, unknown> {
+  // A provider whose model doesn't think (OpenAiProvider.thinking): no field at all.
+  if (flavor === "none") return {};
   const m = model.toLowerCase();
   if (flavor === "zai") {
     // GLM 5.3 (and 5.3 Flash) refuse thinking.type "disabled"; "low" is their floor.
@@ -1309,7 +1381,7 @@ async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, opts: Options):
       ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
     ],
     max_tokens: 2048,
-    ...thinkingFields(model, thinkingLevelFor(env, engine, !!fast), hostFlavor(baseUrlOf(env, engine))),
+    ...thinkingFields(model, thinkingLevelFor(env, engine, !!fast), thinkingFlavorOf(env, engine)),
   });
   reportUsage(env, opts, engine, model, usage, Date.now() - at);
 
@@ -1337,7 +1409,7 @@ async function openAiToolLoop(
   const model = modelFor(env, engine, opts.model);
   // Spoken turns think as little as the host allows: much sooner to the first
   // word, and tool calls still work. See thinkingFields.
-  const thinking = thinkingFields(model, thinkingLevelFor(env, engine, !!voice), hostFlavor(baseUrlOf(env, engine)));
+  const thinking = thinkingFields(model, thinkingLevelFor(env, engine, !!voice), thinkingFlavorOf(env, engine));
   for (let round = paused?.round ?? 0; round <= MAX_TOOL_ROUNDS; round++) {
     // Built each round rather than once: a spoken turn starts with a handful of
     // tools and sends for more mid-turn (toolbelt.ts), and those have to be in
