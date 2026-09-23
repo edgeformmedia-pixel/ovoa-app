@@ -615,8 +615,8 @@ check "the clip transcriber switch is gone" \
 GONE=$(curl -s -X POST -H "authorization: Bearer $TOKEN" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')
 check "an old build's clip gets 410" \
   "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $TOKEN" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')" "410"
-check "keyed on error: gone" "$(echo "$GONE" | j "d['error']")" "gone"
-check "with a sentence to show" "$(echo "$GONE" | j "d['message']")" "Update OVOA from TestFlight"
+check "with the sentence an old build shows as its error" "$(echo "$GONE" | j "d['error']")" "Update OVOA from TestFlight"
+check "and the code alongside" "$(echo "$GONE" | j "d['code']")" "gone"
 check "an old build's live-listening token gets 410" \
   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/voice/token?ttl=600")" "410"
 check "and the wake word's, the same" \

@@ -72,10 +72,12 @@ export const voice = new Hono<{ Bindings: Env; Variables: Vars }>();
 /**
  * Speech to text, gone. Builds from before 2026-09-23 still ask for a clip to
  * be transcribed or for a live-listening token, through the old address's
- * forwarder for a few weeks; they get a plain answer they can show. Free in
- * ROUTE_TIERS (plans.ts), so a free account's old build sees this, not a 402.
+ * forwarder for a few weeks; they get a plain answer they can show. Old builds
+ * show `error` as it is (they never read anything else), so the sentence is
+ * there and the code rides along. Free in ROUTE_TIERS (plans.ts), so a free
+ * account's old build sees this, not a 402.
  */
-const GONE = { error: "gone", message: "Update OVOA from TestFlight" } as const;
+const GONE = { error: "Update OVOA from TestFlight", code: "gone" } as const;
 voice.post("/voice/transcribe", (c) => c.json(GONE, 410));
 voice.post("/voice/token", (c) => c.json(GONE, 410));
 

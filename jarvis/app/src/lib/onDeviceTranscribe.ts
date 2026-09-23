@@ -91,6 +91,9 @@ export async function speechAllowed(): Promise<boolean> {
   }
 }
 
+/** The ask on screen right now, if any. */
+let asking: Promise<boolean> | null = null;
+
 /**
  * Speech recognition (and the microphone, which the library checks even for
  * files) allowed. Asks only when it has never been answered, and only after a
@@ -99,9 +102,17 @@ export async function speechAllowed(): Promise<boolean> {
  * says no, which is why the app asks in the foreground ahead of time: on the
  * permissions screen after sign-up (app/permissions.tsx), when talking starts,
  * and as soon as a band is paired (assistant.tsx), so a band click from the
- * wrist later doesn't find it unanswered.
+ * wrist later doesn't find it unanswered. Two asks at once (at launch, the
+ * band's and Talk's) share one reason and one prompt.
  */
-export async function ensureSpeechPermission({ explained = false }: { explained?: boolean } = {}): Promise<boolean> {
+export function ensureSpeechPermission({ explained = false }: { explained?: boolean } = {}): Promise<boolean> {
+  asking ??= askSpeechPermission(explained).finally(() => {
+    asking = null;
+  });
+  return asking;
+}
+
+async function askSpeechPermission(explained: boolean): Promise<boolean> {
   if (!native) return false;
   try {
     const now = await native.getPermissionsAsync();

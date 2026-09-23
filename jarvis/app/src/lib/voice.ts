@@ -862,6 +862,14 @@ export function useConversation(
    * name doesn't run at all.
    */
   const nameEarOk = useRef(canHearName);
+  /** Why the ear refused, once it has: what a switch left on is told when it stops. */
+  const earRefusal = useRef<string | null>(null);
+  /**
+   * The next start() was asked for by a click or a tap (summon), not by a
+   * switch left on. Without the ear, only a turn like that (or dictation and
+   * setup, which are open by design) may use Apple's recogniser (decision 1).
+   */
+  const summonedStart = useRef(false);
   const standbyRef = useRef(standby);
   standbyRef.current = standby;
   /** Audio stays up in the background: Always listen, or the click standby. */
@@ -909,6 +917,8 @@ export function useConversation(
     // and Talk listened through the whole tour.
     const mine = ++session.current;
     const cancelled = () => session.current !== mine;
+    const summoned = summonedStart.current;
+    summonedStart.current = false;
     // A click sets this itself, a moment earlier; a tap is now.
     if (Date.now() - askedAt.current > 2000) askedAt.current = Date.now();
     // Expo Go and the web have neither the ear nor Apple's recogniser: typing only.
@@ -1181,6 +1191,15 @@ export function useConversation(
 
     let failures = 0;
     let stoppedItself = false;
+    /** Listening stops for good and says why; the orb follows (the assistant provider turns it off when it sees this). */
+    const stopItself = (why: string) => {
+      devlog("err", "listening stopped itself", why);
+      setError(why);
+      setWords("");
+      setPhase("off");
+      setStoppedBy(why);
+      stoppedItself = true;
+    };
     while (!cancelled()) {
       // iOS will not open a microphone for an app that isn't on screen. Background
       // audio keeps a session that is *already* running alive; it does not let a
@@ -1197,6 +1216,22 @@ export function useConversation(
         await whenOnScreen(BACKGROUND_WAIT_MS);
         continue;
       }
+      // Without the phone's ear, Apple's recogniser (which may use Apple's
+      // servers) hears only what the person started (decision 1): dictation and
+      // setup, open by design, or this one click or tap. Never a switch left on,
+      // which would make every sentence in the room a request. Checked before
+      // every listen, because the ear stays refused for the session.
+      if (!nameEarOk.current && wakeRef.current && !summoned && Date.now() >= summonedUntil.current) {
+        const why = earRefusal.current ?? "";
+        stopItself(
+          /isn't allowed/i.test(why)
+            ? why
+            : background
+              ? `Always listen needs an iPhone that recognises speech on its own.${why ? ` ${why}` : ""}`
+              : "Listening for its name needs an iPhone that recognises speech on its own. Tap the orb to ask one thing.",
+        );
+        break;
+      }
       try {
         await runLive();
         failures = 0;
@@ -1211,14 +1246,17 @@ export function useConversation(
         // The phone's ear can't run here: a turn the person starts can use
         // Apple's recogniser instead. Listening for the name only ever runs on
         // the ear (decision 1), so Always listen stops instead.
+        if (wasNameEarFailure(err)) earRefusal.current = why;
         if (wasNameEarFailure(err) && nameEarOk.current && !background) {
           nameEarOk.current = false;
           devlog("voice", "the phone's ear can't run here; turns you start use Apple's recogniser", why);
           continue;
         }
         failures++;
+        // Speech Recognition refused isn't the phone lacking anything: the reason
+        // (Swift's "isn't allowed … Settings") is the whole fix.
         const stopWith = wasNameEarFailure(err)
-          ? background
+          ? background && !/isn't allowed/i.test(why)
             ? `Always listen needs an iPhone that recognises speech on its own. ${why}`
             : why
           : isPermanent(err) || failures >= MAX_LISTEN_FAILURES
@@ -1226,13 +1264,7 @@ export function useConversation(
             : null;
         if (stopWith) {
           if (wasNameEarFailure(err)) nameEarOk.current = false;
-          devlog("err", "listening stopped itself", stopWith);
-          setError(stopWith);
-          setWords("");
-          setPhase("off");
-          // The orb has to follow: the assistant provider turns it off when it sees this.
-          setStoppedBy(stopWith);
-          stoppedItself = true;
+          stopItself(stopWith);
           break;
         }
         // Backing off rather than retrying on a fixed beat: when the microphone
@@ -1267,8 +1299,11 @@ export function useConversation(
     let holding = false;
     /** A check is under way (the timer and the app coming forward can overlap). */
     let checking = false;
+    // Held whatever the conversation is doing: the ear is shared (liveListen.ts
+    // holdEar), so with a conversation running this only adds the standby as a
+    // holder, and when the conversation ends the ear stays on for the next click.
     const hold = async (why: string) => {
-      if (stopped || checking || phaseRef.current !== "off") return;
+      if (stopped || checking) return;
       if (holding && earAlive()) return;
       checking = true;
       try {
@@ -1283,7 +1318,7 @@ export function useConversation(
       // again the moment the app returns.
       if (!onScreen()) return;
       const { granted } = await requestRecordingPermissionsAsync();
-      if (!granted || stopped || phaseRef.current !== "off") return;
+      if (!granted || stopped) return;
       backgroundAudio = true;
       try {
         await applyAudioMode(true);
@@ -1353,7 +1388,10 @@ export function useConversation(
     earRef.current?.wake("summon");
     devlog("voice", "summoned", `phase ${phaseRef.current}`);
     if (phaseRef.current === "speaking") speaker.current.stop();
-    if (phaseRef.current === "off") return start();
+    if (phaseRef.current === "off") {
+      summonedStart.current = true;
+      return start();
+    }
     return Promise.resolve(true);
   }, [start]);
 

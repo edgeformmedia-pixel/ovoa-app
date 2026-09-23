@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AppState } from "react-native";
 import * as NameEar from "../../modules/name-ear";
 import { devlog, devlogRepeat, devlogSettled } from "./devlog";
 import { EarWords } from "./earWords";
@@ -178,20 +179,33 @@ export function wasNameEarFailure(err: unknown) {
 const holders = new Set<string>();
 /** What NameEarModule.swift says when it won't start on this phone at all, rather than not this moment. */
 const EAR_REFUSED = /isn't allowed|can't recognise speech on its own|no speech recognition for|only recognise speech through/i;
-/** A stop on its way to the native side: a start waits for it rather than finding a dying ear. */
-let stopping: Promise<unknown> = Promise.resolve();
+/**
+ * Every start and stop of the native ear, one after another. The Swift side
+ * only says it's running once a start has finished (after its authorisation
+ * and model hops), so a second start in that window would build a second ear
+ * and orphan the first, microphone and all; and a stop has to land after the
+ * start it follows, not before.
+ */
+let earOp: Promise<unknown> = Promise.resolve();
+function queueEar<T>(op: () => Promise<T>): Promise<T> {
+  const next = earOp.then(op);
+  earOp = next.catch(() => {});
+  return next;
+}
+/** A restart in flight: watchEar waits for it rather than asking for another. */
 let restarting: Promise<void> | null = null;
 
 /** Keeps the phone's ear running for `holder`, starting it if it isn't. Starting only works in the foreground. */
 export async function holdEar(holder: string, name: string) {
   listenToEar();
-  await stopping;
   holders.add(holder);
   try {
-    if (NameEar.isRunning()) {
-      // Running already (the standby, off screen perhaps): it carries on, with this name.
-      await NameEar.start({ name });
-    } else {
+    await queueEar(async () => {
+      if (NameEar.isRunning()) {
+        // Running already (the standby, off screen perhaps): it carries on, with this name.
+        await NameEar.start({ name });
+        return;
+      }
       if (!onScreen()) throw offScreenError();
       const can = await NameEar.availability();
       if (!can.available) throw nameEarError(can.reason ?? "This iPhone can't recognise speech on its own.");
@@ -205,7 +219,7 @@ export async function holdEar(holder: string, name: string) {
         throw /off screen/i.test(why) || !onScreen() ? offScreenError() : EAR_REFUSED.test(why) ? nameEarError(why) : new Error(why);
       }
       heard.reset();
-    }
+    });
     source = "ear";
     lastEarLevelAt = Date.now();
   } catch (err) {
@@ -214,24 +228,25 @@ export async function holdEar(holder: string, name: string) {
   }
 }
 
-/** `holder` is done with the ear. The last one out stops it. */
+/** `holder` is done with the ear. The last one out stops it, after any start or restart still on its way. */
 export function releaseEar(holder: string) {
   if (!holders.delete(holder) || holders.size) return;
   if (source === "ear") source = null;
-  stopping = NameEar.stop().catch(() => {});
+  queueEar(() => NameEar.stop()).catch(() => {});
 }
 
 /** The ear went silent on screen: stop it and start it again. One restart at a time, for everyone. */
 function restartEar(name: string) {
-  restarting ??= NameEar.stop()
-    .then(() => NameEar.start({ name }))
-    .then(() => {
-      lastEarLevelAt = Date.now();
-      heard.reset();
-    })
-    .finally(() => {
-      restarting = null;
-    });
+  restarting ??= queueEar(async () => {
+    await NameEar.stop();
+    // Everyone let go while this waited: it stays stopped.
+    if (!holders.size) return;
+    await NameEar.start({ name });
+    lastEarLevelAt = Date.now();
+    heard.reset();
+  }).finally(() => {
+    restarting = null;
+  });
   return restarting;
 }
 
@@ -295,6 +310,8 @@ export async function openEar(
   let apple: { stop: () => void } | null = null;
   let appleStartedAt = 0;
   let appleFailures = 0;
+  /** Apple's recogniser stops when the app goes to the background (it has no heartbeat to watch). */
+  let leaving: { remove: () => void } | null = null;
 
   const down = (err: Error) => {
     if (closed) return;
@@ -401,6 +418,8 @@ export async function openEar(
     detach();
     if (hooks === mine) hooks = null;
     events.onLevel(-160);
+    leaving?.remove();
+    leaving = null;
     apple?.stop();
     apple = null;
     if (kind === "apple" && source === "apple") source = null;
@@ -437,6 +456,13 @@ export async function openEar(
     } else {
       if (!onScreen()) throw offScreenError();
       if (!onDeviceSpeechBuilt) throw new Error("This build can't hear speech on the phone.");
+      // It may be using Apple's servers, for something the person started on
+      // screen: it doesn't go on hearing once they've left the app. Only
+      // "background": "inactive" is also a permission sheet or a pulled-down
+      // notification with the app still in front.
+      leaving = AppState.addEventListener("change", (state) => {
+        if (state === "background") down(offScreenError());
+      });
       await startApple();
     }
     if (closed) throw new Error("Listening was closed while it started");

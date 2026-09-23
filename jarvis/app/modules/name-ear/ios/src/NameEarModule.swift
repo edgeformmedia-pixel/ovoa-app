@@ -565,7 +565,11 @@ final class NameEar {
         // before Apple retires it; either way a new one takes over so the ear
         // is never closed for long. Only the current task may do this: the
         // retired one's own last callback arrives a moment later and must not.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+        // After a pause or a retirement the next task starts straight away, so
+        // the first word after the pause isn't fed to a finished request; after
+        // an error it waits a moment, so a run of errors can't loop tightly.
+        let delay: TimeInterval = error == nil ? 0 : 0.2
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
           guard let self, self.isRunning, self.engineKind == "sfspeech", generation == self.taskGeneration else { return }
           self.endRecognitionTask()
           self.beginRecognitionTask()

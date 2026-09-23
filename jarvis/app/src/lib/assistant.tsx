@@ -16,7 +16,7 @@ import { FILLERS, pickFiller } from "./fillers";
 import { syncAlarms } from "./nag";
 import * as clip from "./clip";
 import { showIsland, type IslandStatus } from "./island";
-import { usePhoneEar } from "./liveListen";
+import { canListen, usePhoneEar } from "./liveListen";
 import { ensureSpeechPermission, speechAllowed, transcribeOnDevice } from "./onDeviceTranscribe";
 import { deleteRecording, wavFile, type Recording } from "./recordings";
 import { micSourcePref, type MicSource } from "./storage";
@@ -50,6 +50,11 @@ type AssistantState = {
   /** The Assistant tab's orb. null until loaded. */
   enabled: boolean | null;
   toggleEnabled: () => void;
+  /**
+   * This iPhone can't recognise speech on its own, so the orb isn't a switch:
+   * a tap asks one thing, like a click, and listening closes after the answer.
+   */
+  tapAsks: boolean;
   /** Danger zone: listen everywhere and allow talking over replies. */
   alwaysListen: boolean;
   setAlwaysListen: (on: boolean) => void;
@@ -90,6 +95,7 @@ const NO_ASSISTANT: AssistantState = {
   status: null,
   enabled: null,
   toggleEnabled: () => {},
+  tapAsks: false,
   alwaysListen: false,
   setAlwaysListen: () => {},
   listenMode: "wake",
@@ -127,6 +133,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   // speech by itself it doesn't run at all, and Settings says why.
   const phoneEar = usePhoneEar();
   const alwaysListen = alwaysListenPicked && can.wake && phoneEar.available;
+  // Nor does the orb left on: without the ear it would be Apple's recogniser,
+  // which may use Apple's servers, hearing every sentence in the room. There a
+  // tap asks one thing instead (toggleEnabled), and the orb isn't restored.
+  const tapAsks = canListen && phoneEar.checked && !phoneEar.available;
   const [listenMode, setListenModeState] = useState<ListenMode>("wake");
   const [micSource, setMicSourceState] = useState<MicSource>("phone");
   const [held, setHeld] = useState(0);
@@ -757,7 +767,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const shouldListen =
-    talks && held === 0 && tourSeen === true && (alwaysListen || (inForeground && !!enabled && onAssistantTab));
+    talks && held === 0 && tourSeen === true && (alwaysListen || (inForeground && !!enabled && !tapAsks && onAssistantTab));
 
   // Listening on or off, in the Dynamic Island: while a conversation runs, or twist standby is on.
   // Retried when the app comes to the front (a Live Activity can only start from there).
@@ -827,7 +837,26 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     listeningPref.set(false);
   }, [conversation.stoppedBy]);
 
+  // An orb left on from before, on a phone where it can't stay on: it's put away.
+  useEffect(() => {
+    if (!tapAsks || !enabled) return;
+    setEnabled(false);
+    listeningPref.set(false);
+  }, [tapAsks, enabled]);
+
   const toggleEnabled = () => {
+    if (tapAsks) {
+      // One question, the click's way: summonedOpen closes it after the answer
+      // or a quiet spell (the effects above).
+      if (currentPhase() === "off") {
+        summonedOpen.current = true;
+        void summon();
+      } else {
+        summonedOpen.current = false;
+        end();
+      }
+      return;
+    }
     const on = !enabled;
     setEnabled(on);
     listeningPref.set(on);
@@ -870,6 +899,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     status,
     enabled,
     toggleEnabled,
+    tapAsks,
     alwaysListen,
     setAlwaysListen,
     listenMode,

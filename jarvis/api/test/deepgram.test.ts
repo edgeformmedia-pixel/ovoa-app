@@ -72,7 +72,7 @@ eq("nothing asks Deepgram to listen, or for a token to listen with", offenders, 
 const voice = readFileSync("src/voice.ts", "utf8");
 eq("/voice/transcribe answers 410", /voice\.post\("\/voice\/transcribe", \(c\) => c\.json\(GONE, 410\)\)/.test(voice), true);
 eq("/voice/token answers 410", /voice\.post\("\/voice\/token", \(c\) => c\.json\(GONE, 410\)\)/.test(voice), true);
-eq("with a sentence an old build can show", /message: "Update OVOA from TestFlight"/.test(voice), true);
+eq("with a sentence an old build can show", /error: "Update OVOA from TestFlight"/.test(voice), true);
 
 console.log(fails ? `\n${fails} failed` : "\nall passed");
 process.exit(fails ? 1 : 0);
