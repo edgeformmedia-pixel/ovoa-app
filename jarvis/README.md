@@ -181,12 +181,34 @@ first-open step). Everyone reconnects once after the v1 move: the new
   Every Google tool then takes an optional `account` (tag or email), so
   "what's on my work calendar" hits the right one; for questions that name no
   account, the assistant checks each and says where each result came from.
-- **How it connects:** OAuth web client `736336639952-…` in Google Cloud
-  project `ovoaappios`, with redirect URI
-  `https://api.ovoa.ai/google/callback` (`PUBLIC_URL`). The app
-  opens `POST /google/connect`'s URL in an auth session. The Worker swaps the
-  code for tokens (with PKCE) and sends the browser back to `exp://…` (Expo
-  Go) or `ovoa://…` (installed app).
+- **How it connects:** OAuth web client `681579233268-…` ("OVOA") in Google
+  Cloud project `ovoa-509511`, with redirect URI
+  `https://api.ovoa.ai/google/callback` (`PUBLIC_URL`). The app opens
+  `POST /google/connect`'s URL in an auth session. The Worker swaps the code
+  for tokens (with PKCE) and sends the browser back to `exp://…` (Expo Go) or
+  `ovoa://…` (installed app). Connections made with the old client
+  (`736336639952-…`, project `ovoaappios`) stop working and have to be made
+  again; where the app lists connections it says **Reconnect Google**.
+- **Signing in with Google or Apple** (`api/src/signin.ts`): the sign-in
+  screen's "Continue with Google" uses the same client and the same callback
+  (a sign-in's state lives in `signin_states`, so the callback knows which it
+  is), asks only `openid email profile`, and comes back to the app with a
+  one-time code that only the phone's key redeems. The way back is exactly
+  `ovoa://google-signin`, or Expo Go on a private-network dev server (not a
+  tunnel; `EXPO_GO_SIGNIN=off` refuses Expo Go). It signs in to the account
+  with that address, or hands back a ticket for a name and password. "Sign in
+  with Apple" sends Apple's identity token, checked against Apple's published
+  keys, for audience `com.ovoa.app`, with a nonce the server issued, and
+  never asks anything after Apple's sheet: it signs in, or makes the account
+  there and then with the name Apple sent (or none) and no password. Apple's
+  `sub` is kept on the account so a returning Apple ID is found even if its
+  address changes.
+- **An account nobody proved the address of** (made by `/auth/signup`, which
+  checks nothing) is taken back when the address is proven by an email code,
+  Google or Apple: its password stops working and every session and push
+  token on it goes, before anything else (`disown()` in `api/src/index.ts`).
+  Google and the email code then hand back a ticket with `existing: true`,
+  whose step sets the new password; Apple signs straight in.
 - **Token storage:** refresh and access tokens are AES-GCM encrypted in
   `google_accounts` (one row per connected account, unique per user + email)
   using the `TOKEN_ENC_KEY` secret. Google drops testing-mode grants after
@@ -536,9 +558,13 @@ summaries, then the 14-day purge; `docs/retention.md`).
 |---|---|---|
 | POST | /auth/signup, /auth/login | `{ email, password, name? }` → `{ token, user }`. A new app sign-up must then prove its address (`/me/email/*`) |
 | POST | /auth/email/code | `{ email }` → emails a 6-digit code from no-reply@ovoa.ai (ovoa.ai's sign-in; `src/emailauth.ts`) |
-| POST | /auth/email/verify | `{ email, code }` → `{ token, user }` for an existing account, else `{ ticket, email, name }` |
-| POST | /auth/email/signup | `{ ticket, name, password }` → `{ token, user }` |
+| POST | /auth/email/verify | `{ email, code }` → `{ token, user }` for an account whose address was proven before, else `{ ticket, email, name, existing? }` |
+| POST | /auth/email/signup | `{ ticket, name, password, session? }` → `{ token, user, passwordChanged? }`; `session: "app"` from the app, else a web session. An unproven account gets this password; `passwordChanged: false` means a proven one kept its own |
 | POST | /auth/google | `{ idToken }` (checked with Google) → same as /auth/email/verify |
+| POST | /auth/google/start | `{ returnUrl }` (`ovoa://google-signin`, or `exp://` to a private address) → `{ url, key }`: the app's "Continue with Google" (`src/signin.ts`) |
+| POST | /auth/google/redeem | `{ code, key }` (the one-time code /google/callback sent back, 60 s, once) → `{ token, user }` (app session) or `{ ticket, email, name, existing? }` |
+| POST | /auth/apple/start | → `{ nonce }`, good once for ten minutes |
+| POST | /auth/apple | `{ identityToken, nonce, fullName? }` (Sign in with Apple, checked against Apple's keys) → `{ token, user, created }` (app session; 201 when it made the account), never a ticket |
 | POST | /auth/logout | |
 | GET / PATCH / DELETE | /me | profile + settings (incl. `stepGoal`, `fallDetection`), `plan`, `emailVerified`, `aiConsent`, `devTools` |
 | POST | /me/password | `{ currentPassword, newPassword }` |
@@ -561,7 +587,7 @@ summaries, then the 14-day purge; `docs/retention.md`).
 | GET / POST / DELETE | /contacts, /contacts/:id | POST `{ name, phone }` (max 5) |
 | GET / POST | /safety-events | POST `{ kind: "fall"\|"sos", status: "ok"\|"alerted", latitude?, longitude? }` |
 | POST | /google/connect | `{ returnUrl, accountId? }` → `{ url }` to open; `accountId` reconnects that account |
-| GET | /google/callback | Google redirect target (public) |
+| GET | /google/callback | Google redirect target (public), for connecting an account and for the app's Google sign-in |
 | GET | /google/status | default account's details plus `accounts` |
 | PATCH / DELETE | /google/accounts/:id | `{ label?, isDefault? }` / disconnect and revoke one account |
 | DELETE | /google | disconnect and revoke every account |

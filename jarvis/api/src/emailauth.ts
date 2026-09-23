@@ -13,8 +13,10 @@
 //      hands over the ID token, which is checked with Google here: the site
 //      can't just say "this is so-and-so".
 //
-// A proven address either has an account and is signed straight in, or gets
-// a signup ticket that "Create your account" spends with a name and password.
+// A proven address either has an account whose address was proven before and
+// is signed straight in, or gets a signup ticket that "Create your account"
+// spends with a name and password. An account nobody had proven the address
+// of is taken back first (index.ts disown), and the ticket sets its password.
 // There is one `users` table, so an account made in the app signs in on the
 // site and one made on the site signs in to the app: the password is what the
 // app asks for.

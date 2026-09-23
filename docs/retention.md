@@ -124,6 +124,7 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 | cron_lock | keep | leases | |
 | server_settings | keep | the switchboard | |
 | email_codes, signup_tickets | expires | `emailauth.ts pruneEmailAuth`, once past their own expiry | |
+| signin_states, signin_codes | expires | `signin.ts pruneSignin`, once past their own expiry | |
 
 ## What changed from before
 

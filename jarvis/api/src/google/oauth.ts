@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { base64url, decrypt, encrypt } from "../crypto";
+import { finishGoogleSignin, takeGoogleSigninState } from "../signin";
 import type { Env, Vars } from "../types";
 
 // Drive is drive.file: only the files OVOA created (the sheets and docs it made),
@@ -325,6 +326,11 @@ function finish(returnUrl: string | null, result: "connected" | "error", message
 googlePublic.get("/google/callback", async (c) => {
   const { code, state, error } = c.req.query();
   if (!state) return finish(null, "error", "Missing state");
+
+  // "Continue with Google" in the app comes back here too, since this is the
+  // redirect registered with Google. Its state is its own (signin.ts).
+  const signin = await takeGoogleSigninState(c.env.DB, state);
+  if (signin) return finishGoogleSignin(c.env, signin, { code, error });
 
   const row = await c.env.DB
     .prepare("DELETE FROM oauth_states WHERE state = ? RETURNING user_id, code_verifier, return_url, expires_at")

@@ -1,4 +1,5 @@
 import { pruneEmailAuth } from "./emailauth";
+import { pruneSignin } from "./signin";
 import { validTimeZone } from "./google/assistant";
 import { KEEP_MS as DEVICE_LOG_KEEP_MS } from "./logs";
 import { recordError } from "./obs";
@@ -218,7 +219,8 @@ export const RULES: Rule[] = [
   // ---- Things with their own expiry ----
   { name: "sessions", table: "sessions", where: "expires_at < ?", args: (c) => [c.now] },
   { name: "oauth_states", table: "oauth_states", where: "expires_at < ?", args: (c) => [c.now] },
-  // email_codes and signup_tickets: emailauth.ts pruneEmailAuth, a step of its own (purgeExpired).
+  // email_codes and signup_tickets: emailauth.ts pruneEmailAuth, a step of its own (purgeExpired);
+  // signin_states and signin_codes: signin.ts pruneSignin, likewise.
 ];
 
 /**
@@ -295,6 +297,8 @@ export const TABLES = {
   user_apps: "keep",
   email_codes: "expires",
   signup_tickets: "expires",
+  signin_states: "expires",
+  signin_codes: "expires",
   food_catalog: "delete",
   food_log: "delete",
 } as const satisfies Record<string, "keep" | "delete" | "mixed" | "expires" | "index">;
@@ -304,6 +308,8 @@ export const STEPS: Record<string, string> = {
   people: "trimPeople",
   email_codes: "pruneEmailAuth",
   signup_tickets: "pruneEmailAuth",
+  signin_states: "pruneSignin",
+  signin_codes: "pruneSignin",
 };
 
 /** One rule, a chunk at a time, until a chunk comes back short or the night's time is up. */
@@ -443,5 +449,6 @@ export async function purgeExpired(env: Env, now = Date.now(), budgetMs = BUDGET
   }
   // A handful of rows at most, each with its own expiry.
   await step("email_auth", async () => (await db.batch(pruneEmailAuth(db, c.now))).reduce((n, r) => n + (r.meta.changes ?? 0), 0));
+  await step("signin", async () => (await db.batch(pruneSignin(db, c.now))).reduce((n, r) => n + (r.meta.changes ?? 0), 0));
   return out;
 }

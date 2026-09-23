@@ -82,8 +82,16 @@
     // The only accounts allowed the dev-only capture-everything flag (always-listening
     // experiments, ruled out for the product on 2026-09-20). Comma-separated.
     "DEV_EMAILS": "tlanch2006@gmail.com",
-    // Google OAuth web client (not secret). GOOGLE_CLIENT_SECRET and TOKEN_ENC_KEY are secrets.
-    "GOOGLE_CLIENT_ID": "736336639952-r4qknf5arp9e6m0tj8hvecsjjhauhouq.apps.googleusercontent.com"
+    // Google OAuth web client "OVOA" in Google Cloud project ovoa-509511 (not secret). It connects
+    // Gmail and Calendar and signs people in to the app, both through <PUBLIC_URL>/google/callback.
+    // The only one of those it has registered is https://api.ovoa.ai/google/callback, so it works
+    // only once PUBLIC_URL is https://api.ovoa.ai (the release-v1 move) and GOOGLE_CLIENT_SECRET is
+    // this client's (ovoa-team/google/.env): never deploy it to the workers.dev Worker on its own.
+    // Google connections made with the old client (736336639952-…) have to be made again after the
+    // switch. TOKEN_ENC_KEY is a secret too.
+    "GOOGLE_CLIENT_ID": "681579233268-eegju2n5qcpg6ja35np11vpl9fic51pf.apps.googleusercontent.com"
+    // Optional: "EXPO_GO_SIGNIN": "off" refuses Expo Go as the way back from the app's Google
+    // sign-in, leaving only the installed app's ovoa://google-signin (src/signin.ts appReturnUrl).
   },
   // Per-person and per-address limits on the routes that spend shared quota
   // (src/limits.ts). Counted per Cloudflare location, no database writes, and set

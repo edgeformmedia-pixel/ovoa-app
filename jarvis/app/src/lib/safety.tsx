@@ -77,7 +77,8 @@ export function SafetyProvider({ children }: { children: ReactNode }) {
       api.logSafetyEvent(token, { kind, status: "alerted", ...location }).catch(logFail("safety: api.logSafetyEvent"));
 
       const list = contactsRef.current;
-      const name = user?.name ?? "Your contact";
+      // An account from Sign in with Apple can have no name yet.
+      const name = user?.name?.trim() || "Your contact";
       const what = kind === "fall" ? "may have fallen and did not respond" : "pressed their SOS button";
       const where = location
         ? ` Location: https://maps.apple.com/?ll=${location.latitude},${location.longitude}`

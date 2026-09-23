@@ -421,6 +421,17 @@ export type UsageSummary = { today: UsageTotals; month: UsageTotals };
 
 export const timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+/**
+ * What Google or Apple proving an address comes back as (api/src/index.ts
+ * afterProven, afterApple): signed in to the account with that address
+ * (`created`: Apple just made it), or a ticket for the name + password step
+ * that makes one. `existing`: there is an account, made with the address by
+ * someone who never proved it; the step gives it a new password.
+ */
+export type ProvenSignIn =
+  | { token: string; user: User; created?: boolean }
+  | { ticket: string; email: string; name: string | null; existing?: boolean };
+
 export class ApiError extends Error {
   /** Per-field messages, when the server said which box is wrong. Signup does. */
   constructor(
@@ -826,6 +837,32 @@ export const api = {
     request<{ token: string; user: User }>("/auth/login", null, {
       method: "POST",
       body: JSON.stringify({ email, password }),
+    }),
+  /** "Continue with Google" (api/src/signin.ts): Google's page to open, and the key that redeems what comes back. */
+  googleSignInStart: (returnUrl: string) =>
+    request<{ url: string; key: string }>("/auth/google/start", null, {
+      method: "POST",
+      body: JSON.stringify({ returnUrl }),
+    }),
+  googleSignInRedeem: (code: string, key: string) =>
+    request<ProvenSignIn>("/auth/google/redeem", null, { method: "POST", body: JSON.stringify({ code, key }) }),
+  /** A nonce for Sign in with Apple, good once: Apple signs it into the token. */
+  appleSignInStart: () => request<{ nonce: string }>("/auth/apple/start", null, { method: "POST", body: "{}" }),
+  appleSignIn: (
+    identityToken: string,
+    nonce: string,
+    fullName: { givenName: string | null; familyName: string | null } | null,
+  ) =>
+    request<ProvenSignIn>("/auth/apple", null, {
+      method: "POST",
+      body: JSON.stringify({ identityToken, nonce, fullName }),
+    }),
+  /** The name + password step after Google proved an address with no account (or an unproven one) behind it. */
+  ticketSignup: (ticket: string, name: string, password: string) =>
+    // `passwordChanged` is there only when the account already existed.
+    request<{ token: string; user: User; passwordChanged?: boolean }>("/auth/email/signup", null, {
+      method: "POST",
+      body: JSON.stringify({ ticket, name, password, session: "app" }),
     }),
   logout: (token: string) => request("/auth/logout", token, { method: "POST" }),
   /** `plan` is missing from servers from before the plans. */

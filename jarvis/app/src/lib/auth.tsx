@@ -39,6 +39,10 @@ type AuthState = {
   user: User | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name: string) => Promise<void>;
+  /** Google or Apple found the account: signed in, as with a password. `isNew`: Apple just made it, as a sign-up. */
+  signInWithSession: (session: { token: string; user: User }, isNew?: boolean) => Promise<void>;
+  /** Google proved an address with no account (or an unproven one): the name + password step makes or claims it. */
+  signUpWithTicket: (ticket: string, name: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   setUser: (user: User) => void;
   /** Reads GET /me again: after the code is typed, consent is given, or the server said either is missing. */
@@ -228,6 +232,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Then the emailed code (app/verify-email.tsx), then the permissions.
       setCodeSentAt(session.codeSent ? Date.now() : null);
       setOnboarding(true);
+      await start(session);
+    },
+    signInWithSession: async (session, isNew) => {
+      if (isNew) setOnboarding(true);
+      await start(session);
+    },
+    signUpWithTicket: async (ticket, name, password) => {
+      const session = await api.ticketSignup(ticket, name, password);
+      // A new account, not one the step gave a new password.
+      if (session.passwordChanged === undefined) setOnboarding(true);
       await start(session);
     },
     signOut: async () => {
