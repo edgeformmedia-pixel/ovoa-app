@@ -16,10 +16,12 @@ import { FILLERS, pickFiller } from "./fillers";
 import { syncAlarms } from "./nag";
 import * as clip from "./clip";
 import { showIsland, type IslandStatus } from "./island";
+import { usePhoneEar } from "./liveListen";
+import { ensureSpeechPermission, speechAllowed, transcribeOnDevice } from "./onDeviceTranscribe";
 import { deleteRecording, wavFile, type Recording } from "./recordings";
 import { micSourcePref, type MicSource } from "./storage";
 import { useTourSeen } from "./tour";
-import { endTurn, failTurn, mark as markTurn, markStopTalking, noteServer, startTurn } from "./turnTimer";
+import { endTurn, failTurn, mark as markTurn, markStopTalking, noteHeard, noteServer, startTurn } from "./turnTimer";
 import {
   alwaysListenPref,
   createSpeaker,
@@ -27,7 +29,6 @@ import {
   serverSpeech,
   listenModePref,
   setTtsEngine,
-  transcribe,
   useConversation,
   type ListenMode,
   type VoicePhase,
@@ -121,8 +122,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [alwaysListenPicked, setAlwaysListenState] = useState(false);
   // Always listen is the wake word at its most hands-free: Base. The switch is
-  // remembered either way, and comes back on its own if the plan does.
-  const alwaysListen = alwaysListenPicked && can.wake;
+  // remembered either way, and comes back on its own if the plan does. It only
+  // runs on the phone's own ear (decision 1): on an iPhone that can't recognise
+  // speech by itself it doesn't run at all, and Settings says why.
+  const phoneEar = usePhoneEar();
+  const alwaysListen = alwaysListenPicked && can.wake && phoneEar.available;
   const [listenMode, setListenModeState] = useState<ListenMode>("wake");
   const [micSource, setMicSourceState] = useState<MicSource>("phone");
   const [held, setHeld] = useState(0);
@@ -343,6 +347,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   }, [user?.ttsEngine]);
   const twistOn = listenMode !== "wake";
   const clipPaired = clip.useClipPaired();
+  // A band click from the wrist is turned into words on the phone, and iOS
+  // can't ask for Speech Recognition off screen: ask now, in the foreground,
+  // as soon as there's a band to click (Phase 5's first open asks too).
+  useEffect(() => {
+    if (clipPaired && inForeground) void ensureSpeechPermission();
+  }, [clipPaired, inForeground]);
   // Twist mode without Always listen: keep the mic (and the app) running so a twist works from other apps.
   // In band mode the phone's microphone is never used, so there's no standby to keep alive.
   const standby = can.voice && twistOn && !alwaysListen && clipPaired && micSource === "phone";
@@ -402,11 +412,22 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         // the container's UUID changes on every app update (device_logs 2026-09-20 23:18).
         const audio = wavFile(entry);
         if (!audio?.exists) throw new Error(entry.decodeError ?? "the clip's recording couldn't be decoded");
-        devlog("file", `band mic: sending ${audio.name}, ${Math.round(audio.size / 1024)} KB`, audio.uri);
+        devlog("file", `band mic: hearing ${audio.name}, ${Math.round(audio.size / 1024)} KB`, audio.uri);
+        // The phone writes the words out itself (onDeviceTranscribe.ts): the audio
+        // never leaves it, the same as a free note. The decoded WAV, never the raw opus.
+        const heard = await transcribeOnDevice(audio.uri);
+        if (!heard) {
+          // Off screen iOS can't ask for Speech Recognition, so an unanswered
+          // permission fails here; the app asks for it in the foreground ahead of time.
+          throw new Error((await speechAllowed()) ? "the recording couldn't be recognised on this phone" : "speech recognition isn't allowed yet");
+        }
+        const text = heard.text.trim();
+        markTurn("recognised on phone", heard.onDevice ? "on the phone" : "Apple's servers");
+        if (text) noteHeard(text);
         // A question isn't worth keeping, so the clip's recording doesn't stay in the
         // Recordings list: it goes once the words are back. Kept until then, so that a
-        // plan that turns out not to include talking can still make a note of it.
-        const text = await transcribe(token, audio.uri, "audio/wav", { keep: true });
+        // plan that turns out not to include talking can still make a note of it, and
+        // a recording the phone couldn't make out stays to be tried again.
         deleteRecording(entry.id);
         if (entry.sessionId) clip.deleteFromClip(entry.sessionId).catch(logFail("assistant: clip.deleteFromClip"));
         if (!text) {
@@ -801,7 +822,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   // The reason is already on screen as the conversation's error.
   useEffect(() => {
     if (!conversation.stoppedBy || !enabled) return;
-    devlog("voice", `listening stopped itself after ${conversation.stoppedBy}; the orb is off`);
+    devlog("voice", "listening stopped itself; the orb is off", conversation.stoppedBy);
     setEnabled(false);
     listeningPref.set(false);
   }, [conversation.stoppedBy]);
@@ -893,6 +914,7 @@ function excuse(message: string) {
   if (/quota|429|503|high demand|overloaded|unavailable/i.test(message)) {
     return "Sorry, my brain is busy right now. Give it a moment and ask again.";
   }
+  if (/speech recognition isn't allowed/i.test(message)) return "I need to be allowed to recognise speech first. Open OVOA once and allow it, then ask me again.";
   if (/decode|recording/i.test(message)) return "Sorry, that recording didn't come through. Try once more.";
   return "Sorry, something went wrong on my end.";
 }

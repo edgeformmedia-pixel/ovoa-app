@@ -2378,10 +2378,11 @@ authed.get("/agent/runs", async (c) => {
 
 // ---------- What it costs ----------
 //
-// The phone streams its microphone straight to Deepgram, so only the phone
-// knows how many seconds went. It counts the audio it actually sent
-// (app/src/lib/liveListen.ts) and reports it here in batches. Clamped, because
-// a phone with a wrong clock or a bug could otherwise claim a day per minute.
+// Builds from before 2026-09-23 streamed the microphone straight to Deepgram,
+// so only the phone knew how many seconds went, and it reports them here in
+// batches. Speech is recognised on the phone now and nothing streams, but old
+// builds keep posting, so this keeps answering. Clamped, because a phone with
+// a wrong clock or a bug could otherwise claim a day per minute.
 
 const streamUsageSchema = z.object({
   /** Seconds of audio sent since the last report. */

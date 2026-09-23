@@ -40,7 +40,7 @@ export type Env = {
   /** Signs shortcuts the assistant writes (see shortcuts/sign.ts). Without it, shortcut writing is off. */
   SHORTCUT_SIGNING_URL?: string;
   SHORTCUT_SIGNING_TOKEN?: string;
-  /** Deepgram key for speech to text and text to speech. Without it, voice routes return 503. */
+  /** Deepgram key for OVOA's voice (text to speech; speech to text is on the phone). Without it, /voice/speak returns 503. */
   DEEPGRAM_API_KEY?: string;
   /** Which engine voices replies (voice.ts TTS_ENGINES). server_settings.tts_engine overrides it without a deploy. */
   TTS_ENGINE?: string;

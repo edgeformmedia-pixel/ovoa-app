@@ -98,13 +98,16 @@ export const uploadLevel = () => uploadFrom;
  */
 const MILESTONES: RegExp[] = [
   /^app started/,
-  /^live transcription (connected|closed|billed|reconnect)/,
   /^heard its name/,
   /^listening live/,
+  // One per conversation: how often the name opened the phone's ear (liveListen.ts).
+  /^stopped listening on the phone/,
+  // A phone without its own recogniser, using Apple's for a turn (onDeviceTranscribe.ts).
+  /^listening with Apple's recogniser/,
   /^speaking \d+ ms after the question/,
   /^BUG REPORT/,
   /^picked up \d+ log lines/,
-  // One row per free note turned into words on the phone (onDeviceTranscribe.ts).
+  // One row per recording turned into words on the phone (onDeviceTranscribe.ts).
   /^on-device transcript after/,
 ];
 /** perf lines are the turn breakdowns (turnTimer.ts): one row per spoken turn. */

@@ -1,14 +1,20 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env, Vars } from "./types";
-import { recordUsage, sttClipRow, ttsRow } from "./usage";
+import { recordUsage, ttsRow } from "./usage";
 
-// Speech to text and text to speech. The keys stay on the server; the app only
-// ever talks to these routes.
+// Text to speech: OVOA's voice. The key stays on the server; the app only ever
+// talks to these routes.
 //
-// Every clip transcribed and every sentence voiced is written to the usage
-// table (usage.ts) against the person it was for: seconds of audio for
-// transcription, characters for speech, which is how each is billed.
+// Speech to text isn't here any more (2026-09-23). The iPhone recognises what
+// people say itself (app lib/liveListen.ts, lib/onDeviceTranscribe.ts), and
+// only the words come to this server. Deepgram is OVOA's voice and nothing
+// else: its listen and token endpoints are never called, which
+// test/deepgram.test.ts checks. The two routes that used them answer 410 so
+// builds from before tell their user to update.
+//
+// Every sentence voiced is written to the usage table (usage.ts) against the
+// person it was for, in characters, which is how it is billed.
 //
 // Text to speech comes from Deepgram's Aura-2 or from the phone itself
 // (TTS_ENGINES), chosen by the TTS_ENGINE var or, without a deploy, by
@@ -22,21 +28,10 @@ import { recordUsage, sttClipRow, ttsRow } from "./usage";
 // all day across everyone, and a cache hit is free.
 
 const DEEPGRAM = "https://api.deepgram.com/v1";
-const STT_MODEL = "nova-3";
-// Helps Deepgram hear the assistant's name instead of "oboe" or "over".
-const KEYTERMS = ["OVOA"];
-const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 // Deepgram's /speak takes at most 2000 characters per request.
 const MAX_SPEAK_CHARS = 2000;
 /** How long a voiced sentence stays in the cache. */
 const CACHE_SECONDS = 30 * 24 * 3600;
-
-/**
- * What transcribes a recorded clip (the band's button, the recorded fallback,
- * talking over a reply): Deepgram Nova-3, filed in the usage table under this
- * name (pricing.ts). Whisper on Workers AI was the cheaper choice until v1.
- */
-const STT_CLIP_USAGE = "deepgram-nova-3-clip";
 
 /** Voices the app can pick from (Deepgram Aura 2). */
 export const VOICES = [
@@ -74,87 +69,15 @@ export function ttsEngineFrom(setting: string | undefined, envVar: string | unde
 
 export const voice = new Hono<{ Bindings: Env; Variables: Vars }>();
 
-/** A clip's words and how long it was, from whichever transcriber. */
-type Transcribed = { text: string; seconds: number };
-
-async function transcribeDeepgram(env: Env, audio: ArrayBuffer, contentType: string, names: string[]): Promise<Transcribed> {
-  if (!env.DEEPGRAM_API_KEY) throw new Error("Voice isn't set up on the server yet");
-  const keyterms = names.map((k) => `&keyterm=${encodeURIComponent(k)}`).join("");
-  const url = `${DEEPGRAM}/listen?model=${STT_MODEL}&smart_format=true&language=en${keyterms}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { authorization: `Token ${env.DEEPGRAM_API_KEY}`, "content-type": contentType },
-    body: audio,
-  });
-  if (!res.ok) throw new Error(`Deepgram ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const body = await res.json<{
-    metadata?: { duration?: number };
-    results?: { channels?: { alternatives?: { transcript?: string }[] }[] };
-  }>();
-  return {
-    text: body.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() ?? "",
-    // Deepgram says how long the audio was; that is what it bills, not the bytes.
-    seconds: Number(body.metadata?.duration) || 0,
-  };
-}
-
-voice.post("/voice/transcribe", async (c) => {
-  const audio = await c.req.arrayBuffer();
-  if (!audio.byteLength) return c.json({ error: "No audio" }, 400);
-  if (audio.byteLength > MAX_AUDIO_BYTES) return c.json({ error: "Recording is too long" }, 413);
-  const contentType = c.req.header("content-type") ?? "audio/mp4";
-  if (!c.env.DEEPGRAM_API_KEY) return c.json({ error: "Voice isn't set up on the server yet" }, 503);
-  // The assistant's name, so the transcriber expects it.
-  const custom = await c.env.DB.prepare("SELECT assistant_name FROM settings WHERE user_id = ?")
-    .bind(c.var.userId)
-    .first<{ assistant_name: string }>()
-    .catch(() => null);
-  const names = [...new Set([...KEYTERMS, ...(custom?.assistant_name ? [custom.assistant_name] : [])])];
-
-  const started = Date.now();
-  let got: Transcribed;
-  try {
-    got = await transcribeDeepgram(c.env, audio, contentType, names);
-  } catch (err) {
-    console.error("transcribe: deepgram failed", err);
-    return c.json({ error: "Couldn't transcribe that" }, 502);
-  }
-  console.log(`transcribe: deepgram, ${Math.round(audio.byteLength / 1024)} KB, ${got.seconds.toFixed(1)} s of audio, ${Date.now() - started} ms`);
-  c.executionCtx.waitUntil(recordUsage(c.env, [sttClipRow(c.var.userId, STT_CLIP_USAGE, got.seconds)]));
-  return c.json({ text: got.text, engine: "deepgram", ms: Date.now() - started });
-});
-
 /**
- * A short-lived Deepgram token so the app can stream the microphone straight
- * to Deepgram's live transcription. It only needs to be valid when the
- * connection opens; the real key never leaves the server.
+ * Speech to text, gone. Builds from before 2026-09-23 still ask for a clip to
+ * be transcribed or for a live-listening token, through the old address's
+ * forwarder for a few weeks; they get a plain answer they can show. Free in
+ * ROUTE_TIERS (plans.ts), so a free account's old build sees this, not a 402.
  */
-voice.post("/voice/token", async (c) => {
-  if (!c.env.DEEPGRAM_API_KEY) return c.json({ error: "Voice isn't set up on the server yet" }, 503);
-  // The phone now fetches a token ahead of time and holds it until the name is
-  // heard, so opening the connection costs no round trip (liveListen.ts). That
-  // needs a token that lasts longer than the 30 s default; Deepgram allows up
-  // to an hour, and ten minutes is plenty. The token only has to be valid at
-  // the moment the connection opens.
-  const ttl = Math.min(600, Math.max(30, Math.round(Number(c.req.query("ttl")) || 30)));
-  const res = await fetch(`${DEEPGRAM}/auth/grant`, {
-    method: "POST",
-    headers: { authorization: `Token ${c.env.DEEPGRAM_API_KEY}`, "content-type": "application/json" },
-    body: JSON.stringify({ ttl_seconds: ttl }),
-  });
-  if (!res.ok) {
-    console.error("deepgram grant", res.status, await res.text());
-    return c.json({ error: "Couldn't start live listening" }, 502);
-  }
-  const { access_token, expires_in } = await res.json<{ access_token: string; expires_in: number }>();
-  // The phone listens for the assistant's name, so make sure Deepgram knows the one this user picked.
-  const custom = await c.env.DB.prepare("SELECT assistant_name FROM settings WHERE user_id = ?")
-    .bind(c.var.userId)
-    .first<{ assistant_name: string }>()
-    .catch(() => null);
-  const keyterms = [...new Set([...KEYTERMS, ...(custom?.assistant_name ? [custom.assistant_name] : [])])];
-  return c.json({ token: access_token, expiresIn: expires_in, model: STT_MODEL, keyterms });
-});
+const GONE = { error: "gone", message: "Update OVOA from TestFlight" } as const;
+voice.post("/voice/transcribe", (c) => c.json(GONE, 410));
+voice.post("/voice/token", (c) => c.json(GONE, 410));
 
 // ---------- Voicing ----------
 

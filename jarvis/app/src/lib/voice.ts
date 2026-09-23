@@ -1,13 +1,4 @@
-import {
-  createAudioPlayer,
-  RecordingPresets,
-  requestRecordingPermissionsAsync,
-  setAudioModeAsync,
-  useAudioRecorder,
-  type AudioRecorder,
-  type AudioStatus,
-  type RecordingOptions,
-} from "expo-audio";
+import { createAudioPlayer, requestRecordingPermissionsAsync, setAudioModeAsync, type AudioStatus } from "expo-audio";
 import { fetch } from "expo/fetch";
 import { File, Paths } from "expo-file-system";
 import * as Speech from "expo-speech";
@@ -18,27 +9,17 @@ import { devlog, devlogRepeat, devlogSettled, logFail } from "./devlog";
 import { pickFiller } from "./fillers";
 import { audioWhy, onScreen, whenOnScreen } from "./foreground";
 import { flushHeard, keepHeard, keepsHeard } from "./heard";
-import {
-  canHearName,
-  earAlive,
-  micAlive,
-  openEar,
-  stopStream,
-  useLiveStream,
-  wasAutoOff,
-  wasCapped,
-  wasNameEarFailure,
-  wasOffScreen,
-  type Ear,
-} from "./liveListen";
+import { canHearName, canListen, earAlive, holdEar, openEar, releaseEar, wasNameEarFailure, wasOffScreen, type Ear } from "./liveListen";
+import { ensureSpeechPermission } from "./onDeviceTranscribe";
 import { onSignOut } from "./signOut";
 import { storage } from "./storage";
-import { onlyStop, saidOverReply, TurnGate, type GateResult, type Turn } from "./turnGate";
+import { TurnGate, type GateResult, type Turn } from "./turnGate";
 import { readProfiles, type TwistProfile, type TwistProfiles } from "./twist";
 import { endTurn, failTurn, mark as markTurn, markStopTalking, noteHeard, startTurn } from "./turnTimer";
 
-// Talking with the assistant: record until the user stops speaking, transcribe
-// on the server (Deepgram), then read the reply aloud a sentence or two at a time.
+// Talking with the assistant: the phone hears what's said (liveListen.ts: the
+// words are recognised on the iPhone, and only they leave it), the words go to
+// the assistant, and the reply is read aloud a sentence or two at a time.
 
 export const VOICES = [
   { id: "aura-2-thalia-en", label: "Thalia", note: "Clear, confident" },
@@ -180,22 +161,10 @@ export async function renderSpeech(token: string, text: string): Promise<Spoken>
   return fetchClip(token, text, await voicePref.get());
 }
 
-// Mono AAC is plenty for speech and keeps uploads small.
-const RECORDING: RecordingOptions = {
-  ...RecordingPresets.HIGH_QUALITY,
-  numberOfChannels: 1,
-  bitRate: 64000,
-  isMeteringEnabled: true,
-};
-
-// End-of-speech detection, from the recorder's level meter (dBFS).
-const TICK_MS = 100;
-const SPEECH_START_MS = 200; // this much sound above the room's noise counts as talking
-const END_SILENCE_MS = 900; // this much quiet after talking ends the turn
 /**
- * Always-listening keeps the audio session alive in the background (the app
- * has the "audio" background mode), and never drops the mic while speaking,
- * because iOS won't let a backgrounded app turn it back on.
+ * Always listen and the click standby keep the audio session alive in the
+ * background (the app has the "audio" background mode), and never drop the mic
+ * while speaking, because iOS won't let a backgrounded app turn it back on.
  */
 let backgroundAudio = false;
 
@@ -227,25 +196,9 @@ function audioMode(allowsRecording: boolean) {
     playsInSilentMode: true,
     shouldPlayInBackground: backgroundAudio || awakeHolds > 0,
     allowsBackgroundRecording: backgroundAudio,
-    // Mixable, like the live mic stream, so switching between them doesn't halt it.
+    // Mixable, like the phone's ear, so switching between them doesn't halt it.
     interruptionMode: "mixWithOthers" as const,
   };
-}
-
-const NO_SPEECH_MS = 20_000; // nobody spoke: throw the recording away and start a fresh one
-const MAX_UTTERANCE_MS = 15_000;
-const SPEECH_DB = 10; // talking is this far above the room's noise...
-const QUIET_DB = 6; // ...and it's a pause again once below this
-const NOISE_WINDOW = 40; // ticks (4 s) of history for estimating the room's noise
-const CALIBRATE_MS = 500; // each recording measures the room this long before listening for speech
-
-// The room's noise level, carried between recordings so each starts calibrated.
-let roomNoise = -50;
-
-/** The room's noise: a low percentile of recent levels, so pauses between words count. */
-function noiseOf(history: number[]) {
-  const sorted = [...history].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length * 0.15)];
 }
 
 async function authedFetch(
@@ -277,41 +230,6 @@ async function authedFetch(
   }
   devlog("res", `${res.status} ${init.method} ${path} · ${Date.now() - started} ms`);
   return res;
-}
-
-/**
- * Turns a recording into text. Deletes the recording afterwards, because a
- * voice turn's audio has no life past the words — pass `keep` for audio the
- * user saved and still owns.
- */
-export async function transcribe(
-  token: string,
-  uri: string,
-  contentType = "audio/mp4",
-  { keep = false }: { keep?: boolean } = {},
-): Promise<string> {
-  const file = new File(uri);
-  try {
-    const audio = new Uint8Array(await file.arrayBuffer());
-    const res = await authedFetch(
-      token,
-      "/voice/transcribe",
-      { method: "POST", headers: { "content-type": contentType }, body: audio },
-      `${Math.round(audio.byteLength / 1024)} KB of audio`,
-    );
-    const { text } = (await res.json()) as { text: string };
-    // How much, never what: the words may be the room's, and they stay on the phone.
-    devlog("voice", text ? `heard ${text.split(/\s+/).length} words` : "heard nothing (noise)");
-    markTurn("transcribe", `${Math.round(audio.byteLength / 1024)} KB uploaded`);
-    if (text) noteHeard(text);
-    return text;
-  } finally {
-    if (!keep) {
-      try {
-        file.delete();
-      } catch {}
-    }
-  }
 }
 
 /** Sentences grouped into pieces, the first one short so playback starts quickly. */
@@ -839,160 +757,6 @@ export function serverSpeech(reply: Reply, cancelled: () => boolean = () => fals
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function discard(uri: string | null) {
-  try {
-    if (uri) new File(uri).delete();
-  } catch {}
-}
-
-/**
- * Records one utterance: waits for the user to start talking, then stops after
- * a short silence. Returns the file uri, or null if nobody spoke or it was cancelled.
- */
-async function recordUtterance(
-  recorder: AudioRecorder,
-  cancelled: () => boolean,
-  onLevel: (level: number) => void,
-  noSpeechMs = NO_SPEECH_MS,
-) {
-  await applyAudioMode(true);
-  await recorder.prepareToRecordAsync(RECORDING);
-  recorder.record();
-
-  const started = Date.now();
-  // Seed the history with the last known room noise so the first ticks are sensible.
-  const history: number[] = Array(10).fill(roomNoise);
-  let floor = roomNoise;
-  let speechMs = 0;
-  let silenceMs = 0;
-  let heard = false;
-  let peak = -160;
-  let threshold = floor + SPEECH_DB;
-  let meterMissing = false;
-
-  while (true) {
-    await sleep(TICK_MS);
-    if (cancelled()) break;
-    const metering = recorder.getStatus().metering;
-    if (metering === undefined && !meterMissing) {
-      meterMissing = true;
-      devlog("err", "recorder isn't reporting mic levels (metering), so speech can't be detected");
-    }
-    const level = metering ?? -160;
-    onLevel(level);
-    peak = Math.max(peak, level);
-    // Learn the room's noise until they start talking, then hold it steady.
-    if (!heard && level > -160) {
-      history.push(level);
-      if (history.length > NOISE_WINDOW) history.shift();
-      floor = noiseOf(history);
-      threshold = Math.min(-15, Math.max(floor + SPEECH_DB, -50));
-    }
-    if (Date.now() - started < CALIBRATE_MS) continue;
-    if (!heard) {
-      // Waiting for them to start talking.
-      if (level > threshold) {
-        speechMs += TICK_MS;
-        if (speechMs >= SPEECH_START_MS) {
-          heard = true;
-          devlog("voice", "speech started", `${Math.round(level)} dB, room ${Math.round(floor)} dB`);
-        }
-      } else speechMs = 0;
-    } else if (level < Math.min(threshold, floor + QUIET_DB)) {
-      silenceMs += TICK_MS; // a pause
-    } else {
-      silenceMs = 0;
-    }
-    const elapsed = Date.now() - started;
-    if (heard && silenceMs >= END_SILENCE_MS) break;
-    if (!heard && elapsed >= noSpeechMs) break;
-    if (elapsed >= MAX_UTTERANCE_MS) break;
-  }
-
-  await recorder.stop();
-  onLevel(-160);
-  roomNoise = floor;
-  const uri = recorder.uri;
-  const seconds = ((Date.now() - started) / 1000).toFixed(1);
-  const levels = `peak ${Math.round(peak)} dB, noise ${Math.round(floor)} dB, speech above ${Math.round(threshold)} dB`;
-  if (cancelled()) {
-    discard(uri);
-    return null;
-  }
-  if (!heard) {
-    devlog("voice", `no speech in ${seconds}s, listening again`, levels);
-    discard(uri);
-    return null;
-  }
-  if (!uri) {
-    devlog("err", "recording finished but has no file");
-    return null;
-  }
-  devlog("voice", `recorded ${seconds}s of speech`, levels);
-  return uri;
-}
-
-// ---------- Talking over the reply (recording fallback) ----------
-// When live transcription isn't available, the microphone also hears the reply
-// with no way to tell them apart by sound. While it plays we record short pieces
-// and transcribe them: words that aren't in the reply mean the user is talking.
-
-const BARGE_IN_CHUNK_MS = 1800;
-const FOLLOW_UP_MS = 1500; // after an interruption, how long to wait for the rest of the sentence
-
-/**
- * Plays the reply while listening in short pieces. Returns what the user said
- * over it if they interrupted, or null if it played to the end.
- */
-async function speakInterruptible(
-  token: string,
-  recorder: AudioRecorder,
-  speaker: Speaker,
-  reply: string,
-  cancelled: () => boolean,
-  onLevel: (level: number) => void,
-  filler = true,
-) {
-  const state = { done: false, said: null as string | null };
-  const playing = speaker.speak(reply, { keepMic: true, filler }).finally(() => (state.done = true));
-  const checks: Promise<void>[] = [];
-
-  while (!state.done && state.said === null && !cancelled()) {
-    await recorder.prepareToRecordAsync(RECORDING);
-    recorder.record();
-    const started = Date.now();
-    while (!state.done && state.said === null && !cancelled() && Date.now() - started < BARGE_IN_CHUNK_MS) {
-      await sleep(TICK_MS);
-      onLevel(recorder.getStatus().metering ?? -160);
-    }
-    await recorder.stop();
-    const uri = recorder.uri;
-    if (!uri) continue;
-    if (cancelled()) {
-      discard(uri);
-      break;
-    }
-    // Check this piece while the next one records.
-    checks.push(
-      transcribe(token, uri)
-        .then((heard) => {
-          const said = saidOverReply(heard, reply);
-          if (heard) devlog("voice", said ? "that was you: interrupting" : "that was the reply's own echo; ignoring");
-          if (said && state.said === null) {
-            state.said = said;
-            speaker.stop();
-          }
-        })
-        .catch(logFail("voice: speaker.stop")),
-    );
-  }
-  onLevel(-160);
-  await playing.catch(logFail("voice: onLevel"));
-  // The last piece may have caught the start of what they said next.
-  await Promise.all(checks);
-  return state.said;
-}
-
 /**
  * "waiting": on, but parked — iOS will not open a microphone for an app that
  * isn't on screen, so the loop is holding until it comes forward. Its own phase
@@ -1004,10 +768,14 @@ export type VoicePhase = "off" | "waiting" | "listening" | "thinking" | "speakin
 const RETRY_MS = 3000;
 /** The voice loop backs off to this between failures rather than asking every 3 s forever. */
 const MAX_RETRY_MS = 60_000;
+/** After this many failures in a row, listening stops and says why, rather than trying all day. */
+const MAX_LISTEN_FAILURES = 6;
 /** How long to wait for the app to come forward before looking for a microphone again. */
 const BACKGROUND_WAIT_MS = 5000;
 const INTERRUPTED = Symbol("interrupted");
-const LIVE_RETRY_MS = 60_000;
+
+/** A failure that trying again won't fix (Speech Recognition refused): listening stops at once and says why. */
+const isPermanent = (err: unknown) => err instanceof Error && (err as { permanent?: boolean }).permanent === true;
 
 /**
  * Hands-free, continuous listening: hear something, send it, read the reply
@@ -1015,13 +783,19 @@ const LIVE_RETRY_MS = 60_000;
  * the assistant and returns the reply to read aloud (or null to skip speaking).
  * With `interruptible`, the user can talk over the reply to cut it off. With
  * `background` (Always listen) it only answers when called by `name`. With
- * `standby` (twist mode) the microphone runs between turns, nothing sent, so a
- * twist can start a turn while the app is in the background. `wake` false (a
- * plan without the hands-free wake word, which comes with Base) keeps the
- * phone's ear off, so every turn is an ordinary one. `fillers` false: no "Let me look
- * into that" while it thinks (setup, where the reply is a scripted question).
+ * `standby` (the click standby) the phone's ear keeps running between turns,
+ * its words going nowhere, so a click can start a turn while the app is in the
+ * background. `wake` false (a plan without the hands-free wake word, which
+ * comes with Base) listens in open mode: every sentence is for the assistant,
+ * as it is for dictation and setup. `fillers` false: no "Let me look into
+ * that" while it thinks (setup, where the reply is a scripted question).
  * `answers`: each turn answers a question (setup), so a one-word answer isn't
  * taken for the question's echo (turnGate.ts).
+ *
+ * The phone hears it all (liveListen.ts): its own ear, or on a phone without
+ * one, Apple's recogniser for a turn the person started. Only the words leave
+ * the phone. Where neither exists (Expo Go, the web) it says so and stays off:
+ * talking there is typing.
  */
 export function useConversation(
   token: string,
@@ -1034,7 +808,6 @@ export function useConversation(
   ) => Promise<string | null>,
   { interruptible = false, background = false, standby = false, name = "OVOA", wake = true, fillers = true, answers = false } = {},
 ) {
-  const recorder = useAudioRecorder(RECORDING);
   const [phase, setPhaseState] = useState<VoicePhase>("off");
   const phaseRef = useRef<VoicePhase>("off");
   const setPhase = (p: VoicePhase) => {
@@ -1044,8 +817,8 @@ export function useConversation(
   const [level, setLevel] = useState(-160);
   const [error, setError] = useState<string | null>(null);
   /**
-   * Set when listening stopped itself (the old way's ten quiet minutes or its
-   * hour a day) rather than being ended. The orb's owner watches it, so the orb
+   * Set when listening stopped itself (it can't run on this phone, or it kept
+   * failing) rather than being ended. The orb's owner watches it, so the orb
    * doesn't stay lit over a microphone that is off.
    */
   const [stoppedBy, setStoppedBy] = useState<string | null>(null);
@@ -1059,41 +832,38 @@ export function useConversation(
   bargeIn.current = interruptible;
   const nameRef = useRef(name);
   nameRef.current = name;
-  // Live transcription when this build has the PCM stream; recording + upload otherwise.
-  const stream = useLiveStream();
-  const liveFailures = useRef(0);
-  // After switching to recording, try live transcription again after a while.
-  const liveFailedAt = useRef(0);
   const [words, setWords] = useState("");
   // A twist or the clip's button: what's said until then counts as addressed.
   const summonedUntil = useRef(0);
+  /** When the person last asked to be heard (a tap, a click): a running ear's earlier words aren't theirs. */
+  const askedAt = useRef(0);
   const gateRef = useRef<TurnGate | null>(null);
   /** The open ear, so a button press can wake it. */
   const earRef = useRef<Ear | null>(null);
   /**
    * Whether the phone's own ear (modules/name-ear) can be used this session. It
    * starts as "yes if the build has it" and turns false the first time the ear
-   * refuses (no on-device recognition, permission denied), after which the old
-   * way is used with its time limits.
+   * refuses (no on-device recognition, permission refused). After that a turn
+   * the person starts is heard by Apple's recogniser, and listening for the
+   * name doesn't run at all.
    */
   const nameEarOk = useRef(canHearName);
   const standbyRef = useRef(standby);
   standbyRef.current = standby;
-  /** Audio stays up in the background: Always listen, or the twist standby. */
+  /** Audio stays up in the background: Always listen, or the click standby. */
   const keepsAudio = () => background || standbyRef.current;
   /**
-   * Wake mode with nothing sent until the name: the phone's ear, when the
-   * build has it. Always listen uses it too (2026-09-23): the ear owns the
-   * microphone natively and stays open through every turn, so it keeps running
-   * in the background the way the old stream did, and it can run day and night
-   * because room talk never leaves the phone and costs nothing. Only the twist
-   * standby keeps the old way, since it listens for a click, not the name.
-   * Without the ear (older iPhone, no on-device recognition) Always listen falls
-   * back to the old way and its limits: that one streams the room to Deepgram.
+   * Room mode, answering only after the name: the wake word or Always listen,
+   * on the phone's ear. Always listen has run on the ear since 2026-09-23: it
+   * owns the microphone natively and stays open through every turn, so it keeps
+   * running in the background, and it can run day and night because room talk
+   * never leaves the phone. Without the ear neither runs (decision 1: listening
+   * for the name never goes to Apple's servers). A click from the standby is an
+   * open turn: the click, not the name, is what started it.
    */
   const wakeRef = useRef(wake);
   wakeRef.current = wake;
-  const useNameEar = () => (wakeRef.current || background) && nameEarOk.current && !standbyRef.current;
+  const listensForName = () => (wakeRef.current || background) && nameEarOk.current && !standbyRef.current;
 
   useEffect(() => {
     speaker.current = createSpeaker(token);
@@ -1111,6 +881,11 @@ export function useConversation(
   // Stop everything when the owner goes away.
   useEffect(() => end, [end]);
 
+  /**
+   * Listens until `end`. Resolves true when it was ended, false when it
+   * couldn't start or stopped itself (the error says why), so the caller can
+   * put its switch back.
+   */
   const start = useCallback(async () => {
     setError(null);
     setStoppedBy(null);
@@ -1120,6 +895,14 @@ export function useConversation(
     // and Talk listened through the whole tour.
     const mine = ++session.current;
     const cancelled = () => session.current !== mine;
+    // A click sets this itself, a moment earlier; a tap is now.
+    if (Date.now() - askedAt.current > 2000) askedAt.current = Date.now();
+    // Expo Go and the web have neither the ear nor Apple's recogniser: typing only.
+    if (!canListen) {
+      devlog("voice", "no speech recognition in this build; voice input is off");
+      setError("Talking to OVOA needs the OVOA app from TestFlight. Here, type instead.");
+      return false;
+    }
     const { granted } = await requestRecordingPermissionsAsync();
     if (cancelled()) return true;
     if (!granted) {
@@ -1127,6 +910,11 @@ export function useConversation(
       setError("Allow microphone access in Settings to talk to the assistant.");
       return false;
     }
+    // Speech Recognition too, asked here in the foreground with its reason,
+    // before anything needs it where iOS can't show a prompt. The answer isn't
+    // needed here: whichever recogniser runs says for itself if it can't.
+    await ensureSpeechPermission();
+    if (cancelled()) return true;
     const previous = running.current;
     let finished = () => {};
     running.current = new Promise<void>((r) => (finished = r));
@@ -1146,11 +934,15 @@ export function useConversation(
     const answerAloud = async (
       text: string,
       addressed: boolean,
-      options: { keepMic: boolean; room?: boolean; onSpeaking?: (soFar: string) => void },
+      options: { keepMic: boolean; room?: boolean; heardAt?: number; onSpeaking?: (soFar: string) => void },
     ) => {
       // Everything from here on is the user waiting, the same as a band turn (turnTimer.ts).
       startTurn("phone");
       markStopTalking();
+      noteHeard(text);
+      // The words were recognised on the phone as they were said; what the user
+      // felt of it is the gate's wait for them to be done.
+      markTurn("recognised on phone", options.heardAt ? `sent ${Date.now() - options.heardAt} ms after the last word` : undefined);
       try {
         return await answerOneTurn(text, addressed, options);
       } catch (err) {
@@ -1236,17 +1028,17 @@ export function useConversation(
     };
 
     /**
-     * Listens over one live connection that stays open through replies: the
-     * words go through the turn gate as they arrive, and a request is sent the
-     * moment it's complete. Returns when cancelled; throws if the connection is lost.
+     * Listens through one ear that stays open through replies: the words go
+     * through the turn gate as they arrive, and a request is sent the moment
+     * it's complete. Returns when cancelled; throws if listening is lost.
      */
-    const runLive = async (s: typeof stream) => {
-      // With the phone's ear, the gate works the way it does in room mode: the
-      // name (in the pre-roll) or a follow-up counts, and room talk is dropped.
-      // Nothing streams until then anyway, so the drop is cheap; it is there for
-      // the follow-up window, when the connection is open and the room may talk.
-      const wakeWord = useNameEar() ? { name: nameRef.current } : null;
-      const room = background || !!wakeWord;
+    const runLive = async () => {
+      // With the phone's ear listening for the name, the gate works in room
+      // mode: the name (with the few words before it), a click or a follow-up
+      // counts, and room talk is dropped. The ear's words only reach the gate
+      // inside the wake window anyway; the drop is there for the follow-up
+      // window, when the room may talk too.
+      const room = listensForName();
       const gate = new TurnGate(nameRef.current, room, bargeIn.current, answers);
       gateRef.current = gate;
       if (Date.now() < summonedUntil.current) gate.summon(summonedUntil.current);
@@ -1276,43 +1068,43 @@ export function useConversation(
       const showWords = () => {
         if (phaseRef.current === "listening") setWords(gate.live());
       };
-      // The phone's ear owns the microphone; the old stream must not be holding it.
-      if (wakeWord) stopStream(s);
-      const ear = await openEar(wakeWord ? null : s, token, {
-        onLevel: setLevel,
-        onInterim: (text) => {
-          gate.onInterim(text, Date.now());
-          // Words still arriving: the request isn't over, so the connection isn't either.
-          if (text) earRef.current?.wake("speech");
-          showWords();
+      const ear = await openEar(
+        {
+          onLevel: setLevel,
+          onInterim: (text) => {
+            gate.onInterim(text, Date.now());
+            // Words still arriving: the request isn't over, so the window isn't either.
+            if (text) earRef.current?.wake("speech");
+            showWords();
+          },
+          onFinal: (text, sentenceEnd) => {
+            if (text) earRef.current?.wake("speech");
+            handle(gate.onFinal(text, sentenceEnd, Date.now()));
+            showWords();
+          },
+          onQuiet: () => handle(gate.onQuiet()),
+          onDown: (err) => {
+            state.down = err;
+            wake(null);
+          },
+          onWake: (why) => {
+            if (why !== "name") return;
+            devlog("voice", "heard its name; listening to the request");
+            // The phone heard the name, so what follows is the request: the same as a button press.
+            const until = Date.now() + SUMMON_MS;
+            summonedUntil.current = until;
+            gate.summon(until);
+          },
+          onSleep: () => setWords(""),
         },
-        onFinal: (text, sentenceEnd) => {
-          if (text) earRef.current?.wake("speech");
-          handle(gate.onFinal(text, sentenceEnd, Date.now()));
-          showWords();
-        },
-        onQuiet: () => handle(gate.onQuiet()),
-        onDown: (err) => {
-          state.down = err;
-          wake(null);
-        },
-        onWake: (why) => {
-          if (why !== "name") return;
-          devlog("voice", "heard its name; streaming what's said now");
-          // The phone heard the name, so what follows is the request whatever
-          // Deepgram makes of the name itself: the same as a button press.
-          const until = Date.now() + SUMMON_MS;
-          summonedUntil.current = until;
-          gate.summon(until);
-        },
-        onSleep: () => setWords(""),
-      }, { reuse: keepsAudio(), wakeWord, room: background });
+        { room, name: nameRef.current, since: askedAt.current, useEar: nameEarOk.current },
+      );
       earRef.current = ear;
-      // A button press that started this listening: the ear opens for it now.
+      // A button press that started this listening: the window opens for it now.
       if (Date.now() < summonedUntil.current) ear.wake("summon");
-      // While a reply is being worked out or read aloud, the connection is kept
+      // While a reply is being worked out or read aloud, the window is kept
       // open moment by moment: a slow first sentence or a long read-aloud would
-      // otherwise outlast the window, and a "stop" in its tail would be missed.
+      // otherwise outlast it, and a "stop" in its tail would be missed.
       let answering = false;
       const timer = setInterval(() => {
         if (cancelled()) wake(null);
@@ -1323,7 +1115,7 @@ export function useConversation(
       }, 150);
       devlog(
         "voice",
-        `listening live (${ear.native ? `on the phone until "${nameRef.current}" is said` : background ? `room mode: waiting for "${nameRef.current}"` : "every sentence"}${bargeIn.current ? ", talk-over on" : ""})`,
+        `listening live (${room ? `on the phone until "${nameRef.current}" is said` : "every sentence"}, ${ear.source === "ear" ? "the phone's ear" : "Apple's recogniser"}${bargeIn.current ? ", talk-over on" : ""})`,
       );
       try {
         while (!cancelled() && !state.down) {
@@ -1339,11 +1131,12 @@ export function useConversation(
           let spoke: boolean;
           answering = true;
           try {
-            // The microphone keeps streaming while the reply plays; the gate hears
-            // the reply so far, to tell its echo from the user talking over it.
+            // The ear keeps hearing while the reply plays; the gate hears the
+            // reply so far, to tell its echo from the user talking over it.
             spoke = await answerAloud(turn.text, turn.addressed, {
               keepMic: true,
               room,
+              heardAt: turn.heardAt,
               onSpeaking: (soFar) => {
                 gate.speak(soFar);
                 ear.wake("reply");
@@ -1359,7 +1152,7 @@ export function useConversation(
           }
           if (cancelled() || !spoke) continue;
           gate.spoke(Date.now());
-          // An answer without the name still counts for a moment; the connection stays open for it.
+          // An answer without the name still counts for a moment; the window stays open for it.
           ear.wake("follow-up");
         }
       } finally {
@@ -1372,193 +1165,134 @@ export function useConversation(
       if (state.down) throw state.down;
     };
 
-    // Words the user said over the last reply; the rest of their sentence follows.
-    let carried: string | null = null;
-
-    /** One sentence the old way: record until a pause, then upload it. "" if nobody spoke. */
-    const hearRecorded = async (noSpeechMs: number) => {
-      // In the background, iOS suspends the app the moment no audio is running, which
-      // froze the reply request for 15 minutes once. Keep the stream going as a keep-alive.
-      // Only from the foreground: starting it while the app is away is refused every
-      // time ('!int'), and the failures were the keep-alive's whole output.
-      // Stopped first, because expo-audio's start() is a no-op while it still
-      // thinks the engine is running (AudioStream.swift: `guard !isStreaming`),
-      // which is the very state a halted engine leaves it in.
-      if (keepsAudio() && stream && onScreen() && !micAlive(stream)) {
-        stopStream(stream);
-        await stream
-          .start()
-          .then(() => devlogSettled("keep-alive mic"))
-          .catch((err) => devlogRepeat("keep-alive mic", "err", "background keep-alive mic failed", audioWhy(err)));
-      }
-      const uri = await recordUtterance(recorder, cancelled, setLevel, noSpeechMs);
-      if (!uri || cancelled()) return "";
-      setPhase("thinking");
-      return transcribe(token, uri);
-    };
-
-    /** One turn without live transcription: hear, answer, speak. */
-    const recordingTurn = async () => {
-      setPhase("listening");
-      setWords(carried ?? "");
-      let text: string;
-      if (carried !== null) {
-        const rest = await hearRecorded(FOLLOW_UP_MS);
-        if (cancelled()) return;
-        text = `${carried} ${rest}`.trim();
-        carried = null;
-        if (onlyStop(text)) return; // they just wanted it to stop talking
-      } else {
-        text = await hearRecorded(NO_SPEECH_MS);
-        if (cancelled()) return;
-      }
-      if (!text) return; // nobody spoke, or just noise
-      const addressed = Date.now() < summonedUntil.current;
-      if (!bargeIn.current) {
-        await answerAloud(text, addressed, { keepMic: false });
-        return;
-      }
-      // Talking over the reply without live transcription needs the whole reply first.
-      setPhase("thinking");
-      setWords(text);
-      devlog("voice", `asking the assistant (${text.length} chars)`);
-      const reply = await handler.current(text, addressed);
-      if (cancelled() || !reply) return;
-      setPhase("speaking");
-      setWords("");
-      carried = await speakInterruptible(token, recorder, speaker.current, reply, cancelled, setLevel, fillers);
-    };
-
-    let loopFailures = 0;
+    let failures = 0;
+    let stoppedItself = false;
     while (!cancelled()) {
+      // iOS will not open a microphone for an app that isn't on screen. Background
+      // audio keeps a session that is *already* running alive; it does not let a
+      // stopped one start again, and every attempt comes back as
+      // AVAudioSessionErrorCodeCannotInterruptOthers ('!int', OSStatus 560557684).
+      // Asking anyway, every three seconds, filled the log with 7,150 identical
+      // failures and left no working microphone at all (device_logs, 2026-09-21).
+      // A running ear (Always listen, the click standby) carries on off screen.
+      if (!onScreen() && !earAlive()) {
+        // Say so: parking used to leave the phase on "listening", so the Lock
+        // Screen, the Dynamic Island and the clip's light all claimed the app
+        // was listening while it was waiting for the user to open it.
+        setPhase("waiting");
+        await whenOnScreen(BACKGROUND_WAIT_MS);
+        continue;
+      }
       try {
-        // iOS will not open a microphone for an app that isn't on screen. Background
-        // audio keeps a session that is *already* running alive; it does not let a
-        // stopped one start again, and every attempt comes back as
-        // AVAudioSessionErrorCodeCannotInterruptOthers ('!int', OSStatus 560557684).
-        // Asking anyway, every three seconds, filled the log with 7,150 identical
-        // failures and left no working microphone at all (device_logs, 2026-09-21).
-        //
-        // The test is micAlive, not isStreaming: a twist has to be able to start a
-        // turn from the background, so a mic that really is running carries on —
-        // but the flag stays true for an engine iOS halted (liveListen.ts), and
-        // trusting it is what let the loop through to be refused over and over.
-        if (!onScreen() && !micAlive(stream) && !earAlive()) {
-          // Say so: parking used to leave the phase on "listening", so the Lock
-          // Screen, the Dynamic Island and the clip's light all claimed the app
-          // was listening while it was waiting for the user to open it.
-          setPhase("waiting");
+        await runLive();
+        failures = 0;
+      } catch (err) {
+        if (cancelled()) break;
+        // iOS took the microphone because the app went off screen: wait for it.
+        if (wasOffScreen(err)) {
           await whenOnScreen(BACKGROUND_WAIT_MS);
           continue;
         }
-        if (liveFailures.current >= 2 && Date.now() - liveFailedAt.current > LIVE_RETRY_MS) {
-          devlog("voice", "trying live transcription again");
-          liveFailures.current = 0;
-        }
-        if ((stream || useNameEar()) && liveFailures.current < 2) {
-          try {
-            await runLive(stream);
-            liveFailures.current = 0;
-          } catch (err) {
-            if (cancelled()) break;
-            // iOS took the microphone because the app went off screen. Live
-            // transcription is fine; wait for the app rather than spending a
-            // failure and falling back to recording, which can't work there either.
-            if (wasOffScreen(err)) {
-              await whenOnScreen(BACKGROUND_WAIT_MS);
-              continue;
-            }
-            // The phone can't hear its name (an older iPhone, no on-device
-            // recognition, permission refused): the old way, with its limits.
-            if (wasNameEarFailure(err)) {
-              nameEarOk.current = false;
-              devlog("voice", "can't hear the name on the phone; listening the old way, with a time limit", err instanceof Error ? err.message : String(err));
-              continue;
-            }
-            // The old way stopped itself: ten quiet minutes, or the hour for the
-            // day. Say so on screen and stop, rather than starting again.
-            if (wasAutoOff(err) || wasCapped(err)) {
-              setError(err instanceof Error ? err.message : String(err));
-              setWords("");
-              setPhase("off");
-              // The orb has to follow: the assistant provider turns it off when it sees this.
-              setStoppedBy(wasCapped(err) ? "the day's hour of listening" : "ten quiet minutes");
-              break;
-            }
-            liveFailures.current++;
-            liveFailedAt.current = Date.now();
-            devlog(
-              "err",
-              liveFailures.current < 2 ? "live transcription failed; trying again" : "live transcription keeps failing; switching to recording",
-              err instanceof Error ? err.message : String(err),
-            );
-            if (!keepsAudio()) stopStream(stream);
-            await sleep(1000);
-          }
+        const why = err instanceof Error ? err.message : String(err);
+        // The phone's ear can't run here: a turn the person starts can use
+        // Apple's recogniser instead. Listening for the name only ever runs on
+        // the ear (decision 1), so Always listen stops instead.
+        if (wasNameEarFailure(err) && nameEarOk.current && !background) {
+          nameEarOk.current = false;
+          devlog("voice", "the phone's ear can't run here; turns you start use Apple's recogniser", why);
           continue;
         }
-        await recordingTurn();
-        loopFailures = 0;
-      } catch (err) {
-        // Usually a dropped connection: say so, wait a moment, and keep going.
-        // Backing off rather than retrying on a fixed beat: when the microphone is
-        // refused outright, asking again in three seconds only asks again forever.
-        if (cancelled()) break;
-        loopFailures++;
-        const wait = Math.min(RETRY_MS * 2 ** (loopFailures - 1), MAX_RETRY_MS);
-        devlog("err", `voice loop error, retrying in ${Math.round(wait / 1000)} s`, audioWhy(err, { attempt: loopFailures }));
-        setError(err instanceof Error ? err.message : "Voice stopped working");
-        if (recorder.getStatus().isRecording) await recorder.stop().catch(logFail("voice: recorder.stop"));
+        failures++;
+        const stopWith = wasNameEarFailure(err)
+          ? background
+            ? `Always listen needs an iPhone that recognises speech on its own. ${why}`
+            : why
+          : isPermanent(err) || failures >= MAX_LISTEN_FAILURES
+            ? why
+            : null;
+        if (stopWith) {
+          if (wasNameEarFailure(err)) nameEarOk.current = false;
+          devlog("err", "listening stopped itself", stopWith);
+          setError(stopWith);
+          setWords("");
+          setPhase("off");
+          // The orb has to follow: the assistant provider turns it off when it sees this.
+          setStoppedBy(stopWith);
+          stoppedItself = true;
+          break;
+        }
+        // Backing off rather than retrying on a fixed beat: when the microphone
+        // is refused outright, asking again in three seconds only asks again forever.
+        const wait = Math.min(RETRY_MS * 2 ** (failures - 1), MAX_RETRY_MS);
+        devlog("err", `listening failed, trying again in ${Math.round(wait / 1000)} s`, audioWhy(err, { attempt: failures }));
+        setError(why);
+        setPhase("waiting");
         await sleep(wait);
       }
     }
-    // The twist standby keeps the microphone (and the app) running for the next twist.
-    if (!standbyRef.current) {
-      stopStream(stream);
-      if (backgroundAudio) {
-        backgroundAudio = false;
-        await applyAudioMode(false).catch(logFail("voice: applyAudioMode"));
-      }
+    // The click standby keeps the ear (and the app) running for the next click.
+    if (!standbyRef.current && backgroundAudio) {
+      backgroundAudio = false;
+      await applyAudioMode(false).catch(logFail("voice: applyAudioMode"));
     }
     finished();
-    return true;
-  }, [recorder, stream, token, background]);
+    return !stoppedItself;
+  }, [token, background]);
 
-  // Twist standby: iOS won't let a backgrounded app start the microphone, and suspends one with
-  // no audio running. So in twist mode the mic stream runs between turns (its audio goes
-  // nowhere) and a twist in another app can start a turn. It can only be started in the
-  // foreground; if iOS stops it (a phone call, another app's audio) it's started again, and
-  // failing that, the next time the app is opened.
+  // The click standby (decision 13): iOS won't let a backgrounded app open a
+  // microphone, and suspends one with no audio running. So with the phone's
+  // microphone picked and a band paired, the phone's ear runs between turns
+  // (its words go nowhere: nothing reaches the gate, nothing leaves the phone)
+  // and a click in another app starts a turn from the words it hears. It can
+  // only be started in the foreground; if iOS stops it (a phone call, another
+  // app's audio) it's started again, and failing that, the next time the app
+  // is opened. No new microphone is ever opened off screen.
   useEffect(() => {
-    if (!standby || !stream) return;
+    if (!standby || !canHearName) return;
     let stopped = false;
-    let lastAudioAt = Date.now();
-    const sub = stream.addListener("audioStreamBuffer", () => (lastAudioAt = Date.now()));
+    let holding = false;
+    /** A check is under way (the timer and the app coming forward can overlap). */
+    let checking = false;
     const hold = async (why: string) => {
-      if (stopped || phaseRef.current !== "off") return;
-      if (stream.isStreaming && Date.now() - lastAudioAt < STANDBY_SILENT_MS) return;
+      if (stopped || checking || phaseRef.current !== "off") return;
+      if (holding && earAlive()) return;
+      checking = true;
+      try {
+        await holdNow(why);
+      } finally {
+        checking = false;
+      }
+    };
+    const holdNow = async (why: string) => {
       // Off screen there is nothing to do but wait: iOS only opens a microphone
-      // for an app that's in front, and this stops the stream before starting it,
-      // so asking anyway killed a standby mic that was still running and then
-      // couldn't get it back — and with it the background audio that keeps the app
-      // alive for the next twist (device_logs, 2026-09-21). The AppState listener
-      // below calls this again the moment the app returns.
+      // for an app that's in front. The AppState listener below calls this
+      // again the moment the app returns.
       if (!onScreen()) return;
       const { granted } = await requestRecordingPermissionsAsync();
       if (!granted || stopped || phaseRef.current !== "off") return;
       backgroundAudio = true;
       try {
         await applyAudioMode(true);
-        if (stream.isStreaming) stopStream(stream);
-        await stream.start();
-        lastAudioAt = Date.now();
-        devlog("voice", `twist standby: microphone on (${why}); nothing is sent until a twist`);
-        devlogSettled("twist standby mic");
+        // Held but silent: iOS stopped it. Let go, and start it afresh.
+        if (holding) releaseEar("standby");
+        holding = false;
+        await holdEar("standby", nameRef.current);
+        // Standby was turned off while the ear started: hand it straight back.
+        if (stopped) return releaseEar("standby");
+        holding = true;
+        devlog("voice", `click standby: the phone's ear is on (${why}); nothing leaves the phone until a click`);
+        devlogSettled("click standby ear");
       } catch (err) {
-        devlogRepeat("twist standby mic", "err", "twist standby: couldn't turn the microphone on", audioWhy(err, { why }));
+        if (wasNameEarFailure(err)) {
+          // This phone can't recognise on its own: a click works with the app open, not from other apps.
+          stopped = true;
+          devlog("voice", "click standby: the phone's ear can't run here; clicks work while OVOA is open", err instanceof Error ? err.message : String(err));
+          return;
+        }
+        devlogRepeat("click standby ear", "err", "click standby: couldn't start the phone's ear", audioWhy(err, { why }));
       }
     };
-    hold("twist mode").catch(logFail("voice: hold"));
+    hold("click mode").catch(logFail("voice: hold"));
     const timer = setInterval(() => hold("it had stopped").catch(logFail("voice: hold")), STANDBY_CHECK_MS);
     const appState = AppState.addEventListener("change", (s) => {
       if (s === "active") hold("app opened").catch(logFail("voice: hold"));
@@ -1567,18 +1301,17 @@ export function useConversation(
       stopped = true;
       clearInterval(timer);
       appState.remove();
-      sub.remove();
-      // A turn in progress keeps the mic; its loop stops it at the end now that standby is off.
-      if (phaseRef.current === "off") {
-        stopStream(stream);
-        devlog("voice", "twist standby: microphone off");
-        if (!background) {
-          backgroundAudio = false;
-          applyAudioMode(false).catch(logFail("voice: applyAudioMode"));
-        }
+      // A turn in progress holds the ear itself, so letting go here never stops it mid-turn.
+      if (holding) {
+        releaseEar("standby");
+        devlog("voice", "click standby: off");
+      }
+      if (phaseRef.current === "off" && !background) {
+        backgroundAudio = false;
+        applyAudioMode(false).catch(logFail("voice: applyAudioMode"));
       }
     };
-  }, [standby, stream, background]);
+  }, [standby, background]);
 
   // Overheard lines wait a few seconds before being sent; send what's waiting when
   // the app goes away, rather than losing it if iOS suspends us.
@@ -1597,10 +1330,12 @@ export function useConversation(
    * next ~8 s of speech as addressed even without the name. Cuts off a reply.
    */
   const summon = useCallback(() => {
-    const until = Date.now() + SUMMON_MS;
+    const now = Date.now();
+    const until = now + SUMMON_MS;
     summonedUntil.current = until;
+    askedAt.current = now;
     gateRef.current?.summon(until);
-    // The button is as good as the name: the phone's ear starts streaming now.
+    // The button is as good as the name: the ear's words go to the gate from now.
     earRef.current?.wake("summon");
     devlog("voice", "summoned", `phase ${phaseRef.current}`);
     if (phaseRef.current === "speaking") speaker.current.stop();
@@ -1617,9 +1352,8 @@ export function useConversation(
   return { phase, currentPhase, level, error, setError, words, start, end, interrupt, summon, finishNow, stoppedBy };
 }
 
-/** Twist standby: how often the mic is checked, and how long without audio means iOS stopped it. */
+/** The click standby: how often the ear is checked. */
 const STANDBY_CHECK_MS = 5000;
-const STANDBY_SILENT_MS = 3000;
 
 /** After a twist, how long speech counts as addressed without the name. */
 const SUMMON_MS = 8000;

@@ -21,6 +21,7 @@ import { api, type Autonomy, type Memory } from "../../lib/api";
 import { disableTimeline, enableTimeline, timelinePref } from "../../lib/location";
 import { useAgent } from "../../lib/agent";
 import { useAssistant } from "../../lib/assistant";
+import { usePhoneEar } from "../../lib/liveListen";
 import { useSession } from "../../lib/auth";
 import { devModePref, useDevMode } from "../../lib/devMode";
 import { usePlan } from "../../lib/plan";
@@ -45,6 +46,8 @@ export default function Settings() {
   // below ("For Base users") show only where the plan's features say otherwise,
   // as a server from before v1 still does for the wake word and background work.
   const { free, can } = usePlan();
+  // Always listen runs on the phone's own recogniser or not at all (decision 1).
+  const phoneEar = usePhoneEar();
   const devMode = useDevMode();
   const soundsOn = useSoundsOn();
   const [quiet, setQuiet] = useState({
@@ -537,6 +540,15 @@ export default function Settings() {
               label="Always listen"
               what="The microphone stays on day and night, and answers when you say its name."
             />
+          ) : !phoneEar.available ? (
+            phoneEar.checked && (
+              <View style={{ gap: 2 }}>
+                <Text style={styles.label}>Always listen</Text>
+                <Text style={styles.meta}>
+                  Not on this iPhone: it can't recognise speech on its own, and OVOA never sends a room's sound anywhere to listen for its name.
+                </Text>
+              </View>
+            )
           ) : (
             <Setting
               label="Always listen"
@@ -672,7 +684,7 @@ const LISTEN_MODES = [
   {
     mode: "twist",
     label: "Clip click",
-    hint: "Double-click the ES100's button: it buzzes and listens. Press once to send what you said; press once while it answers to cut it off. Works from other apps too.",
+    hint: "Double-click the ES100's button: it buzzes and listens. Press once to send what you said; press once while it answers to cut it off. Works from other apps too, on an iPhone that recognises speech on its own.",
   },
 ] as const;
 

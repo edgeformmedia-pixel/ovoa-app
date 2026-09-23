@@ -523,12 +523,21 @@ check "and it can be put back" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['tt
 # The Workers AI voices went with Workers AI: choosing one is refused.
 check "a Workers AI voice is refused" \
   "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"tts_engine":"workers-aura-2"}')" "400"
-# Clips: Deepgram is the only transcriber, so there is nothing to choose, and
-# with no Deepgram key here a clip fails honestly rather than going somewhere else.
-check "the clip transcriber is no longer a setting" \
-  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"stt_clip_engine":"workers-whisper"}')" "400"
-check "a clip with no transcriber to hand fails, not lies" \
-  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $TOKEN" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')" "503"
+# Speech to text is on the phone now (2026-09-23): the server never asks
+# Deepgram to listen. Old builds still ask for a clip to be transcribed or a
+# live-listening token, and are told plainly to update; the old clip-engine
+# switch is gone with them.
+check "the clip transcriber switch is gone" \
+  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"stt_clip_engine":"workers-whisper"}' | j "d['error']")" "Nothing to change."
+GONE=$(curl -s -X POST -H "authorization: Bearer $TOKEN" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')
+check "an old build's clip gets 410" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $TOKEN" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')" "410"
+check "keyed on error: gone" "$(echo "$GONE" | j "d['error']")" "gone"
+check "with a sentence to show" "$(echo "$GONE" | j "d['message']")" "Update OVOA from TestFlight"
+check "an old build's live-listening token gets 410" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/voice/token?ttl=600")" "410"
+check "and the wake word's, the same" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/voice/token?mode=wake")" "410"
 
 echo
 echo "── plans: free, base and pro ──────────────────────"
@@ -569,6 +578,8 @@ check "with error needs_plan" "$(echo "$NP" | j "d['error']")" "needs_plan"
 check "needing base" "$(echo "$NP" | j "d['needs']")" "base"
 check "and a sentence to show" "$(echo "$NP" | j "d['message'].startswith(\"That's for Base users.\")")" "True"
 check "free: voicing is 402" "$(code -X POST "${P[@]}" "$API/voice/speak" -d '{"text":"Hello there"}')" "402"
+check "free: an old build's clip hears 410, not 402" "$(code -X POST "${P[@]}" "$API/voice/transcribe" --data-binary 'x')" "410"
+check "free: and its token the same" "$(code -X POST "${P[@]}" "$API/voice/token?mode=wake")" "410"
 check "free: the brief is 402" "$(code "${P[@]}" "$API/brief")" "402"
 check "free: designing an app is 402" "$(code -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")" "402"
 check "free: the setup conversation is 402" "$(code -X POST "${P[@]}" "$API/onboarding/answer" -d '{"step":"name","text":"Sam"}')" "402"
@@ -614,7 +625,6 @@ check "base: 20 replies a day" "$(echo "$BASE_ME" | j "d['plan']['limits']['repl
 check "base: every feature, wake word and background work included" "$(echo "$BASE_ME" | j "all(d['plan']['features'].values())")" "True"
 check "base: /chat gets past the gate" "$(not402 -X POST "${P[@]}" "$API/chat" -d '{"message":"hello"}')" "yes"
 check "base: overheard talk isn't a plan problem" "$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello","ambient":true}' | j "d.get('error')!='needs_plan'")" "True"
-check "base: the wake word's stream isn't a plan problem" "$(not402 -X POST "${P[@]}" "$API/voice/token?mode=wake")" "yes"
 check "base: background work gets through" "$(code -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"Check","instruction":"Look.","kind":"once"}')" "201"
 check "base: designing an app reaches the engines (none here)" "$(code -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")" "503"
 # The day's spend, used up: $0.30 against Base's $0.25.

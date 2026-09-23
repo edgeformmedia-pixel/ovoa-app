@@ -88,20 +88,23 @@ The Assistant tab is voice only: no message list, no text box. Tap the orb
 to turn listening on. It stays on, and comes back on when you return to the
 tab or reopen the app, until you tap the orb again.
 
-1. **Live transcription** (`app/src/lib/liveListen.ts`): the app gets a
-   30-second Deepgram token from `POST /voice/token`, then streams 16 kHz PCM
-   from `expo-audio`'s `AudioStream` straight to Deepgram's live WebSocket
-   (`nova-3`, with `OVOA` as a key term). Your words appear under the orb as
-   you say them. Deepgram's endpointing says when you've finished (600 ms
-   pause, or 1.2 s with no new words), and the sentence is sent right away.
-   The real key never leaves the Worker.
-   - Fallback: if the live connection fails twice, it records with the level
-     meter instead and uploads to `POST /voice/transcribe`.
+1. **Hearing you, on the phone** (`app/src/lib/liveListen.ts`): the iPhone
+   recognises speech itself. The phone's ear (`app/modules/name-ear`, Apple's
+   on-device recognition) hears you; `earWords.ts` turns its growing text into
+   sentences, and the turn gate (`turnGate.ts`) decides when you've finished
+   (a pause of about 0.7 s, or a question mark). Only the words leave the
+   phone, never the sound. On an iPhone that can't recognise on its own, a
+   turn you start uses Apple's recogniser instead (it may use Apple's servers);
+   listening for the name and Always listen then don't run at all. Recordings
+   (the band's button, the Record tab) are turned into words on the phone too
+   (`onDeviceTranscribe.ts`). Nothing is transcribed on the server:
+   `POST /voice/transcribe` and `POST /voice/token` answer 410 for old builds.
 2. The text goes to `/chat` with `voice: true`, which asks the model for
    short, spoken-style replies. Conversations are still saved for memory and
    context.
-3. The reply is read aloud through `POST /voice/speak` (Deepgram Aura 2), a
-   sentence or two at a time so it starts quickly. Then it listens again.
+3. The reply is read aloud through `POST /voice/speak` (Deepgram Aura 2), or
+   voiced in the `/chat` stream itself, a sentence or two at a time so it
+   starts quickly. Then it listens again. Deepgram is only OVOA's voice.
 
 How long a turn takes, and which leg of it is slow, is measured per turn in
 `app/src/lib/turnTimer.ts` and shown in **Dev tools → Turn timings**; the
@@ -110,13 +113,14 @@ numbers and what to do about them are in
 
 Tap the orb while it's talking to cut it off. Approval cards (texts, emails,
 calls) still appear under the orb. Listening pauses when you leave the tab or
-the app goes to the background; iOS doesn't allow recording in the background
-from Expo Go. Pick the voice in **Settings → Voice** (saved on the phone).
+the app goes to the background. Pick the voice in **Settings → Voice** (saved
+on the phone).
 
-While it's on, everything it hears goes to the assistant, including TV and
-other people talking. There's no wake word.
+Without the wake word, everything it hears while the orb is on goes to the
+assistant, including TV and other people talking. With it, only what follows
+"OVOA" (or a click on the band) does; the rest never leaves the phone.
 
-Everything uses `expo-audio` and `expo-file-system`, so it works in Expo Go.
+Expo Go and the web have neither recogniser, so there talking is typing.
 Listening lives in `AssistantProvider` (`app/src/lib/assistant.tsx`), above
 the tabs; the Assistant tab only draws it.
 
@@ -124,20 +128,21 @@ the tabs; the Assistant tab only draws it.
 
 Off by default, saved on the phone, and it asks for confirmation. When on:
 
-- The microphone stays on while the app is open, on **every** screen, not
-  just the Assistant tab. It still stops in the background.
-- **Talk over a reply to interrupt it.** Expo Go can't turn on the iPhone's
-  echo cancellation, so the mic also hears the reply. While a reply plays, the
-  app records 1.8 s pieces and transcribes them. It only counts as the user
-  talking if at least 3 words (70% of what was heard) aren't in the reply, or
-  if the piece is just "stop" / "okay stop" / "hold on". It then stops
-  the reply and catches the rest of the sentence. A bare "stop" or "hold on"
-  just silences it. Expect about 1–2 s before it reacts.
+- The microphone stays on, on **every** screen and with the app in the
+  background, on the phone's own ear: nothing leaves the phone until it hears
+  its name. It only runs on an iPhone that recognises speech on its own.
+- **Talk over a reply to interrupt it.** The phone's ear also hears the
+  reply. What it hears while a reply plays only counts as the user talking if
+  at least 3 words (70% of what was heard) aren't in the reply, or if it's
+  just "stop" / "okay stop" / "hold on". It then stops the reply and catches
+  the rest of the sentence. A bare "stop" or "hold on" just silences it.
+  Expect about 1–2 s before it reacts.
 - If a reply creates an approval card while you're on another tab, the app
   switches to the Assistant tab to show it.
 
-The Deepgram key lives only on the Worker (`DEEPGRAM_API_KEY` secret). Without
-it, the voice routes return 503.
+The Deepgram key lives only on the Worker (`DEEPGRAM_API_KEY` secret). It is
+used for OVOA's voice only (text to speech). Without it, `/voice/speak` returns
+503.
 
 ## Google connection
 
@@ -371,9 +376,9 @@ week". The assistant reaches it through `context_day`, `context_week`,
 transcripts, which is what stops it falling over after a week of real use.
 
 Capture is explicit only, and there is no branch in the code that makes it
-otherwise. A saved recording is transcribed, the words go to the server to be
-summarised and are dropped there, and what is kept is a title and two
-sentences. The audio stays on the phone. Ambient capture was ruled out on
+otherwise. A saved recording is turned into words on the phone, the words go
+to the server to be summarised and are dropped there, and what is kept is a
+title and two sentences. The audio stays on the phone. Ambient capture was ruled out on
 legal grounds (all-party consent, BIPA), not deferred.
 
 Promises are pulled out while the words are still around, with the words

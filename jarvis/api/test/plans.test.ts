@@ -51,6 +51,7 @@ eq("resuming a turn is base", tierForRoute("POST", "/chat/resume"), "base");
 eq("Siri is base", tierForRoute("POST", "/siri"), "base");
 eq("the brief is base", tierForRoute("GET", "/brief"), "base");
 eq("voicing is base (Deepgram)", tierForRoute("POST", "/voice/speak"), "base");
+eq("the old token route is free with or without the wake word's mode", tierForRoute("POST", "/voice/token", (k) => (k === "mode" ? "wake" : undefined)), "free");
 eq("the timeline is base", tierForRoute("POST", "/context/blocks"), "base");
 eq("a timeline day is base", tierForRoute("GET", "/context/days/2026-09-22"), "base");
 eq("a timeline week is base", tierForRoute("GET", "/context/weeks/2026-09-21"), "base");
@@ -267,7 +268,7 @@ const U = "user-1";
 
 // ---------- The allowance arithmetic ----------
 
-eq("one spoken reply: $0.0022 + $0.0066 + $0.0028", SPOKEN_REPLY_MICRO, 11_600);
+eq("one spoken reply: $0.0022 + $0.0066 (no live listening to pay for)", SPOKEN_REPLY_MICRO, 8_800);
 eq("Base at its cap stays under $0.25", BASE_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO <= 250_000, true);
 eq("Pro at its cap stays under $0.75", PRO_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO <= 750_000, true);
 eq("the ceilings are the brief's", `${BASE_DAILY_CEILING_MICRO} ${PRO_DAILY_CEILING_MICRO}`, "250000 750000");
@@ -275,7 +276,7 @@ eq("the replies are 20 and 60", `${BASE_REPLIES_PER_DAY} ${PRO_REPLIES_PER_DAY}`
 eq("Pro is exactly 3x Base: replies", PRO_REPLIES_PER_DAY, 3 * BASE_REPLIES_PER_DAY);
 eq("and ceiling", PRO_DAILY_CEILING_MICRO, 3 * BASE_DAILY_CEILING_MICRO);
 eq("and month", ALLOWANCES.pro.monthly, 3 * ALLOWANCES.base.monthly);
-eq("new work stops one reply short of the ceiling", spendStopMicro("base"), 250_000 - 11_600);
+eq("new work stops one reply short of the ceiling", spendStopMicro("base"), 250_000 - 8_800);
 eq("so the last reply can't cross it", spendStopMicro("pro") + SPOKEN_REPLY_MICRO <= PRO_DAILY_CEILING_MICRO, true);
 eq("free has nothing", ALLOWANCES.free.replies, 0);
 

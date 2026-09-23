@@ -4,7 +4,7 @@ import type { Env, Vars } from "./types";
 
 // How fast one person, or one address, may use the expensive routes.
 //
-// Every model, transcription and voice call comes out of accounts the whole app
+// Every model and voice call comes out of accounts the whole app
 // shares. With one user that never mattered; with many, one script (or one
 // phone stuck in a loop) could spend the day's allowance for everyone, and the
 // engine cooldowns in llm.ts would then push every other person onto the slow
@@ -26,11 +26,9 @@ const ROUTE_LIMITS: [RegExp, Limiter, string][] = [
   [/^\/claude$/, "RL_TURN", "claude"],
   // One per sentence from builds that voice replies themselves.
   [/^\/voice\/speak$/, "RL_SPEAK", "speak"],
-  // Not /voice/token or /voice/transcribe, on purpose: v1 recognises speech on
-  // the phone, and those two are kept only to tell old builds to update
-  // (release brief, Phase 3). They are free in plans.ts for the same reason.
-  // The phone's count of microphone seconds it streamed, sent every minute or
-  // so (app liveListen.ts). Counted with the log uploads: same shape, same pace.
+  // Builds from before 2026-09-23 report the microphone seconds they streamed,
+  // every minute or so. Counted with the log uploads: same shape, same pace.
+  // (/voice/transcribe and /voice/token only answer 410 now: nothing to limit.)
   [/^\/usage\/stream$/, "RL_LOGS", "usage"],
   // Asking the site again for a person's plan, after a checkout (plans.ts).
   // Counted with sign-ins: ten a minute is a pull to refresh every six seconds.
