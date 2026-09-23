@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAssistant } from "../lib/assistant";
 import { useSession } from "../lib/auth";
 import { logFail } from "../lib/devlog";
 import { measureSpot, pointAt, useDrawer, type SpotRect } from "../lib/drawer";
@@ -144,6 +145,16 @@ function Walkthrough() {
   const [voiceOn, setVoiceOn] = useState(true);
   const [speaking, setSpeaking] = useState(false);
 
+  // Talk's microphone stays shut for the whole tour. Left open, it heard the
+  // tour's own voice as a question and answered it ("Let me look into that")
+  // over the top of the next card.
+  const { hold } = useAssistant();
+  useEffect(() => {
+    let release = () => {};
+    void hold(() => new Promise<void>((r) => (release = r)));
+    return () => release();
+  }, [hold]);
+
   const all = steps(user?.settings.assistantName || "OVOA", free);
   const step = all[at];
   const last = at === all.length - 1;
@@ -158,7 +169,7 @@ function Walkthrough() {
   };
   const say = (text: string) =>
     can.voice
-      ? speaker.current.speak(text)
+      ? speaker.current.speak(text, { filler: false })
       : speakOnDevice(text, (stop) => (stopDevice.current = stop));
 
   // The spotlight: the screen dimmed except a soft cut-out around what's being
@@ -197,7 +208,14 @@ function Walkthrough() {
   /** Shines on `label` once whatever is moving (the menu, a new screen) has settled. */
   const shineOn = async (label: string, after: number, live: () => boolean) => {
     await wait(after);
-    if (live()) spotlight(await measureSpot(label));
+    if (!live()) return;
+    // A drawer still springing open can measure as nothing: one more look.
+    let r = await measureSpot(label);
+    if (!r && live()) {
+      await wait(SETTLE_MS);
+      r = await measureSpot(label);
+    }
+    if (live()) spotlight(r);
   };
 
   // One card: show it, say it, and move on when it's been said.
@@ -216,6 +234,9 @@ function Walkthrough() {
       } else if ("point" in show) {
         drawer.close();
         router.navigate(show.on);
+        // The new screen has to be up before its row can be found and lit.
+        await wait(SETTLE_MS);
+        if (cancelled) return;
         pointAt(show.point);
         await shineOn(show.point, SETTLE_MS, live);
       } else if (show.menu === "open") {
@@ -226,7 +247,9 @@ function Walkthrough() {
         drawer.open();
         pointAt(show.row);
         await shineOn(show.row, SETTLE_MS, live);
+        if (cancelled) return;
         await wait(POINT_MS);
+        // Moved on (Next, Back, Skip) while pointing: the next card owns the screen now.
         if (cancelled) return;
         pointAt(null);
         spotlight(null);
@@ -255,6 +278,9 @@ function Walkthrough() {
       cancelled = true;
       hush();
       setSpeaking(false);
+      // Nothing half-done left behind: a ring on a row, or a spotlight on it.
+      pointAt(null);
+      spotlight(null);
     };
     // Keyed on the card and the voice switch only: a re-render mid-sentence must not restart it.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -555,8 +555,12 @@ export function createSpeaker(token: string) {
     wakeCurrent?.();
   };
 
-  /** `keepMic`: keep the microphone usable so the user can talk over the reply. */
-  const open = ({ keepMic = false } = {}) => {
+  /**
+   * `keepMic`: keep the microphone usable so the user can talk over the reply.
+   * `filler` false: never cover a slow start with "Let me look into that" — for
+   * lines that are read out (the tour, setup's questions), not worked out.
+   */
+  const open = ({ keepMic = false, filler = true } = {}) => {
     stop();
     const mine = generation;
     const pieces: string[] = [];
@@ -673,9 +677,9 @@ export function createSpeaker(token: string) {
      * Plays a clip already on the phone, ahead of everything else ("One second
      * while I get that"): no network, so it starts at once. First thing only.
      */
-    let fillerPlayed = false;
+    let fillerPlayed = !filler;
     const clip = (file: Spoken) => {
-      if (mine !== generation || pieces.length) return;
+      if (!filler || mine !== generation || pieces.length) return;
       pieces.push("(filler)");
       clips.push(Promise.resolve(file));
       fillerPlayed = true;
@@ -737,8 +741,8 @@ export function createSpeaker(token: string) {
     return { say, end, done, clip, voiced };
   };
 
-  const speak = async (text: string, { keepMic = false } = {}) => {
-    const reply = open({ keepMic });
+  const speak = async (text: string, { keepMic = false, filler = true } = {}) => {
+    const reply = open({ keepMic, filler });
     speechChunks(text).forEach(reply.say);
     reply.end();
     await reply.done;
@@ -995,7 +999,8 @@ const LIVE_RETRY_MS = 60_000;
  * `standby` (twist mode) the microphone runs between turns, nothing sent, so a
  * twist can start a turn while the app is in the background. `wake` false (a
  * plan without the hands-free wake word, which is Pro) keeps the phone's ear
- * off, so every turn is an ordinary one.
+ * off, so every turn is an ordinary one. `fillers` false: no "Let me look
+ * into that" while it thinks (setup, where the reply is a scripted question).
  */
 export function useConversation(
   token: string,
@@ -1006,7 +1011,7 @@ export function useConversation(
     signal?: AbortSignal,
     extra?: { speech?: ServerSpeech; room?: boolean },
   ) => Promise<string | null>,
-  { interruptible = false, background = false, standby = false, name = "OVOA", wake = true } = {},
+  { interruptible = false, background = false, standby = false, name = "OVOA", wake = true, fillers = true } = {},
 ) {
   const recorder = useAudioRecorder(RECORDING);
   const [phase, setPhaseState] = useState<VoicePhase>("off");
@@ -1140,10 +1145,10 @@ export function useConversation(
       setWords(text);
       const asked = Date.now();
       devlog("voice", `${addressed ? "heard its name; asking the assistant" : "asking the assistant"} (${text.length} chars)`);
-      const reply = speaker.current.open({ keepMic });
+      const reply = speaker.current.open({ keepMic, filler: fillers });
       // Something heard straight away while the answer is worked out. Only when it
       // was said to the assistant: overheard speech mostly gets no answer at all.
-      if (addressed) {
+      if (addressed && fillers) {
         const filler = pickFiller();
         if (filler) reply.clip(filler);
       }

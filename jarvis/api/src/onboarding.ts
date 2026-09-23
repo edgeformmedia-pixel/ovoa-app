@@ -259,21 +259,27 @@ const STEP_SPECS: Record<Step, StepSpec> = {
     schema: {
       type: "object",
       properties: {
-        where: { type: "string", description: "Gym name or kind of exercise, empty if they don't" },
-        days: weekdays,
-        time,
+        works_out: { type: "boolean", description: "True if they work out at all, even without naming a place" },
+        where: { type: "string", description: "Gym name or kind of exercise, if they said; empty otherwise" },
+        days: { ...weekdays, description: "Every day / 7 days a week means all seven" },
+        time: { ...time, description: "When they start, HH:MM 24-hour ('1-2pm' starts at 13:00)" },
       },
     },
     apply: async (env, userId, d) => {
       const where = String(d.where ?? "").trim().slice(0, 120);
-      if (!where) return "No workouts to plan around.";
-      await saveProfile(env.DB, userId, { gym: where });
+      // "7 days a week, 1-2pm" names no gym, and used to read as no workouts at all.
+      const works = d.works_out === true || !!where || parseClock(d.time) !== null || toDays(d.days).length > 0;
+      if (!works) return "No workouts to plan around.";
+      const what = where || "Workout";
+      const days = toDays(d.days);
+      const when = days.length === 7 || !days.length ? "every day" : days.map((i) => WEEKDAYS[i].slice(0, 3)).join(", ");
+      await saveProfile(env.DB, userId, { gym: `${what}, ${when}${parseClock(d.time) !== null ? ` at ${d.time}` : ""}` });
       const at = parseClock(d.time);
       if (at !== null) {
-        await addRoutines(env, userId, [{ title: `Workout (${where})`, times: [d.time], days: d.days }], "habit");
-        return `${where}, and I'll nudge you at ${clockFromMinutes(at)}.`;
+        await addRoutines(env, userId, [{ title: where ? `Workout (${where})` : "Workout", times: [d.time], days: d.days }], "habit");
+        return `${what} ${when} — I'll plan around it and nudge you at ${clockFromMinutes(at)}.`;
       }
-      return `${where}, noted.`;
+      return `${what} ${when}, noted.`;
     },
   },
   routines: {
@@ -322,19 +328,28 @@ async function advance(env: Env, userId: string, from: Step) {
   return onboardingNext(env, userId);
 }
 
+const withAck = (schema: Record<string, unknown>) => ({
+  ...schema,
+  properties: { ...(schema.properties as object), ack: { type: "string" } },
+});
+
 /** Reads one answer into fields with the model, then saves them. */
 export async function onboardingAnswer(env: Env, userId: string, step: Step, text: string) {
   const spec = STEP_SPECS[step];
   const tz = await env.DB.prepare("SELECT time_zone FROM settings WHERE user_id = ?").bind(userId).first<{ time_zone: string | null }>();
   const raw = await generateText(env, {
     model: env.MEMORY_MODEL,
-    json: { schema: spec.schema },
+    // Every answer also gets a reaction in the assistant's own words, so setup
+    // sounds like someone listening rather than a form being filled in.
+    json: { schema: withAck(spec.schema) },
     fast: true,
     usage: { userId, purpose: "onboarding" },
     system: [
       "You read one answer from a new user setting up their personal assistant, and pull out only what they actually said.",
       "Times are 24-hour HH:MM in their own time zone" + (tz?.time_zone ? ` (${tz.time_zone})` : "") + ". 'Eight' in the morning is 08:00; 'ten at night' is 22:00.",
+      "'Every day' or '7 days a week' means all seven weekdays. A range like '1-2pm' starts at 13:00.",
       "If they said no, none, skip, or didn't answer the question, return empty values. Never invent anything.",
+      "ack: one short, warm sentence reacting to what they said, like a thoughtful assistant who is paying attention (for example how it helps you look after them). Don't repeat the details back, don't ask a question, no emoji.",
     ].join("\n"),
     turns: [{ role: "user", text: JSON.stringify({ question: await questionFor(env, userId, step), answer: text }) }],
   });
@@ -344,7 +359,9 @@ export async function onboardingAnswer(env: Env, userId: string, step: Step, tex
   } catch {
     throw new Error("I didn't quite get that. Could you say it another way?");
   }
-  const understood = await spec.apply(env, userId, data);
+  const facts = await spec.apply(env, userId, data);
+  const ack = typeof data.ack === "string" ? data.ack.trim().slice(0, 200) : "";
+  const understood = ack ? `${ack} ${facts}` : facts;
   return { understood, next: await advance(env, userId, step) };
 }
 

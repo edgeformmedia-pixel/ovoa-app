@@ -1,8 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,11 +11,13 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import type { OrbMode } from "../components/Orb";
+import { OrbView } from "../components/OrbView";
 import { api, isNeedsPlan, type OnboardingStep } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { devlog, logFail } from "../lib/devlog";
 import { syncRoutines } from "../lib/routines";
-import { colors, lift } from "../lib/theme";
+import { colors } from "../lib/theme";
 import { createSpeaker, useConversation } from "../lib/voice";
 
 // Setup, as a phone call.
@@ -102,7 +102,10 @@ export default function Onboarding() {
     }
   };
 
-  const convo = useConversation(token, answer, { interruptible: true });
+  // wake false: Talk's wake word ear waits for "OVOA" before anything counts,
+  // so setup heard every answer as room talk and never replied. And no "Let me
+  // look into that" fillers: the reply here is the next question, not a search.
+  const convo = useConversation(token, answer, { interruptible: true, wake: false, fillers: false });
   // The hook's own speaker belongs to the loop; the greeting happens before the
   // loop starts, so it gets one of its own and finishes before start() is called.
   const intro = useRef(createSpeaker(token));
@@ -122,7 +125,7 @@ export default function Onboarding() {
         say({ from: "ovoa", text: greeting });
         say({ from: "ovoa", text: next.question });
         setCalling(true);
-        await intro.current.speak(`${greeting} ${next.question}`).catch(logFail("onboarding: greeting"));
+        await intro.current.speak(`${greeting} ${next.question}`, { filler: false }).catch(logFail("onboarding: greeting"));
         if (!cancelled) await convo.start();
       })
       // Setup is part of the assistant. On the free plan the answer is needs_plan,
@@ -151,7 +154,7 @@ export default function Onboarding() {
       }
       setCurrent(res.next);
       say({ from: "ovoa", text: res.next.question });
-      if (calling) await intro.current.speak(res.next.question).catch(logFail("onboarding: next question"));
+      if (calling) await intro.current.speak(res.next.question, { filler: false }).catch(logFail("onboarding: next question"));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -176,7 +179,7 @@ export default function Onboarding() {
     void answer(said).then(async (reply) => {
       // Typed answers are read back only while the call is live; someone who
       // switched to the keyboard is probably somewhere they can't listen either.
-      if (reply && calling) await intro.current.speak(reply).catch(logFail("onboarding: reply"));
+      if (reply && calling) await intro.current.speak(reply, { filler: false }).catch(logFail("onboarding: reply"));
     });
   };
 
@@ -206,29 +209,8 @@ export default function Onboarding() {
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={styles.stage}>
-          <View style={styles.orbWrap}>
-            {calling && (
-              <View
-                style={[
-                  styles.halo,
-                  phase === "speaking" && { backgroundColor: colors.done },
-                  { transform: [{ scale: 1 + loudness * 0.35 }], opacity: 0.12 + loudness * 0.35 },
-                ]}
-              />
-            )}
-            <View style={[styles.orb, !calling && styles.orbOff]}>
-              <Image source={require("../../assets/orb-ring.png")} style={styles.ring} resizeMode="cover" />
-              {phase === "thinking" ? (
-                <ActivityIndicator size="large" color={colors.now} />
-              ) : (
-                <Ionicons
-                  name={!calling ? "call-outline" : phase === "speaking" ? "volume-high" : "mic"}
-                  size={30}
-                  color={!calling ? colors.inkMute : phase === "speaking" ? colors.done : colors.now}
-                />
-              )}
-            </View>
-          </View>
+          {/* The same particle globe as Talk; smaller while the keyboard is up. */}
+          <OrbView mode={orbMode(calling, phase)} level={loudness} size={typing ? 96 : 170} />
 
           {/* The question, big, because it's the thing being answered. */}
           <Text style={styles.question}>{step?.question ?? (busy ? "One moment…" : "")}</Text>
@@ -258,9 +240,14 @@ export default function Onboarding() {
               placeholderTextColor={colors.inkMute}
               onSubmitEditing={sendTyped}
               returnKeyType="send"
+              submitBehavior="submit"
               editable={!busy && !!step}
               autoFocus
-              multiline
+              // No AutoFill: iOS offered passwords and contacts over the send
+              // button, straight after the sign-in screen.
+              textContentType="none"
+              autoComplete="off"
+              importantForAutofill="no"
             />
             <Pressable style={styles.send} onPress={sendTyped} disabled={busy || !text.trim()} accessibilityLabel="Send">
               <Ionicons name="arrow-up" size={20} color={colors.paper} />
@@ -323,6 +310,12 @@ function CallButton({
   );
 }
 
+function orbMode(calling: boolean, phase: string): OrbMode {
+  if (!calling) return "off";
+  if (phase === "listening" || phase === "thinking" || phase === "speaking") return phase;
+  return "idle";
+}
+
 function statusLine(calling: boolean, phase: string, busy: boolean) {
   if (busy) return "One moment…";
   if (!calling) return "Setup";
@@ -340,20 +333,7 @@ const styles = StyleSheet.create({
   track: { height: 3, borderRadius: 2, backgroundColor: colors.wash, overflow: "hidden" },
   trackFill: { height: 3, backgroundColor: colors.now },
 
-  stage: { alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 18 },
-  orbWrap: { width: 160, height: 160, alignItems: "center", justifyContent: "center" },
-  halo: { position: "absolute", width: 150, height: 150, borderRadius: 75, backgroundColor: colors.now },
-  orb: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
-    backgroundColor: colors.paper,
-    alignItems: "center",
-    justifyContent: "center",
-    ...lift,
-  },
-  orbOff: { opacity: 0.55 },
-  ring: { position: "absolute", width: 130, height: 130, borderRadius: 65 },
+  stage: { alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 12 },
   question: { color: colors.ink, fontSize: 21, lineHeight: 28, textAlign: "center", paddingHorizontal: 8 },
   heard: { color: colors.now, fontSize: 16, lineHeight: 22, textAlign: "center", opacity: 0.9 },
   error: { color: colors.stop, textAlign: "center" },

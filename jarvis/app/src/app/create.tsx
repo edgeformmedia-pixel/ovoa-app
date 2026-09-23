@@ -167,7 +167,9 @@ export default function Create() {
 
   // ---------- describing it ----------
   return (
-    <Screen keyboardShouldPersistTaps="handled">
+    // automaticallyAdjustKeyboardInsets: the list scrolls up past the keyboard,
+    // so "Make my app" (right under the box) is never hidden behind it.
+    <Screen keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
       <Text style={styles.heading}>What should your app do?</Text>
       <Text style={styles.sub}>Say it or type it, in your own words. OVOA makes it into an app you can open any time.</Text>
 
@@ -194,21 +196,11 @@ export default function Create() {
         placeholderTextColor={colors.inkMute}
         multiline
         editable={!making}
+        // No AutoFill bar: iOS offered contacts and passwords over the button.
+        textContentType="none"
+        autoComplete="off"
+        importantForAutofill="no"
       />
-
-      {!text.trim() && (
-        <>
-          <Text style={styles.label}>Ideas</Text>
-          {EXAMPLES.map((e) => (
-            <Pressable key={e} onPress={() => setText(e)} style={({ pressed }) => [styles.example, pressed && { opacity: 0.6 }]}>
-              <Ionicons name="bulb-outline" size={16} color={colors.inkMute} />
-              <Text style={styles.exampleText}>{e}</Text>
-            </Pressable>
-          ))}
-        </>
-      )}
-
-      {(error || convo.error) && <Text style={styles.error}>{error ?? convo.error}</Text>}
 
       {making ? (
         <View style={styles.making}>
@@ -223,6 +215,20 @@ export default function Create() {
           style={{ alignSelf: "flex-start", marginTop: space.s2 }}
         />
       )}
+
+      {!text.trim() && (
+        <>
+          <Text style={styles.label}>Ideas</Text>
+          {EXAMPLES.map((e) => (
+            <Pressable key={e} onPress={() => setText(e)} style={({ pressed }) => [styles.example, pressed && { opacity: 0.6 }]}>
+              <Ionicons name="bulb-outline" size={16} color={colors.inkMute} />
+              <Text style={styles.exampleText}>{e}</Text>
+            </Pressable>
+          ))}
+        </>
+      )}
+
+      {(error || convo.error) && <Text style={styles.error}>{error ?? convo.error}</Text>}
     </Screen>
   );
 }
