@@ -805,7 +805,7 @@ async function runTurn(
   const phone = phoneAssistant(env, userId, caps, autoApprove);
   const shortcuts = shortcutAssistant(env, userId, autoApprove);
   const timeline = contextAssistant(env, userId, timeZone, !!settings.context_enabled);
-  const web = webAssistant(env, timeZone);
+  const web = webAssistant(env, timeZone, ctx);
   const agent = agentAssistant(env, userId, timeZone, settings as AgentSettings, voice);
   const routine = routinesAssistant(env, userId, timeZone, { voice, fromAgent });
   const profileTools = profileAssistant(env, userId);

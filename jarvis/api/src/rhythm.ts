@@ -254,18 +254,75 @@ export async function leavingHome(env: Env, userId: string) {
 
 // ---------- F20 Commute ----------
 
+/**
+ * Both public services ask for at most one request a second and no repeats
+ * (cost pass, Phase 9). Answers are kept in the Workers cache: a drive for
+ * half an hour, keyed on both ends rounded to about a hundred metres, and an
+ * address for a day. Calls that do go out are spaced a second apart within a
+ * tick. The demo router is a courtesy, not a contract (see the report).
+ */
+const ROUTE_CACHE_S = 30 * 60;
+const GEOCODE_CACHE_S = 24 * 3600;
+const PUBLIC_GAP_MS = 1000;
+let lastPublicCallAt = 0;
+
+/** Rounded to three decimals: about 110 m, near enough for a drive time. */
+const roundedCoord = (p: { lat: number; lng: number }) => `${p.lat.toFixed(3)},${p.lng.toFixed(3)}`;
+
+function publicCache(): Cache | null {
+  try {
+    return (globalThis as { caches?: { default?: Cache } }).caches?.default ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** A public service is asked politely: never twice in the same second. */
+async function spaced<T>(call: () => Promise<T>) {
+  const wait = lastPublicCallAt + PUBLIC_GAP_MS - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastPublicCallAt = Date.now();
+  return call();
+}
+
+/** A JSON answer from the cache, or from `fetch`, kept for `seconds`. Null answers are kept too, briefly. */
+async function remembered<T>(key: string, seconds: number, fetch: () => Promise<T | null>): Promise<T | null> {
+  const cache = publicCache();
+  const req = new Request(`https://public.ovoa.internal/${key}`);
+  if (cache) {
+    try {
+      const hit = await cache.match(req);
+      if (hit) return (await hit.json()) as T | null;
+    } catch (err) {
+      console.error("rhythm: cache read failed", err);
+    }
+  }
+  const value = await spaced(fetch);
+  if (cache) {
+    await cache
+      .put(req, new Response(JSON.stringify(value), { headers: { "content-type": "application/json", "cache-control": `max-age=${value === null ? 300 : seconds}` } }))
+      .catch((err) => console.error("rhythm: cache write failed", err));
+  }
+  return value;
+}
+
 async function geocode(query: string) {
-  const res = await fetch(`${NOMINATIM}?format=json&limit=1&q=${encodeURIComponent(query)}`, { headers: { "user-agent": UA } });
-  if (!res.ok) return null;
-  const [hit] = (await res.json()) as { lat: string; lon: string }[];
-  return hit ? { lat: Number(hit.lat), lng: Number(hit.lon) } : null;
+  const q = query.toLowerCase().replace(/\s+/g, " ").trim();
+  return remembered<{ lat: number; lng: number }>(`geocode/${encodeURIComponent(q)}`, GEOCODE_CACHE_S, async () => {
+    const res = await fetch(`${NOMINATIM}?format=json&limit=1&q=${encodeURIComponent(query)}`, { headers: { "user-agent": UA } });
+    if (!res.ok) return null;
+    const [hit] = (await res.json()) as { lat: string; lon: string }[];
+    return hit ? { lat: Number(hit.lat), lng: Number(hit.lon) } : null;
+  });
 }
 
 async function driveSeconds(from: { lat: number; lng: number }, to: { lat: number; lng: number }) {
-  const res = await fetch(`${OSRM}/${from.lng},${from.lat};${to.lng},${to.lat}?overview=false`, { headers: { "user-agent": UA } });
-  if (!res.ok) return null;
-  const route = ((await res.json()) as { routes?: { duration: number }[] }).routes?.[0];
-  return route ? Math.round(route.duration) : null;
+  return remembered<number>(`route/${roundedCoord(from)}/${roundedCoord(to)}`, ROUTE_CACHE_S, async () => {
+    const res = await fetch(`${OSRM}/${from.lng},${from.lat};${to.lng},${to.lat}?overview=false`, { headers: { "user-agent": UA } });
+    if (!res.ok) return null;
+    const route = ((await res.json()) as { routes?: { duration: number }[] }).routes?.[0];
+    return route ? Math.round(route.duration) : null;
+  });
 }
 
 /**

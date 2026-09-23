@@ -26,9 +26,43 @@ export type SearchResult = {
   sources?: { title: string; url: string }[];
   snippets?: { title: string; text: string }[];
   note?: string;
-  /** Which route answered, so the usage table can count searches by what they cost. */
-  via?: "gemini" | "duckduckgo";
+  /** Which route answered, so the usage table can count searches by what they cost. "cache": a recent answer, free. */
+  via?: "gemini" | "duckduckgo" | "cache";
 };
+
+/**
+ * Which route to try first. "auto" is the behaviour there always was: Gemini's
+ * grounding when there is a key, DuckDuckGo otherwise. Set to "duckduckgo" to
+ * stop paying for grounding without a deploy of code; "gemini" to insist on it.
+ */
+export type SearchEngine = "auto" | "gemini" | "duckduckgo";
+export const SEARCH_ENGINES: SearchEngine[] = ["auto", "gemini", "duckduckgo"];
+export const searchEngineFrom = (value: string | undefined): SearchEngine =>
+  (SEARCH_ENGINES as string[]).includes(value ?? "") ? (value as SearchEngine) : "auto";
+
+/**
+ * The same question asked again within half an hour gets the same answer
+ * without another search: "what's the weather" is asked twice in a row more
+ * often than the weather changes. Keyed on the words alone, so one person's
+ * answer serves the next person asking the same thing; there is nothing of
+ * anyone in a weather report.
+ */
+export const SEARCH_CACHE_S = 30 * 60;
+
+async function cacheKey(engine: SearchEngine, query: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(query.toLowerCase().replace(/\s+/g, " ").trim()));
+  const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return new Request(`https://search.ovoa.internal/${engine}/${hash}`);
+}
+
+/** The Workers cache, when there is one (not in unit tests). */
+function cacheStore(): Cache | null {
+  try {
+    return (globalThis as { caches?: { default?: Cache } }).caches?.default ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Gemini answers with search turned on, and says where it got it. */
 async function grounded(apiKey: string, model: string, query: string, today: string): Promise<SearchResult> {
@@ -121,9 +155,9 @@ async function duckDuckGo(query: string): Promise<SearchResult> {
   };
 }
 
-/** Looks `query` up on the web. Throws only if every route fails. */
-export async function searchWeb(env: Env, query: string, today: string): Promise<SearchResult> {
-  if (env.GEMINI_API_KEY) {
+/** Looks `query` up on the web, by whichever route SEARCH_ENGINE says. Throws only if every route fails. */
+async function searchFresh(env: Env, engine: SearchEngine, query: string, today: string): Promise<SearchResult> {
+  if (engine !== "duckduckgo" && env.GEMINI_API_KEY) {
     try {
       return await grounded(env.GEMINI_API_KEY, env.CHAT_MODEL, query, today);
     } catch (err) {
@@ -131,6 +165,34 @@ export async function searchWeb(env: Env, query: string, today: string): Promise
     }
   }
   return duckDuckGo(query);
+}
+
+/**
+ * Looks `query` up on the web: from the cache when the same thing was asked in
+ * the last half hour, otherwise fresh, and the fresh answer is kept. `ctx` lets
+ * the write happen after the reply has gone out.
+ */
+export async function searchWeb(env: Env, query: string, today: string, ctx?: { waitUntil(p: Promise<unknown>): void }): Promise<SearchResult> {
+  const engine = searchEngineFrom(env.SEARCH_ENGINE);
+  const cache = cacheStore();
+  const key = cache ? await cacheKey(engine, query) : null;
+  if (cache && key) {
+    try {
+      const hit = await cache.match(key);
+      if (hit) return { ...((await hit.json()) as SearchResult), via: "cache" };
+    } catch (err) {
+      console.error("web: cache read failed", err);
+    }
+  }
+  const fresh = await searchFresh(env, engine, query, today);
+  if (cache && key) {
+    const put = cache
+      .put(key, new Response(JSON.stringify(fresh), { headers: { "content-type": "application/json", "cache-control": `max-age=${SEARCH_CACHE_S}` } }))
+      .catch((err) => console.error("web: cache write failed", err));
+    if (ctx) ctx.waitUntil(put);
+    else await put;
+  }
+  return fresh;
 }
 
 const TOOLS: ToolSpec[] = [
@@ -155,15 +217,28 @@ const TOOLS: ToolSpec[] = [
 const NAMES = new Set(TOOLS.map((t) => t.name));
 export const isWebTool = (name: string) => NAMES.has(name);
 
-export function webAssistant(env: Env, timeZone: string) {
+/**
+ * Searches a turn may run against a provider. Past this the model is told to
+ * answer with what it has: a turn that searched five times was a turn going
+ * in circles, and each one is a paid grounding call.
+ */
+export const MAX_SEARCHES_PER_TURN = 2;
+
+export function webAssistant(env: Env, timeZone: string, ctx?: { waitUntil(p: Promise<unknown>): void }) {
   const today = new Date().toLocaleDateString("en-US", { timeZone, dateStyle: "full" });
+  let fresh = 0;
 
   const callTool: CallTool = async (name, args) => {
     if (name !== "web_search") return { error: `Unknown tool ${name}` };
     const query = String(args.query ?? "").trim().slice(0, 400);
     if (!query) return { error: "query is required" };
+    if (fresh >= MAX_SEARCHES_PER_TURN) {
+      return { error: `That's the ${MAX_SEARCHES_PER_TURN} searches a reply allows. Answer with what you have, and say what you couldn't check.` };
+    }
     try {
-      return await searchWeb(env, query, today);
+      const found = await searchWeb(env, query, today, ctx);
+      if (found.via !== "cache") fresh++;
+      return found;
     } catch (err) {
       console.error("web_search failed", err);
       return { error: "The search didn't come back. Say you couldn't look it up right now." };
