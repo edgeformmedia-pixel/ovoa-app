@@ -461,9 +461,9 @@ check "and are priced"                     "$(echo "$MINE" | j "d['today']['micr
 check "the mic line is named"              "$(echo "$MINE" | j "'mic' in d['today']['by']")" "True"
 check "the month includes today"           "$(echo "$MINE" | j "d['month']['streamSeconds']")" "43"
 check "someone else's usage is theirs"     "$(curl -s -H "authorization: Bearer $OTHER" "$API/usage/me" | j "d['today']['streamSeconds']")" "0"
-# The month's cap (cap.ts) rides along: a thousand replies unless wrangler.jsonc
-# says otherwise, none of them used yet, and nothing said about it.
-check "a month's cap is a thousand replies" "$(echo "$MINE" | j "d['cap']['limit']")" "1000"
+# The month's cap (cap.ts) rides along: the plan's daily replies × 31 (here
+# Pro's, since a local worker has no site key), none used yet, nothing said.
+check "a month's cap is the plan's: Pro's 1,860" "$(echo "$MINE" | j "d['cap']['limit']")" "1860"
 check "none used yet"                       "$(echo "$MINE" | j "d['cap']['used']")" "0"
 check "so nothing is said about it"         "$(echo "$MINE" | j "d['cap']['standing']")" "ok"
 check "filed under this month"              "$(echo "$MINE" | j "len(d['cap']['month'])")" "7"
@@ -534,34 +534,45 @@ echo
 echo "── plans: free, base and pro ──────────────────────"
 # plans.ts. A local worker has no MEMBERSHIP_API_KEY, so everyone is pro until
 # the debug override says otherwise, which is exactly how production behaves
-# until the site's key is set. Free gets health and notes and a 402 with a
-# reason on anything that spends; base gets the assistant but not the wake word
-# or background work; the day's allowance ends in a sentence, not an error.
+# until the site's key is set. Free gets health, notes and every route that
+# never calls a model, and a 402 with a reason on anything that does. Base gets
+# every AI feature; Pro is only three times the usage. The day's allowance ends
+# in a sentence, not an error, and says when it comes back. The gate in front
+# of every model call (modelGate) is shown refusing before any engine is tried:
+# with no keys here, a call it lets through says it can't reach the AI instead.
 # The "other" account from earlier: it has asked for nothing today, and by now
 # sign-ups from this address are over their per-minute limit.
 P=(-H "authorization: Bearer $OTHER" -H 'content-type: application/json')
 PID=$(curl -s "${P[@]}" "$API/me" | j "d['user']['id']")
 setplan() { curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/plan" -d "{\"userId\":\"$PID\",\"override\":$1}"; }
+# Usage written straight into today's rows (POST /debug/usage): turns, or spend in micro-dollars.
+use() { curl -s -o /dev/null -w '%{http_code}' -X POST "${D[@]}" -H 'content-type: application/json' "$API/debug/usage" -d "{\"userId\":\"$PID\",$1}"; }
 code() { curl -s -o /dev/null -w '%{http_code}' -m 30 "$@"; }
+not402() { [ "$(code "$@")" != 402 ] && echo yes; }
+DESIGN='{"description":"A grocery helper that keeps my shopping list"}'
 check "no site key: everyone is pro" "$(curl -s "${P[@]}" "$API/me" | j "d['plan']['tier']")" "pro"
 check "and /me.plan has the contract's shape" \
   "$(curl -s "${P[@]}" "$API/me" | j "sorted(d['plan'].keys())==['features','limits','renewsAt','status','tier','trialEndsAt'] and sorted(d['plan']['limits'].keys())==['repliesLeftToday','resetsAt'] and sorted(d['plan']['features'].keys())==['agent','chat','voice','wake']")" "True"
 check "the override needs the debug key" \
   "$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'content-type: application/json' "$API/debug/plan" -d "{\"userId\":\"$PID\",\"override\":\"free\"}")" "404"
+check "so does writing usage" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' "$API/debug/usage" -d "{\"userId\":\"$PID\",\"turns\":1}")" "404"
 check "a made-up plan is refused" "$(setplan '"gold"')" "400"
 check "made free" "$(setplan '"free"')" "200"
 FREE_ME=$(curl -s "${P[@]}" "$API/me")
 check "free: /me says free" "$(echo "$FREE_ME" | j "d['plan']['tier']")" "free"
 check "free: no replies today" "$(echo "$FREE_ME" | j "d['plan']['limits']['repliesLeftToday']")" "0"
-check "free: no chat, no wake" "$(echo "$FREE_ME" | j "(d['plan']['features']['chat'], d['plan']['features']['wake'])")" "(False, False)"
+check "free: no chat, wake or background work" "$(echo "$FREE_ME" | j "(d['plan']['features']['chat'], d['plan']['features']['wake'], d['plan']['features']['agent'])")" "(False, False, False)"
 check "free: /chat is 402" "$(code -X POST "${P[@]}" "$API/chat" -d '{"message":"hello"}')" "402"
 NP=$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello"}')
 check "with error needs_plan" "$(echo "$NP" | j "d['error']")" "needs_plan"
 check "needing base" "$(echo "$NP" | j "d['needs']")" "base"
-check "and a sentence to show" "$(echo "$NP" | j "len(d['message'])>20")" "True"
+check "and a sentence to show" "$(echo "$NP" | j "d['message'].startswith(\"That's for Base users.\")")" "True"
 check "free: voicing is 402" "$(code -X POST "${P[@]}" "$API/voice/speak" -d '{"text":"Hello there"}')" "402"
 check "free: the brief is 402" "$(code "${P[@]}" "$API/brief")" "402"
-check "free: background work needs pro" "$(curl -s -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"x","instruction":"y","kind":"once"}' | j "d['needs']")" "pro"
+check "free: designing an app is 402" "$(code -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")" "402"
+check "free: the setup conversation is 402" "$(code -X POST "${P[@]}" "$API/onboarding/answer" -d '{"step":"name","text":"Sam"}')" "402"
+check "free: background work needs base" "$(curl -s -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"x","instruction":"y","kind":"once"}' | j "d['needs']")" "base"
 check "free: heart rate is 200" \
   "$(code -X POST "${P[@]}" "$API/hr" -d "{\"source\":\"band\",\"samples\":[{\"ts\":$(($(date +%s)*1000)),\"bpm\":61}]}")" "200"
 check "free: today's heart rate is 200" "$(code "${P[@]}" "$API/hr/today")" "200"
@@ -574,30 +585,65 @@ check "and it says where its words came from" \
 check "a note from nowhere is refused" "$(code -X POST "${P[@]}" "$API/notes" -d '{"text":"x","source":"telepathy"}')" "400"
 check "free: notes list is 200" "$(code "${P[@]}" "$API/notes")" "200"
 check "free: the home feed is 200" "$(code "${P[@]}" "$API/feed")" "200"
+# Everything that never calls a model is free (decision 5).
+check "free: routines" "$(code "${P[@]}" "$API/routines")" "200"
+check "free: to-dos" "$(code "${P[@]}" "$API/todos")" "200"
+check "free: money" "$(code "${P[@]}" "$API/money")" "200"
+check "free: alarms" "$(code "${P[@]}" "$API/alarms")" "200"
+check "free: people" "$(code "${P[@]}" "$API/people")" "200"
+check "free: places" "$(code "${P[@]}" "$API/places")" "200"
+check "free: promises" "$(code "${P[@]}" "$API/context/commitments")" "200"
+check "free: Google's status" "$(code "${P[@]}" "$API/google/status")" "200"
+check "free: the actions waiting for an OK" "$(code "${P[@]}" "$API/actions")" "200"
+check "free: reading transcripts" "$(code "${P[@]}" "$API/transcripts/search?q=dentist")" "200"
+check "free: making the Siri key" "$(code -X POST "${P[@]}" "$API/siri/key")" "200"
+check "but asking through it is 402" "$(code -X POST "${P[@]}" "$API/siri" -d '{"message":"hello"}')" "402"
+MADE=$(curl -s -X POST "${P[@]}" "$API/apps" -d '{"name":"Groceries","about":"What I am out of.","icon":"cart-outline","tone":"teal","instructions":"Keep my shopping list."}')
+MADE_ID=$(echo "$MADE" | j "d['app']['id']")
+check "free: saving an app someone designed" "$([ -n "$MADE_ID" ] && echo yes)" "yes"
+check "free: editing it by hand" \
+  "$(code -X PUT "${P[@]}" "$API/apps/$MADE_ID" -d '{"name":"Shopping","about":"What I am out of.","icon":"cart-outline","tone":"teal","instructions":"Keep my shopping list."}')" "200"
+check "free: old builds' speech routes aren't a plan problem" \
+  "$([ "$(code -X POST "${P[@]}" "$API/voice/token")" != 402 ] && [ "$(code -X POST -H "authorization: Bearer $OTHER" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')" != 402 ] && echo yes)" "yes"
 check "free: deleting history always works" "$(code -X DELETE "${P[@]}" "$API/chat/messages")" "200"
 check "free: refreshing the plan works" "$(curl -s -X POST "${P[@]}" "$API/me/plan/refresh" | j "d['plan']['tier']")" "free"
 
 check "made base" "$(setplan '"base"')" "200"
-check "base: 20 replies a day" "$(curl -s "${P[@]}" "$API/me" | j "d['plan']['limits']['repliesLeftToday']")" "20"
-check "base: /chat gets past the gate" "$([ "$(code -X POST "${P[@]}" "$API/chat" -d '{"message":"hello"}')" != 402 ] && echo yes)" "yes"
-check "base: overheard open-mic talk needs pro" "$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello","ambient":true}' | j "d['needs']")" "pro"
-check "base: the wake word's stream needs pro" "$(curl -s -X POST "${P[@]}" "$API/voice/token?mode=wake" | j "d['needs']")" "pro"
-check "base: a live-listening token isn't a plan problem" "$([ "$(code -X POST "${P[@]}" "$API/voice/token")" != 402 ] && echo yes)" "yes"
-check "base: background work still needs pro" "$(code -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"x","instruction":"y","kind":"once"}')" "402"
-# An hour of open microphone is $0.29 at Nova-3's price: past Base's $0.25 day.
-curl -s -o /dev/null -X POST "${P[@]}" "$API/usage/stream" -d '{"seconds":3600,"connections":1}'
+BASE_ME=$(curl -s "${P[@]}" "$API/me")
+check "base: 20 replies a day" "$(echo "$BASE_ME" | j "d['plan']['limits']['repliesLeftToday']")" "20"
+check "base: every feature, wake word and background work included" "$(echo "$BASE_ME" | j "all(d['plan']['features'].values())")" "True"
+check "base: /chat gets past the gate" "$(not402 -X POST "${P[@]}" "$API/chat" -d '{"message":"hello"}')" "yes"
+check "base: overheard talk isn't a plan problem" "$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello","ambient":true}' | j "d.get('error')!='needs_plan'")" "True"
+check "base: the wake word's stream isn't a plan problem" "$(not402 -X POST "${P[@]}" "$API/voice/token?mode=wake")" "yes"
+check "base: background work gets through" "$(code -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"Check","instruction":"Look.","kind":"once"}')" "201"
+check "base: designing an app reaches the engines (none here)" "$(code -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")" "503"
+# The day's spend, used up: $0.30 against Base's $0.25.
+check "a day's spend written" "$(use '"microUsd":300000')" "200"
 sleep 1
-check "base: streamed minutes use up the day" "$(curl -s "${P[@]}" "$API/me" | j "d['plan']['limits']['repliesLeftToday']")" "0"
-CAPPED=$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello"}')
+check "base: the spent day leaves no replies" "$(curl -s "${P[@]}" "$API/me" | j "d['plan']['limits']['repliesLeftToday']")" "0"
+CAPPED=$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello","timeZone":"America/New_York"}')
 check "and the next reply says so, plainly" "$(echo "$CAPPED" | j "d['messages'][0]['content'].startswith(\"I've used up today's allowance\")")" "True"
 check "with no model asked" "$(echo "$CAPPED" | j "d['meta']['engine']")" "none"
 check "and says when it comes back" "$(echo "$CAPPED" | j "'pick up again at' in d['messages'][0]['content']")" "True"
+REFUSED=$(curl -s -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")
+check "the gate stops a model route that isn't a reply: 429" "$(code -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")" "429"
+check "keyed on error" "$(echo "$REFUSED" | j "d['error']")" "allowance"
+check "before any engine is tried (not 'can't reach the AI')" "$(echo "$REFUSED" | j "d['message'].startswith(\"I've used up today's allowance\") and 'pick up again at' in d['message']")" "True"
+check "the setup conversation too" "$(code -X POST "${P[@]}" "$API/onboarding/answer" -d '{"step":"name","text":"Sam"}')" "429"
+check "free routes don't care" "$(code "${P[@]}" "$API/routines")" "200"
 
 check "made pro" "$(setplan '"pro"')" "200"
-check "pro: background work gets through" "$(code -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"Check","instruction":"Look.","kind":"once"}')" "201"
-check "pro: the wake word's stream isn't a plan problem" "$([ "$(code -X POST "${P[@]}" "$API/voice/token?mode=wake")" != 402 ] && echo yes)" "yes"
+check "pro: the same spend is under Pro's line, so the gate lets it through" "$(code -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")" "503"
 check "pro: /chat gets past the gate" "$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello"}' | j "d.get('error')!='needs_plan'")" "True"
-check "pro: 55 a day, less what the hour of mic cost" "$(curl -s "${P[@]}" "$API/me" | j "0 < d['plan']['limits']['repliesLeftToday'] <= 55")" "True"
+check "pro: 60 a day" "$(curl -s "${P[@]}" "$API/me" | j "d['plan']['limits']['repliesLeftToday']")" "60"
+check "pro: 1,860 a month" "$(curl -s "${P[@]}" "$API/usage/me" | j "d['cap']['limit']")" "1860"
+check "sixty replies written" "$(use '"turns":60')" "200"
+sleep 1
+CAPPED=$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello","timeZone":"America/New_York"}')
+check "pro: the 61st reply says the number, and when" \
+  "$(echo "$CAPPED" | j "d['messages'][0]['content'].startswith(\"That's all 60 of today's replies on your plan, so I'll pick up again at\")")" "True"
+check "with no model asked" "$(echo "$CAPPED" | j "d['meta']['engine']")" "none"
+check "but the reply count isn't the gate's: a model call that isn't a reply still goes" "$(code -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")" "503"
 check "the debug view says why" "$(curl -s "${D[@]}" "$API/debug/plan?userId=$PID" | j "d['plan']['from']")" "override"
 check "clearing the override" "$(setplan null)" "200"
 check "puts them back to what the site (here: no key) says" "$(curl -s "${P[@]}" "$API/me" | j "d['plan']['tier']")" "pro"

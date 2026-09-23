@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { CallTool, ToolSpec } from "./llm";
-import { AI_UNREACHABLE, generateText, isAiUnreachable } from "./llm";
+import { AI_UNREACHABLE, generateText, isAiUnreachable, isModelRefused } from "./llm";
+import { refusedResponse } from "./plans";
 import { buckets } from "./time";
 import type { Env, Vars } from "./types";
 
@@ -584,6 +585,8 @@ myApps.post("/apps/design", async (c) => {
   try {
     return c.json({ draft: await designApp(c.env, c.var.userId, parsed.data.description) });
   } catch (err) {
+    // Not part of their plan, the day's spend is used up, or no consent yet: said plainly (plans.ts).
+    if (isModelRefused(err)) return refusedResponse(c, err);
     console.error("ovoa.err apps: couldn't design an app", err);
     // No engine could answer: said plainly, the way a turn says it (llm.ts).
     if (isAiUnreachable(err)) return c.json({ error: AI_UNREACHABLE }, 503);
@@ -600,6 +603,8 @@ myApps.post("/apps/revise", async (c) => {
   try {
     return c.json({ draft: await reviseApp(c.env, c.var.userId, current, parsed.data.change) });
   } catch (err) {
+    // Not part of their plan, the day's spend is used up, or no consent yet: said plainly (plans.ts).
+    if (isModelRefused(err)) return refusedResponse(c, err);
     console.error("ovoa.err apps: couldn't change an app", err);
     if (isAiUnreachable(err)) return c.json({ error: AI_UNREACHABLE }, 503);
     return c.json({ error: err instanceof Error ? err.message : "Couldn't change that app" }, 502);

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { validTimeZone } from "./google/assistant";
 import { digestBlock, type Extracted } from "./people";
-import { generateText, type CallTool, type ToolSpec } from "./llm";
+import { generateText, isModelRefused, type CallTool, type ToolSpec } from "./llm";
 import { atLocalTime, buckets, clock, dayRange } from "./time";
 import { blockedFor } from "./plans";
 import type { Env, Vars } from "./types";
@@ -218,14 +218,15 @@ export async function titleTranscripts(env: Env) {
 
   const hours = new Map<string, { userId: string; hour: string; timeZone: string }>();
   // Titles are written by a model, which is Base's (plans.ts). Asked once per person per tick.
-  const blocked = new Map<string, Promise<null | "plan" | "allowance">>();
+  const blocked = new Map<string, Promise<Awaited<ReturnType<typeof blockedFor>>>>();
   for (const b of due) {
     const timeZone = validTimeZone(b.time_zone);
     if (!blocked.has(b.user_id)) blocked.set(b.user_id, blockedFor(env, b.user_id, "base"));
     const why = await blocked.get(b.user_id);
-    if (why === "plan") {
-      // Filed untitled, so it stops coming back as due and holding up everyone
-      // else's blocks behind it. The words are still there to read.
+    if (why === "plan" || why === "consent") {
+      // No plan with AI, or no consent to send words to one: filed untitled, so
+      // it stops coming back as due and holding up everyone else's blocks
+      // behind it. The words are still there to read.
       await upsert(db, b.user_id, "5m", new Date(b.start).toISOString(), b.start, { title: null, summary: null }, "", b.n);
       continue;
     }
@@ -260,7 +261,8 @@ export async function titleTranscripts(env: Env) {
       const hour = buckets(b.start, timeZone).hour;
       hours.set(`${b.user_id}|${hour}`, { userId: b.user_id, hour, timeZone });
     } catch (err) {
-      console.error("transcripts: couldn't title a block", err);
+      // Refused by the gate (plans.ts modelGate): left due, like the allowance case above.
+      if (!isModelRefused(err)) console.error("transcripts: couldn't title a block", err);
     }
   }
 
@@ -283,7 +285,7 @@ export async function titleTranscripts(env: Env) {
       await upsert(db, userId, "hour", hour, start, t, sources, blocks.length);
       days.set(`${userId}|${hour.slice(0, 10)}`, { userId, day: hour.slice(0, 10), timeZone });
     } catch (err) {
-      console.error("transcripts: couldn't title an hour", err);
+      if (!isModelRefused(err)) console.error("transcripts: couldn't title an hour", err);
     }
   }
 
@@ -309,7 +311,7 @@ export async function titleTranscripts(env: Env) {
       );
       await upsert(db, userId, "day", day, from, t, "", hoursOfDay.length);
     } catch (err) {
-      console.error("transcripts: couldn't title a day", err);
+      if (!isModelRefused(err)) console.error("transcripts: couldn't title a day", err);
     }
   }
   return due.length;

@@ -44,8 +44,6 @@ export type Env = {
   DEEPGRAM_API_KEY?: string;
   /** Which engine voices replies (voice.ts TTS_ENGINES). server_settings.tts_engine overrides it without a deploy. */
   TTS_ENGINE?: string;
-  /** Replies a person gets in a calendar month (cap.ts). Unset: 1000. "0": no cap. Development accounts are never capped. */
-  TURN_CAP_MONTHLY?: string;
   /** Which web search route goes first (web.ts): "auto" (Gemini grounding when keyed, else DuckDuckGo), "gemini", or "duckduckgo". */
   SEARCH_ENGINE?: string;
   /**

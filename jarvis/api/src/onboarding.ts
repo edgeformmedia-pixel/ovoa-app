@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { listGoogleAccounts, setAccountLabel } from "./google/oauth";
 import type { CallTool, ToolSpec } from "./llm";
-import { AI_UNREACHABLE, generateText, isAiUnreachable } from "./llm";
+import { AI_UNREACHABLE, generateText, isAiUnreachable, isModelRefused } from "./llm";
+import { refusedResponse } from "./plans";
 import { createRoutine, parseClock, routinesChanged, type NewRoutine } from "./routines";
 import { clockFromMinutes } from "./time";
 import type { Env, Vars } from "./types";
@@ -431,6 +432,8 @@ onboarding.post("/onboarding/answer", async (c) => {
   try {
     return c.json(await onboardingAnswer(c.env, c.var.userId, parsed.data.step, parsed.data.text));
   } catch (err) {
+    // Not part of their plan, the day's spend is used up, or no consent yet: said plainly (plans.ts).
+    if (isModelRefused(err)) return refusedResponse(c, err);
     console.error("onboarding: couldn't read the answer", err);
     // No engine could answer: said plainly, the way a turn says it (llm.ts).
     if (isAiUnreachable(err)) return c.json({ error: AI_UNREACHABLE }, 503);

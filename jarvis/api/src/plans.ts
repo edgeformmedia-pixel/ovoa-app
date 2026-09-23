@@ -1,24 +1,29 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { aiConsentFor, CONSENT_NEEDED } from "./consent";
+import type { GateCall, LlmEnv, ModelRefused, Refusal } from "./llm";
 import { say } from "./obs";
 import { sttCostMicro, ttsCostMicro } from "./pricing";
 import type { Env, Vars } from "./types";
 
-// Plans: free, base and pro (docs/paywall/SPEC.md is the source of truth).
+// Plans: free, base and pro (docs/paywall/SPEC.md; the v1 release brief wins
+// where they differ).
 //
-// Free is health and notes, with no AI. Base is the assistant. Pro adds the
-// hands-free wake word and the background agent, and a larger daily allowance.
-// The site (ovoa.ai) sells the plans and says which tier an email is on; this
-// file asks it, remembers the answer, and decides what each route and each
-// cron job may do for the person asking.
+// Free is health, notes and every app that doesn't use AI. Base is every AI
+// feature: talking to OVOA, the wake word, Always listen, background work,
+// making apps. Pro is three times Base's daily usage and nothing else. The
+// site (ovoa.ai) sells the plans and says which tier an email is on; this file
+// asks it, remembers the answer, and decides what each route, each cron job
+// and each model call may do for the person asking.
 //
 // Three promises, in order of importance:
 //   1. Nobody who pays is locked out because ovoa.ai had a blip. The last good
 //      answer stands for a day, and until the site's key is set on this Worker
 //      everyone is treated as pro, so shipping this can't lock out a tester.
-//   2. A free person never costs a model call, a voice or a transcription: every
-//      route that spends is behind requirePlan below, and the cron jobs that
-//      call models ask mayRunFor first.
-//   3. At its cap, Base costs under $0.25 a day and Pro under $0.65 (the
+//   2. A free person never costs a model call or a voice: every route that
+//      calls a model is behind requirePlan below, the cron jobs that call
+//      models ask mayRunFor first, and every model call asks modelGate (the
+//      gate, near the end) before anything is sent.
+//   3. At its cap, Base costs under $0.25 a day and Pro under $0.75 (the
 //      allowance section below has the arithmetic).
 
 // ---------------------------------------------------------------------------
@@ -29,25 +34,33 @@ import type { Env, Vars } from "./types";
 // signed-in route that matches nothing needs base: a new route that spends
 // money is paid until someone decides otherwise, never free by accident.
 //
+// The rule (2026-09-23): charge only for what uses AI. Every route that never
+// calls a model is free, whatever it's for; the ones that do are Base. No route
+// needs Pro: Pro is more of the same allowance, not more features. This table
+// is the early reject, so a free phone gets a 402 before anything is read; the
+// model-call gate (modelGate) is what actually stands in front of every model.
+//
 // Public (no sign-in, never gated):
 //   GET  /                        health check
-//   POST /auth/signup, /auth/login
-//   GET  /google/callback         OAuth return (the connect itself is base)
+//   POST /auth/*                  sign up, sign in, email codes, Google
+//   GET  /google/callback         OAuth return
 //   GET  /shortcuts/file/:t/:name signed shortcut download
 //   POST /logs                    phone logs
 //   *    /debug/*                 DEBUG_KEY only (engines, usage, ticks, plan)
 //
 // Signed in: see ROUTE_TIERS just below; the `why` on each line is the reason.
 //
-// Cron jobs (index.ts runTick). Only the ones that call a model are gated:
+// Cron jobs (index.ts runTick). Only the ones that call a model are gated, by
+// their own silent pre-check (blockedFor, mayRunFor, lazyCheck) and then by the
+// gate on each model call, which they treat as a skip:
 //   */2 clock lane  alarms, routines, escalate, note reminders   no model: run for everyone
-//   */2 slow lane   agent jobs (agent.ts runJob)                 PRO  (the background agent)
+//   */2 slow lane   agent jobs (agent.ts runJob)                 BASE (model)
 //                   evening list (todos.ts)                      no model: runs for everyone
 //                   transcript titles (transcripts.ts)           BASE (model)
 //                   rhythm: morning brief (rhythm.ts)            BASE (model); wind-down,
 //                                                                 commute and oddities have none
-//                   extras: inbox, follow-ups, bills, prep,      BASE (email and calendar)
-//                           weekly report (extras.ts)
+//                   extras: inbox triage, follow-ups, bills      BASE (model); meeting prep
+//                           (extras.ts)                           and the weekly report have none
 //                   money reminders (money.ts)                   no model: runs for everyone
 //   13 4 nightly    maintenance, retention, pruning              no model
 //                   learn places, expectations                   no model
@@ -64,17 +77,12 @@ export const isTier = (v: unknown): v is Tier => typeof v === "string" && (TIERS
 /** Whether `have` includes everything `need` does. */
 export const atLeast = (have: Tier, need: Tier) => RANK[have] >= RANK[need];
 
-type RouteRule = { method: string; path: RegExp; tier: Tier; why: string; query?: (q: (k: string) => string | undefined) => boolean };
+type RouteRule = { method: string; path: RegExp; tier: Tier; why: string };
 
 export const ROUTE_TIERS: RouteRule[] = [
   // Removing your own things is always allowed, whatever the plan: data, a
   // connection, a Siri key, a job. A downgrade must never trap anything.
   { method: "DELETE", path: /./, tier: "free", why: "deleting your own data or connections" },
-
-  // Pro: the two features that cost the most to run.
-  { method: "POST", path: /^\/voice\/token$/, query: (q) => q("mode") === "wake", tier: "pro", why: "open-mic wake word streaming" },
-  { method: "POST", path: /^\/agent\/(jobs|goals)$/, tier: "pro", why: "setting up background work" },
-  { method: "POST", path: /^\/agent\/jobs\/[^/]+\/run$/, tier: "pro", why: "running background work now" },
 
   // Free: the account, the phone, health, notes.
   { method: "*", path: /^\/auth\/logout$/, tier: "free", why: "sign out" },
@@ -96,27 +104,41 @@ export const ROUTE_TIERS: RouteRule[] = [
   { method: "GET", path: /^\/agent\/(notes|jobs|goals|runs)$/, tier: "free", why: "seeing what the agent did" },
   { method: "POST", path: /^\/agent\/notes\/read$/, tier: "free", why: "clearing the outbox" },
   { method: "PATCH", path: /^\/agent\/(jobs|goals)\/[^/]+$/, tier: "free", why: "pausing background work" },
-  // Filled only by the pro agent, polled by every phone; empty for everyone else.
+  // Filled only by the agent, polled by every phone; empty for everyone else.
   { method: "*", path: /^\/commands(\/pending|\/[^/]+\/done)?$/, tier: "free", why: "the phone's command queue" },
 
-  // Base: everything that calls a model, voices, transcribes, or is part of
-  // the assistant. Listed so the table reads whole; the default is base anyway.
-  { method: "POST", path: /^\/(chat|chat\/resume|siri|siri\/key|claude)$/, tier: "base", why: "chat, Siri and ask-Claude" },
+  // Free: everything else that never calls a model (decision 5, 2026-09-23).
+  // What they feed later (a turn, a cron) is gated where the model is called.
+  { method: "*", path: /^\/(routines|todos|money|alarms|nags|people|favors|locations|places)(\/.*)?$/, tier: "free", why: "lists, reminders, money, people and places: no model" },
+  { method: "POST", path: /^\/apps\/(design|revise)$/, tier: "base", why: "a model designs the app, or changes it" },
+  { method: "*", path: /^\/apps(\/[^/]+(\/state)?)?$/, tier: "free", why: "saving an app you designed, and editing it or its screen by hand" },
+  { method: "GET", path: /^\/transcripts\/(day\/[^/]+|lines|search)$/, tier: "free", why: "reading your transcripts" },
+  { method: "*", path: /^\/context\/commitments(\/[^/]+)?$/, tier: "free", why: "what you said you'd do, and marking it done" },
+  { method: "*", path: /^\/google\/(status|connect|callback|accounts\/[^/]+)$/, tier: "free", why: "connecting Google and managing its accounts" },
+  { method: "GET", path: /^\/actions$/, tier: "free", why: "the actions waiting for your OK" },
+  { method: "POST", path: /^\/actions\/[^/]+\/approve$/, tier: "free", why: "approving one: it runs as written, no model" },
+  { method: "POST", path: /^\/siri\/key$/, tier: "free", why: "making the Siri key (asking through it is base)" },
+  // Old builds' speech routes: free, so an old build on any plan hears that it
+  // needs updating rather than a 402. Neither calls a model.
+  { method: "POST", path: /^\/voice\/(transcribe|token)$/, tier: "free", why: "old builds' speech routes" },
+
+  // Base: everything that calls a model, or voices a reply. Listed so the table
+  // reads whole; the default is base anyway.
+  { method: "POST", path: /^\/(chat|chat\/resume|siri)$/, tier: "base", why: "chat and Siri" },
   { method: "GET", path: /^\/brief$/, tier: "base", why: "the morning brief" },
-  { method: "POST", path: /^\/voice\/(transcribe|speak|token)$/, tier: "base", why: "speech: clips, voice, live listening" },
+  { method: "POST", path: /^\/voice\/speak$/, tier: "base", why: "OVOA's voice (Deepgram)" },
   { method: "*", path: /^\/context\//, tier: "base", why: "the timeline (summaries are a model)" },
   { method: "*", path: /^\/onboarding(\/.*)?$/, tier: "base", why: "the setup conversation (a model)" },
-  { method: "POST", path: /^\/apps(\/design|\/revise)?$/, tier: "base", why: "making or changing an app (a model designs it; it runs on chat)" },
-  { method: "*", path: /^\/apps\/[^/]+(\/state)?$/, tier: "base", why: "editing an app you made, and what's on its screen" },
-  { method: "*", path: /^\/(google|actions)(\/.*)?$/, tier: "base", why: "email and calendar" },
-  { method: "*", path: /^\/(routines|todos|money|alarms|nags|transcripts|people|favors|locations|places)(\/.*)?$/, tier: "base", why: "assistant features" },
+  { method: "POST", path: /^\/agent\/(jobs|goals)$/, tier: "base", why: "setting up background work" },
+  { method: "POST", path: /^\/agent\/jobs\/[^/]+\/run$/, tier: "base", why: "running background work now" },
+  { method: "POST", path: /^\/transcripts\/heard$/, tier: "base", why: "overheard lines, kept for the timeline" },
 ];
 
 /** Which plan a signed-in request needs. Pure. */
-export function tierForRoute(method: string, path: string, query: (k: string) => string | undefined = () => undefined): Tier {
+export function tierForRoute(method: string, path: string): Tier {
   const m = method.toUpperCase();
   for (const r of ROUTE_TIERS) {
-    if ((r.method === "*" || r.method === m) && r.path.test(path) && (!r.query || r.query(query))) return r.tier;
+    if ((r.method === "*" || r.method === m) && r.path.test(path)) return r.tier;
   }
   return "base";
 }
@@ -326,15 +348,19 @@ export function isDevEmail(env: Pick<Env, "DEV_EMAILS">, email: string) {
 
 export type NeedsPlan = { error: "needs_plan"; needs: "base" | "pro"; message: string };
 
-/** The 402 body (SPEC §2). The app keys off `error`, never off the status alone. */
+/**
+ * The 402 body (SPEC §2). The app keys off `error`, never off the status alone.
+ * No route needs Pro any more (Pro is usage, not features); "pro" stays in the
+ * contract because the app still reads it.
+ */
 export function needsPlanBody(needs: "base" | "pro"): NeedsPlan {
   return {
     error: "needs_plan",
     needs,
     message:
       needs === "pro"
-        ? "The hands-free wake word and background work are part of the Pro plan. Plans are managed at ovoa.ai."
-        : "Talking with OVOA is part of the Base and Pro plans. Your health and notes stay free. Plans are managed at ovoa.ai.",
+        ? "That's for Pro users. Plans are on ovoa.ai."
+        : "That's for Base users. Your health, notes and the apps that don't use AI stay free. Plans are on ovoa.ai.",
   };
 }
 
@@ -349,7 +375,7 @@ export function needsPlan(c: Context, needs: "base" | "pro") {
  */
 export function requirePlan(): MiddlewareHandler<{ Bindings: Env; Variables: Vars }> {
   return async (c, next) => {
-    const need = tierForRoute(c.req.method, c.req.path, (k) => c.req.query(k));
+    const need = tierForRoute(c.req.method, c.req.path);
     if (need === "free") return next();
     const plan = await planFor(c.env, c.var.userId);
     c.set("plan", plan);
@@ -377,21 +403,26 @@ export function requirePlan(): MiddlewareHandler<{ Bindings: Env; Variables: Var
 //
 // Base: 20 replies × $0.0116 = $0.232 a day, under the $0.25 ceiling (SPEC §1;
 //       $9.95 a month is about $0.31 a day after Stripe).
-// Pro:  55 replies × $0.0116 = $0.638 a day, under the $0.65 ceiling. That is
-//       2.75× Base, not 3×: 60 would be $0.696, over the line.
+// Pro:  60 replies × $0.0116 = $0.696 a day, under the $0.75 ceiling. Exactly
+//       3× Base, in replies and in ceiling: that is all Pro is (2026-09-23).
 //
 // Replies are the limit a person can see and count. Behind them is a spend
 // ceiling, read from usage_daily, which catches everything else the day cost:
-// microphone minutes streamed with nothing said (wake mode), the morning brief,
-// a long reply with many tool rounds. New replies stop once the day's spend is
-// within one spoken reply of the ceiling, so the reply that crosses the line
-// can't carry the day past it.
+// the morning brief, background work, a long reply with many tool rounds. New
+// replies stop once the day's spend is within one spoken reply of the ceiling,
+// so the reply that crosses the line can't carry the day past it.
+//
+// The replies are counted where a turn starts (index.ts chatTurn), never on each
+// model call: the reply that uses the last one still gets its memory update.
+// The spend is checked in both places: at the start of a turn, and by the gate
+// on every model call (modelGate), which is what stops the crons and the other
+// model routes once the day is spent.
 //
 // Both are counted per UTC day, because usage_daily is (usage.ts); the person
 // is told the reset in their own time.
 //
-// The monthly fair-use ceiling (cap.ts, TURN_CAP_MONTHLY) still applies on top.
-// Development accounts are exempt from both, as they were from the monthly one.
+// A monthly ceiling applies on top (cap.ts): the daily replies × 31, so Base 620
+// and Pro 1,860 a calendar month. Development accounts are exempt from all of it.
 
 /** One spoken reply at list price, in micro-dollars (see the table above). */
 export const MODEL_MICRO_PER_SPOKEN_REPLY = 2_200;
@@ -399,14 +430,18 @@ export const SPOKEN_REPLY_MICRO =
   MODEL_MICRO_PER_SPOKEN_REPLY + ttsCostMicro("deepgram-aura-2", 220) + sttCostMicro("deepgram-nova-3-live", 35);
 
 export const BASE_REPLIES_PER_DAY = 20;
-export const PRO_REPLIES_PER_DAY = 55;
+export const PRO_REPLIES_PER_DAY = 60;
 export const BASE_DAILY_CEILING_MICRO = 250_000;
-export const PRO_DAILY_CEILING_MICRO = 650_000;
+export const PRO_DAILY_CEILING_MICRO = 750_000;
+/** The daily replies × 31 (the brief's default): a month can't use more than its longest days would. */
+export const BASE_REPLIES_PER_MONTH = BASE_REPLIES_PER_DAY * 31;
+export const PRO_REPLIES_PER_MONTH = PRO_REPLIES_PER_DAY * 31;
 
-export const ALLOWANCES: Record<Tier, { replies: number; ceilingMicro: number }> = {
-  free: { replies: 0, ceilingMicro: 0 },
-  base: { replies: BASE_REPLIES_PER_DAY, ceilingMicro: BASE_DAILY_CEILING_MICRO },
-  pro: { replies: PRO_REPLIES_PER_DAY, ceilingMicro: PRO_DAILY_CEILING_MICRO },
+/** Per plan: replies a day, the day's spend ceiling, and replies a calendar month (cap.ts). */
+export const ALLOWANCES: Record<Tier, { replies: number; ceilingMicro: number; monthly: number }> = {
+  free: { replies: 0, ceilingMicro: 0, monthly: 0 },
+  base: { replies: BASE_REPLIES_PER_DAY, ceilingMicro: BASE_DAILY_CEILING_MICRO, monthly: BASE_REPLIES_PER_MONTH },
+  pro: { replies: PRO_REPLIES_PER_DAY, ceilingMicro: PRO_DAILY_CEILING_MICRO, monthly: PRO_REPLIES_PER_MONTH },
 };
 
 /** The spend at which new work stops for the day: one spoken reply short of the ceiling. */
@@ -449,21 +484,28 @@ export function allowanceMessage(a: Allowance, now: number, timeZone: string) {
     : `I've used up today's allowance on your plan, so I'll pick up again ${when}.`;
 }
 
+/** What today (UTC, like usage_daily) has cost this person so far, in micro-dollars. */
+async function spentToday(env: Env, userId: string, now = Date.now()) {
+  const row = await env.DB.prepare("SELECT COALESCE(SUM(est_micro_usd), 0) AS micro FROM usage_daily WHERE user_id = ? AND day = ?")
+    .bind(userId, new Date(now).toISOString().slice(0, 10))
+    .first<{ micro: number }>();
+  return row?.micro ?? 0;
+}
+
 /**
  * For work nobody asked for this minute (the cron, a workout summary): null
- * when this person's plan covers `need` and today's spend is still under its
- * line, otherwise why not. Never throws: when in doubt, the work waits.
+ * when this person's plan covers `need`, they have agreed to AI, and today's
+ * spend is still under its line; otherwise why not. The same questions the
+ * model-call gate asks, asked before any work is built, so a cron can skip a
+ * person quietly and say why. Never throws: when in doubt, the work waits.
  */
-export async function blockedFor(env: Env, userId: string, need: Tier): Promise<null | "plan" | "allowance"> {
+export async function blockedFor(env: Env, userId: string, need: Tier): Promise<null | "plan" | "consent" | "allowance"> {
   try {
     const loaded = await loadPlan(env, userId);
     if (!loaded || !atLeast(loaded.plan.tier, need)) return "plan";
+    if ((await aiConsentFor(env, userId)) !== "given") return "consent";
     if (isDevEmail(env, loaded.email)) return null;
-    const today = new Date().toISOString().slice(0, 10);
-    const row = await env.DB.prepare("SELECT COALESCE(SUM(est_micro_usd), 0) AS micro FROM usage_daily WHERE user_id = ? AND day = ?")
-      .bind(userId, today)
-      .first<{ micro: number }>();
-    return (row?.micro ?? 0) < spendStopMicro(loaded.plan.tier) ? null : "allowance";
+    return (await spentToday(env, userId)) < spendStopMicro(loaded.plan.tier) ? null : "allowance";
   } catch (err) {
     console.error("ovoa.err plan: couldn't check a plan for background work", err);
     return "plan";
@@ -478,6 +520,94 @@ export async function mayRunFor(env: Env, userId: string, need: Tier) {
 export function lazyCheck(env: Env, userId: string, need: Tier) {
   let answer: Promise<boolean> | null = null;
   return () => (answer ??= mayRunFor(env, userId, need));
+}
+
+// ---------------------------------------------------------------------------
+// The model-call gate
+// ---------------------------------------------------------------------------
+//
+// llm.ts asks this before every model call (setModelGate, registered once in
+// index.ts), web search grounding included, and sends nothing when it says no.
+// Three questions, in order:
+//
+//   1. The plan. Free never reaches a model: needs_plan.
+//   2. Today's spend, against the plan's line (spendStopMicro): allowance. The
+//      spend only, never the 20 or 60 replies: those are counted where a turn
+//      starts (index.ts chatTurn), so the reply that uses the last one still
+//      gets its memory update, and a paused turn can still finish. A resumed
+//      turn (GateCall.continuing) isn't asked about the spend at all: it was let
+//      in when it began. Development accounts have no line.
+//   3. Consent (consent.ts aiConsentFor): needs_consent until they've agreed.
+//
+// The crons ask the same questions first through blockedFor and friends, and
+// skip quietly; this is the backstop behind them, and the one door a new
+// caller can't forget.
+//
+// Fails closed on the plan: a database error reading it fails the call as an
+// ordinary error, and nothing is sent. Fails open on the spend: a person on a
+// plan whose day couldn't be read this once isn't refused for it (the reply
+// count at the start of their turn, and blockedFor for the crons, still hold).
+// A call with no person (userId null) is only ever a DEBUG_KEY route's.
+
+export async function modelGate(env: Env, call: GateCall, now = Date.now()): Promise<Refusal | null> {
+  if (!call.userId) return null;
+  const loaded = await loadPlan(env, call.userId);
+  if (!loaded || !atLeast(loaded.plan.tier, "base")) return "needs_plan";
+  if (!call.continuing && !isDevEmail(env, loaded.email)) {
+    const spent = await spentToday(env, call.userId, now).catch((err: unknown) => {
+      console.error("ovoa.err plan: couldn't read today's spend for a model call; letting it through", err);
+      return 0;
+    });
+    if (spent >= spendStopMicro(loaded.plan.tier)) {
+      say("plan", { outcome: "refused", user: call.userId, why: "allowance", purpose: call.purpose });
+      return "allowance";
+    }
+  }
+  if ((await aiConsentFor(env, call.userId)) !== "given") {
+    say("plan", { outcome: "refused", user: call.userId, why: "consent", purpose: call.purpose });
+    return "needs_consent";
+  }
+  return null;
+}
+
+/** For setModelGate: llm.ts hands over its own env type, which on this Worker is the whole Env. */
+export const modelGateFor = (env: LlmEnv, call: GateCall) => modelGate(env as Env, call);
+
+/** The one sentence a person hears or reads when a model call was refused. `timeZone` says when the day resets. */
+export function refusalMessage(reason: Refusal, tier: Tier, now: number, timeZone: string) {
+  if (reason === "needs_plan") return needsPlanBody("base").message;
+  if (reason === "needs_consent") return CONSENT_NEEDED;
+  const { replies } = ALLOWANCES[tier];
+  return allowanceMessage({ limit: replies, used: 0, left: 0, over: "spend" }, now, timeZone);
+}
+
+/** A time zone Intl knows, or UTC. */
+function zoneOr(tz: unknown) {
+  if (typeof tz !== "string" || !tz) return "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return "UTC";
+  }
+}
+
+/**
+ * A route's answer when its model call was refused (llm.ts ModelRefused): 402
+ * needs_plan (the body the app already knows), 429 allowance, or 403
+ * needs_consent, each with `message`, the sentence to show. The app keys off
+ * `error`, as it does for needs_plan.
+ */
+export async function refusedResponse(c: Context<{ Bindings: Env; Variables: Vars }>, err: ModelRefused) {
+  if (err.reason === "needs_plan") return needsPlan(c, "base");
+  const [settings, plan] = await Promise.all([
+    c.env.DB.prepare("SELECT time_zone FROM settings WHERE user_id = ?").bind(c.var.userId).first<{ time_zone: string | null }>().catch(() => null),
+    planFor(c.env, c.var.userId).catch(() => FREE),
+  ]);
+  const message = refusalMessage(err.reason, plan.tier, Date.now(), zoneOr(settings?.time_zone));
+  return err.reason === "allowance"
+    ? c.json({ error: "allowance", message, resetsAt: new Date(nextUtcMidnight(Date.now())).toISOString() }, 429)
+    : c.json({ error: "needs_consent", message }, 403);
 }
 
 // ---------------------------------------------------------------------------
@@ -501,11 +631,13 @@ export function planView(plan: Plan, allowance: Allowance | null, now: number): 
     trialEndsAt: plan.trialEndsAt,
     renewsAt: plan.renewsAt,
     limits: { repliesLeftToday: allowance ? allowance.left : null, resetsAt: new Date(nextUtcMidnight(now)).toISOString() },
+    // Every feature comes with Base (Pro is more usage, not more features).
+    // Four flags still, because every build of the app reads all four.
     features: {
       chat: atLeast(plan.tier, "base"),
       voice: atLeast(plan.tier, "base"),
-      wake: atLeast(plan.tier, "pro"),
-      agent: atLeast(plan.tier, "pro"),
+      wake: atLeast(plan.tier, "base"),
+      agent: atLeast(plan.tier, "base"),
     },
   };
 }

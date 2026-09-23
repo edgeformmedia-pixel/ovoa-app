@@ -2,20 +2,13 @@
 //
 // One person asking a thousand questions a month is the plan; one phone stuck
 // in a loop asking ten thousand is a bill. The cap is counted from usage_daily
-// (a turn row per answered reply), so it costs nothing extra to keep, and it
-// is a number in wrangler.jsonc rather than a plan tier: nothing here checks
-// membership, and development accounts are never capped.
+// (a turn row per answered reply), so it costs nothing extra to keep. Since the
+// v1 release it is per plan, the daily replies × 31: Base 620, Pro 1,860
+// (plans.ts ALLOWANCES.monthly). This file is only the arithmetic and the
+// words; development accounts are never capped (index.ts standingFor).
 
-/** Replies a person gets in a calendar month. 0 turns the cap off. */
-export const DEFAULT_TURN_CAP = 1000;
 /** At this share of the cap the person is told once, in the reply they were getting anyway. */
 export const WARN_AT = 0.8;
-
-export function turnCapFrom(env: { TURN_CAP_MONTHLY?: string }) {
-  if (env.TURN_CAP_MONTHLY === undefined || env.TURN_CAP_MONTHLY === "") return DEFAULT_TURN_CAP;
-  const n = Number(env.TURN_CAP_MONTHLY);
-  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_TURN_CAP;
-}
 
 export type CapVerdict = "ok" | "warn" | "over";
 

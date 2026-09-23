@@ -75,7 +75,7 @@ import { askClaude, askClaudeTool, claude } from "./claude";
 import { appAssistant, appFor, describeScreen, isAppTool, myApps, type MadeApp } from "./myapps";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
-import { capVerdict, monthKey, overCapMessage, turnCapFrom, warnMessage } from "./cap";
+import { capVerdict, monthKey, overCapMessage, warnMessage } from "./cap";
 import { isMoneyTool, moneyAssistant, moneyRoutes, moneyTick } from "./money";
 import { MORE_TOOLS, SPOKEN_CORE, toolbelt, TYPED_CORE, type ToolGuide } from "./toolbelt";
 import { mightBeAboutThem } from "./remember";
@@ -95,20 +95,47 @@ import {
   verifyGoogleIdToken,
 } from "./emailauth";
 import { sliceFor } from "./sweep";
-import { cleanOrder, engineStatus, ENGINES, isEngine, setRuntimeEngines, setUsageSink, type Engine, type EnginePrefs, type LlmUsage } from "./llm";
+import {
+  cleanOrder,
+  engineStatus,
+  ENGINES,
+  isEngine,
+  isModelRefused,
+  setModelGate,
+  setRuntimeEngines,
+  setUsageSink,
+  type Engine,
+  type EnginePrefs,
+  type LlmUsage,
+  type ModelRefused,
+} from "./llm";
 import { glmPriceFrom, usd } from "./pricing";
 import { globalSettings, setServerSetting, settingsFor, type ServerSettings, type SettingKey } from "./settings";
-import { dayOf, llmRow, pruneUsage, recordUsage, replyCounts, searchRow, sttStreamRow, turnRow, usageByPerson, usageForPerson } from "./usage";
 import {
+  dayOf,
+  llmRow,
+  pruneUsage,
+  recordUsage,
+  replyCounts,
+  searchRow,
+  sttStreamRow,
+  turnRow,
+  usageByPerson,
+  usageForPerson,
+  type UsageRow,
+} from "./usage";
+import {
+  ALLOWANCES,
   allowanceFor,
   allowanceMessage,
-  atLeast,
   isDevEmail,
   isTier,
   loadPlan,
-  needsPlan,
+  modelGateFor,
   planFor,
   planView,
+  refusalMessage,
+  refusedResponse,
   requirePlan,
   setPlanOverride,
   type Tier,
@@ -119,6 +146,11 @@ import {
 // isolate. The write is not awaited: this runs inside whatever request or
 // tick made the call, and a count must never hold up an answer.
 setUsageSink((env, u: LlmUsage) => void recordUsage(env as Env, [llmRow(u.userId, u, glmPriceFrom(env as Env))]));
+
+// And every model call asks first whether it may happen at all: the person's
+// plan, the day's spend and their consent (plans.ts modelGate). Nothing is sent
+// when it says no. Once per isolate, like the sink.
+setModelGate(modelGateFor);
 
 /**
  * The runtime settings (server_settings) as the engine choices llm.ts
@@ -228,7 +260,11 @@ const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 app.use("*", observe());
 app.use("*", cors());
 
-app.onError((err, c) => {
+app.onError(async (err, c) => {
+  // A model call the gate refused is an answer, not a fault. The routes that
+  // call a model answer it themselves (refusedResponse); this is the net under
+  // any that don't, so the person still hears why rather than a 500.
+  if (isModelRefused(err) && c.get("userId")) return refusedResponse(c as Context<{ Bindings: Env; Variables: Vars }>, err);
   // The row is written by observe(), which sees c.error after this returns
   // (hono/dist/compose.js sets context.error before calling the handler).
   // Recording here as well would count every failure twice.
@@ -983,8 +1019,6 @@ type TurnInput = {
   /** "agent": a queued command from the background agent rather than the user. */
   source?: "agent";
   resume?: { state: LoopState; results: Record<string, unknown> };
-  /** The person's plan. Below pro, the tools that set up background work are left out. */
-  tier?: Tier;
   /** Streaming: receives each sentence of the reply as soon as it's written. */
   onSentence?: (sentence: string) => void;
   /** The cf-ray from observe(), so this turn's line can be joined to its request's. */
@@ -1000,7 +1034,7 @@ type TurnInput = {
 async function runTurn(
   env: Env,
   ctx: Pick<ExecutionContext, "waitUntil">,
-  { userId, text, timeZone, caps, voice, source, tier, resume, onSentence, requestId, app }: TurnInput,
+  { userId, text, timeZone, caps, voice, source, resume, onSentence, requestId, app }: TurnInput,
 ) {
   const fromAgent = source === "agent";
   const started = Date.now();
@@ -1029,7 +1063,7 @@ async function runTurn(
   const phone = phoneAssistant(env, userId, caps, autoApprove);
   const shortcuts = shortcutAssistant(env, userId, autoApprove);
   const timeline = contextAssistant(env, userId, timeZone, !!settings.context_enabled);
-  const web = webAssistant(env, timeZone, ctx);
+  const web = webAssistant(env, userId, timeZone, ctx);
   const agent = agentAssistant(env, userId, timeZone, settings as AgentSettings, voice);
   const routine = routinesAssistant(env, userId, timeZone, { voice, fromAgent });
   const profileTools = profileAssistant(env, userId);
@@ -1093,11 +1127,7 @@ async function runTurn(
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
-    (t) =>
-      (!fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name)) &&
-      (!voice || !NOT_SPOKEN.has(t.name)) &&
-      // Background work is Pro's (plans.ts): on Base, the model can't offer to set it up.
-      (!tier || atLeast(tier, "pro") || !isAgentTool(t.name)),
+    (t) => (!fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name)) && (!voice || !NOT_SPOKEN.has(t.name)),
   );
   // Instructions that travel with their tools (toolbelt.ts): in the prompt while
   // the tools are carried, handed over with the tools when more_tools brings
@@ -1416,7 +1446,8 @@ async function runTurn(
 
   if (settings.memory_enabled && mightBeAboutThem(text)) {
     ctx.waitUntil(
-      updateMemories(env, userId, memories, text, reply).catch((err) => console.error("memory update failed", err)),
+      // Refused by the gate (consent withdrawn, say): nothing to remember with, and nothing wrong.
+      updateMemories(env, userId, memories, text, reply).catch((err) => isModelRefused(err) || console.error("memory update failed", err)),
     );
   }
 
@@ -1576,9 +1607,6 @@ authed.post("/chat", async (c) => {
   const { data } = parsed;
   const rid = c.var.requestId;
   const tier = (c.var.plan ?? (await planFor(c.env, c.var.userId))).tier;
-  // Overheard by the always-open microphone: that is the open-mic mode, which
-  // is Pro's. The route itself is Base (plans.ts), so this one flag is checked here.
-  if (data.ambient && !atLeast(tier, "pro")) return needsPlan(c, "pro");
   if (data.stream) {
     return streamTurn(
       c,
@@ -1646,11 +1674,12 @@ async function chatTurn(
     caps: data.phone ?? ACTIONS_ONLY,
     voice: data.voice,
     source: data.source,
-    tier,
     onSentence,
     requestId,
   }).catch((err: unknown) => {
-    if (data.source || !isAiUnreachable(err)) throw err;
+    if (data.source) throw err;
+    if (isModelRefused(err)) return refusedReply(err, tier, limitZone, onSentence);
+    if (!isAiUnreachable(err)) throw err;
     return unreachableReply(env, ctx, err, "/chat", { requestId, userId, started }, onSentence);
   });
   // Most of the month's replies are gone: said once, on the end of a reply
@@ -1671,13 +1700,14 @@ const CAP_WARNED = "turn-cap-warned";
 
 /**
  * Where a person stands, from one read of the usage table (a turn row per
- * answered reply, and every cost): `month` against the monthly fair-use cap
- * (cap.ts), null with the cap off; `day` against their plan's daily allowance
- * (plans.ts). Both null for a development account, which is never capped.
+ * answered reply, and every cost): `month` against their plan's monthly cap
+ * (plans.ts ALLOWANCES.monthly, worded by cap.ts), null on a plan with none;
+ * `day` against their plan's daily allowance (plans.ts). Both null for a
+ * development account, which is never capped.
  */
 async function standingFor(env: Env, userId: string, timeZone: string, tier: Tier) {
   if (await isDevAccount(env, userId)) return { month: null, day: null };
-  const cap = turnCapFrom(env);
+  const cap = ALLOWANCES[tier].monthly;
   const now = Date.now();
   const month = monthKey(now, timeZone);
   const [counts, warnedRow] = await Promise.all([
@@ -1725,6 +1755,19 @@ function unreachableReply(
     }),
   );
   return plainReply(AI_UNREACHABLE, onSentence);
+}
+
+/**
+ * A person's turn whose model call the gate refused (llm.ts ModelRefused,
+ * plans.ts modelGate): no plan with AI, today's spend used up, or no consent
+ * yet. One plain sentence, like the allowance messages, and the allowance one
+ * says when the day starts again. Nothing is saved, nothing counts, and it is
+ * no error: it is the rule working. The agent's own commands don't come here;
+ * they fail, and are marked failed, as before.
+ */
+function refusedReply(err: ModelRefused, tier: Tier, timeZone: string, onSentence?: (sentence: string) => void): TurnResult {
+  say("plan", { outcome: "turn refused", why: err.reason });
+  return plainReply(refusalMessage(err.reason, tier, Date.now(), timeZone), onSentence);
 }
 
 /**
@@ -1787,13 +1830,14 @@ authed.post("/chat/resume", async (c) => {
       caps: phoneCapsSchema.parse(caps),
       voice: !!caps.voice,
       source: caps.source === "agent" ? "agent" : undefined,
-      tier: c.var.plan?.tier,
       app: resumedApp,
       resume: { state: JSON.parse(row.state), results },
       onSentence,
       requestId: c.var.requestId,
     }).catch((err: unknown) => {
-      if (caps.source === "agent" || !isAiUnreachable(err)) throw err;
+      if (caps.source === "agent") throw err;
+      if (isModelRefused(err)) return refusedReply(err, c.var.plan?.tier ?? "base", validTimeZone(row.time_zone), onSentence);
+      if (!isAiUnreachable(err)) throw err;
       return unreachableReply(c.env, c.executionCtx, err, "/chat/resume", { requestId: c.var.requestId, userId, started }, onSentence);
     });
   if (parsed.data.stream) return streamTurn(c, run, caps.voice ? parsed.data.speak?.voice : undefined);
@@ -1824,8 +1868,8 @@ authed.post("/siri", async (c) => {
     text,
     timeZone,
     caps: ACTIONS_ONLY,
-    tier,
   }).catch((err: unknown) => {
+    if (isModelRefused(err)) return refusedReply(err, tier, timeZone);
     if (!isAiUnreachable(err)) throw err;
     return unreachableReply(c.env, c.executionCtx, err, "/siri", { requestId: c.var.requestId, userId: c.var.userId, started });
   });
@@ -2485,6 +2529,29 @@ app.get("/debug/usage", async (c) => {
 });
 
 /**
+ * Writes usage against one person today, as if they had used it: `turns`
+ * answered replies and/or `microUsd` of spend. For the smoke test's plan
+ * section, which has to use up a day on a local worker that can't call a
+ * model. Filed under engine "debug", so it's plain in any report. Needs DEBUG_KEY.
+ *
+ *   POST /debug/usage  {"userId":"...","turns":20}  or  {"userId":"...","microUsd":300000}
+ */
+app.post("/debug/usage", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const parsed = z
+    .object({ userId: z.string().max(64), turns: z.number().int().min(0).max(10_000).optional(), microUsd: z.number().int().min(0).max(100_000_000).optional() })
+    .safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: 'Send {"userId", "turns" and/or "microUsd"}.' }, 400);
+  const { userId, turns = 0, microUsd = 0 } = parsed.data;
+  const rows: UsageRow[] = [
+    ...(turns ? [{ ...turnRow(userId, "debug", false), n: turns }] : []),
+    ...(microUsd ? [{ userId, kind: "llm_call" as const, engine: "debug", model: "debug", n: 1, microUsd }] : []),
+  ];
+  await recordUsage(c.env, rows);
+  return c.json({ ok: true, rows: rows.length });
+});
+
+/**
  * A person's plan override, for the developer, App Review and testers: it beats
  * whatever the site says (plans.ts). Needs DEBUG_KEY.
  *
@@ -2649,6 +2716,13 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
         }
       }
     } catch (err) {
+      // The gate refused a model call (plans.ts modelGate): someone's plan,
+      // spend or consent said no. A skip, like the ones the crons' own
+      // pre-checks make, never a cron error.
+      if (isModelRefused(err)) {
+        decided[`${name}.refused`] = (decided[`${name}.refused`] ?? 0) + 1;
+        return;
+      }
       errors++;
       say("err", { cron, part: name, ms: Date.now() - at, why: classifyEngineError(err) });
       console.error(`ovoa.err cron=${cron} part=${name}`, err);

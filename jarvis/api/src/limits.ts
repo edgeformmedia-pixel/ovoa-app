@@ -23,13 +23,12 @@ type Limiter = keyof Pick<Env, "RL_AUTH" | "RL_TURN" | "RL_SPEAK" | "RL_LOGS">;
 const ROUTE_LIMITS: [RegExp, Limiter, string][] = [
   // A turn, however it arrives. 20 a minute is a question every three seconds.
   [/^\/(chat|chat\/resume|siri)$/, "RL_TURN", "turn"],
-  [/^\/voice\/token$/, "RL_TURN", "listen"],
   [/^\/claude$/, "RL_TURN", "claude"],
   // One per sentence from builds that voice replies themselves.
   [/^\/voice\/speak$/, "RL_SPEAK", "speak"],
-  // Talking over a reply without live transcription uploads a 1.8 s piece at a
-  // time (app voice.ts speakInterruptible): over 30 a minute, legitimately.
-  [/^\/voice\/transcribe$/, "RL_SPEAK", "transcribe"],
+  // Not /voice/token or /voice/transcribe, on purpose: v1 recognises speech on
+  // the phone, and those two are kept only to tell old builds to update
+  // (release brief, Phase 3). They are free in plans.ts for the same reason.
   // The phone's count of microphone seconds it streamed, sent every minute or
   // so (app liveListen.ts). Counted with the log uploads: same shape, same pace.
   [/^\/usage\/stream$/, "RL_LOGS", "usage"],

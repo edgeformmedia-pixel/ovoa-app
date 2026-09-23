@@ -1,8 +1,12 @@
-import { generate as geminiGenerate, quickThinking, type Turn } from "./gemini";
+import { generate as geminiGenerate, grounded as geminiGrounded, quickThinking, type Turn } from "./gemini";
 
 // The reply engines: which model answers, in what order, and what each call
-// cost. Every model call goes through here, apart from web search grounding
-// (web.ts calls Gemini itself) and Ask Claude (claude.ts).
+// cost. Every model call goes through here, web search grounding included
+// (searchGrounded; web.ts asks it), apart from Ask Claude (claude.ts, which
+// goes in Phase 7). Each one asks the gate first (setModelGate, below): the
+// person's plan, the day's spend and their consent are checked before an engine
+// is chosen or a byte is sent. test/gate.test.ts fails if a model host or
+// gemini.ts is reached from anywhere else.
 //
 // Two engines, and one order for every use: typed and spoken turns, memory and
 // summaries, the setup conversation, app design, agent jobs and food all try
@@ -82,8 +86,12 @@ type Options = {
   fast?: boolean;
   /** Called once per engine tried or skipped. See EngineAttempt. */
   onAttempt?: OnAttempt;
-  /** Whose call this is and what for, so the tokens land against the right person. See LlmUsage. */
-  usage?: UsageTag;
+  /**
+   * Whose call this is and what for, so the tokens land against the right
+   * person and the gate knows whose plan to ask. Required: a call nobody is
+   * named on can't be checked. See LlmUsage and GateCall.
+   */
+  usage: UsageTag;
   /** Receives every model call's token counts. When set, the default sink is not called. */
   onUsage?: OnUsage;
   /** This caller's own engine choices, over the runtime settings and the vars. See EnginePrefs. */
@@ -91,6 +99,68 @@ type Options = {
 };
 
 export type ToolSpec = { name: string; description: string; parameters: Record<string, unknown> };
+
+// ---------- The gate ----------
+//
+// "Before anything is sent to a model, OVOA checks the plan" (the v1 release,
+// 2026-09-23). No one function carries every model call, so each door into a
+// model asks first: generateText, chatWithTools (before its resume branch) and
+// searchGrounded. The check comes before an engine is chosen, so a refused call
+// costs nothing and tries nothing.
+//
+// This file stays free of the database, so the rules are handed in, the way the
+// usage sink is: index.ts registers plans.ts modelGate once per isolate. With
+// no gate registered (the unit tests) every call goes ahead.
+//
+// A refusal is a ModelRefused, never an ordinary failure: a person's turn turns
+// it into one plain sentence (index.ts), a route into a 402, 403 or 429 with
+// that sentence (plans.ts refusedResponse), and the crons into a skip (their
+// own pre-checks, blockedFor and friends, usually stop them sooner).
+
+/** Why a model call wasn't made: no plan with AI, today's spend used up, or no consent yet. */
+export type Refusal = "needs_plan" | "allowance" | "needs_consent";
+
+/** What the gate is asked about one call. */
+export type GateCall = UsageTag & {
+  /**
+   * The second half of a turn that was already let in: a paused turn resumed
+   * with what the phone looked up (chatWithTools `resume`). Its plan and
+   * consent are asked again; its spend isn't, because the turn was allowed
+   * when it began and refusing its second half would leave the phone's answer
+   * with nobody to hear it.
+   */
+  continuing?: boolean;
+};
+
+export type ModelGate = (env: LlmEnv, call: GateCall) => Promise<Refusal | null>;
+
+let modelGate: ModelGate | null = null;
+
+/** The rules every model call asks first (plans.ts modelGate). Set once by index.ts. */
+export function setModelGate(gate: ModelGate | null) {
+  modelGate = gate;
+}
+
+/** A model call the gate refused. Nothing was sent. `reason` says why. */
+export class ModelRefused extends Error {
+  constructor(
+    readonly reason: Refusal,
+    purpose: string,
+  ) {
+    super(`No model call for ${purpose}: ${reason}`);
+    this.name = "ModelRefused";
+  }
+}
+
+export const isModelRefused = (err: unknown): err is ModelRefused =>
+  err instanceof ModelRefused || (err instanceof Error && err.name === "ModelRefused" && "reason" in err);
+
+/** Throws ModelRefused when the gate says no. First thing in every door into a model. */
+async function askGate(env: LlmEnv, call: GateCall) {
+  if (!modelGate) return;
+  const refusal = await modelGate(env, call);
+  if (refusal) throw new ModelRefused(refusal, call.purpose);
+}
 
 // ---------- Usage ----------
 //
@@ -104,7 +174,11 @@ export type ToolSpec = { name: string; description: string; parameters: Record<s
 // registers one sink for the whole isolate, and a call is tagged with the
 // person and purpose it was for so the sink knows where to file it.
 
-/** Who a call is for, and why. Filed against user_id in usage_daily. */
+/**
+ * Who a call is for, and why. Filed against user_id in usage_daily, and the
+ * person whose plan the gate asks about. userId is null only on a DEBUG_KEY
+ * route (logs.ts /debug/ambient), where there is no person to check or charge.
+ */
 export type UsageTag = { userId: string | null; purpose: string };
 
 /** One model call's token counts, as the engine reported them. */
@@ -176,7 +250,7 @@ export function readGeminiUsage(meta: any): TokenUsage | null {
 
 function reportUsage(
   env: LlmEnv,
-  opts: { usage?: UsageTag; onUsage?: OnUsage },
+  opts: { usage: UsageTag; onUsage?: OnUsage },
   engine: Engine,
   model: string,
   counts: TokenUsage | null,
@@ -191,8 +265,8 @@ function reportUsage(
     outputTokens: c.output,
     reasoningTokens: c.reasoning,
     ms,
-    userId: opts.usage?.userId ?? null,
-    purpose: opts.usage?.purpose ?? "other",
+    userId: opts.usage.userId,
+    purpose: opts.usage.purpose,
   };
   try {
     if (opts.onUsage) opts.onUsage(usage);
@@ -245,8 +319,8 @@ type ToolLoopOptions = {
   onText?: OnText;
   /** Called once per engine tried or skipped, so the day's engine health is recordable. */
   onAttempt?: OnAttempt;
-  /** Whose turn this is and what for, for the usage table. See LlmUsage. */
-  usage?: UsageTag;
+  /** Whose turn this is and what for, for the usage table and the gate. Required. See LlmUsage. */
+  usage: UsageTag;
   /** Every model round's token counts. When set, the default sink is not called. */
   onUsage?: OnUsage;
   /** This person's own engine choices, over the runtime settings and the vars. See EnginePrefs. */
@@ -494,6 +568,7 @@ export function coolingEngines() {
  * "GLM glm-5.3-flash 429: …" a few functions below.
  */
 export function classifyEngineError(err: unknown): string {
+  if (isModelRefused(err)) return "refused";
   const text = String(err instanceof Error ? err.message : err);
   if (/No AI engine has its key set/.test(text)) return "no_engine";
   if (/cooling down/.test(text)) return "skipped";
@@ -635,6 +710,7 @@ function logFallback(from: Engine, to: Engine, err: unknown) {
 }
 
 export async function generateText(env: LlmEnv, opts: Options): Promise<string> {
+  await askGate(env, opts.usage);
   applyDeadlines(env);
   const order = engines(env, false, opts.prefer);
   const failures: string[] = [];
@@ -677,6 +753,8 @@ export async function chatWithTools(
   env: LlmEnv,
   opts: ToolLoopOptions & { resume?: { state: LoopState; results: Record<string, unknown> } },
 ): Promise<ChatOutcome> {
+  // Before the resume branch: a resumed turn is asked about too (GateCall.continuing).
+  await askGate(env, { ...opts.usage, continuing: !!opts.resume });
   applyDeadlines(env);
   if (opts.resume) {
     const { state, results } = opts.resume;
@@ -765,6 +843,20 @@ export async function chatWithTools(
     }
   }
   throw new Error("No engines");
+}
+
+// ---------- Web search ----------
+
+/**
+ * A question answered by Gemini with Google Search turned on, and the pages it
+ * used (web.ts web_search asks this first, and DuckDuckGo when it fails). A
+ * model call like any other, so it asks the gate first. Its cost is filed by
+ * the caller as a search (usage.ts searchRow), not through the usage sink.
+ */
+export async function searchGrounded(env: LlmEnv, opts: { query: string; today: string; usage: UsageTag }) {
+  await askGate(env, opts.usage);
+  if (!env.GEMINI_API_KEY) throw new Error("Gemini search has no key (GEMINI_API_KEY)");
+  return geminiGrounded({ apiKey: env.GEMINI_API_KEY, model: env.CHAT_MODEL ?? "", query: opts.query, today: opts.today });
 }
 
 // ---------- Deadlines ----------

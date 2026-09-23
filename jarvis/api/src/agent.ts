@@ -4,7 +4,7 @@ import { agentBuzz, agentBuzzTool } from "./buzz";
 import { agentCommandsLastHour, enqueueCommand } from "./commands";
 import { contextAssistant, isContextTool } from "./context";
 import { googleAssistant, validTimeZone } from "./google/assistant";
-import { chatWithTools, type CallTool, type ToolSpec } from "./llm";
+import { chatWithTools, isModelRefused, type CallTool, type ToolSpec } from "./llm";
 import { push } from "./push";
 import {
   addDays,
@@ -340,7 +340,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
   ]);
 
   const timeline = contextAssistant(env, userId, timeZone, !!settings.context_enabled);
-  const web = webAssistant(env, timeZone);
+  const web = webAssistant(env, userId, timeZone);
 
   // What the agent is allowed to say, and how it says it.
   let spoke: NewNote | null = null;
@@ -597,9 +597,17 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
       detail = "Ended without saying anything.";
     }
   } catch (err) {
-    outcome = "error";
-    detail = err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300);
-    console.error("agent: run failed", err);
+    if (isModelRefused(err)) {
+      // The gate said no before anything was sent (plans.ts modelGate): the
+      // plan, the day's spend or consent changed since runJob asked. A skipped
+      // run, like the ones runJob writes itself, not a failure to count.
+      outcome = "skipped";
+      detail = `Not run: ${err.reason === "allowance" ? "today's allowance on the plan was used up" : err.reason === "needs_consent" ? "waiting for you to agree to AI" : "background work is for Base users"}.`;
+    } else {
+      outcome = "error";
+      detail = err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300);
+      console.error("agent: run failed", err);
+    }
   } finally {
     if (expire !== null) clearTimeout(expire);
   }
@@ -626,7 +634,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     )
     .run();
 
-  const said = { spoke: "told you something", error: "failed", acted: "proposed a change", quiet: "nothing to say" }[outcome];
+  const said = { spoke: "told you something", error: "failed", acted: "proposed a change", quiet: "nothing to say", skipped: "skipped" }[outcome];
   await logAction(db, userId, "agent_run", `${job?.title ?? "Background check"}: ${said}`, "agent", runId);
 
   // A note exists only for a run that decided to speak and got to the end. A
@@ -864,9 +872,9 @@ async function runJob(env: Env, job: JobRow) {
     .bind(next ?? now + 86_400_000, now, next ? job.status : "done", job.id)
     .run();
 
-  // Background work is Pro's, and comes out of the day's allowance like
+  // Background work is Base's, and comes out of the day's allowance like
   // everything else (plans.ts). Written down like any other skipped run.
-  const blocked = await blockedFor(env, job.user_id, "pro");
+  const blocked = await blockedFor(env, job.user_id, "base");
   if (blocked) {
     await db
       .prepare(
@@ -878,12 +886,17 @@ async function runJob(env: Env, job: JobRow) {
         job.user_id,
         job.id,
         now,
-        blocked === "plan" ? "Background work is part of the Pro plan." : "Today's allowance on the plan was already used.",
+        blocked === "plan"
+          ? "Background work is for Base users."
+          : blocked === "consent"
+            ? "Waiting for you to agree to AI."
+            : "Today's allowance on the plan was already used.",
       )
       .run();
-    // Not on Pro: looked at again in a day, not every tick, like a job whose
-    // agent was turned off. Over the allowance: its next ordinary run stands.
-    if (blocked === "plan") {
+    // No plan with AI, or no consent yet: looked at again in a day, not every
+    // tick, like a job whose agent was turned off. Over the allowance: its next
+    // ordinary run stands.
+    if (blocked !== "allowance") {
       await db.prepare("UPDATE agent_jobs SET next_run_at = ? WHERE id = ?").bind(now + 86_400_000, job.id).run();
     }
     return;

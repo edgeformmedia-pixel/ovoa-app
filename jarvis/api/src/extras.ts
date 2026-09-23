@@ -4,7 +4,7 @@ import { validTimeZone } from "./google/assistant";
 import { googleAccessToken, listGoogleAccounts, type GoogleAccount } from "./google/oauth";
 import { toolsByName } from "./google/tools";
 import { baselineFor } from "./heart";
-import { generateText, type CallTool, type ToolSpec } from "./llm";
+import { generateText, isModelRefused, type CallTool, type ToolSpec } from "./llm";
 import { recordBillFromMail, toCents } from "./money";
 import { addNote } from "./notes";
 import { findPerson } from "./people";
@@ -338,7 +338,8 @@ export async function extrasTick(env: Env, slice?: Slice) {
         if (await weeklyReport(env, r.user_id, timeZone)) done.weekly++;
       }
     } catch (err) {
-      console.error(`extras: tick failed for ${r.user_id}`, err);
+      // Refused by the gate (plans.ts modelGate) is a skip, not a failure.
+      if (!isModelRefused(err)) console.error(`extras: tick failed for ${r.user_id}`, err);
     }
   }
   return done;

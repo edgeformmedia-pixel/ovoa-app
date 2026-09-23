@@ -57,16 +57,12 @@
     // own voices). server_settings.tts_engine, set from Dev tools, overrides
     // this without a deploy.
     "TTS_ENGINE": "deepgram-aura-2",
-    // Replies a person gets in a calendar month (cap.ts): a ceiling on what one
-    // account can cost, not a plan tier. "0" turns it off. DEV_EMAILS are exempt.
-    // At 80% the person is told once; past it they hear one sentence saying when
-    // it resets. Nothing here checks membership.
-    "TURN_CAP_MONTHLY": "1000",
     // Where the site answers "which plan is this email on?" (plans.ts, SPEC §2).
     // Point it at the site's test Worker to try a flow end to end. The key is the
     // secret MEMBERSHIP_API_KEY; until it is set everyone is treated as pro, so
     // no tester is locked out by the plans shipping before the site does. The
-    // daily allowances per plan are constants in plans.ts, with the arithmetic.
+    // daily and monthly allowances per plan are constants in plans.ts, with the
+    // arithmetic (the monthly one used to be TURN_CAP_MONTHLY here).
     "MEMBERSHIP_URL": "https://ovoa.ai/api/public/membership",
     // Which web search route goes first (web.ts): "auto" is Gemini's grounding
     // when there is a key (paid past 5K a month), else DuckDuckGo's snippets;

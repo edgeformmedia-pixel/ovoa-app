@@ -142,7 +142,13 @@ eq("an ordinary error is not it", isAiUnreachable(new Error("GLM glm-5.3-flash 5
 const attempts: EngineAttempt[] = [];
 let thrown: unknown = null;
 try {
-  await generateText({}, { model: "gemini-3.5-flash-lite", system: "s", turns: [{ role: "user", text: "hi" }], onAttempt: (a) => attempts.push(a) });
+  await generateText({}, {
+    model: "gemini-3.5-flash-lite",
+    system: "s",
+    turns: [{ role: "user", text: "hi" }],
+    usage: { userId: "u1", purpose: "test" },
+    onAttempt: (a) => attempts.push(a),
+  });
 } catch (err) {
   thrown = err;
 }

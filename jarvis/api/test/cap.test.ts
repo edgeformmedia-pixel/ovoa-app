@@ -1,7 +1,9 @@
-// The monthly reply cap (cap.ts): where the lines are, that the warning comes
-// once, and what is said, checked without a database.
+// The monthly reply cap (cap.ts, with its numbers per plan in plans.ts): where
+// the lines are, that the warning comes once, and what is said, checked
+// without a database.
 
-import { capVerdict, monthKey, nextMonthStart, overCapMessage, turnCapFrom, warnMessage } from "../src/cap";
+import { capVerdict, monthKey, nextMonthStart, overCapMessage, warnMessage } from "../src/cap";
+import { ALLOWANCES } from "../src/plans";
 
 let fails = 0;
 function eq(label: string, got: unknown, want: unknown) {
@@ -10,14 +12,13 @@ function eq(label: string, got: unknown, want: unknown) {
   console.log(`${ok ? "ok  " : "FAIL"} ${label}: ${got}${ok ? "" : `  (wanted ${want})`}`);
 }
 
-// ---------- The number ----------
+// ---------- The numbers, per plan ----------
 
-eq("a thousand unless told otherwise", turnCapFrom({}), 1000);
-eq("an empty setting is the default too", turnCapFrom({ TURN_CAP_MONTHLY: "" }), 1000);
-eq("a number is taken as it is", turnCapFrom({ TURN_CAP_MONTHLY: "250" }), 250);
-eq("zero turns it off", turnCapFrom({ TURN_CAP_MONTHLY: "0" }), 0);
-eq("nonsense is the default", turnCapFrom({ TURN_CAP_MONTHLY: "lots" }), 1000);
-eq("a negative number is the default", turnCapFrom({ TURN_CAP_MONTHLY: "-5" }), 1000);
+eq("Base: 620 a month (20 a day × 31)", ALLOWANCES.base.monthly, 620);
+eq("Pro: 1,860 a month (60 a day × 31)", ALLOWANCES.pro.monthly, 1860);
+eq("free has no cap to count (it has no replies)", ALLOWANCES.free.monthly, 0);
+eq("Base is warned at 496", capVerdict(496, ALLOWANCES.base.monthly, false), "warn");
+eq("and stops at 620", capVerdict(620, ALLOWANCES.base.monthly, true), "over");
 
 // ---------- Where the lines are ----------
 
@@ -46,6 +47,7 @@ eq("and the month key follows the zone, not UTC", monthKey(dec, "Pacific/Aucklan
 
 eq("over: one sentence with the number and the date", overCapMessage(1000, sept, "America/Chicago"), "I've reached this month's limit of 1,000 replies, so I'll pick up again on October 1.");
 eq("warn: one sentence with both numbers", warnMessage(800, 1000), "Heads up: that's 800 of this month's 1,000 replies.");
+eq("Pro's, with its comma", overCapMessage(ALLOWANCES.pro.monthly, sept, "America/Chicago"), "I've reached this month's limit of 1,860 replies, so I'll pick up again on October 1.");
 
 console.log(fails ? `\n${fails} failed` : "\nall passed");
 process.exit(fails ? 1 : 0);
