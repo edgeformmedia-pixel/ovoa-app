@@ -91,6 +91,8 @@ const row = (p: Partial<PlanRow> = {}): PlanRow => ({
 
 eq("the override beats everything", planFromRow(row({ plan_override: "base", plan_tier: "pro", plan_checked_at: NOW }), NOW, true).plan.tier, "base");
 eq("and never asks the site", planFromRow(row({ plan_override: "free" }), NOW, true).ask, false);
+eq("a pro override reads as comp", planFromRow(row({ plan_override: "pro" }), NOW, true).plan.status, "comp");
+eq("a free override has nothing to comp", planFromRow(row({ plan_override: "free" }), NOW, true).plan.status, "none");
 eq("the override beats the missing key too", planFromRow(row({ plan_override: "free" }), NOW, false).plan.tier, "free");
 eq("no key: pro", planFromRow(row(), NOW, false).plan, { tier: "pro", status: "comp", trialEndsAt: null, renewsAt: null, from: "no_key" });
 eq("no key: never asks", planFromRow(row(), NOW, false).ask, false);

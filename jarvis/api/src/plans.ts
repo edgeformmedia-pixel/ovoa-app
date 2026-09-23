@@ -165,7 +165,9 @@ const FREE: Plan = { tier: "free", status: "none", trialEndsAt: null, renewsAt: 
  */
 export function planFromRow(row: PlanRow, now: number, keySet: boolean): { plan: Plan; ask: boolean } {
   if (isTier(row.plan_override)) {
-    return { plan: { tier: row.plan_override, status: "comp", trialEndsAt: null, renewsAt: null, from: "override" }, ask: false };
+    // "comp", like access given from the site's admin page; a free override has nothing to comp.
+    const status: PlanStatus = row.plan_override === "free" ? "none" : "comp";
+    return { plan: { tier: row.plan_override, status, trialEndsAt: null, renewsAt: null, from: "override" }, ask: false };
   }
   if (!keySet) return { plan: { tier: "pro", status: "comp", trialEndsAt: null, renewsAt: null, from: "no_key" }, ask: false };
   const age = row.plan_checked_at == null ? Infinity : Math.max(0, now - row.plan_checked_at);
