@@ -1,11 +1,14 @@
-// Food (food.ts): the sanity clamp, the catalog match, a day's totals, the
-// tracking level's rules and the "lower than usual" check.
+// Food (food.ts): the sanity clamp, the catalog match, which entry a correction
+// means, a day's totals, the tracking level's rules, the "lower than usual"
+// check, and a goal said by voice.
 //
 // The clamp is the part that decides whether the numbers can be trusted at all:
 // a model that says a tablespoon of oil is 40 kcal has to be corrected, and a
 // clamp that argues with bacon has to not exist. The level rules are the part
 // that decides whether the feature is pleasant to leave on.
 
+import { readdirSync, readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import {
   BOUNDS,
   catalogMatches,
@@ -13,7 +16,9 @@ import {
   dayTotals,
   foodAssistant,
   foodPrompt,
+  foodSettings,
   levelRules,
+  logFood,
   lowerThanUsual,
   normalizeFood,
   parseItem,
@@ -81,11 +86,21 @@ eq("within the band, the catalog answers", catalogMatches({ grams: 400, kcal: 10
 eq("well outside it, a different food", catalogMatches({ grams: 400, kcal: 1400 }, { kcal_100g: 225 }), false);
 eq("no weight, no match", catalogMatches({ grams: null, kcal: 900 }, { kcal_100g: 225 }), false);
 eq("nothing stored, no match", catalogMatches({ grams: 400, kcal: 900 }, null), false);
+// They said the 900 kcal burrito was 600 (150 per 100 g); the model says 900 again (225).
+eq("their correction holds past the 30% band", catalogMatches({ grams: 400, kcal: 900 }, { kcal_100g: 150, source: "user" }), true);
+eq("but not for a food more than twice it", catalogMatches({ grams: 400, kcal: 1400 }, { kcal_100g: 150, source: "user" }), false);
+eq("a model's number keeps the narrow band", catalogMatches({ grams: 400, kcal: 900 }, { kcal_100g: 150, source: "model" }), false);
 
 const entries = [{ name: "Coffee with milk" }, { name: "Chicken burrito" }, { name: "Banana" }];
 eq("a correction means the last one logged", pickEntry(entries, undefined)?.name, "Coffee with milk");
 eq("or the one it names", pickEntry(entries, "the burrito")?.name, "Chicken burrito");
 eq("and nothing when it names nothing there", pickEntry(entries, "pizza"), null);
+eq("'tea' is a word, not letters in 'steak'", pickEntry([{ name: "Steak burrito" }, { name: "Green tea" }], "the tea")?.name, "Green tea");
+eq("and not the steak burrito on its own", pickEntry([{ name: "Steak burrito" }], "tea"), null);
+eq("'egg' isn't the veggie burger", pickEntry([{ name: "Veggie burger" }, { name: "Boiled egg" }], "egg")?.name, "Boiled egg");
+eq("'eggs' finds the boiled egg", pickEntry([{ name: "Veggie burger" }, { name: "Boiled egg" }], "eggs")?.name, "Boiled egg");
+eq("a whole word wins over the start of one", pickEntry([{ name: "Corny dog" }, { name: "Corn on the cob" }], "corn")?.name, "Corn on the cob");
+eq("the start of a word still finds it", pickEntry(entries, "burr")?.name, "Chicken burrito");
 
 // ---------- A day ----------
 
@@ -156,6 +171,64 @@ eq("the goal and the day are a more_tools away", spoken.tools.some((t) => t.name
 eq("'how many calories today' names the day's tool", namedTools(tools, "how many calories have I had today")[0]?.name, "food_today");
 eq("'what did I eat yesterday' brings it along", toolbelt(tools, SPOKEN_CORE).preload("what did I eat yesterday").includes("food_today"), true);
 eq("'I had a burrito' needs nothing brought", toolbelt(tools, SPOKEN_CORE).preload("I had a burrito").length, 0);
+
+// ---------- Against the real schema ----------
+//
+// Node's own SQLite with every migration applied, behind a small stand-in for
+// D1's calls (as in retention.test.ts).
+
+function d1(sqlite: DatabaseSync): D1Database {
+  const statement = (sql: string, args: unknown[] = []) => ({
+    sql,
+    bind: (...next: unknown[]) => statement(sql, next),
+    first: async () => (sqlite.prepare(sql).get(...(args as never[])) as unknown) ?? null,
+    all: async () => ({ results: sqlite.prepare(sql).all(...(args as never[])) }),
+    run: async () => ({ meta: { changes: Number(sqlite.prepare(sql).run(...(args as never[])).changes) } }),
+  });
+  return {
+    prepare: (sql: string) => statement(sql),
+    // Reads in a batch come back as results (logFood reads the catalog that way).
+    batch: async (list: ReturnType<typeof statement>[]) => {
+      sqlite.exec("BEGIN");
+      try {
+        const out = [];
+        for (const s of list) out.push(/^\s*SELECT/i.test(s.sql) ? await s.all() : await s.run());
+        sqlite.exec("COMMIT");
+        return out;
+      } catch (err) {
+        sqlite.exec("ROLLBACK");
+        throw err;
+      }
+    },
+  } as unknown as D1Database;
+}
+
+const sqlite = new DatabaseSync(":memory:");
+for (const file of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort()) {
+  sqlite.exec(readFileSync(`migrations/${file}`, "utf8"));
+}
+const DB = d1(sqlite);
+for (const id of ["goal", "cleared", "chose", "fixer"]) {
+  sqlite.prepare("INSERT INTO users (id, email, password_hash, password_salt, name, created_at) VALUES (?, ?, '', '', 'Sam', 0)").run(id, `${id}@example.com`);
+}
+const target = (userId: string, args: Record<string, unknown>) =>
+  foodAssistant({ DB } as unknown as Env, userId, "UTC").callTool("food_target", args) as Promise<Record<string, unknown>>;
+
+const said = await target("goal", { kcal: 2000 });
+eq("a goal said by voice turns tracking on", (await foodSettings(DB, "goal")).level, "normal");
+eq("and says Calorie follows", typeof said.note, "string");
+await target("cleared", { kcal: 0 });
+eq("clearing a goal doesn't", (await foodSettings(DB, "cleared")).level, null);
+await target("chose", { detail: "strict" });
+await target("chose", { kcal: 1800 });
+eq("a level they chose stays as it was", (await foodSettings(DB, "chose")).level, "strict");
+
+// They said the burrito was 600, not 900; the model says 900 again next time.
+const burrito = { items: [{ name: "Burrito", grams: 400, kcal: 900, category: "mixed" }] };
+await logFood(DB, "fixer", "UTC", burrito, 1_000_000);
+sqlite.prepare("UPDATE food_catalog SET kcal_100g = 150, source = 'user' WHERE user_id = 'fixer'").run();
+const next = await logFood(DB, "fixer", "UTC", { ...burrito, again: true }, 1_060_000);
+eq("a corrected food is priced as they said", "items" in next ? [next.items[0].kcal, next.items[0].source] : next, [600, "catalog"]);
 
 console.log(fails ? `\n${fails} FAILED` : "\nall passed");
 process.exit(fails ? 1 : 0);

@@ -80,7 +80,9 @@ wants a rough idea. So the add-on has a **tracking level**, `profile.food_detail
   `strict`, "eat a bit better" → `quick`).
 - **Changed by voice** any time: "stop asking, just log it" → `quick`, "be more exact" → `strict`.
   "Just log it" also ends the current questions at any level, and it logs its best guess.
-- `food_target` takes `detail` to save it; the prompt section reads it.
+- `food_target` takes `detail` to save it; the prompt section reads it. A goal said by voice ("keep me to
+  2,000") with no level set turns Calorie on at the level they chose before, or `normal`, as an eating goal in
+  setup does.
 
 ## Standalone rule
 
@@ -212,7 +214,8 @@ night's, and a tracker that disagrees is a tracker they stop trusting.
 
 1. The model calls `food_log` with items it has already priced: `{name, grams, kcal, protein, carbs, fat, category}`.
 2. For each item, `key = normalize(name)`. If the catalog has it **and** the model's kcal/100g is within
-   ±30% of the stored value, the catalog wins (consistency beats freshness). Outside that band, the model
+   ±30% of the stored value, the catalog wins (consistency beats freshness); a number they corrected wins from
+   half to double it. Outside that band, the model
    is probably talking about a different food with the same name — keep both by qualifying the key with
    what the model said (`"chicken thigh skin on"`).
 3. Clamp: `kcal/100g` must sit inside the category's bounds.

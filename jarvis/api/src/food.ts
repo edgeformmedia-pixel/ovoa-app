@@ -43,6 +43,13 @@ export const FOOD_RETAIN_DAYS = 14;
 export const DEDUPE_MS = 20 * 60_000;
 /** Inside this share of the stored kcal per 100 g, the catalog's number wins: the same meal costs the same. */
 export const CATALOG_BAND = 0.3;
+/**
+ * A number they corrected (catalog source 'user') wins over a model estimate
+ * from half to double it: the model tends to say its first number again, and a
+ * correction that only held within 30% of that was never used. Past double,
+ * it's likely a different food under the same name.
+ */
+export const USER_BAND = [0.5, 2] as const;
 const MAX_ITEMS = 12;
 const MAX_GRAMS = 3000;
 const MAX_ITEM_KCAL = 5000;
@@ -162,17 +169,27 @@ export function normalizeFood(name: string) {
   return key || name.trim().toLowerCase().slice(0, 80);
 }
 
-type CatalogRow = { key: string; kcal_100g: number; protein_100g: number | null; carbs_100g: number | null; fat_100g: number | null };
+type CatalogRow = {
+  key: string;
+  kcal_100g: number;
+  protein_100g: number | null;
+  carbs_100g: number | null;
+  fat_100g: number | null;
+  /** 'user' when it's their correction (amendEntry), else what the model said first. */
+  source: string | null;
+};
 
 /**
  * Whether the catalog's number should stand in for the model's: only when the
  * model is describing the same food, which is when its calories per 100 g land
  * within CATALOG_BAND of the stored ones. Further off, it's a different food by
  * the same name (a burrito with everything on it), and the new number stands.
+ * Their own correction holds over a wider band (USER_BAND).
  */
-export function catalogMatches(item: { grams: number | null; kcal: number }, row: { kcal_100g: number } | null) {
+export function catalogMatches(item: { grams: number | null; kcal: number }, row: { kcal_100g: number; source?: string | null } | null) {
   if (!row || !item.grams || row.kcal_100g <= 0) return false;
   const per100 = (item.kcal / item.grams) * 100;
+  if (row.source === "user") return per100 >= USER_BAND[0] * row.kcal_100g && per100 <= USER_BAND[1] * row.kcal_100g;
   return Math.abs(per100 - row.kcal_100g) <= CATALOG_BAND * row.kcal_100g;
 }
 
@@ -392,7 +409,7 @@ export async function logFood(
   const keys = items.map((i) => normalizeFood(i.name));
   const marks = keys.map(() => "?").join(",");
   const [catalog, recent] = await db.batch([
-    db.prepare(`SELECT key, kcal_100g, protein_100g, carbs_100g, fat_100g FROM food_catalog WHERE user_id = ? AND key IN (${marks})`).bind(userId, ...keys),
+    db.prepare(`SELECT key, kcal_100g, protein_100g, carbs_100g, fat_100g, source FROM food_catalog WHERE user_id = ? AND key IN (${marks})`).bind(userId, ...keys),
     db.prepare(`SELECT key FROM food_log WHERE user_id = ? AND created_at > ? AND key IN (${marks})`).bind(userId, now - DEDUPE_MS, ...keys),
   ]);
   const known = new Map((catalog.results as CatalogRow[]).map((r) => [r.key, r]));
@@ -454,11 +471,20 @@ async function recentEntries(db: D1Database, userId: string, now: number) {
   return results;
 }
 
-/** The entry "which" names (every word of it in the name), or the last one logged. */
+/**
+ * The entry "which" names, or the last one logged. By word, not by letters
+ * ("tea" isn't the steak burrito, "egg" isn't the veggie burger): first an
+ * entry with every word in its name ("eggs" finds "Boiled egg"), then one where
+ * each word starts a word of it ("burr"), newest first in each.
+ */
 export function pickEntry<T extends { name: string }>(rows: T[], which: unknown) {
   const words = typeof which === "string" ? normalizeFood(which).split(" ").filter(Boolean) : [];
   if (!words.length) return rows[0] ?? null;
-  return rows.find((r) => words.every((w) => normalizeFood(r.name).includes(w))) ?? null;
+  const names = rows.map((r) => normalizeFood(r.name).split(" "));
+  const whole = (w: string, n: string) => n === w || w === `${n}s` || w === `${n}es`;
+  const start = (w: string, n: string) => whole(w, n) || n.startsWith(w);
+  const find = (match: (w: string, n: string) => boolean) => rows.find((_, i) => words.every((w) => names[i].some((n) => match(w, n))));
+  return find(whole) ?? find(start) ?? null;
 }
 
 export type Amend = { fraction?: number | null; grams?: number | null; kcal?: number | null };
@@ -799,12 +825,19 @@ export function foodAssistant(env: Env, userId: string, timeZone: string, { voic
       const kcal = num(args.kcal);
       const protein = num(args.protein);
       await setFoodTarget(db, userId, { ...(kcal !== null && { kcal }), ...(protein !== null && { protein }) });
+      // A goal is asking to track: it turns Calorie on (the level they chose
+      // before, or normal), as an eating goal in setup does. Clearing one doesn't.
+      let installed = false;
+      if (!detail && ((kcal ?? 0) > 0 || (protein ?? 0) > 0) && (await foodSettings(db, userId)).level === null) {
+        await setCalorieInstalled(db, userId, true);
+        installed = true;
+      }
       const s = await foodSettings(db, userId);
       return {
         detail: s.level ?? "quick (not set up)",
         dailyGoal: s.target.kcal ? `${fmt(s.target.kcal)} kcal` : "none",
         ...(s.target.protein && { protein: `${fmt(s.target.protein)} g` }),
-        ...(detail && { note: "Their Calorie app follows this, and appears on their phone next time they open OVOA." }),
+        ...((detail || installed) && { note: "Their Calorie app follows this, and appears on their phone next time they open OVOA." }),
       };
     }
 

@@ -5,7 +5,7 @@ import { Alert, Modal, Pressable, RefreshControl, StyleSheet, Text, View } from 
 import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withDelay, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CountUp, PressScale, Ring, Rise, SkeletonList } from "../../components/motion";
-import { PartOfPlan } from "../../components/Plan";
+import { LockedLine, StoreActions } from "../../components/Plan";
 import { Btn, GroupLabel, Screen, TopBar, text, toneInk, toneWash } from "../../components/ui";
 import { useSession } from "../../lib/auth";
 import { devlog } from "../../lib/devlog";
@@ -15,7 +15,9 @@ import { colors, numeric, radius, space, type } from "../../lib/theme";
 
 // Calorie: what OVOA noted about food, from what was said in Talk
 // (api/src/food.ts). The screen only reads it and fixes it; nothing here calls
-// a model, so a downgrade never locks anyone out of their own log.
+// a model, so a downgrade never locks anyone out of their own log (the /food
+// routes are free, decision 5): without Base it still opens, with one line
+// saying that logging by talking is for Base users.
 //
 // Today is a ring of eaten against their goal (just the number when there's no
 // goal), a protein bar, and what they had, each of which opens a sheet to fix
@@ -40,20 +42,8 @@ const LEVELS: Record<FoodLevel, string> = {
 const n = (v: number) => Math.round(v).toLocaleString();
 
 export default function Calorie() {
-  const { can } = usePlan();
-  if (!can.chat) {
-    return (
-      <PartOfPlan
-        title="Calorie"
-        what="Tell OVOA what you eat and it keeps count for you: calories and protein, today and over the last two weeks."
-      />
-    );
-  }
-  return <CalorieScreen />;
-}
-
-function CalorieScreen() {
   const { token } = useSession();
+  const { can, needsConsent } = usePlan();
   const [data, setData] = useState<FoodScreen | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +104,13 @@ function CalorieScreen() {
     <View style={styles.page}>
       <TopBar title="Calorie" />
       <Screen refreshControl={<RefreshControl refreshing={state === "loading" && !!data} onRefresh={() => void load()} tintColor={ACCENT} />}>
+        {!can.chat && (
+          <View style={styles.locked}>
+            <LockedLine label="Logging by talking" what="Tell OVOA what you eat and it keeps count here. What's already here stays yours to see and fix." />
+            {!needsConsent && <StoreActions align="flex-start" />}
+          </View>
+        )}
+
         {state === "loading" && !data && <SkeletonList rows={5} />}
 
         {state === "error" && !data && (
@@ -381,6 +378,8 @@ function AmendSheet({ entry, onClose, onSave }: { entry: FoodEntry | null; onClo
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.paper },
+
+  locked: { gap: space.s2 },
 
   ask: { backgroundColor: WASH, borderRadius: radius.tile, padding: space.s4, gap: space.s3 },
   askTitle: { ...type.head, color: colors.ink },

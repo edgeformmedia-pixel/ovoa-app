@@ -2,6 +2,8 @@ import { AppState } from "react-native";
 import { installedAddons } from "./addons";
 import { request } from "./api";
 import { devlog } from "./devlog";
+import { onSignOut } from "./signOut";
+import { storage } from "./storage";
 
 // Food, as the Calorie add-on sees it (api/src/food.ts).
 //
@@ -63,18 +65,40 @@ export const foodApi = {
 };
 
 /**
+ * Calorie was taken off while the server couldn't be told (offline, a
+ * timeout). Until it has been, the next sync tells it again instead of seeing
+ * the level still set and putting Calorie back.
+ */
+const REMOVAL_PENDING_KEY = "ovoa.calorieRemovalPending";
+onSignOut("calorie removal", () => storage.remove(REMOVAL_PENDING_KEY));
+
+/**
  * Calorie was added or taken off on this phone. Adding turns tracking on at the
  * level they last chose (or normal); taking it off goes back to noting quietly.
- * Failing is logged and left: the screen sends it again when it's opened.
+ * A failed add is sent again by the screen when it's opened; a failed removal
+ * by the next sync (REMOVAL_PENDING_KEY).
  */
 export async function calorieToggled(token: string | null, installed: boolean) {
   if (!token) return;
-  await foodApi.set(token, { installed }).catch((err) => devlog("err", "calorie: couldn't tell the server", String(err)));
+  if (installed) await storage.remove(REMOVAL_PENDING_KEY).catch(() => {});
+  try {
+    await foodApi.set(token, { installed });
+  } catch (err) {
+    devlog("err", "calorie: couldn't tell the server", String(err));
+    if (!installed) await storage.set(REMOVAL_PENDING_KEY, "1").catch(() => {});
+  }
 }
 
 /** Adds Calorie to this phone when the server says a level is set and it isn't here yet. */
 async function syncCalorie(token: string) {
   try {
+    // A removal the server never heard about: tell it now, and don't add Calorie back meanwhile.
+    if ((await storage.get(REMOVAL_PENDING_KEY).catch(() => null)) === "1") {
+      await foodApi.set(token, { installed: false });
+      await storage.remove(REMOVAL_PENDING_KEY);
+      devlog("log", "calorie: told the server it was removed");
+      return;
+    }
     const s = await foodApi.settings(token);
     if (!s.level) return;
     const ids = await installedAddons.get();

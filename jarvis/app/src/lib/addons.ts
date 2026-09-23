@@ -13,7 +13,10 @@ import { storage } from "./storage";
 // what to see, nothing more: the screens are already in the app, so installing
 // downloads nothing, and removing one only takes it off the list — whatever it
 // had switched on (fall detection, the location timeline) stays as it was, and
-// is turned off on its own screen or in Settings.
+// is turned off on its own screen or in Settings. Calorie is the exception:
+// installing or removing it sets or clears the tracking level on the server
+// (profile.food_detail, through lib/food.ts), and the server can install it too
+// (an eating goal in setup, a level or a goal said by voice).
 //
 // `by` is the maker's name, shown as "by OVOA". Every add-on today is OVOA's
 // own; the field is there so the catalog reads the same once it isn't.
