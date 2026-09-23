@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import { GoogleConnection } from "../../components/GoogleConnection";
-import { PartOfProLine, YourPlan } from "../../components/Plan";
+import { PartOfProLine } from "../../components/Plan";
 import { SiriSetup } from "../../components/SiriSetup";
 import { VoicePicker } from "../../components/VoicePicker";
 import { Btn, GroupLabel, Screen, Toggle, TopBar } from "../../components/ui";
@@ -23,21 +23,19 @@ import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
 import { devModePref, useDevMode } from "../../lib/devMode";
 import { usePlan } from "../../lib/plan";
+import { tourPref } from "../../lib/tour";
 import { autoSendTextsPref, SEND_TEXT_SHORTCUT } from "../../lib/storage";
 import { colors, space, type } from "../../lib/theme";
 
 export default function Settings() {
   const router = useRouter();
-  const { token, user, setUser, signOut, clear } = useSession();
-  const [name, setName] = useState(user?.name ?? "");
+  const { token, user, setUser } = useSession();
   const [assistantName, setAssistantName] = useState(user?.settings.assistantName ?? "");
   const [personality, setPersonality] = useState(user?.settings.personality ?? "");
   const [saving, setSaving] = useState(false);
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [memoriesOpen, setMemoriesOpen] = useState(false);
   const [autoSendTexts, setAutoSendTexts] = useState(false);
-  const [currentPw, setCurrentPw] = useState("");
-  const [newPw, setNewPw] = useState("");
   const { listenMode, setListenMode, micSource, setMicSource, alwaysListen, setAlwaysListen } = useAssistant();
   const { pushProblem } = useAgent();
   // The free plan has no assistant, so its settings aren't shown at all; Base
@@ -84,7 +82,6 @@ export default function Settings() {
   if (!user) return null; // signing out
 
   const dirty =
-    name.trim() !== user.name ||
     assistantName.trim() !== user.settings.assistantName ||
     personality.trim() !== user.settings.personality;
 
@@ -92,7 +89,6 @@ export default function Settings() {
     setSaving(true);
     try {
       const r = await api.updateMe(token, {
-        name: name.trim(),
         assistantName: assistantName.trim(),
         personality: personality.trim(),
       });
@@ -208,31 +204,12 @@ export default function Settings() {
 
   const setRetention = (contextRetainDays: number) => patch({ contextRetainDays });
 
-  const changePassword = async () => {
-    if (newPw.length < 8) return Alert.alert("New password must be at least 8 characters");
-    try {
-      await api.changePassword(token, currentPw, newPw);
-      setCurrentPw("");
-      setNewPw("");
-      Alert.alert("Password changed", "Other devices have been signed out.");
-    } catch (err) {
-      Alert.alert("Couldn't change password", (err as Error).message);
-    }
-  };
-
   return (
     <View style={styles.page}>
       <TopBar title="Settings" />
       <Screen keyboardShouldPersistTaps="handled">
-      <Section title="Your plan">
-        <YourPlan />
-      </Section>
-
-      <Section title="Account">
-        <Text style={styles.meta}>{user.email}</Text>
-        <Field label="Your name" value={name} onChangeText={setName} />
-      </Section>
-
+      {/* Your plan, name, email, password, signing out and deleting the
+          account are on Account now (app/(tabs)/account.tsx). */}
       {!free && (
       <>
       <Section title="Assistant">
@@ -348,12 +325,6 @@ export default function Settings() {
       </>
       )}
 
-      <Section title="Password">
-        <Field label="Current password" value={currentPw} onChangeText={setCurrentPw} secureTextEntry />
-        <Field label="New password" value={newPw} onChangeText={setNewPw} secureTextEntry />
-        <Button label="Change password" onPress={changePassword} disabled={!currentPw || !newPw} />
-      </Section>
-
       {!free && (
       <Section title="Your day">
         <LocationTimeline />
@@ -395,8 +366,12 @@ export default function Settings() {
         {devMode && <Button label="Sensors, inputs & ES100" onPress={() => router.push("/dev-tools")} />}
       </Section>
 
-      <Section title="Session">
-        <Button label="Sign out" onPress={signOut} />
+      <Section title="Getting around">
+        <About>
+          The menu is Talk, Apps, Account and Settings. Everything else is an app you add from Apps. The tour walks
+          through it again.
+        </About>
+        <Button label="Show the tour again" onPress={() => void tourPref.replay()} />
       </Section>
 
       {!free && (
@@ -534,17 +509,16 @@ export default function Settings() {
       </>
       )}
 
+      {/* Deleting the account moved to Account; what's left here is the assistant's. */}
+      {!free && (
       <Section title="Danger zone">
-        {!free && (
         <Setting
           label="Approve for me"
           about={`Skip approval cards: ${assistantName || "your assistant"} sends emails, deletes things, and changes your contacts, calendar, and reminders right away. iOS still asks you to tap Send for emails, and for texts unless "Send texts automatically" is on.`}
         >
           <Toggle value={user.settings.autoApprove} onValueChange={toggleAutoApprove} />
         </Setting>
-        )}
-        {!free &&
-          (!can.wake ? (
+        {!can.wake ? (
             <PartOfProLine
               label="Always listen"
               what="The microphone stays on day and night, and answers when you say its name."
@@ -570,23 +544,9 @@ export default function Settings() {
                 }
               />
             </Setting>
-          ))}
-        <Button
-          label="Delete account"
-          danger
-          onPress={() =>
-            confirm(
-              "Delete your account?",
-              "This permanently deletes your account, chats, and memories.",
-              "Delete",
-              async () => {
-                await api.deleteAccount(token);
-                await clear();
-              },
-            )
-          }
-        />
+          )}
       </Section>
+      )}
       </Screen>
     </View>
   );

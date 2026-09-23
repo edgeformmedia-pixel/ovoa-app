@@ -13,11 +13,9 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAgent } from "../lib/agent";
-import { useSession } from "../lib/auth";
-import { useDevMode } from "../lib/devMode";
+import { ADDONS } from "../lib/addons";
 import { DrawerContext, type DrawerHandle } from "../lib/drawer";
-import { usePlan } from "../lib/plan";
+import { PLAN_NAMES, usePlan } from "../lib/plan";
 import { colors, lift, numeric, space, type } from "../lib/theme";
 import { IconTile, type IconName, type Tone } from "./ui";
 
@@ -41,43 +39,26 @@ const EASE = Easing.bezier(0.32, 0.72, 0, 1);
 
 export type NavItem = { label: string; href: Href; icon: IconName; tone: Tone };
 
-/** The seven screens, in the order the design puts them. */
-export const MAIN: NavItem[] = [
+/**
+ * The whole menu. Four rows, and nothing else ever joins them: every other
+ * screen is an app you add from Apps (lib/addons.ts), and opens from there.
+ */
+export const MENU: NavItem[] = [
   { label: "Talk", href: "/chat", icon: "mic", tone: "teal" },
-  { label: "Brief", href: "/brief" as Href, icon: "sunny-outline", tone: "amber" },
-  { label: "Activity", href: "/", icon: "pulse", tone: "coral" },
-  { label: "Day", href: "/day" as Href, icon: "time-outline", tone: "violet" },
-  { label: "Record", href: "/record", icon: "radio-button-on", tone: "blue" },
-  { label: "Safety", href: "/safety", icon: "shield-checkmark-outline", tone: "green" },
-  { label: "Background", href: "/agent" as Href, icon: "git-branch-outline", tone: "pink" },
+  { label: "Apps", href: "/apps" as Href, icon: "apps-outline", tone: "violet" },
+  { label: "Account", href: "/account" as Href, icon: "person-circle-outline", tone: "blue" },
+  { label: "Settings", href: "/settings", icon: "settings-outline", tone: "amber" },
 ];
 
-export const MORE: NavItem[] = [
-  { label: "Settings", href: "/settings", icon: "settings-outline", tone: "blue" },
-  { label: "Transcripts", href: "/transcripts" as Href, icon: "document-text-outline", tone: "violet" },
-  { label: "Report a problem", href: "/report-bug" as Href, icon: "bug-outline", tone: "coral" },
+// The free plan has no assistant to talk to, so its first row is its day
+// (components/FreeToday.tsx) rather than Talk; the other three are the same.
+export const FREE_MENU: NavItem[] = [
+  { label: "Today", href: "/", icon: "time-outline", tone: "teal" },
+  ...MENU.slice(1),
 ];
 
-// The two shortcuts the Activity tab used to carry, plus dev tools. The design
-// has nowhere else for them and losing them would make this rework a net
-// negative, so they get their own group. Motion lab and the ES100 screen stay
-// where they are, inside dev tools.
-export const DEV: NavItem[] = [
-  { label: "Sensors & ES100", href: "/dev-tools", icon: "hardware-chip-outline", tone: "amber" },
-  { label: "Live listen", href: "/live" as Href, icon: "radio-outline", tone: "coral" },
-  { label: "Ask Claude", href: "/claude" as Href, icon: "sparkles-outline", tone: "violet" },
-];
-
-// The free plan's menu: its day, its recordings, safety, and the way out.
-// Talk, Brief, Background work and Transcripts are the assistant's, and the
-// home screen's one card says so; the menu doesn't list them to say it again.
-// Home is the day itself on the free plan (components/FreeToday.tsx).
-export const FREE_MAIN: NavItem[] = [
-  { label: "Today", href: "/", icon: "time-outline", tone: "violet" },
-  { label: "Record", href: "/record", icon: "radio-button-on", tone: "blue" },
-  { label: "Safety", href: "/safety", icon: "shield-checkmark-outline", tone: "green" },
-];
-const ASSISTANT_ONLY = new Set(["Transcripts", "Live listen", "Ask Claude"]);
+/** Every app's screen, so the menu can mark Apps while one of them is open. */
+const APP_ROUTES = new Set(ADDONS.map((a) => String(a.href)));
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
@@ -86,44 +67,22 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
 export function DrawerPanel({
   current,
   tails,
-  recent,
   onGo,
   onClose,
   free = false,
 }: {
-  /** The free plan: no assistant, so no Talk and no assistant screens. */
+  /** The free plan: no assistant, so its day where Talk would be. */
   free?: boolean;
   /** The route showing behind the panel, so its row can be marked. */
   current: string;
   /** Only the values actually to hand; the rest of the rows go without. */
   tails: Record<string, string | undefined>;
-  /** What OVOA said today, newest first. Empty is the normal state. */
-  recent: { id: string; title: string }[];
   onGo: (href: Href) => void;
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const devMode = useDevMode();
-
-  const row = (item: NavItem) => {
-    const on = current === item.href;
-    const tail = tails[item.label];
-    return (
-      <Pressable
-        key={item.label}
-        onPress={() => onGo(item.href)}
-        accessibilityRole="button"
-        accessibilityState={{ selected: on }}
-        style={({ pressed }) => [styles.navRow, on && styles.navRowOn, pressed && { opacity: 0.6 }]}
-      >
-        <IconTile name={item.icon} tone={item.tone} />
-        <Text style={styles.navLabel} numberOfLines={1}>
-          {item.label}
-        </Text>
-        {!!tail && <Text style={styles.navTail}>{tail}</Text>}
-      </Pressable>
-    );
-  };
+  const on = (item: NavItem) =>
+    current === item.href || (item.label === "Apps" && APP_ROUTES.has(current));
 
   return (
     <View style={[styles.panelBody, { paddingTop: insets.top + space.s4, paddingBottom: insets.bottom + space.s4 }]}>
@@ -135,50 +94,25 @@ export function DrawerPanel({
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: space.s4 }}>
-        {(free ? FREE_MAIN : MAIN).map(row)}
-
-        {/* "Today" is what OVOA actually said today, not a list of screens. An
-            agent that had nothing to say shows nothing here, which is the point
-            of it — see docs/agent.md. */}
-        {recent.length > 0 && (
-          <>
-            <Text style={styles.label}>Today</Text>
-            {recent.map((n) => (
-              <Pressable key={n.id} onPress={() => onGo("/day" as Href)} style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}>
-                <Text style={styles.recent} numberOfLines={1}>
-                  {n.title}
-                </Text>
-              </Pressable>
-            ))}
-          </>
-        )}
-
-        <Text style={styles.label}>More</Text>
-        {MORE.filter((i) => !free || !ASSISTANT_ONLY.has(i.label)).map(row)}
-
-        {devMode && (
-          <>
-            <Text style={styles.label}>Developer</Text>
-            {DEV.filter((i) => !free || !ASSISTANT_ONLY.has(i.label)).map(row)}
-          </>
-        )}
+        {(free ? FREE_MENU : MENU).map((item) => {
+          const tail = tails[item.label];
+          return (
+            <Pressable
+              key={item.label}
+              onPress={() => onGo(item.href)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on(item) }}
+              style={({ pressed }) => [styles.navRow, on(item) && styles.navRowOn, pressed && { opacity: 0.6 }]}
+            >
+              <IconTile name={item.icon} tone={item.tone} />
+              <Text style={styles.navLabel} numberOfLines={1}>
+                {item.label}
+              </Text>
+              {!!tail && <Text style={styles.navTail}>{tail}</Text>}
+            </Pressable>
+          );
+        })}
       </ScrollView>
-
-      {!free && (
-        <View style={styles.talk}>
-          <Pressable
-            onPress={() => onGo("/chat")}
-            style={({ pressed }) => [styles.pill, pressed && { opacity: 0.8 }]}
-            accessibilityRole="button"
-          >
-            <Ionicons name="mic" size={19} color={colors.paper} />
-            <Text style={styles.pillText}>Talk</Text>
-          </Pressable>
-          <Pressable onPress={() => onGo("/agent" as Href)} hitSlop={8} style={styles.round} accessibilityLabel="Background work">
-            <Ionicons name="git-branch-outline" size={18} color={colors.ink} />
-          </Pressable>
-        </View>
-      )}
     </View>
   );
 }
@@ -188,23 +122,11 @@ export function DrawerPanel({
 export function AppDrawer({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { user } = useSession();
-  const { notes, unread } = useAgent();
-  const { free, can } = usePlan();
+  const { free, plan } = usePlan();
 
-  const today = new Date().toLocaleDateString("en-CA");
-  const recent = notes
-    .filter((n) => new Date(n.created_at).toLocaleDateString("en-CA") === today)
-    .slice(0, 4)
-    .map((n) => ({ id: n.id, title: n.title }));
-
-  // Only what is cheaply and truthfully to hand. The mock shows a value beside
-  // every row; inventing the rest would be worse than leaving them blank.
+  // Only what is cheaply and truthfully to hand.
   const tails = {
-    Day: unread ? `${unread} new` : undefined,
-    Safety: user?.settings.fallDetection ? "Armed" : "Off",
-    // Background work is part of Pro; on Base its row says so rather than opening onto a surprise.
-    Background: can.agent ? undefined : "Pro",
+    Account: plan ? PLAN_NAMES[plan.tier] : undefined,
   };
 
   return (
@@ -213,7 +135,6 @@ export function AppDrawer({ children }: { children: ReactNode }) {
         <DrawerPanel
           current={pathname}
           tails={tails}
-          recent={recent}
           free={free}
           onClose={close}
           onGo={(href) => {
@@ -391,26 +312,4 @@ const styles = StyleSheet.create({
   navRowOn: { backgroundColor: colors.wash },
   navLabel: { ...type.body, color: colors.ink, flex: 1 },
   navTail: { ...type.meta, color: colors.inkMute, ...numeric },
-
-  label: {
-    ...type.meta,
-    fontWeight: "600",
-    color: colors.inkMute,
-    paddingHorizontal: space.s3,
-    paddingTop: space.s5,
-    paddingBottom: space.s2,
-  },
-  recent: { ...type.sub, color: colors.inkDim, paddingVertical: 8, paddingHorizontal: space.s3 },
-
-  talk: { flexDirection: "row", alignItems: "center", gap: space.s3, paddingTop: space.s4 },
-  pill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: space.s2,
-    backgroundColor: colors.now,
-    borderRadius: 24,
-    paddingVertical: 13,
-    paddingHorizontal: 22,
-  },
-  pillText: { ...type.body, fontWeight: "600", color: colors.paper },
 });

@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "rea
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AppDrawer } from "../components/Drawer";
 import { NagOverlay } from "../components/NagOverlay";
+import { Tour } from "../components/Tour";
 import { AgentProvider } from "../lib/agent";
 import { AssistantProvider } from "../lib/assistant";
 import { AuthProvider, useAuth } from "../lib/auth";
@@ -154,6 +155,8 @@ function RootStack() {
           {/* The drawer is inside the providers because its rows read from them,
               and outside the Stack because it has to sit over every route. */}
           <AppDrawer>{stack}</AppDrawer>
+          {/* Once, the first time the app opens past setup: what the menu is now. */}
+          <Tour />
           {/* After the drawer, so an alarm going off covers the menu too. */}
           <NagOverlay />
         </AssistantProvider>

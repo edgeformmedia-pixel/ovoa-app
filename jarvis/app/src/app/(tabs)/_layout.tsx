@@ -45,7 +45,8 @@ export default function TabsLayout() {
   // Still a tab navigator, and deliberately so: every screen here keeps its own
   // state when you leave it, and the drawer can never stack two copies of one.
   // It just doesn't draw a bar any more — navigation is the drawer, and each
-  // screen carries its own TopBar with the hamburger in it.
+  // screen carries its own TopBar with the hamburger in it. The drawer lists
+  // only Talk, Apps, Account and Settings; the rest are opened from Apps.
   //
   // SafetyProvider, AgentProvider, AssistantProvider and NagOverlay live in
   // app/_layout.tsx: /agent, /transcripts, /live, /claude, /dev-tools, /es100
@@ -62,8 +63,11 @@ export default function TabsLayout() {
         tabBarStyle: { display: "none" },
       }}
     >
-      <Tabs.Screen name="index" options={{ title: "Activity" }} />
+      <Tabs.Screen name="index" options={{ title: "Home" }} />
       <Tabs.Screen name="chat" options={{ title: "Talk" }} />
+      <Tabs.Screen name="apps" options={{ title: "Apps" }} />
+      <Tabs.Screen name="account" options={{ title: "Account" }} />
+      <Tabs.Screen name="activity" options={{ title: "Activity" }} />
       <Tabs.Screen name="brief" options={{ title: "Brief" }} />
       <Tabs.Screen name="day" options={{ title: "Day" }} />
       <Tabs.Screen name="record" options={{ title: "Record" }} />
