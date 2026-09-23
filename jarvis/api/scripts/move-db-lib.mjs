@@ -14,6 +14,7 @@
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 // ---------- Which tables ----------
 
@@ -108,6 +109,12 @@ export function pageSql({ table, columns, withoutRowid = false, pk = [], limit, 
  * then sits on one line of the file, whatever reads it. Anything else comes
  * back unchanged. A '' pair never straddles a line break, so the pieces stay
  * valid literals.
+ *
+ * The pieces are joined as a balanced tree, ((a || b) || (c || d)), not a flat
+ * chain: SQLite refuses an expression deeper than its limit (100 on D1,
+ * "Expression tree is too large"), and a chain is one level per piece, so a
+ * text with 50 line breaks (a device log's stack) failed the whole import. A
+ * tree is about log2(pieces) deep.
  */
 export function oneLine(literal) {
   if (!literal.startsWith("'") || !/[\r\n]/.test(literal)) return literal;
@@ -116,7 +123,14 @@ export function oneLine(literal) {
     .split(/(\r|\n)/)
     .filter((part) => part !== "")
     .map((part) => (part === "\n" ? "char(10)" : part === "\r" ? "char(13)" : `'${part}'`));
-  return `(${parts.join(" || ")})`;
+  return parts.length === 1 ? `(${parts[0]})` : concat(parts);
+}
+
+/** `a || b || ...`, split in half again and again. */
+function concat(parts) {
+  if (parts.length === 1) return parts[0];
+  const mid = Math.ceil(parts.length / 2);
+  return `(${concat(parts.slice(0, mid))} || ${concat(parts.slice(mid))})`;
 }
 
 /** One column-listed INSERT on one line. Every value must already be a SQL literal; nothing is escaped here. */
@@ -156,6 +170,27 @@ export function exportRiskStatements(tables, columnsOf) {
   });
 }
 
+/** D1 refuses one statement longer than this (SQLITE_TOOBIG), and each row is one INSERT. */
+export const STATEMENT_LIMIT = 100_000;
+
+/**
+ * Per table, its largest row roughly as its INSERT will carry it: each value's
+ * bytes, a blob twice (it's written as hex), and about 24 more for each line
+ * break in a text (' || char(10) || ' and the brackets around it).
+ */
+export function rowSizeStatements(tables, columnsOf) {
+  return tables.map((t) => {
+    const sizes = columnsOf(t).map((name) => {
+      const c = qid(name);
+      return (
+        `COALESCE(length(CAST(${c} AS BLOB)) * (1 + (typeof(${c}) = 'blob')) + ` +
+        `(typeof(${c}) = 'text') * 24 * (length(${c}) - length(replace(replace(${c}, char(10), ''), char(13), ''))), 0)`
+      );
+    });
+    return `SELECT max(${sizes.length ? sizes.join(" + ") : "0"}) AS "n" FROM ${qid(t)}`;
+  });
+}
+
 /** The INSERTs for a page of rows from pageSql(). */
 export function insertsFromRows(table, columns, rows) {
   return rows.map((row) =>
@@ -170,6 +205,16 @@ export function insertsFromRows(table, columns, rows) {
 /** The file both methods produce: foreign keys checked once, at the end, so the order of tables doesn't matter. */
 export function dataFile(statements) {
   return `PRAGMA defer_foreign_keys = TRUE;\n${statements.join("\n")}\n`;
+}
+
+/**
+ * The copied tables of the new database emptied, to start a copy again after
+ * it went wrong. Foreign keys are checked at the end, as for the copy. Only
+ * for a new database whose Worker is still in maintenance: then everything in
+ * these tables came from the copy.
+ */
+export function resetFile(tables) {
+  return `PRAGMA defer_foreign_keys = TRUE;\n${tables.map((t) => `DELETE FROM ${qid(t)};`).join("\n")}\n`;
 }
 
 /** Row counts for many tables in as few statements as fit: one SELECT per group, n0, n1, ... */
@@ -237,15 +282,73 @@ export function readExport(text) {
  * INSERT, DELETE, REPLACE), ignoring comments, quoted text and trigger bodies.
  * A migration the old database never had runs on the new database while it is
  * still empty, so a backfill in it never touches the copied rows.
+ *
+ * Read once, left to right, so each thing is what it is where it starts: an
+ * apostrophe in a comment ("-- don't") is part of the comment, not the start
+ * of a string that swallows the statements after it. Then, statement by
+ * statement, the first word; a CREATE TRIGGER's body is skipped to its own END
+ * (CASE ... END inside it counted), since it runs later, on rows written then.
  */
 export function dataChanges(sql) {
-  const bare = String(sql ?? "")
-    .replace(/'(?:[^']|'')*'/g, "''")
-    .replace(/--[^\n]*/g, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\bCREATE\s+(?:TEMP\w*\s+)?TRIGGER\b[\s\S]*?\bEND\s*;/gi, "");
+  const text = String(sql ?? "");
+  let bare = "";
+  for (let i = 0; i < text.length; ) {
+    const ch = text[i];
+    const two = text.slice(i, i + 2);
+    if (ch === "'" || ch === '"') {
+      // A string, or a quoted name: to its closing quote, a doubled one inside it.
+      let j = i + 1;
+      for (;;) {
+        const k = text.indexOf(ch, j);
+        if (k < 0) {
+          j = text.length;
+          break;
+        }
+        if (text[k + 1] === ch) j = k + 2;
+        else {
+          j = k + 1;
+          break;
+        }
+      }
+      bare += " x ";
+      i = j;
+    } else if (two === "--") {
+      const k = text.indexOf("\n", i);
+      i = k < 0 ? text.length : k;
+    } else if (two === "/*") {
+      const k = text.indexOf("*/", i + 2);
+      i = k < 0 ? text.length : k + 2;
+      bare += " ";
+    } else {
+      bare += ch;
+      i++;
+    }
+  }
   const verbs = new Set();
-  for (const m of bare.matchAll(/(?:^|;)\s*(UPDATE|INSERT|DELETE|REPLACE)\b/gi)) verbs.add(m[1].toUpperCase());
+  let head = [];
+  /** 0: not in a trigger; 1: a CREATE TRIGGER before its BEGIN; 2: inside its body. */
+  let trigger = 0;
+  let cases = 0;
+  for (const token of bare.match(/[A-Za-z_]\w*|;/g) ?? []) {
+    const word = token.toUpperCase();
+    if (trigger === 2) {
+      if (word === "CASE") cases++;
+      else if (word === "END") {
+        if (cases) cases--;
+        else trigger = 0;
+      }
+      continue;
+    }
+    if (word === ";") {
+      head = [];
+      trigger = 0;
+      continue;
+    }
+    if (!head.length && ["UPDATE", "INSERT", "DELETE", "REPLACE"].includes(word)) verbs.add(word);
+    head.push(word);
+    if (trigger === 1 && word === "BEGIN") trigger = 2;
+    else if (word === "TRIGGER" && head[0] === "CREATE" && head.length <= 3) trigger = 1;
+  }
   return [...verbs];
 }
 
@@ -474,6 +577,19 @@ export async function move({ from, to, runner, log = console.log, method = "auto
   const occupied = copy.filter((t) => before.new.get(t) > 0);
   printCounts(log, copy, before.old, before.new, "old", "new now");
 
+  // Each row is one INSERT, and D1 refuses a statement over 100 KB: a row near
+  // that would fail the whole import (it's one transaction), so it's said now.
+  const sizes = queryMany(query, from, rowSizeStatements(copy, (t) => columns.get(t).names));
+  const largest = copy.map((t, i) => [t, Number(sizes[i]?.[0]?.n ?? 0)]).sort((a, b) => b[1] - a[1]);
+  if (largest.length && largest[0][1] > 0) log(`   largest row: about ${largest[0][1]} bytes, in ${largest[0][0]}`);
+  const tooBig = largest.filter(([, n]) => n >= 0.8 * STATEMENT_LIMIT);
+  if (tooBig.length) {
+    log(
+      `   WARNING: ${tooBig.map(([t, n]) => `${t} (about ${n} bytes)`).join(", ")} ` +
+        `${tooBig.length === 1 ? "has a row" : "have rows"} near D1's ${STATEMENT_LIMIT}-byte statement limit; the import may be refused.`,
+    );
+  }
+
   // How the rows will leave. The export is one command, but it can't leave
   // columns out, and it writes a few kinds of value back changed
   // (exportRiskStatements); for either, the rows are read with SELECT instead,
@@ -556,8 +672,25 @@ export async function move({ from, to, runner, log = console.log, method = "auto
   log("\n7. Rows after the copy");
   const after = { old: counts(query, from, copy), new: counts(query, to, copy) };
   const bad = printCounts(log, copy, after.old, after.new, "old", "new");
-  if (bad.length) {
-    log(`\nMISMATCH in ${bad.join(", ")}. The SQL that was imported is kept at ${dataPath} (it holds everyone's data; delete it when done).`);
+  // The old database was meant to be frozen. If it moved, something still
+  // writes to it (a request or a cron run the old Worker started before the
+  // forwarder replaced it), and that, not the copy, is what to fix.
+  const moved = copy.filter((t) => after.old.get(t) !== before.old.get(t));
+  if (moved.length) {
+    log(
+      `\nThe OLD database changed while this ran (${moved.map((t) => `${t} ${before.old.get(t)} -> ${after.old.get(t)}`).join(", ")}). ` +
+        "Something still writes to it: wait until two --check runs a minute apart show the same old counts, then start again.",
+    );
+  }
+  if (bad.length || moved.length) {
+    // The way back: the copied tables emptied again, in one transaction. Only
+    // while the new Worker is still in maintenance, when nothing but this copy
+    // has written there.
+    const resetPath = join(dirname(dataPath), "reset-new.sql");
+    writeFileSync(resetPath, resetFile(copy));
+    log(`\n${bad.length ? `MISMATCH in ${bad.join(", ")}. ` : ""}The SQL that was imported is kept at ${dataPath} (it holds everyone's data; delete it when done).`);
+    log("To start again, with the new Worker still in maintenance, empty what was copied, then run this again:");
+    log(`   ${formatCommand(to, importArgs(to, resetPath))}`);
     return 1;
   }
   if (keepFile) log(`\nAll ${copy.length} tables match. The SQL is kept at ${dataPath} (it holds everyone's data; delete it when done).`);

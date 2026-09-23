@@ -6,11 +6,27 @@
 //      maintenance (every request answers 503, the crons do nothing):
 //        XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npm run db:migrate
 //        XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npx wrangler deploy --var MAINTENANCE:on
+//      Then its secrets, each piped in through stdin, never typed on the line:
+//        XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npx wrangler secret put NAME
+//      GEMINI_API_KEY, GLM_API_KEY, DEEPGRAM_API_KEY, GOOGLE_CLIENT_SECRET,
+//      RESEND_API_KEY, and two made new for this account: TOKEN_ENC_KEY
+//      (standard base64 of 32 random bytes) and DEBUG_KEY. Not
+//      MEMBERSHIP_API_KEY (it turns plans on), and none of the ones OVOA no
+//      longer uses (wrangler.jsonc's closing comment has the list).
 //   2. The old Worker is replaced by the forwarder, which freezes the old
-//      database (nothing can write to it any more):
+//      database (nothing new can write to it):
 //        XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-edgeformmedia npx wrangler deploy -c ../forwarder/wrangler.jsonc
+//      A /chat turn or a cron run the old Worker started just before can still
+//      write for a moment, so wait about two minutes, and not near 04:13 UTC
+//      (the nightly run deletes and writes for a while). Then run --check
+//      twice, a minute apart: the old counts (device_logs, cron_ticks, usage_daily)
+//      must not move between them.
 //   3. The copy (this):
 //        node scripts/move-db.mjs
+//      If its counts don't match, or the old database moved while it ran, it
+//      says so, writes reset-new.sql beside the SQL it imported, and prints the
+//      command that empties what was copied. Run that (only while the new
+//      Worker is still in maintenance), fix the cause, and run this again.
 //   4. The new Worker again, out of maintenance:
 //        XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npx wrangler deploy
 //
@@ -44,8 +60,10 @@
 //     which applies it as one transaction: whole or not at all, with foreign
 //     keys checked at the end (PRAGMA defer_foreign_keys), so the order of
 //     tables doesn't matter;
+//   - says how big the largest row is, and warns when one is near D1's 100 KB
+//     limit for a statement (each row is one INSERT);
 //   - rebuilds the full-text index, then counts every table on both sides and
-//     exits non-zero if any differs;
+//     exits non-zero if any differs, or if the old side's counts moved;
 //   - Migrations the old database never had ran on the new one while it was
 //     empty. It names any of them that changes rows (an UPDATE backfill, say):
 //     the copied rows never went through those, so run those statements on the
@@ -70,7 +88,7 @@
 // empty. What wrangler prints is filtered, so the export's signed download
 // link never reaches the screen, and no token is ever printed. The SQL file
 // holds everyone's data: it's deleted after a copy whose counts match, and kept
-// (with a note saying where) otherwise.
+// (with a note saying where, and reset-new.sql beside it) otherwise.
 
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -239,6 +257,7 @@ if (dryRun) {
   show(to, execArgs(to, `PRAGMA table_info("${T}")`));
   show(from, execArgs(from, `SELECT (SELECT count(*) FROM "${T}") AS "n0", ...`), "3. counts; the new side must be all 0");
   show(to, execArgs(to, `SELECT (SELECT count(*) FROM "${T}") AS "n0", ...`));
+  show(from, execArgs(from, `SELECT max(<each value's bytes, summed>) AS "n" FROM "${T}"`), "the largest row, several tables to a command");
   if (method !== "select") {
     show(
       from,

@@ -2,8 +2,13 @@
 // the old account's database into the new one at the v1 move. Nothing here runs
 // wrangler: which tables go, how a page is read, what may appear after VALUES,
 // how an export file is read, and that nothing secret reaches the screen.
-// The whole copy was also rehearsed between two local D1s (see the commit).
+// The whole copy was also rehearsed between two local D1s (see the commit), and
+// the INSERTs it writes for long multi-line text go into a real D1 at the end.
 
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   chunkStatements,
   countStatements,
@@ -23,6 +28,8 @@ import {
   qid,
   readExport,
   redact,
+  resetFile,
+  rowSizeStatements,
   skipReason,
 } from "../scripts/move-db-lib.mjs";
 
@@ -100,8 +107,19 @@ eq(
 eq(
   "a text with line breaks goes on one line, exactly",
   insertSql("m", ["content"], ["'one\n''two''\r\nthree \\n stays'"]),
-  `INSERT INTO "m" ("content") VALUES (('one' || char(10) || '''two''' || char(13) || char(10) || 'three \\n stays'));`,
+  `INSERT INTO "m" ("content") VALUES (((('one' || char(10)) || '''two''') || ((char(13) || char(10)) || 'three \\n stays')));`,
 );
+// D1 refuses an expression more than 100 deep, and a flat chain of pieces was one level each.
+const depth = (sql: string) => {
+  let deepest = 0;
+  let open = 0;
+  for (const ch of sql.replace(/'(?:[^']|'')*'/g, "''").replace(/char\(1[03]\)/g, "c")) {
+    if (ch === "(") deepest = Math.max(deepest, ++open);
+    else if (ch === ")") open--;
+  }
+  return deepest;
+};
+eq("a thousand line breaks stay shallow", depth(oneLine(`'${"line\r\n".repeat(1000)}'`)) <= 13, true);
 eq("a text that is only a line break", oneLine("'\n'"), "(char(10))");
 eq("a text without one is left alone", oneLine("'plain ''x'''"), "'plain ''x'''");
 eq("numbers and blobs are left alone", [oneLine("-9.0e+999"), oneLine("X'0A'"), oneLine("NULL")], ["-9.0e+999", "X'0A'", "NULL"]);
@@ -196,7 +214,18 @@ eq(
   ),
   [],
 );
-eq("the repo's FTS migration has no backfill", dataChanges("CREATE TRIGGER context_blocks_ad AFTER DELETE ON context_blocks BEGIN\n  INSERT INTO context_search(context_search, rowid) VALUES ('delete', old.rowid);\nEND;"), []);
+eq(
+  "an apostrophe in a comment doesn't hide what follows",
+  dataChanges("-- OVOA's guess\nALTER TABLE memories ADD COLUMN source TEXT;\nUPDATE memories SET source = 'learned';"),
+  ["UPDATE"],
+);
+eq("the repo's alarms migration, with \"don't\" in its comments, has its backfill found", dataChanges(readFileSync("migrations/0026_alarms.sql", "utf8")), ["UPDATE"]);
+eq(
+  "a trigger body with CASE ... END in it is skipped to its own END",
+  dataChanges("CREATE TRIGGER t_au AFTER UPDATE ON t BEGIN\n  UPDATE u SET n = CASE WHEN new.x THEN 1 ELSE 0 END;\n  DELETE FROM v;\nEND;\nCREATE INDEX i ON t (x);"),
+  [],
+);
+eq("the repo's FTS migration has no backfill",dataChanges("CREATE TRIGGER context_blocks_ad AFTER DELETE ON context_blocks BEGIN\n  INSERT INTO context_search(context_search, rowid) VALUES ('delete', old.rowid);\nEND;"), []);
 
 // ---------- Nothing secret on screen ----------
 
@@ -230,6 +259,51 @@ const jsonc = parseJsonc(`{
   "list": [1, 2,],
 }`);
 eq("wrangler.jsonc: comments and trailing commas", [jsonc.account_id, jsonc.vars.PUBLIC_URL, jsonc.vars.S, jsonc.vars.Q, jsonc.list], ["e58b", "https://api.ovoa.ai", "a // not a comment", 'say "hi"', [1, 2]]);
+
+// ---------- The largest row, and the way back ----------
+
+eq(
+  "a row's size counts bytes, blobs twice and line breaks",
+  rowSizeStatements(["m"], () => ["t"]),
+  [
+    `SELECT max(COALESCE(length(CAST("t" AS BLOB)) * (1 + (typeof("t") = 'blob')) + ` +
+      `(typeof("t") = 'text') * 24 * (length("t") - length(replace(replace("t", char(10), ''), char(13), ''))), 0)) AS "n" FROM "m"`,
+  ],
+);
+eq("emptying what was copied, foreign keys checked at the end", resetFile(["a", 'b"c']), 'PRAGMA defer_foreign_keys = TRUE;\nDELETE FROM "a";\nDELETE FROM "b""c";\n');
+
+// ---------- Into a real D1 ----------
+//
+// The INSERTs for long multi-line text, run in wrangler's local D1 (the same
+// SQLite limits as the real one: an expression at most 100 deep, where a flat
+// chain of 50 line breaks already failed), and read back exactly. Wrangler is
+// loaded by path so the test bundle leaves it out; its database lives in a
+// throwaway folder.
+
+const { getPlatformProxy } = await import(pathToFileURL(resolve("node_modules/wrangler/wrangler-dist/cli.js")).href);
+const scratch = mkdtempSync(join(tmpdir(), "ovoa-movedb-"));
+writeFileSync(
+  join(scratch, "wrangler.json"),
+  JSON.stringify({ name: "movedb-test", compatibility_date: "2025-01-01", d1_databases: [{ binding: "DB", database_name: "movedb-test", database_id: "movedb-test" }] }),
+);
+const proxy = await getPlatformProxy({ configPath: join(scratch, "wrangler.json"), persist: { path: join(scratch, "state") } });
+try {
+  const db = (proxy.env as { DB: D1Database }).DB;
+  await db.prepare("CREATE TABLE m (id INTEGER PRIMARY KEY, content TEXT)").run();
+  const texts = [
+    "a stack\n".repeat(60),
+    Array.from({ length: 1000 }, (_, i) => `line ${i} 🍩 it''s "quoted" with a \\n that stays`).join("\r\n"),
+    `${"\r\n".repeat(40)}${"\n\n".repeat(40)}end`,
+  ];
+  for (const [i, text] of texts.entries()) {
+    await db.prepare(insertSql("m", ["id", "content"], [String(i + 1), `'${text.replace(/'/g, "''")}'`])).run();
+  }
+  const { results } = await db.prepare("SELECT content FROM m ORDER BY id").all<{ content: string }>();
+  eq("long multi-line text goes into D1 and comes back exactly", results.map((r, i) => r.content === texts[i]), [true, true, true]);
+} finally {
+  await proxy.dispose();
+  rmSync(scratch, { recursive: true, force: true });
+}
 
 console.log(fails ? `\n${fails} failed` : "\nall passed");
 process.exit(fails ? 1 : 0);

@@ -1,5 +1,8 @@
 # 00 · Orchestrator: wait for the cost pass, then run 01–06
 
+> These prompts (00–06) are the historical record of how the plans were built. The site has changed since (it is the
+> `ovoa-site` Cloudflare Worker now); `setup.md` in ovoa-team is the current guide.
+
 You are working in `C:\Users\thoma\OneDrive\Documents\GitHub\ovoa-app`. The site repo is `C:\Users\thoma\OneDrive\Documents\GitHub\ovoa-team`.
 
 Another session (Fable 5.1) is running the cost-reduction pass from `docs/cost-cut-prompt.md`. Your job is to wait until it has finished, then run the plans-and-paywall work in `docs/paywall/` using subagents. **Do not edit any code yourself while waiting.**

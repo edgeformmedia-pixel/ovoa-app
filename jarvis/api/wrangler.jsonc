@@ -109,8 +109,10 @@
       "migrations_dir": "migrations"
     }
   ]
-  // Secrets (set with `XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npx wrangler secret put NAME`): GEMINI_API_KEY, GLM_API_KEY, GOOGLE_CLIENT_SECRET,
-  // TOKEN_ENC_KEY, DEEPGRAM_API_KEY, DEBUG_KEY, MEMBERSHIP_API_KEY, and SHORTCUT_SIGNING_URL (+ optional SHORTCUT_SIGNING_TOKEN) to turn on
-  // shortcut writing (see README). RESEND_API_KEY sends ovoa.ai's sign-in codes from no-reply@ovoa.ai, and the optional
-  // GOOGLE_SIGNIN_CLIENT_IDS accepts Google sign-ins from another OAuth client than GOOGLE_CLIENT_ID (src/emailauth.ts).
+  // Secrets the Worker needs (set with `XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npx wrangler secret put NAME`, the value
+  // piped in through stdin): GEMINI_API_KEY, GLM_API_KEY, DEEPGRAM_API_KEY (reply voices), GOOGLE_CLIENT_SECRET, TOKEN_ENC_KEY
+  // (standard base64 of 32 random bytes), DEBUG_KEY, and RESEND_API_KEY, which sends the sign-in and sign-up codes from
+  // no-reply@ovoa.ai. Optional: GOOGLE_SIGNIN_CLIENT_IDS accepts Google sign-ins from another OAuth client than GOOGLE_CLIENT_ID
+  // (src/emailauth.ts). Not MEMBERSHIP_API_KEY: setting it turns plans on, and they stay off for v1. Nor SHORTCUT_SIGNING_URL or
+  // _TOKEN (shortcut writing stays off), nor a key for any AI company OVOA no longer uses.
 }
