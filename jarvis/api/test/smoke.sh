@@ -427,8 +427,15 @@ check "a second tick is counted, not duplicated" \
 
 # An engine failure is recorded even though the phone got a 200. A local worker
 # has no model key, so any turn that needs one fails -- which is the case worth
-# proving, because it is the case that used to leave no trace at all.
-curl -s -m 60 -o /dev/null -X POST "${A[@]}" "$API/chat" -d '{"message":"hello","timeZone":"America/New_York"}'
+# proving, because it is the case that used to leave no trace at all. The
+# person is told plainly, as a reply, that OVOA can't reach the AI right now:
+# read on a typed turn, heard on a spoken one (the sentence is streamed).
+NOAI=$(curl -s -m 60 -X POST "${A[@]}" "$API/chat" -d '{"message":"hello","timeZone":"America/New_York"}')
+check "no engine: the turn says so plainly" "$(echo "$NOAI" | j "d['messages'][0]['content'].startswith(\"Sorry, I can't reach the AI right now\")")" "True"
+check "as a reply no model wrote" "$(echo "$NOAI" | j "d['meta']['engine']")" "none"
+check "and a spoken turn hears it" \
+  "$(curl -s -m 60 -X POST "${A[@]}" "$API/chat" -d '{"message":"hello","voice":true,"stream":true}' | python -c "import sys,json;ls=[json.loads(l) for l in sys.stdin if l.strip()];print([l['type'] for l in ls if l['type']!='voice'], \"can't reach the AI\" in ls[-2].get('text',''))" 2>/dev/null)" "['sentence', 'done'] True"
+check "none of it was saved as conversation" "$(curl -s "${A[@]}" "$API/chat/messages" | j "len(d['messages'])")" "0"
 check "a failed turn leaves a fingerprint" \
   "$(curl -s "${D[@]}" "$API/debug/logs?since=5m" | j "len([e for e in d['errors'] if '/chat' in e['route']]) >= 1")" "True"
 check "and an engine attempt" \
@@ -468,21 +475,25 @@ check "the usage reader needs the key" "$(curl -s -o /dev/null -w '%{http_code}'
 
 echo
 echo "── switching engines ──────────────────────────────"
-# The switchboard: no key means an engine doesn't exist, Workers AI is always
-# the net, a bad name is refused with a reason, one person can differ from
-# everyone, and a plain account can't touch any of it.
+# The switchboard: GLM then Gemini, no key means an engine doesn't exist, an
+# order naming no engine is refused with a reason, an old build's ",workers" is
+# dropped quietly, one person can differ from everyone, and a plain account
+# can't touch any of it.
 ME_ID=$(curl -s "${A[@]}" "$API/me" | j "d['user']['id']")
 ENG=$(curl -s "${D[@]}" "$API/debug/engines")
+check "the engines are GLM, then Gemini" "$(echo "$ENG" | j "','.join(e['engine'] for e in d['engines'])")" "glm,gemini"
 check "GLM has no key here"        "$(echo "$ENG" | j "[e['key'] for e in d['engines'] if e['engine']=='glm'][0]")" "missing"
-check "Workers AI needs none"      "$(echo "$ENG" | j "[e['key'] for e in d['engines'] if e['engine']=='workers'][0]")" "not needed"
-check "a typed turn ends on Workers AI" "$(echo "$ENG" | j "d['typedOrder'][-1]")" "workers"
-check "an unknown engine is refused with a reason" \
-  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":"claude,workers"}' | j "'claude' in d['error']")" "True"
-check "a bad model id is refused" \
-  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"workers_model":"gpt-4"}')" "400"
-check "the order can be set for everyone" \
-  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":"glm,deepseek,workers"}' | j "d['everyone']['engine_order']")" "glm,deepseek,workers"
-check "without a key GLM is left out of it" "$(curl -s "${D[@]}" "$API/debug/engines" | j "'glm' not in d['typedOrder']")" "True"
+check "nor Gemini"                 "$(echo "$ENG" | j "[e['key'] for e in d['engines'] if e['engine']=='gemini'][0]")" "missing"
+check "so a turn has nothing to try" "$(echo "$ENG" | j "len(d['typedOrder']) + len(d['voiceOrder'])")" "0"
+check "an order naming no engine is refused with a reason" \
+  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":"claude,workers"}' | j "'names no engine' in d['error']")" "True"
+check "Workers AI's model is no longer a setting" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"workers_model":"@cf/openai/gpt-oss-120b"}')" "400"
+check "an old build's order loses its Workers AI, quietly" \
+  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":"gemini,glm,workers"}' | j "d['everyone']['engine_order']")" "gemini,glm"
+check "without keys the order is still empty" "$(curl -s "${D[@]}" "$API/debug/engines" | j "len(d['typedOrder'])")" "0"
+check "Workers AI can't answer spoken turns any more" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"workers\",\"userId\":\"$ME_ID\"}")" "400"
 check "one person can be given their own" \
   "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"keyed\",\"userId\":\"$ME_ID\"}" | j "d['mine']['voice_engine']")" "keyed"
 check "and everyone else is untouched" "$(curl -s "${D[@]}" "$API/debug/engines" | j "'voice_engine' not in d['everyone']")" "True"
@@ -509,15 +520,15 @@ check "then the server sends no audio, and says why" \
 check "everyone else still has Deepgram" "$(curl -s -H "authorization: Bearer $OTHER" "$API/me" | j "d['user']['ttsEngine']")" "deepgram-aura-2"
 curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"tts_engine\":\"\",\"userId\":\"$ME_ID\"}"
 check "and it can be put back" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['ttsEngine']")" "deepgram-aura-2"
-# Clips: a made-up transcriber is refused; with Whisper chosen and no model
-# here (Workers AI needs the real thing), the clip fails honestly rather than
-# silently going somewhere else.
-check "a made-up clip transcriber is refused" \
-  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"stt_clip_engine":"nova"}')" "400"
-curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"stt_clip_engine\":\"workers-whisper\",\"userId\":\"$ME_ID\"}"
+# The Workers AI voices went with Workers AI: choosing one is refused.
+check "a Workers AI voice is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"tts_engine":"workers-aura-2"}')" "400"
+# Clips: Deepgram is the only transcriber, so there is nothing to choose, and
+# with no Deepgram key here a clip fails honestly rather than going somewhere else.
+check "the clip transcriber is no longer a setting" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"stt_clip_engine":"workers-whisper"}')" "400"
 check "a clip with no transcriber to hand fails, not lies" \
-  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $TOKEN" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')" "502"
-curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"stt_clip_engine\":\"\",\"userId\":\"$ME_ID\"}"
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $TOKEN" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')" "503"
 
 echo
 echo "── plans: free, base and pro ──────────────────────"

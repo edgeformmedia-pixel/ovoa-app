@@ -2,6 +2,17 @@ const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 export type Turn = { role: "user" | "model"; text: string };
 
+/**
+ * The least thinking a Gemini model takes, for spoken turns and quick calls.
+ * Flash-Lite goes down to "minimal", which is also its default; the 3.x Flash
+ * models refuse "minimal" with a 400 ("Thinking level MINIMAL is not supported
+ * for this model", 2026-09-21) and stop at "low". Checked against
+ * ai.google.dev/gemini-api/docs/thinking on 2026-09-23.
+ */
+export function quickThinking(model: string): "minimal" | "low" {
+  return /flash-lite/i.test(model) ? "minimal" : "low";
+}
+
 type GenerateOptions = {
   apiKey: string;
   model: string;
@@ -25,7 +36,7 @@ export async function generate({ apiKey, model, system, turns, json, fast }: Gen
       contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
       generationConfig: {
         ...(json && { responseMimeType: "application/json", responseSchema: json.schema }),
-        ...(fast && { thinkingConfig: { thinkingLevel: "minimal" } }),
+        ...(fast && { thinkingConfig: { thinkingLevel: quickThinking(model) } }),
       },
     }),
   });

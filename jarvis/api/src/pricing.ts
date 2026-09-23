@@ -13,67 +13,66 @@
 // A useful coincidence: a price quoted in dollars per million tokens is exactly
 // the price in micro-dollars per token. So tokens × price is the cost in micro.
 //
-// Checked 2026-09-22 against:
-//   https://developers.cloudflare.com/workers-ai/platform/pricing/
+// Checked 2026-09-22 against the pages below, and Google's again on 2026-09-23
+// for Gemini 3.5 Flash-Lite and the models whose prices double in 2027:
 //   https://deepgram.com/pricing
-//   https://api-docs.deepseek.com/quick_start/pricing
 //   https://ai.google.dev/gemini-api/docs/pricing
 //   https://docs.z.ai/guides/overview/pricing
+//
+// The DeepSeek and Workers AI rows went with those engines in the v1 release
+// (2026-09-23). usage_daily rows from before then keep the cost they were
+// written with; nothing here re-prices them.
 
-export const PRICES_CHECKED_ON = "2026-09-22";
+export const PRICES_CHECKED_ON = "2026-09-23";
 
 /** Dollars per million tokens. `cachedIn` is the price of an input token the provider already had. */
 export type TokenPrice = { in: number; out: number; cachedIn?: number };
 
 /**
  * Reply engines, by the model id the engine actually calls (llm.ts modelFor).
- * Workers AI bills in neurons and publishes the token equivalent; the token
- * prices are used because they are what the usage object counts in.
+ * A model missing from here costs $0 in the estimate, so a new provider's
+ * model gets a row the day it is added (llm.ts, the top of the file).
  */
 export const LLM_PRICES: Record<string, TokenPrice> = {
-  // DeepSeek. Thinking is on by default and its tokens are billed as output.
-  "deepseek-flash": { in: 0.3, cachedIn: 0.006, out: 1.2 },
-  // Gemini, paid tier. The current key is on the free tier, which costs nothing
-  // and answers about 20 requests a day; this is what it would cost if funded.
+  // Gemini 3.5 Flash-Lite, paid tier: the second engine, and the model for web
+  // search grounding. Standard prices from Google's pricing page, 2026-09-23.
+  "gemini-3.5-flash-lite": { in: 0.3, cachedIn: 0.03, out: 2.5 },
+  // Gemini 3.8 Flash, paid tier: the model before Flash-Lite. Kept so a switch
+  // back through CHAT_MODEL is still priced.
   "gemini-3.8-flash": { in: 0.75, cachedIn: 0.075, out: 3.75 },
-  // Workers AI. gpt-oss-120b is today's last-resort engine.
-  "@cf/openai/gpt-oss-120b": { in: 0.35, out: 0.75 },
-  "@cf/openai/gpt-oss-20b": { in: 0.2, out: 0.3 },
-  // GLM 5.3 Flash on Workers AI: needs the paid plan, supports tool calls.
-  "@cf/zai-org/glm-5.3-flash": { in: 0.15, cachedIn: 0.03, out: 0.5 },
 };
 
 /**
- * GLM 5.3 Flash from the user's own cheap provider (Phase 2). The provider
- * isn't decided, so the price is a default that the GLM_PRICE_* vars override.
+ * GLM 5.3 Flash from the user's own cheap provider (Z.ai for v1). The provider
+ * may change, so the price is a default that the GLM_PRICE_* vars override.
  */
 export const GLM_DEFAULT_PRICE: TokenPrice = { in: 0.06, cachedIn: 0.06, out: 0.2 };
 
 /**
- * Gemini's paid prices double on this date (announced with the 3.8 pricing).
- * Applied by date so the estimate is right in January without a deploy.
+ * Some Gemini models' paid prices double on this date. Applied by date so the
+ * estimate is right in January without a deploy.
  */
 export const GEMINI_PRICE_DOUBLES_ON = "2027-01-01";
 
 /**
- * DeepSeek charges half price outside its busy hours. The windows are UTC and
- * apply on weekdays; weekends are off-peak throughout. Kept as data so a change
- * to the hours is a one-line edit.
+ * The models Google's pricing page shows with a price "starting January 1,
+ * 2027" (checked 2026-09-23). Gemini 3.5 Flash-Lite is not one of them, so it
+ * keeps its price; before this list, every "gemini" id was doubled.
  */
-export const DEEPSEEK_PEAK_UTC: { from: number; to: number }[] = [
-  { from: 1, to: 4 },
-  { from: 6, to: 10 },
+export const GEMINI_DOUBLING_MODELS: readonly string[] = [
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.8-live",
+  "gemini-3.8-live-extended-thinking",
+  "gemini-3.1-flash-live-preview",
+  "gemini-robotics-er-2-preview",
+  "gemini-robotics-er-2-streaming-preview",
 ];
-export const DEEPSEEK_OFF_PEAK_DISCOUNT = 0.5;
 
 /** Text to speech, dollars per 1,000 characters. */
 export const TTS_PRICES_PER_1K_CHARS: Record<string, number> = {
   "deepgram-aura-2": 0.03,
-  "workers-aura-2": 0.03,
-  "workers-aura-1": 0.015,
-  // MeloTTS is priced per minute of audio ($0.0002). Speech runs about 900
-  // characters a minute, so per thousand characters it is about $0.0002 too.
-  "workers-melotts": 0.0002,
   // The phone's own voices.
   device: 0,
 };
@@ -83,36 +82,17 @@ export const STT_PRICES_PER_MINUTE: Record<string, number> = {
   // Nova-3 live, direct from the phone. Promo price; the regular price is $0.0077.
   "deepgram-nova-3-live": 0.0048,
   "deepgram-nova-3-clip": 0.0043,
-  "workers-whisper-turbo": 0.0005,
 };
-
-/**
- * Workers AI gives this many neurons a day before charging $0.011 per thousand.
- * Shared by the whole account, not per person, so it is left out of the per-call
- * estimate and mentioned in the report instead.
- */
-export const WORKERS_FREE_NEURONS_PER_DAY = 10_000;
-export const WORKERS_USD_PER_1K_NEURONS = 0.011;
 
 export const MICRO_PER_USD = 1_000_000;
 
 export type TokenCounts = { input: number; cached?: number; output: number };
 
-/** Whether `at` falls in DeepSeek's discounted hours. Pure, so it can be tested on fixed dates. */
-export function deepseekOffPeak(at: Date) {
-  const day = at.getUTCDay();
-  if (day === 0 || day === 6) return true;
-  const hour = at.getUTCHours() + at.getUTCMinutes() / 60;
-  return !DEEPSEEK_PEAK_UTC.some((w) => hour >= w.from && hour < w.to);
-}
-
-/** The price of a model, adjusted for the date: Gemini's doubling, DeepSeek's off-peak hours. */
+/** The price of a model, adjusted for the date: the 2027 doubling, for the Gemini models it applies to. */
 export function priceFor(model: string, at: Date, override?: TokenPrice): TokenPrice | null {
   const base = override ?? LLM_PRICES[model];
   if (!base) return null;
-  let factor = 1;
-  if (model.startsWith("gemini") && at.toISOString().slice(0, 10) >= GEMINI_PRICE_DOUBLES_ON) factor = 2;
-  if (model.startsWith("deepseek") && deepseekOffPeak(at)) factor = DEEPSEEK_OFF_PEAK_DISCOUNT;
+  const factor = GEMINI_DOUBLING_MODELS.includes(model) && at.toISOString().slice(0, 10) >= GEMINI_PRICE_DOUBLES_ON ? 2 : 1;
   return {
     in: base.in * factor,
     out: base.out * factor,

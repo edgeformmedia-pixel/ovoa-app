@@ -33,12 +33,14 @@ import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
 import { googleAuthed, googlePublic } from "./google/oauth";
 import {
+  AI_UNREACHABLE,
   chatWithTools,
   classifyEngineError,
   coolingEngines,
   DEFER,
   engineTrouble,
   generateText,
+  isAiUnreachable,
   type EngineAttempt,
   type LoopState,
   type OnText,
@@ -51,7 +53,7 @@ import { dropRepeats, sentenceStream } from "./sentences";
 import { isPhoneTool, type PhoneCaps } from "./phone";
 import { isShortcutTool, shortcutAssistant, shortcutFiles } from "./shortcuts/assistant";
 import type { Env, Vars } from "./types";
-import { speechStream, STT_CLIP_ENGINES, sttClipEngineFrom, TTS_ENGINES, ttsEngineFrom, voice, VOICES, type TtsEngine, type VoiceId } from "./voice";
+import { speechStream, TTS_ENGINES, ttsEngineFrom, voice, VOICES, type TtsEngine, type VoiceId } from "./voice";
 import { logs } from "./logs";
 import { forgetPushToken, registerPushToken } from "./push";
 import { BUZZ_PATTERNS, sendBuzz, type BuzzPattern } from "./buzz";
@@ -93,7 +95,7 @@ import {
   verifyGoogleIdToken,
 } from "./emailauth";
 import { sliceFor } from "./sweep";
-import { engineStatus, ENGINES, isEngine, setRuntimeEngines, setUsageSink, type Engine, type EnginePrefs, type LlmUsage } from "./llm";
+import { cleanOrder, engineStatus, ENGINES, isEngine, setRuntimeEngines, setUsageSink, type Engine, type EnginePrefs, type LlmUsage } from "./llm";
 import { glmPriceFrom, usd } from "./pricing";
 import { globalSettings, setServerSetting, settingsFor, type ServerSettings, type SettingKey } from "./settings";
 import { dayOf, llmRow, pruneUsage, recordUsage, replyCounts, searchRow, sttStreamRow, turnRow, usageByPerson, usageForPerson } from "./usage";
@@ -118,9 +120,13 @@ import {
 // tick made the call, and a count must never hold up an answer.
 setUsageSink((env, u: LlmUsage) => void recordUsage(env as Env, [llmRow(u.userId, u, glmPriceFrom(env as Env))]));
 
-/** The runtime settings (server_settings) as the engine choices llm.ts understands. */
+/**
+ * The runtime settings (server_settings) as the engine choices llm.ts
+ * understands. A copied row naming an engine retired before v1 is passed over
+ * there (llm.ts usableOrder, usableVoice).
+ */
 function prefsFrom(s: ServerSettings): EnginePrefs {
-  return { order: s.engine_order, voice: s.voice_engine, workersModel: s.workers_model };
+  return { order: s.engine_order, voice: s.voice_engine };
 }
 
 /**
@@ -228,20 +234,15 @@ app.onError((err, c) => {
   // Recording here as well would count every failure twice.
   say("err", { rid: c.get("requestId"), route: labelFor(c), why: classifyEngineError(err) });
   console.error(err);
-  // When no engine can answer at all, say which one and why. "Something went
-  // wrong" 166 times in a day is what the alternative looked like (2026-09-21).
-  // Only when every engine is down — otherwise a failure on a route that never
+  // When no engine can answer at all, say so plainly, with which one and why as
+  // the detail. "Something went wrong" 166 times in a day is what the
+  // alternative looked like (2026-09-21). Only when every engine is down, or
+  // the model call itself said so — otherwise a failure on a route that never
   // goes near a model answered 503 "can't reach an AI model" for the duration
   // of some other engine's cooldown.
   const trouble = engineTrouble(c.env);
-  if (trouble) return c.json({ error: `OVOA can't reach an AI model right now. ${trouble}` }, 503);
-  // Still here for a 4006 raised somewhere outside the engine loop, where
-  // nothing was cooled down and engineTrouble has nothing to report.
-  if (/\b4006\b|daily free allocation/.test(String(err))) {
-    return c.json(
-      { error: "OVOA's AI is out of usage for today. Add credit to the Gemini or DeepSeek account, or try again after midnight UTC." },
-      503,
-    );
+  if (trouble || isAiUnreachable(err)) {
+    return c.json({ error: AI_UNREACHABLE, detail: trouble ?? (err instanceof Error ? err.message : String(err)) }, 503);
   }
   return c.json({ error: "Something went wrong" }, 500);
 });
@@ -682,7 +683,6 @@ authed.use("*", async (c, next) => {
   await applyRuntime(c.env);
   const mine = await settingsFor(c.env, session.userId);
   c.set("ttsEngine", ttsEngineFrom(mine.tts_engine, c.env.TTS_ENGINE));
-  c.set("sttClipEngine", sttClipEngineFrom(mine.stt_clip_engine, c.env.STT_CLIP_ENGINE));
   await next();
 });
 
@@ -1052,11 +1052,11 @@ async function runTurn(
   }));
   // What changes from one message to the next rides on the message itself, not at
   // the top of the system prompt. Every engine here reuses the work of reading a
-  // prompt it has seen before (DeepSeek's context cache, Gemini's implicit cache,
-  // Workers AI's prefix cache), but only up to the first character that differs,
-  // and the clock used to be that character: it sat 200 characters in and changed
-  // every minute, so the instructions and all the tool JSON after it were read from
-  // scratch on every turn. Only what the user said is saved; this never is.
+  // prompt it has seen before (GLM's context cache, Gemini's implicit cache), but
+  // only up to the first character that differs, and the clock used to be that
+  // character: it sat 200 characters in and changed every minute, so the
+  // instructions and all the tool JSON after it were read from scratch on every
+  // turn. Only what the user said is saved; this never is.
   const moment = [
     `It is now ${new Date().toLocaleString("en-US", { timeZone, dateStyle: "full", timeStyle: "short" })}.`,
     `Recent activity (steps per day, daily goal ${settings.step_goal}):\n${activity || "No step data yet."}`,
@@ -1242,9 +1242,6 @@ async function runTurn(
     system,
     turns,
     tools,
-    // One person's turns go to the same model server, which is the one still holding
-    // the prompt it read for them last time (see `moment` above).
-    affinity: userId,
     onAttempt: (a) => attempts.push(a),
     usage: { userId, purpose: voice ? "voice" : "chat" },
     onUsage: (u) => usages.push(u),
@@ -1529,10 +1526,11 @@ function streamTurn(
         // as a 200 before any of this ran, so app.onError never sees it. The
         // record has to be written here or it is written nowhere.
         const trouble = engineTrouble(c.env);
+        const down = !!trouble || isAiUnreachable(err);
         say("err", { rid, route, ms: Date.now() - started, sentences, why: classifyEngineError(err) });
         console.error("ovoa.err streamed turn failed", err);
         await recordError(c.env, {
-          kind: trouble ? "engines_down" : "error",
+          kind: down ? "engines_down" : "error",
           route: `${route} (streamed)`,
           requestId: rid,
           userId: userId ?? null,
@@ -1543,13 +1541,12 @@ function streamTurn(
           message: err instanceof Error ? err.message : String(err),
           stack: err instanceof Error ? err.stack : undefined,
         });
+        // A person's own turn never gets here when no engine could answer (it
+        // gets unreachableReply); the agent's commands do, and fail as before.
         await send({
           type: "error",
-          error: trouble
-            ? `OVOA can't reach an AI model right now. ${trouble}`
-            : err instanceof Error
-              ? err.message
-              : "The assistant failed",
+          error: down ? AI_UNREACHABLE : err instanceof Error ? err.message : "The assistant failed",
+          ...(down && { detail: trouble ?? (err instanceof Error ? err.message : String(err)) }),
         });
       } finally {
         if (stall) clearTimeout(stall);
@@ -1640,6 +1637,7 @@ async function chatTurn(
 
   // Someone else's app, or one deleted since it was opened, is simply not there.
   const app = data.app && !data.source ? await appFor(db, userId, data.app) : null;
+  const started = Date.now();
   const result = await runTurn(env, ctx, {
     userId,
     app,
@@ -1651,6 +1649,9 @@ async function chatTurn(
     tier,
     onSentence,
     requestId,
+  }).catch((err: unknown) => {
+    if (data.source || !isAiUnreachable(err)) throw err;
+    return unreachableReply(env, ctx, err, "/chat", { requestId, userId, started }, onSentence);
   });
   // Most of the month's replies are gone: said once, on the end of a reply
   // they were getting anyway. A paused turn keeps it for the next one.
@@ -1693,6 +1694,38 @@ async function standingFor(env: Env, userId: string, timeZone: string, tier: Tie
 
 const markWarned = (db: D1Database, userId: string, month: string) =>
   db.prepare("INSERT OR IGNORE INTO daily_marks (user_id, kind, day, at) VALUES (?, ?, ?, ?)").bind(userId, CAP_WARNED, month, Date.now()).run();
+
+/**
+ * A person's turn that no engine could answer (llm.ts AiUnreachable): answered
+ * with one plain sentence, like the allowance messages, so a spoken turn hears
+ * it and a typed one reads it, instead of an error the phone shows as "Couldn't
+ * reach the assistant". Nothing is saved and nothing counts against the day's
+ * replies. It is still written down as engines_down, with the real reason: that
+ * is the row the morning after wants. The agent's own commands don't come
+ * here; they fail, and are marked failed, as before.
+ */
+function unreachableReply(
+  env: Env,
+  ctx: Pick<ExecutionContext, "waitUntil">,
+  err: unknown,
+  route: string,
+  at: { requestId?: string; userId: string; started: number },
+  onSentence?: (sentence: string) => void,
+): TurnResult {
+  say("err", { rid: at.requestId, route, ms: Date.now() - at.started, why: classifyEngineError(err) });
+  ctx.waitUntil(
+    recordError(env, {
+      kind: "engines_down",
+      route,
+      requestId: at.requestId,
+      userId: at.userId,
+      ms: Date.now() - at.started,
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    }),
+  );
+  return plainReply(AI_UNREACHABLE, onSentence);
+}
 
 /**
  * A reply that no model wrote: one sentence, streamed like any other so the
@@ -1745,6 +1778,7 @@ authed.post("/chat/resume", async (c) => {
 
   const caps = JSON.parse(row.caps);
   const resumedApp = typeof caps.app === "string" ? await appFor(c.env.DB, userId, caps.app) : null;
+  const started = Date.now();
   const run = (onSentence?: (s: string) => void) =>
     runTurn(c.env, c.executionCtx, {
       userId,
@@ -1758,6 +1792,9 @@ authed.post("/chat/resume", async (c) => {
       resume: { state: JSON.parse(row.state), results },
       onSentence,
       requestId: c.var.requestId,
+    }).catch((err: unknown) => {
+      if (caps.source === "agent" || !isAiUnreachable(err)) throw err;
+      return unreachableReply(c.env, c.executionCtx, err, "/chat/resume", { requestId: c.var.requestId, userId, started }, onSentence);
     });
   if (parsed.data.stream) return streamTurn(c, run, caps.voice ? parsed.data.speak?.voice : undefined);
   return c.json(turnResponse(await run()));
@@ -1781,12 +1818,16 @@ authed.post("/siri", async (c) => {
   if (standing.day?.over) return c.text(allowanceMessage(standing.day, Date.now(), timeZone));
   if (standing.month?.verdict === "over") return c.text(overCapMessage(standing.month.cap, Date.now(), timeZone));
 
+  const started = Date.now();
   const result = await runTurn(c.env, c.executionCtx, {
     userId: c.var.userId,
     text,
     timeZone,
     caps: ACTIONS_ONLY,
     tier,
+  }).catch((err: unknown) => {
+    if (!isAiUnreachable(err)) throw err;
+    return unreachableReply(c.env, c.executionCtx, err, "/siri", { requestId: c.var.requestId, userId: c.var.userId, started });
   });
   if (result.kind === "paused") return c.text("Open the OVOA app to do that.");
   const next = settings.auto_approve ? "Open OVOA to finish." : "Open OVOA to approve.";
@@ -1867,7 +1908,7 @@ async function updateMemories(
   const raw = await generateText(env, {
     model: env.MEMORY_MODEL,
     json: { schema: memoryUpdateSchema },
-    // Runs after every reply: Workers AI first, so it doesn't use up the free Gemini quota chat needs.
+    // Runs after many replies, so it thinks as little as the model allows.
     fast: true,
     usage: { userId, purpose: "memory" },
     system: [
@@ -2331,47 +2372,43 @@ authed.get("/usage/me", async (c) => {
 
 // ---------- Which engine answers ----------
 //
-// The switchboard: which reply engine typed and spoken turns try first, which
-// Workers AI model stands behind them, and (Phase 4) which voice speaks. Two
-// doors to the same room: /debug/engines with the debug key, for scripts, and
-// /engines for a signed-in development account, for the Dev tools picker.
-// Changes go to server_settings (settings.ts) and take effect within a minute
-// on every isolate, with no deploy.
+// The switchboard: which reply engine typed and spoken turns try first, and
+// which voice speaks. Two doors to the same room: /debug/engines with the
+// debug key, for scripts, and /engines for a signed-in development account, for
+// the Dev tools picker. Changes go to server_settings (settings.ts) and take
+// effect within a minute on every isolate, with no deploy.
 
 /**
  * Whether a value may go in the table under this key. Returns a sentence saying
- * what is wrong, or null. Names are checked against what llm.ts knows: an
- * unknown engine in the order would be ignored at run time, but the person
- * setting it deserves to hear that now rather than wonder later why nothing changed.
+ * what is wrong, or null. Names are checked against what llm.ts knows. An order
+ * keeps the engines it names and quietly drops the rest (settingValue), because
+ * Dev tools in builds from before v1 add ",workers" to every order they send;
+ * an order naming no engine at all is refused, so the person setting it hears
+ * now rather than wonders later why nothing changed.
  */
 function settingProblem(key: SettingKey, value: string): string | null {
   const names = `The engines are ${ENGINES.join(", ")}.`;
   switch (key) {
-    case "engine_order": {
-      const bad = value.split(",").map((s) => s.trim().toLowerCase()).filter((s) => s && !isEngine(s));
-      return bad.length ? `"${bad[0]}" isn't an engine. ${names}` : null;
-    }
+    case "engine_order":
+      return cleanOrder(value) ? null : `"${value}" names no engine. ${names}`;
     case "voice_engine": {
       const v = value.trim().toLowerCase();
-      return v === "workers" || v === "keyed" || isEngine(v) ? null : `"${value}" isn't a choice for spoken turns. Use workers, keyed, or an engine name. ${names}`;
+      return v === "keyed" || isEngine(v) ? null : `"${value}" isn't a choice for spoken turns. Use keyed or an engine name. ${names}`;
     }
-    case "workers_model":
-      return /^@cf\/[\w.-]+\/[\w.-]+$/.test(value.trim()) ? null : `"${value}" doesn't look like a Workers AI model id (they start with @cf/).`;
     case "tts_engine":
       return (TTS_ENGINES as readonly string[]).includes(value.trim()) ? null : `"${value}" isn't a voice engine. The choices are ${TTS_ENGINES.join(", ")}.`;
-    case "stt_clip_engine":
-      return (STT_CLIP_ENGINES as readonly string[]).includes(value.trim())
-        ? null
-        : `"${value}" isn't a clip transcriber. The choices are ${STT_CLIP_ENGINES.join(" and ")}.`;
   }
+}
+
+/** What goes in the table for a value settingProblem accepted: an order as its known engines only. */
+function settingValue(key: SettingKey, value: string) {
+  return key === "engine_order" ? cleanOrder(value) : value.trim();
 }
 
 const settingsPatchSchema = z.object({
   engine_order: z.string().max(200).optional(),
   voice_engine: z.string().max(40).optional(),
-  workers_model: z.string().max(80).optional(),
   tts_engine: z.string().max(40).optional(),
-  stt_clip_engine: z.string().max(40).optional(),
 });
 
 /** Everything the switchboard shows: each engine's state, the orders, and what is set for everyone and for `userId`. */
@@ -2387,14 +2424,14 @@ async function readEngines(env: Env, userId: string | null) {
  */
 async function writeEngines(c: Context<{ Bindings: Env; Variables: Vars }>, body: unknown, userId: string | null) {
   const parsed = settingsPatchSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: "Send engine_order, voice_engine, workers_model or tts_engine as strings." }, 400);
+  if (!parsed.success) return c.json({ error: "Send engine_order, voice_engine or tts_engine as strings." }, 400);
   const entries = Object.entries(parsed.data).filter(([, v]) => v !== undefined) as [SettingKey, string][];
   if (!entries.length) return c.json({ error: "Nothing to change." }, 400);
   for (const [key, value] of entries) {
     const problem = value.trim() ? settingProblem(key, value) : null;
     if (problem) return c.json({ error: problem }, 400);
   }
-  for (const [key, value] of entries) await setServerSetting(c.env, key, value.trim().toLowerCase() === "" ? null : value.trim(), userId);
+  for (const [key, value] of entries) await setServerSetting(c.env, key, value.trim() === "" ? null : settingValue(key, value), userId);
   await applyRuntime(c.env);
   say("engines", { by: userId ? "person" : "everyone", changed: entries.map(([k, v]) => `${k}=${v || "(cleared)"}`).join(",") });
   return c.json(await readEngines(c.env, userId));

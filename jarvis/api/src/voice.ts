@@ -10,11 +10,12 @@ import { recordUsage, sttClipRow, ttsRow } from "./usage";
 // table (usage.ts) against the person it was for: seconds of audio for
 // transcription, characters for speech, which is how each is billed.
 //
-// Text to speech can come from five places (TTS_ENGINES), chosen by the
-// TTS_ENGINE var or, without a deploy, by server_settings.tts_engine. The voice
-// is the product: Deepgram's Aura-2 stays the default until the user picks
-// otherwise. The same eight voice ids are used everywhere and mapped to each
-// engine's nearest voice, so a chosen voice survives an engine switch.
+// Text to speech comes from Deepgram's Aura-2 or from the phone itself
+// (TTS_ENGINES), chosen by the TTS_ENGINE var or, without a deploy, by
+// server_settings.tts_engine. The voice is the product: Aura-2 is the default.
+// The three Workers AI voices (Aura-2 and Aura-1 through Workers AI, and
+// MeloTTS) went with Workers AI in the v1 release; a copied setting that still
+// names one falls back to the default rather than silencing anyone.
 //
 // Identical sentences in the same engine and voice are voiced once and kept in
 // the Workers cache for a month. Fillers, confirmations and greetings repeat
@@ -32,20 +33,10 @@ const CACHE_SECONDS = 30 * 24 * 3600;
 
 /**
  * What transcribes a recorded clip (the band's button, the recorded fallback,
- * talking over a reply): Deepgram Nova-3 at $0.0043 a minute, or Whisper on
- * Workers AI at $0.0005. Whisper is told the assistant's name the way Deepgram
- * is given it as a keyterm, and Deepgram stays the fallback when Whisper fails.
+ * talking over a reply): Deepgram Nova-3, filed in the usage table under this
+ * name (pricing.ts). Whisper on Workers AI was the cheaper choice until v1.
  */
-export const STT_CLIP_ENGINES = ["deepgram", "workers-whisper"] as const;
-export type SttClipEngine = (typeof STT_CLIP_ENGINES)[number];
-export const isSttClipEngine = (s: string): s is SttClipEngine => (STT_CLIP_ENGINES as readonly string[]).includes(s);
-export function sttClipEngineFrom(setting: string | undefined, envVar: string | undefined): SttClipEngine {
-  const want = (setting || envVar || "").trim();
-  return isSttClipEngine(want) ? want : "deepgram";
-}
-
-/** The names the usage table files these under (pricing.ts). */
-const STT_USAGE: Record<SttClipEngine, string> = { deepgram: "deepgram-nova-3-clip", "workers-whisper": "workers-whisper-turbo" };
+const STT_CLIP_USAGE = "deepgram-nova-3-clip";
 
 /** Voices the app can pick from (Deepgram Aura 2). */
 export const VOICES = [
@@ -63,46 +54,22 @@ export type VoiceId = (typeof VOICES)[number];
 
 /**
  * Where a reply's voice can come from, and what each costs (pricing.ts):
- *   deepgram-aura-2  Deepgram direct, today's default            $0.030 / 1K chars
- *   workers-aura-2   the same voices through Workers AI            $0.030 / 1K chars, no Deepgram key needed
- *   workers-aura-1   Deepgram's older voices through Workers AI    $0.015 / 1K chars
- *   workers-melotts  MeloTTS on Workers AI, one voice              about free; lower quality
- *   device           the phone's own voices (expo-speech)          free, offline, lowest latency
+ *   deepgram-aura-2  Deepgram direct, the default          $0.030 / 1K chars
+ *   device           the phone's own voices (expo-speech)  free, offline, lowest latency
  */
-export const TTS_ENGINES = ["deepgram-aura-2", "workers-aura-2", "workers-aura-1", "workers-melotts", "device"] as const;
+export const TTS_ENGINES = ["deepgram-aura-2", "device"] as const;
 export type TtsEngine = (typeof TTS_ENGINES)[number];
 export const DEFAULT_TTS_ENGINE: TtsEngine = "deepgram-aura-2";
 
 export const isTtsEngine = (s: string): s is TtsEngine => (TTS_ENGINES as readonly string[]).includes(s);
 
-/** The engine to use: the runtime setting, else the var, else the default. Unknown names fall back rather than silence anyone. */
-export function ttsEngineFrom(setting: string | undefined, envVar: string | undefined): TtsEngine {
-  const want = (setting || envVar || "").trim();
-  return isTtsEngine(want) ? want : DEFAULT_TTS_ENGINE;
-}
-
-/** The bare Aura-2 speaker name ("thalia") behind an app voice id, which is what Workers AI wants. */
-const aura2Speaker = (voice: VoiceId) => voice.replace(/^aura-2-/, "").replace(/-en$/, "");
-
 /**
- * Aura-1 has twelve voices and shares only three names with Aura-2. The rest
- * map to the closest sound: a clear female voice to a clear female voice, and
- * so on, so switching engines keeps the character of what was chosen.
+ * The engine to use: the runtime setting, else the var, else the default. An
+ * unknown name (a Workers AI voice from before v1, in a copied row) is passed
+ * over rather than silencing anyone.
  */
-const AURA1_SPEAKER: Record<VoiceId, string> = {
-  "aura-2-thalia-en": "asteria",
-  "aura-2-andromeda-en": "stella",
-  "aura-2-helena-en": "athena",
-  "aura-2-luna-en": "luna",
-  "aura-2-apollo-en": "orpheus",
-  "aura-2-arcas-en": "arcas",
-  "aura-2-orion-en": "orion",
-  "aura-2-hermes-en": "perseus",
-};
-
-/** Which of the app's voices an engine can offer. An empty list means the engine has one voice of its own. */
-export function voicesFor(engine: TtsEngine): readonly VoiceId[] {
-  return engine === "workers-melotts" || engine === "device" ? [] : VOICES;
+export function ttsEngineFrom(setting: string | undefined, envVar: string | undefined): TtsEngine {
+  return [setting, envVar].map((v) => (v ?? "").trim()).find(isTtsEngine) ?? DEFAULT_TTS_ENGINE;
 }
 
 export const voice = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -131,29 +98,12 @@ async function transcribeDeepgram(env: Env, audio: ArrayBuffer, contentType: str
   };
 }
 
-/**
- * Whisper on Workers AI. It takes the clip as base64 and a short prompt that
- * primes it with the names it should expect, the way Deepgram takes keyterms:
- * without one it hears "OVOA" as "over" or "oboe".
- */
-async function transcribeWhisper(env: Env, audio: ArrayBuffer, names: string[]): Promise<Transcribed> {
-  const bytes = new Uint8Array(audio);
-  let b64 = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  const out = (await env.AI.run(
-    "@cf/openai/whisper-large-v3-turbo" as never,
-    { audio: btoa(b64), language: "en", initial_prompt: `Talking to an assistant called ${names.join(", also called ")}.` } as never,
-  )) as { text?: string; transcription_info?: { duration?: number } };
-  return { text: (out.text ?? "").trim(), seconds: Number(out.transcription_info?.duration) || 0 };
-}
-
 voice.post("/voice/transcribe", async (c) => {
   const audio = await c.req.arrayBuffer();
   if (!audio.byteLength) return c.json({ error: "No audio" }, 400);
   if (audio.byteLength > MAX_AUDIO_BYTES) return c.json({ error: "Recording is too long" }, 413);
   const contentType = c.req.header("content-type") ?? "audio/mp4";
-  const engine = c.get("sttClipEngine") ?? sttClipEngineFrom(undefined, c.env.STT_CLIP_ENGINE);
-  if (engine === "deepgram" && !c.env.DEEPGRAM_API_KEY) return c.json({ error: "Voice isn't set up on the server yet" }, 503);
+  if (!c.env.DEEPGRAM_API_KEY) return c.json({ error: "Voice isn't set up on the server yet" }, 503);
   // The assistant's name, so the transcriber expects it.
   const custom = await c.env.DB.prepare("SELECT assistant_name FROM settings WHERE user_id = ?")
     .bind(c.var.userId)
@@ -162,28 +112,16 @@ voice.post("/voice/transcribe", async (c) => {
   const names = [...new Set([...KEYTERMS, ...(custom?.assistant_name ? [custom.assistant_name] : [])])];
 
   const started = Date.now();
-  let used: SttClipEngine = engine;
   let got: Transcribed;
   try {
-    got = engine === "workers-whisper" ? await transcribeWhisper(c.env, audio, names) : await transcribeDeepgram(c.env, audio, contentType, names);
+    got = await transcribeDeepgram(c.env, audio, contentType, names);
   } catch (err) {
-    console.error(`transcribe: ${engine} failed`, err);
-    // Whisper is the cheaper choice, not the only one: a clip it couldn't take goes to Deepgram.
-    if (engine === "workers-whisper" && c.env.DEEPGRAM_API_KEY) {
-      try {
-        used = "deepgram";
-        got = await transcribeDeepgram(c.env, audio, contentType, names);
-      } catch (err2) {
-        console.error("transcribe: deepgram fallback failed", err2);
-        return c.json({ error: "Couldn't transcribe that" }, 502);
-      }
-    } else {
-      return c.json({ error: "Couldn't transcribe that" }, 502);
-    }
+    console.error("transcribe: deepgram failed", err);
+    return c.json({ error: "Couldn't transcribe that" }, 502);
   }
-  console.log(`transcribe: ${used}, ${Math.round(audio.byteLength / 1024)} KB, ${got.seconds.toFixed(1)} s of audio, ${Date.now() - started} ms`);
-  c.executionCtx.waitUntil(recordUsage(c.env, [sttClipRow(c.var.userId, STT_USAGE[used], got.seconds)]));
-  return c.json({ text: got.text, engine: used, ms: Date.now() - started });
+  console.log(`transcribe: deepgram, ${Math.round(audio.byteLength / 1024)} KB, ${got.seconds.toFixed(1)} s of audio, ${Date.now() - started} ms`);
+  c.executionCtx.waitUntil(recordUsage(c.env, [sttClipRow(c.var.userId, STT_CLIP_USAGE, got.seconds)]));
+  return c.json({ text: got.text, engine: "deepgram", ms: Date.now() - started });
 });
 
 /**
@@ -220,20 +158,10 @@ voice.post("/voice/token", async (c) => {
 
 // ---------- Voicing ----------
 
-/** Whichever shape a Workers AI model hands back, as bytes. */
-async function toBytes(out: unknown): Promise<Uint8Array> {
-  if (out instanceof Response) return new Uint8Array(await out.arrayBuffer());
-  if (out instanceof ReadableStream) return new Uint8Array(await new Response(out).arrayBuffer());
-  if (out instanceof ArrayBuffer) return new Uint8Array(out);
-  if (out instanceof Uint8Array) return out;
-  const audio = (out as { audio?: unknown } | null)?.audio;
-  if (typeof audio === "string") return Uint8Array.from(atob(audio), (ch) => ch.charCodeAt(0));
-  throw new Error("The voice model returned no audio");
-}
-
 /**
- * Voices one piece of text on one engine. MP3 from all of them, so the phone's
- * player and the cache never need to know which engine spoke.
+ * Voices one piece of text on one engine, as MP3, so the phone's player and the
+ * cache never need to know which engine spoke. The phone's own voice is never
+ * asked for here: it speaks on the phone.
  */
 async function synthesize(env: Env, engine: TtsEngine, voice: VoiceId, text: string): Promise<Uint8Array> {
   switch (engine) {
@@ -247,12 +175,6 @@ async function synthesize(env: Env, engine: TtsEngine, voice: VoiceId, text: str
       if (!res.ok) throw new Error(`Deepgram ${res.status}: ${(await res.text()).slice(0, 200)}`);
       return new Uint8Array(await res.arrayBuffer());
     }
-    case "workers-aura-2":
-      return toBytes(await env.AI.run("@cf/deepgram/aura-2-en" as never, { text, speaker: aura2Speaker(voice), encoding: "mp3" } as never, { returnRawResponse: true }));
-    case "workers-aura-1":
-      return toBytes(await env.AI.run("@cf/deepgram/aura-1" as never, { text, speaker: AURA1_SPEAKER[voice], encoding: "mp3" } as never, { returnRawResponse: true }));
-    case "workers-melotts":
-      return toBytes(await env.AI.run("@cf/myshell-ai/melotts" as never, { prompt: text, lang: "en" } as never));
     case "device":
       throw new Error("The phone voices this itself");
   }

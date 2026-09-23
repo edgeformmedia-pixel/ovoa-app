@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { listGoogleAccounts, setAccountLabel } from "./google/oauth";
 import type { CallTool, ToolSpec } from "./llm";
-import { generateText } from "./llm";
+import { AI_UNREACHABLE, generateText, isAiUnreachable } from "./llm";
 import { createRoutine, parseClock, routinesChanged, type NewRoutine } from "./routines";
 import { clockFromMinutes } from "./time";
 import type { Env, Vars } from "./types";
@@ -432,6 +432,8 @@ onboarding.post("/onboarding/answer", async (c) => {
     return c.json(await onboardingAnswer(c.env, c.var.userId, parsed.data.step, parsed.data.text));
   } catch (err) {
     console.error("onboarding: couldn't read the answer", err);
+    // No engine could answer: said plainly, the way a turn says it (llm.ts).
+    if (isAiUnreachable(err)) return c.json({ error: AI_UNREACHABLE }, 503);
     return c.json({ error: err instanceof Error ? err.message : "Couldn't read that" }, 502);
   }
 });

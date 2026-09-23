@@ -6,9 +6,8 @@ import { useSession } from "../lib/auth";
 import { colors } from "../lib/theme";
 import { createSpeaker, voicePref, VOICES, type VoiceId } from "../lib/voice";
 
-/** Engines with one voice of their own, and how to say so. */
+/** Engines with voices of their own, and how to say so. */
 const ONE_VOICE: Record<string, string> = {
-  "workers-melotts": "The assistant is using a plain voice right now, which sounds the same whichever you pick. Your choice is kept for when it changes back.",
   device: "The assistant is using your iPhone's own voice right now. Your choice here picks the one that sounds closest.",
 };
 

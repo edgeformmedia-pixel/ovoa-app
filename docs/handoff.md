@@ -18,7 +18,7 @@ A personal voice assistant. Two halves:
   deployed at `https://api.ovoa.ai` (the ovoa.ai Cloudflare account since the
   v1 move; the old `jarvis-api.edgeformmedia.workers.dev` forwards there until
   2026-10-14). Chat turns, tool
-  calling across three model engines (Gemini → DeepSeek → Workers AI), the
+  calling across two model engines (GLM → Gemini, since v1), the
   background agent, Google integration, Deepgram STT/TTS proxying.
 - `jarvis/app` — Expo (SDK 57) iOS app. Talks to the API, drives an **ES100
   wrist clip** over BLE through a custom native module. The clip has a button

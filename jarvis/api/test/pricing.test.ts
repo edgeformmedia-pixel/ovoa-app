@@ -4,7 +4,6 @@
 // confident face on it.
 
 import {
-  deepseekOffPeak,
   glmPriceFrom,
   llmCostMicro,
   priceFor,
@@ -20,45 +19,38 @@ function eq(label: string, got: unknown, want: unknown) {
   console.log(`${ok ? "ok  " : "FAIL"} ${label}: ${got}${ok ? "" : `  (wanted ${want})`}`);
 }
 
-// A weekday at 12:00 UTC: inside neither DeepSeek peak window.
-const offPeak = new Date("2026-09-22T12:00:00Z");
-// A weekday at 02:00 UTC: inside the first one.
-const peak = new Date("2026-09-22T02:00:00Z");
+const today = new Date("2026-09-22T12:00:00Z");
 
 // ---------- Tokens to money ----------
 
-// A million input tokens on gpt-oss-120b is $0.35 exactly.
-eq("a million tokens is the list price", llmCostMicro("@cf/openai/gpt-oss-120b", { input: 1_000_000, output: 0 }, offPeak), 350_000);
-eq("output is priced separately", llmCostMicro("@cf/openai/gpt-oss-120b", { input: 0, output: 1_000_000 }, offPeak), 750_000);
-// The Sept 21 baseline: 11.4K in, 350 out per reply on gpt-oss ≈ $0.0043.
-eq("one typical reply on gpt-oss", llmCostMicro("@cf/openai/gpt-oss-120b", { input: 11_400, output: 350 }, offPeak), 4_253);
-eq("an unknown model costs nothing rather than throwing", llmCostMicro("nope", { input: 100, output: 100 }, offPeak), 0);
+// A million input tokens on Gemini 3.5 Flash-Lite is $0.30 exactly.
+eq("a million tokens is the list price", llmCostMicro("gemini-3.5-flash-lite", { input: 1_000_000, output: 0 }, today), 300_000);
+eq("output is priced separately", llmCostMicro("gemini-3.5-flash-lite", { input: 0, output: 1_000_000 }, today), 2_500_000);
+// A typical reply: 11.4K in, 350 out ≈ $0.0043 on Flash-Lite.
+eq("one typical reply on Flash-Lite", llmCostMicro("gemini-3.5-flash-lite", { input: 11_400, output: 350 }, today), 4_295);
+eq("an unknown model costs nothing rather than throwing", llmCostMicro("nope", { input: 100, output: 100 }, today), 0);
 
 // Cached tokens are part of `input`, charged at the cached rate, never twice.
 eq(
-  "cache hits are cheaper on DeepSeek",
-  llmCostMicro("deepseek-flash", { input: 10_000, cached: 8_000, output: 0 }, peak),
-  // 2,000 fresh at $0.30/M + 8,000 cached at $0.006/M = 600 + 48 micro
-  648,
+  "cache hits are cheaper on Gemini",
+  llmCostMicro("gemini-3.5-flash-lite", { input: 10_000, cached: 8_000, output: 0 }, today),
+  // 2,000 fresh at $0.30/M + 8,000 cached at $0.03/M = 600 + 240 micro
+  840,
 );
 eq(
   "cached cannot exceed input",
-  llmCostMicro("deepseek-flash", { input: 1_000, cached: 5_000, output: 0 }, peak),
+  llmCostMicro("gemini-3.5-flash-lite", { input: 1_000, cached: 5_000, output: 0 }, today),
   // all 1,000 at the cached rate
-  6,
+  30,
 );
-eq("no cached rate means the input rate", llmCostMicro("@cf/openai/gpt-oss-120b", { input: 1_000, cached: 1_000, output: 0 }, offPeak), 350);
+eq("no cached rate means the input rate", llmCostMicro("x", { input: 1_000, cached: 1_000, output: 0 }, today, { in: 0.35, out: 0.75 }), 350);
 
 // ---------- Dates ----------
 
-eq("a weekday noon is off-peak", deepseekOffPeak(offPeak), true);
-eq("02:00 UTC on a weekday is peak", deepseekOffPeak(peak), false);
-eq("07:30 UTC on a weekday is peak", deepseekOffPeak(new Date("2026-09-22T07:30:00Z")), false);
-eq("the peak window ends on the hour", deepseekOffPeak(new Date("2026-09-22T10:00:00Z")), true);
-eq("a Sunday is off-peak all day", deepseekOffPeak(new Date("2026-09-20T02:00:00Z")), true);
-eq("DeepSeek is half price off-peak", llmCostMicro("deepseek-flash", { input: 1_000_000, output: 0 }, offPeak), 150_000);
-eq("Gemini doubles on New Year's Day", priceFor("gemini-3.8-flash", new Date("2027-01-01T00:00:00Z"))?.in, 1.5);
+eq("Gemini 3.8 Flash doubles on New Year's Day", priceFor("gemini-3.8-flash", new Date("2027-01-01T00:00:00Z"))?.in, 1.5);
 eq("and not the day before", priceFor("gemini-3.8-flash", new Date("2026-12-31T23:59:00Z"))?.in, 0.75);
+eq("Flash-Lite does not double: Google names no 2027 price for it", priceFor("gemini-3.5-flash-lite", new Date("2027-01-01T00:00:00Z"))?.in, 0.3);
+eq("nor does its output", priceFor("gemini-3.5-flash-lite", new Date("2027-06-01T00:00:00Z"))?.out, 2.5);
 
 // ---------- Overrides ----------
 
@@ -67,19 +59,19 @@ eq("GLM in from the var", glm.in, 0.1);
 eq("GLM out from the var", glm.out, 0.4);
 eq("GLM cached keeps its default", glm.cachedIn, 0.06);
 eq("a garbage var keeps the default", glmPriceFrom({ GLM_PRICE_IN_PER_M: "cheap" }).in, 0.06);
-eq("an override replaces the table", llmCostMicro("glm-5.3-flash", { input: 1_000_000, output: 0 }, offPeak, glm), 100_000);
+eq("an override replaces the table", llmCostMicro("glm-5.3-flash", { input: 1_000_000, output: 0 }, today, glm), 100_000);
+eq("the GLM default is Z.ai's price", glmPriceFrom({}).out, 0.2);
 
 // ---------- Speech ----------
 
 eq("Aura-2 direct: $0.030 per 1K chars", ttsCostMicro("deepgram-aura-2", 1000), 30_000);
-eq("Aura-1 is half of that", ttsCostMicro("workers-aura-1", 1000), 15_000);
 eq("the phone's voices are free", ttsCostMicro("device", 5000), 0);
 // The Sept 21 baseline: 11,871 chars on Aura-2 ≈ $0.36.
 eq("a heavy day of Aura-2", usd(ttsCostMicro("deepgram-aura-2", 11_871)), "$0.36");
 eq("a minute of live Nova-3", sttCostMicro("deepgram-nova-3-live", 60), 4_800);
 // The Sept 21 baseline: 380 minutes streamed ≈ $1.82.
 eq("a day of the mic streaming", usd(sttCostMicro("deepgram-nova-3-live", 380 * 60)), "$1.82");
-eq("a minute of Whisper", sttCostMicro("workers-whisper-turbo", 60), 500);
+eq("a minute of a recorded clip", sttCostMicro("deepgram-nova-3-clip", 60), 4_300);
 eq("an unknown engine costs nothing", sttCostMicro("nope", 60), 0);
 
 // ---------- Printing ----------

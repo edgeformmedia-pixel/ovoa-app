@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { CallTool, ToolSpec } from "./llm";
-import { generateText } from "./llm";
+import { AI_UNREACHABLE, generateText, isAiUnreachable } from "./llm";
 import { buckets } from "./time";
 import type { Env, Vars } from "./types";
 
@@ -585,6 +585,8 @@ myApps.post("/apps/design", async (c) => {
     return c.json({ draft: await designApp(c.env, c.var.userId, parsed.data.description) });
   } catch (err) {
     console.error("ovoa.err apps: couldn't design an app", err);
+    // No engine could answer: said plainly, the way a turn says it (llm.ts).
+    if (isAiUnreachable(err)) return c.json({ error: AI_UNREACHABLE }, 503);
     return c.json({ error: err instanceof Error ? err.message : "Couldn't make that app" }, 502);
   }
 });
@@ -599,6 +601,7 @@ myApps.post("/apps/revise", async (c) => {
     return c.json({ draft: await reviseApp(c.env, c.var.userId, current, parsed.data.change) });
   } catch (err) {
     console.error("ovoa.err apps: couldn't change an app", err);
+    if (isAiUnreachable(err)) return c.json({ error: AI_UNREACHABLE }, 503);
     return c.json({ error: err instanceof Error ? err.message : "Couldn't change that app" }, 502);
   }
 });

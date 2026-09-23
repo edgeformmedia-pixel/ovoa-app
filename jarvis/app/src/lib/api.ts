@@ -252,14 +252,14 @@ export type User = {
 export type EngineInfo = {
   engine: string;
   name: string;
-  key: "set" | "missing" | "not needed";
+  key: "set" | "missing";
   model: string | null;
   coolingForS: number;
   lastError: string | null;
 };
 
-/** What the server's own settings say: the order typed turns try, who answers spoken turns, which Workers AI model, which voice. */
-export type ServerSettings = { engine_order?: string; voice_engine?: string; workers_model?: string; tts_engine?: string; stt_clip_engine?: string };
+/** What the server's own settings say: the order every call tries, who answers spoken turns first, which voice. */
+export type ServerSettings = { engine_order?: string; voice_engine?: string; tts_engine?: string };
 
 export type EngineStatus = {
   engines: EngineInfo[];
@@ -385,7 +385,7 @@ export type GoogleStatus =
 /**
  * What one day (or the month so far) cost to serve, as the server counted it
  * (api/src/usage.ts). `estUsd` is at list price; `by` splits it by what it was
- * spent on ("mic", "voice (deepgram-aura-2)", "ai (workers)").
+ * spent on ("mic", "voice (deepgram-aura-2)", "ai (glm)").
  */
 export type UsageTotals = {
   day: string;

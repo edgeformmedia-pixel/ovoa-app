@@ -12,8 +12,13 @@ import type { Env } from "./types";
 /** How long one isolate trusts what it last read. */
 const CACHE_MS = 60_000;
 
-/** The keys the server understands. Anything else is refused at the door. */
-export const SETTING_KEYS = ["engine_order", "voice_engine", "workers_model", "tts_engine", "stt_clip_engine"] as const;
+/**
+ * The keys the server understands. Anything else is refused at the door, and
+ * rows under keys retired since (workers_model and stt_clip_engine went with
+ * Workers AI in v1; the old database's rows may have been copied across) are
+ * never read.
+ */
+export const SETTING_KEYS = ["engine_order", "voice_engine", "tts_engine"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 export type ServerSettings = Partial<Record<SettingKey, string>>;

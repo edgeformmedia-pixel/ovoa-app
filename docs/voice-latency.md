@@ -1,5 +1,9 @@
 # Reply engines, measured
 
+(A record from 2026-09-22. Since v1, 2026-09-23, the engines are GLM then Gemini
+3.5 Flash-Lite for everything; DeepSeek and Workers AI are gone. See the top of
+`jarvis/api/src/llm.ts`.)
+
 Twenty production turns per engine on 2026-09-22 (ten spoken, ten typed), from
 a throwaway account created and deleted by `jarvis/api/scripts/engine-bench.mjs`,
 each account given its own engine through `server_settings`. Times are measured

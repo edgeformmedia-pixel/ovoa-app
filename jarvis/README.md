@@ -170,9 +170,8 @@ accounts**.
 - **Assistant tools** (`api/src/google/tools.ts`): calendar list, create,
   update and delete; Gmail search, read, draft, send, mark read and trash;
   Drive search and trash; Sheets info, read, append, update and create; Docs
-  read, create and append; Tasks list, add and complete; Contacts search. The
-  Workers AI fallback and Gemini both call tools through `chatWithTools` in
-  `llm.ts`.
+  read, create and append; Tasks list, add and complete; Contacts search. GLM
+  and Gemini both call tools through `chatWithTools` in `llm.ts`.
 - **Approvals:** tools with a `confirm` step (send email, trash, delete,
   invite guests) aren't run right away. They're saved to `pending_actions`
   and appear in chat as an **Approve / Cancel** card. `POST
@@ -394,13 +393,22 @@ can schedule its own reminder. See [docs/agent.md](../docs/agent.md).
 
 ## AI models
 
-Set in `api/wrangler.jsonc`:
+Every model call (typed and spoken turns, memory and summaries, setup, app
+design, agent jobs) tries **GLM first and Gemini second** (`api/src/llm.ts`,
+since v1). An engine without its key doesn't exist. When both fail, a person's
+turn is answered plainly: "Sorry, I can't reach the AI right now." Set in
+`api/wrangler.jsonc`:
 
-- `CHAT_MODEL`: `gemini-3.1-pro-preview` for replies
-- `MEMORY_MODEL`: `gemini-3.8-flash` for memory extraction
-- `FALLBACK_MODEL`: `@cf/openai/gpt-oss-120b` on Cloudflare Workers AI (free
-  plan). It's used when `GEMINI_API_KEY` is not set or a Gemini call fails, so
-  chat works before the key is added.
+- `GLM_BASE_URL`, `GLM_MODEL`: GLM 5.3 Flash on Z.ai (`glm-5.3-flash`); the
+  key is the secret `GLM_API_KEY`. Any OpenAI-compatible host works.
+- `CHAT_MODEL`, `MEMORY_MODEL`: `gemini-3.5-flash-lite`, the fallback, for
+  replies and for the quick calls (memory, setup, app design, briefs).
+  `CHAT_MODEL` also does web search grounding. The key is `GEMINI_API_KEY`.
+- Adding another OpenAI-compatible provider is an entry in `OPENAI_PROVIDERS`
+  plus its vars and price; the top of `api/src/llm.ts` says how.
+
+Dev tools (development accounts) can change which engine goes first without a
+deploy. Prices are in `api/src/pricing.ts`.
 
 **To add the Gemini key:** double-click `jarvis/set-gemini-key.cmd` and paste
 the key when asked.

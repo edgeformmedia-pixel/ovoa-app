@@ -19,7 +19,8 @@ OVOA is a personal voice assistant with two main components:
      backup until 2026-10-14.
    - D1 database (jarvis-db)
    - Handles chat turns, tool calling, background agent jobs
-   - Interfaces with three LLM engines: DeepSeek (primary) → Gemini → Workers AI
+   - Interfaces with two LLM engines: GLM 5.3 Flash on Z.ai (first) → Gemini 3.5
+     Flash-Lite (fallback), since v1 (2026-09-23); DeepSeek and Workers AI are gone
    - Transcription proxy (Deepgram STT), TTS proxy (ElevenLabs), Google integration
 
 2. JARVIS/APP (Expo SDK 57 iOS app)
@@ -144,7 +145,7 @@ COMPLETED WORK:
 ✓ HealthKit integration (health.ts, HealthCards.tsx)
 ✓ Voice latency instrumentation (turnTimer.ts, perf logging)
 ✓ Health cards on Activity tab (heart rate, resting, HRV, sleep, workouts)
-✓ Multiple LLM engines (DeepSeek primary, Gemini fallback, Workers AI tertiary)
+✓ Multiple LLM engines (GLM first, Gemini fallback, since v1; DeepSeek and Workers AI removed)
 ✓ Google integration (Workspace, Gmail, Drive)
 ✓ Background agent (cron jobs, tool calling)
 ✓ Push notifications (Expo Notifications)

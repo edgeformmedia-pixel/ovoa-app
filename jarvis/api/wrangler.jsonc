@@ -30,47 +30,33 @@
   // an odd minute on purpose, so it isn't queued behind everyone else's 04:00.
   "triggers": { "crons": ["*/2 * * * *", "13 4 * * *"] },
   "vars": {
-    // Flash for both: the Gemini key is on the free tier, which allows no Pro requests.
-    "CHAT_MODEL": "gemini-3.8-flash",
-    "MEMORY_MODEL": "gemini-3.8-flash",
-    // Used when Gemini fails or runs out, if DEEPSEEK_API_KEY is set.
-    "DEEPSEEK_MODEL": "deepseek-flash",
-    // Which keyed engine is tried first: "deepseek" or "gemini". DeepSeek since
-    // 2026-09-21: the Gemini key is on the free tier (20 requests) and kept 429ing.
-    "PRIMARY_ENGINE": "deepseek",
-    // Spoken turns go to Workers AI first: measured first token 1.0-2.9 s there
-    // against 4.3-14.1 s on the free-tier Gemini key. Set to "keyed" to undo this
-    // once a keyed engine is funded and actually faster.
-    "VOICE_PRIMARY": "workers",
-    // Cloudflare Workers AI: the last resort when the keyed models fail or aren't set.
-    // @cf/zai-org/glm-5.3-flash works here too (needs the Workers Paid plan), and
-    // the table can override this without a deploy (server_settings.workers_model).
-    "FALLBACK_MODEL": "@cf/openai/gpt-oss-120b",
-    // GLM 5.3 Flash from the user's own provider (llm.ts). The key is a secret
-    // (GLM_API_KEY); without it the engine does not exist. The base URL is any
-    // OpenAI-compatible endpoint, Z.ai's by default, and the model id is the
-    // provider's own (OpenRouter calls it z-ai/glm-5.3-flash). Its price comes
-    // from pricing.ts unless GLM_PRICE_IN_PER_M / GLM_PRICE_OUT_PER_M /
-    // GLM_PRICE_CACHED_PER_M say otherwise (dollars per million tokens).
+    // Every model call tries GLM first and Gemini second (llm.ts ENGINES); these
+    // two are the Gemini model it calls. Gemini 3.5 Flash-Lite for both, on the
+    // paid key; the id is the one GET v1beta/models listed for that key
+    // (2026-09-23). CHAT_MODEL also does web search grounding (web.ts).
+    "CHAT_MODEL": "gemini-3.5-flash-lite",
+    "MEMORY_MODEL": "gemini-3.5-flash-lite",
+    // GLM 5.3 Flash from the user's own provider (llm.ts OPENAI_PROVIDERS). The
+    // key is a secret (GLM_API_KEY); without it the engine does not exist. The
+    // base URL is any OpenAI-compatible endpoint, Z.ai's by default, and the
+    // model id is the provider's own (OpenRouter calls it z-ai/glm-5.3-flash).
+    // Its price comes from pricing.ts unless GLM_PRICE_IN_PER_M /
+    // GLM_PRICE_OUT_PER_M / GLM_PRICE_CACHED_PER_M say otherwise (dollars per
+    // million tokens).
     "GLM_BASE_URL": "https://api.z.ai/api/paas/v4",
     "GLM_MODEL": "glm-5.3-flash",
-    // How much the thinking models think on a typed turn: "off", "low" or "on".
-    // Spoken turns never think; the wait before the first word is the whole
-    // experience there. Thinking is billed as output tokens, at the output price.
+    // How much GLM thinks on a typed turn: "off", "low" or "on". Spoken turns
+    // never think; the wait before the first word is the whole experience there.
+    // Thinking is billed as output tokens, at the output price.
     "GLM_THINKING": "low",
-    "DEEPSEEK_THINKING": "low",
-    // ENGINE_ORDER, e.g. "glm,deepseek,gemini,workers", would replace PRIMARY_ENGINE
-    // above. Left unset: the order is set at run time instead (Dev tools, or
+    // ENGINE_ORDER, e.g. "gemini,glm", would put Gemini first. Left unset: GLM
+    // first. The order can also be set at run time (Dev tools, or
     // PUT /debug/engines), which needs no deploy.
     // Which engine voices replies (voice.ts TTS_ENGINES): deepgram-aura-2 (the
-    // default; the voice is the product), workers-aura-2, workers-aura-1,
-    // workers-melotts, or device (the phone speaks with its own voices).
-    // server_settings.tts_engine, set from Dev tools, overrides this without a deploy.
+    // default; the voice is the product) or device (the phone speaks with its
+    // own voices). server_settings.tts_engine, set from Dev tools, overrides
+    // this without a deploy.
     "TTS_ENGINE": "deepgram-aura-2",
-    // What transcribes recorded clips (the band's button, the recorded fallback):
-    // "deepgram" (Nova-3, $0.0043/min) or "workers-whisper" ($0.0005/min, with
-    // Deepgram as the fallback when it fails). server_settings.stt_clip_engine overrides it.
-    "STT_CLIP_ENGINE": "deepgram",
     // Replies a person gets in a calendar month (cap.ts): a ceiling on what one
     // account can cost, not a plan tier. "0" turns it off. DEV_EMAILS are exempt.
     // At 80% the person is told once; past it they hear one sentence saying when
@@ -103,7 +89,6 @@
     // Google OAuth web client (not secret). GOOGLE_CLIENT_SECRET and TOKEN_ENC_KEY are secrets.
     "GOOGLE_CLIENT_ID": "736336639952-r4qknf5arp9e6m0tj8hvecsjjhauhouq.apps.googleusercontent.com"
   },
-  "ai": { "binding": "AI" },
   // Per-person and per-address limits on the routes that spend shared quota
   // (src/limits.ts). Counted per Cloudflare location, no database writes, and set
   // well above what a person can reach by talking: they exist for runaways and
@@ -128,7 +113,7 @@
       "migrations_dir": "migrations"
     }
   ]
-  // Secrets (set with `XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npx wrangler secret put NAME`): GEMINI_API_KEY, DEEPSEEK_API_KEY, GLM_API_KEY, GOOGLE_CLIENT_SECRET,
+  // Secrets (set with `XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npx wrangler secret put NAME`): GEMINI_API_KEY, GLM_API_KEY, GOOGLE_CLIENT_SECRET,
   // TOKEN_ENC_KEY, DEEPGRAM_API_KEY, DEBUG_KEY, MEMBERSHIP_API_KEY, and SHORTCUT_SIGNING_URL (+ optional SHORTCUT_SIGNING_TOKEN) to turn on
   // shortcut writing (see README). RESEND_API_KEY sends ovoa.ai's sign-in codes from no-reply@ovoa.ai, and the optional
   // GOOGLE_SIGNIN_CLIENT_IDS accepts Google sign-ins from another OAuth client than GOOGLE_CLIENT_ID (src/emailauth.ts).
