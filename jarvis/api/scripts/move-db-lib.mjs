@@ -38,11 +38,19 @@ export function skipReason(name, sql = "") {
 }
 
 /**
- * The tables to copy, in the old database's order, and the ones left out with
+ * The tables to copy, parents before children, and the ones left out with
  * why. oldTables is sqlite_master's rows ({ name, sql }); newNames the new
- * database's table names. A table the new database doesn't have is left out.
+ * database's table names; newTables, when given, its rows too, so a foreign
+ * key only the new schema has still orders the copy. A table the new
+ * database doesn't have is left out.
+ *
+ * Parents first because D1 applies a big import in pieces: PRAGMA
+ * defer_foreign_keys only covers the piece it's in, so a child row that
+ * arrives before its parent (sessions before users, in name order) fails
+ * the whole import with SQLITE_CONSTRAINT_FOREIGNKEY. That is what the
+ * 2026-09-23 cutover hit twice before the file was reordered.
  */
-export function planTables(oldTables, newNames) {
+export function planTables(oldTables, newNames, newTables = []) {
   const have = new Set(newNames);
   const copy = [];
   const skipped = [];
@@ -51,7 +59,35 @@ export function planTables(oldTables, newNames) {
     if (reason) skipped.push({ name, reason });
     else copy.push(name);
   }
-  return { copy, skipped };
+  const sqlOf = new Map();
+  for (const { name, sql } of [...oldTables, ...newTables]) sqlOf.set(name, `${sqlOf.get(name) ?? ""}\n${sql ?? ""}`);
+  return { copy: parentsFirst(copy, sqlOf), skipped };
+}
+
+/** The table names a CREATE TABLE points at with REFERENCES. */
+export function referencedTables(sql = "") {
+  const out = new Set();
+  for (const m of sql.matchAll(/\bREFERENCES\s+(?:"([^"]+)"|'([^']+)'|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/gi)) {
+    out.add(m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5]);
+  }
+  return out;
+}
+
+/** names ordered so each comes after every table it references (among names); otherwise stable. */
+export function parentsFirst(names, sqlOf) {
+  const inSet = new Set(names);
+  const order = [];
+  const done = new Set();
+  const visit = (name, path) => {
+    if (done.has(name) || path.has(name)) return; // a cycle keeps the order it came in
+    path.add(name);
+    for (const parent of referencedTables(sqlOf.get(name))) if (parent !== name && inSet.has(parent)) visit(parent, path);
+    path.delete(name);
+    done.add(name);
+    order.push(name);
+  };
+  for (const n of names) visit(n, new Set());
+  return order;
 }
 
 /** True for a table declared WITHOUT ROWID: it has no rowid to page by. */
@@ -533,7 +569,7 @@ export async function move({ from, to, runner, log = console.log, method = "auto
     }
   }
 
-  const { copy, skipped } = planTables(oldTables, newNames);
+  const { copy, skipped } = planTables(oldTables, newNames, newTables);
   log(`   copying ${copy.length}: ${copy.join(", ")}`);
   for (const s of skipped) log(`   not copying ${s.name}: ${s.reason}`);
   if (!copy.length) throw new Error("nothing to copy");

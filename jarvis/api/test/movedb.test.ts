@@ -77,6 +77,25 @@ eq(
   ["_cf_KV", "account_profiles", "context_search", "context_search_config", "context_search_data", "cron_lock", "d1_migrations", "google_accounts", "oauth_states", "old_gone", "sqlite_sequence"],
 );
 eq("each with a reason", plan.skipped.every((s: { reason: string }) => s.reason.length > 5), true);
+
+// Parents before children: D1 imports in pieces, so a session row before its user fails the import.
+const fkTables = [
+  { name: "messages", sql: "CREATE TABLE messages (id TEXT, user_id TEXT REFERENCES users(id))" },
+  { name: "routine_events", sql: 'CREATE TABLE routine_events (id TEXT, routine_id TEXT REFERENCES "routines"(id))' },
+  { name: "routines", sql: "CREATE TABLE routines (id TEXT, user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE)" },
+  { name: "sessions", sql: "CREATE TABLE sessions (token TEXT, user_id TEXT, FOREIGN KEY (user_id) REFERENCES users(id))" },
+  { name: "users", sql: "CREATE TABLE users (id TEXT PRIMARY KEY)" },
+];
+const fkPlan = planTables(fkTables, fkTables.map((t) => t.name));
+eq("users comes before everything that points at it", fkPlan.copy.indexOf("users"), 0);
+eq("routines before routine_events", fkPlan.copy.indexOf("routines") < fkPlan.copy.indexOf("routine_events"), true);
+eq("otherwise the old order", fkPlan.copy, ["users", "messages", "routines", "routine_events", "sessions"]);
+const newOnlyFk = planTables(
+  [{ name: "a_child", sql: "CREATE TABLE a_child (id TEXT, p TEXT)" }, { name: "b_parent", sql: "CREATE TABLE b_parent (id TEXT)" }],
+  ["a_child", "b_parent"],
+  [{ name: "a_child", sql: "CREATE TABLE a_child (id TEXT, p TEXT REFERENCES b_parent(id))" }],
+);
+eq("a foreign key only the new schema has still orders the copy", newOnlyFk.copy, ["b_parent", "a_child"]);
 eq("the dropped table's reason", skipReason("old_gone") ?? plan.skipped.find((s: { name: string }) => s.name === "old_gone").reason, "not in the new database");
 eq("a virtual table under another name is left out too", skipReason("notes_fts", "CREATE VIRTUAL TABLE notes_fts USING fts5(x)"), "a virtual table");
 eq("an ordinary table is copied", skipReason("messages", "CREATE TABLE messages (id TEXT)"), null);
