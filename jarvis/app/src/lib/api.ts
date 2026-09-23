@@ -17,8 +17,6 @@ export type Settings = {
   autoApprove: boolean;
   /** The timeline of the day. Off until asked for. */
   contextEnabled: boolean;
-  /** How long the phone keeps the words. 0 keeps them. */
-  contextRetainDays: number;
   /** Whether OVOA does anything when nobody is talking to it. */
   agentEnabled: boolean;
   agentAutonomy: Autonomy;
@@ -224,7 +222,8 @@ export type ContextWeek =
       to: string;
       title?: string;
       summary?: string;
-      days: { date: string; weekday: string; happened: string[] }[];
+      /** `summary`: the day's kept summary, for a day past the 14 days (api/src/daysummary.ts). */
+      days: { date: string; weekday: string; happened: string[]; summary?: string }[];
       nothing?: undefined;
     };
 
@@ -1122,7 +1121,9 @@ export const api = {
 
   /**
    * Adds one moment to the timeline. The transcript is read on the server to
-   * write the summary and is then dropped: it is never stored there.
+   * write the summary, and kept there as the recording's words until the user
+   * deletes them (a recording made on purpose outlives the 14 days,
+   * api/src/retention.ts).
    */
   addContextBlock: (
     token: string,

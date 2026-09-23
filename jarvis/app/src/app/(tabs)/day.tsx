@@ -257,7 +257,7 @@ function PlanDay() {
             body={
               user.settings.contextEnabled
                 ? `${name} stays quiet unless something is worth interrupting you for. An empty day means nothing needed you.`
-                : "Turn on Timeline in Settings and what you record gets summarised into a day you can ask about later. The words themselves are never stored on the server."
+                : "Turn on Timeline in Settings and what you record gets summarised into a day you can ask about later. A recording's words are kept with it until you delete them."
             }
             action={
               user.settings.contextEnabled ? undefined : { label: "Open Settings", onPress: () => router.navigate("/settings") }

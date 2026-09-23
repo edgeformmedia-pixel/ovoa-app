@@ -202,15 +202,13 @@ export default function Settings() {
     if (!on) return patch({ contextEnabled: false });
     Alert.alert(
       "Keep a record of your days?",
-      "Only what you record. Each recording is summarised, the summary is kept, and the words are dropped — they are never stored on the server. Nothing is captured in the background, ever.",
+      "Only what you record. Each recording is summarised, and its words and summary are kept on OVOA's server until you delete them. Everything else about your day is deleted after 14 days, apart from a short summary of each day. Nothing is captured in the background, ever.",
       [
         { text: "Not now", style: "cancel" },
         { text: "Turn on", onPress: () => patch({ contextEnabled: true }) },
       ],
     );
   };
-
-  const setRetention = (contextRetainDays: number) => patch({ contextRetainDays });
 
   return (
     <View style={styles.page}>
@@ -289,7 +287,10 @@ export default function Settings() {
       </Section>
 
       <Section title="Memory">
-        <Setting label="Remember things about me" about={`${assistantName || "Your assistant"} learns facts from your chats.`}>
+        <Setting
+          label="Remember things about me"
+          about={`${assistantName || "Your assistant"} learns facts from your chats and forgets them after 14 days, unless you asked it to remember them ("remember that I'm vegan").`}
+        >
           <Toggle value={user.settings.memoryEnabled} onValueChange={toggleMemory} />
         </Setting>
 
@@ -494,28 +495,12 @@ export default function Settings() {
       <Section title="Timeline">
         <Setting
           label="Keep a record of my days"
-          about={`What you record gets summarised into a day ${assistantName || "OVOA"} can look things up in — "what did I do Tuesday", "did I ever call Sarah back". Only ever what you chose to record: nothing is captured in the background. The words themselves are never stored on the server. They're read once to write the summary and then dropped; the recordings stay on this phone.`}
+          about={`What you record gets summarised into a day ${assistantName || "OVOA"} can look things up in — "what did I do Tuesday", "did I ever call Sarah back". Only ever what you chose to record: nothing is captured in the background. A recording's words and summary are kept on OVOA's server until you delete them, and the audio stays on this phone. Everything else about your day is deleted after 14 days, apart from a short summary of each day.`}
         >
           <Toggle value={user.settings.contextEnabled} onValueChange={toggleContext} />
         </Setting>
         {user.settings.contextEnabled && (
           <>
-            <Text style={styles.label}>Forget summaries after</Text>
-            <View style={styles.segment}>
-              {RETENTION.map((r) => (
-                <Pressable
-                  key={r.days}
-                  onPress={() => setRetention(r.days)}
-                  style={[styles.segmentItem, user.settings.contextRetainDays === r.days && styles.segmentOn]}
-                >
-                  <Text
-                    style={[styles.segmentText, user.settings.contextRetainDays === r.days && styles.segmentTextOn]}
-                  >
-                    {r.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
             <Button
               label="Forget the last hour"
               danger
@@ -663,13 +648,6 @@ const AUTONOMY = [
   },
 ];
 
-const RETENTION = [
-  { days: 14, label: "2 weeks" },
-  { days: 90, label: "3 months" },
-  { days: 365, label: "A year" },
-  { days: 0, label: "Keep" },
-];
-
 /** 450 to "07:30". */
 const minutesToClock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 
@@ -702,7 +680,7 @@ const LISTEN_MODES = [
 
 /**
  * The location timeline: off until turned on here, because it needs "Always"
- * location and keeps where they've been for 14 days (places for good).
+ * location and keeps where they've been for 14 days (named places for good).
  */
 function LocationTimeline() {
   const [on, setOn] = useState(false);
