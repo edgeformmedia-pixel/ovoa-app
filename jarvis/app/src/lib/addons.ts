@@ -150,6 +150,21 @@ export const ADDONS: Addon[] = [
     needs: "assistant",
     keywords: "history words search conversation",
   },
+  {
+    // Installing it also tells the server to count and ask (lib/food.ts), and
+    // the server can install it: an eating goal in setup, or "be more exact".
+    id: "calorie",
+    name: "Calorie",
+    by: "OVOA",
+    about: "Say what you ate and OVOA keeps count: calories and protein, today and the last two weeks.",
+    usage: "some",
+    usageWhy: "OVOA works out the calories in the reply when you mention food.",
+    icon: "restaurant-outline",
+    tone: "green",
+    href: "/calorie" as Href,
+    needs: "assistant",
+    keywords: "food calories protein eat meal nutrition tracker",
+  },
 
   // Developer: listed only in dev mode, and installed from the start for it.
   {
