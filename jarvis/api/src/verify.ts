@@ -47,8 +47,12 @@ export const needsVerificationBody = () => ({ error: "needs_verification" as con
 
 export type VerifyRow = { must_verify: number | null; email_verified_at: number | null };
 
-/** Blocked until the code is typed: made by the app's sign-up since this shipped, and not proven yet. Pure. */
-export const mustVerifyNow = (row: VerifyRow | null | undefined) => !!row && !!row.must_verify && row.email_verified_at == null;
+/**
+ * Blocked until the code is typed: made by the app's sign-up since this shipped
+ * (must_verify 1), and not proven yet. 2 is the same sign-up on a Worker that
+ * couldn't send a code, not held (migration 0045). Pure.
+ */
+export const mustVerifyNow = (row: VerifyRow | null | undefined) => !!row && Number(row.must_verify) === 1 && row.email_verified_at == null;
 
 // Per isolate, and only the answer that can't change back: once proven (or an
 // account from before, which never has to be), always so. Every signed-in

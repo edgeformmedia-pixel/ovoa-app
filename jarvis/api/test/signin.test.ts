@@ -503,8 +503,63 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
     eq("the second signs in to it and says the password didn't change", [second.status, second.body?.passwordChanged], [200, false]);
     eq("so the first password is still the one", [await login("eve@example.com", "firstpassword"), await login("eve@example.com", "otherpassword")], [200, 401]);
 
+    // An account from before sign-ups had to prove their address: a proof only stamps it.
+    const old = await call("POST", "/auth/signup", { email: "olga@example.com", password: "password123", name: "Olga" });
+    const olgaId = String(row(sqlite, "SELECT id FROM users WHERE email = 'olga@example.com'")?.id);
+    eq("a sign-up where no code can go isn't held, but isn't from before", row(sqlite, "SELECT must_verify m FROM users WHERE id = ?", olgaId)?.m, 2);
+    sqlite.prepare("UPDATE users SET must_verify = 0 WHERE id = ?").run(olgaId);
+    sqlite
+      .prepare("INSERT INTO google_accounts (id, user_id, email, is_default, scopes, refresh_token_enc, connected_at) VALUES (?, ?, ?, 1, '', 'x', ?)")
+      .run("g-olga", olgaId, "olga@gmail.com", Date.now());
+    const rOlga = await viaGoogle("olga@example.com", "Olga");
+    eq("an account from before is signed straight in, not taken back", [rOlga.body?.user?.id, "ticket" in (rOlga.body ?? {})], [olgaId, false]);
+    eq("and is proven now", typeof row(sqlite, "SELECT email_verified_at v FROM users WHERE id = ?", olgaId)?.v, "number");
+    eq("its phone stays signed in", await me(old.body.token), 200);
+    eq("its password still works", await login("olga@example.com", "password123"), 200);
+    eq("and its Google account stays", row(sqlite, "SELECT count(*) n FROM google_accounts WHERE user_id = ?", olgaId)?.n, 1);
+
+    // A Google connect the registrant had open can't finish into the account once it's taken back.
+    const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+    const connectState = async (token: string) =>
+      new URL((await call("POST", "/google/connect", { returnUrl: "ovoa://google-callback" }, bearer(token))).body.url).searchParams.get("state")!;
+    const googlesOf = (id: string) => row(sqlite, "SELECT count(*) n FROM google_accounts WHERE user_id = ?", id)?.n;
+    const sq = await call("POST", "/auth/signup", { email: "gus@example.com", password: "password123", name: "Mallory" });
+    const gusId = String(row(sqlite, "SELECT id FROM users WHERE email = 'gus@example.com'")?.id);
+    const early = await connectState(sq.body.token);
+    const rGus = await viaGoogle("gus@example.com", "Gus");
+    eq("the owner's proof takes it back", rGus.body?.existing, true);
+    eq("and the registrant's connect in progress with it", row(sqlite, "SELECT count(*) n FROM oauth_states WHERE user_id = ?", gusId)?.n, 0);
+    const lateCb = await call("GET", `/google/callback?state=${early}&code=abc`);
+    eq("so finishing Google's page afterwards connects nothing", [lateCb.location, googlesOf(gusId)], [null, 0]);
+    // One started from a session another isolate still trusted for its last minute.
+    sqlite
+      .prepare("INSERT INTO oauth_states (state, user_id, code_verifier, return_url, expires_at, session_hash) VALUES (?, ?, 'v', ?, ?, ?)")
+      .run("cached-state", gusId, "ovoa://google-callback", Date.now() + 60_000, await sha256(sq.body.token));
+    const cachedCb = await call("GET", "/google/callback?state=cached-state&code=abc");
+    eq(
+      "nor one from a signed-out session",
+      [cachedCb.location, googlesOf(gusId)],
+      ["ovoa://google-callback?google=error&message=You+were+signed+out.+Sign+in+and+connect+again.", 0],
+    );
+    const gus = await call("POST", "/auth/email/signup", { ticket: rGus.body.ticket, name: "Gus", password: "guspassword1", session: "app" });
+    const stub = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url === "https://oauth2.googleapis.com/token") {
+        return Response.json({ access_token: "a", refresh_token: "r", expires_in: 3600, scope: "openid" });
+      }
+      if (url.startsWith("https://openidconnect.googleapis.com/")) return Response.json({ email: "gus@gmail.com", name: "Gus" });
+      return stub(input, init);
+    }) as typeof fetch;
+    try {
+      const okCb = await call("GET", `/google/callback?state=${await connectState(gus.body.token)}&code=abc`);
+      eq("the owner's own connect still works", [okCb.location, googlesOf(gusId)], ["ovoa://google-callback?google=connected", 1]);
+    } finally {
+      globalThis.fetch = stub;
+    }
+
     // Cancelling on Google's page.
-    const s3 = await call("POST", "/auth/google/start", { returnUrl: "ovoa://google-signin" });
+    const s3 =await call("POST", "/auth/google/start", { returnUrl: "ovoa://google-signin" });
     const cb3 = await call("GET", `/google/callback?state=${new URL(s3.body.url).searchParams.get("state")}&error=access_denied`);
     eq("cancelling goes back to the app quietly", cb3.location, "ovoa://google-signin?error=cancelled");
 
