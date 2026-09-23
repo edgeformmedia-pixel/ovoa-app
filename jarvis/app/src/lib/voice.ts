@@ -1057,12 +1057,17 @@ export function useConversation(
   const keepsAudio = () => background || standbyRef.current;
   /**
    * Wake mode with nothing sent until the name: the phone's ear, when the
-   * build has it and nothing else needs the microphone kept running between
-   * turns (the twist standby and Always listen both do, and keep the old way).
+   * build has it. Always listen uses it too (2026-09-23): the ear owns the
+   * microphone natively and stays open through every turn, so it keeps running
+   * in the background the way the old stream did, and it can run day and night
+   * because room talk never leaves the phone and costs nothing. Only the twist
+   * standby keeps the old way, since it listens for a click, not the name.
+   * Without the ear (older iPhone, no on-device recognition) Always listen falls
+   * back to the old way and its limits: that one streams the room to Deepgram.
    */
   const wakeRef = useRef(wake);
   wakeRef.current = wake;
-  const useNameEar = () => wakeRef.current && nameEarOk.current && !keepsAudio();
+  const useNameEar = () => (wakeRef.current || background) && nameEarOk.current && !standbyRef.current;
 
   useEffect(() => {
     speaker.current = createSpeaker(token);
@@ -1597,10 +1602,11 @@ const alwaysListenListeners = new Set<(on: boolean) => void>();
 onSignOut("always listen", () => alwaysListenPref.set(false));
 
 /**
- * Always listen. Since 2026-09-20 it's only reachable from Dev tools: ambient
- * listening was ruled out for the product on legal grounds, and the switch
- * stays for development. Dev tools sits outside the assistant, so the provider
- * hears about a change through onChange rather than by rendering the switch.
+ * Always listen, in Settings → Danger zone (Pro). Since 2026-09-23 it runs on
+ * the phone's own ear, so nothing leaves the phone until the name is heard:
+ * that is what keeps it on the right side of the 2026-09-20 ruling against
+ * ambient capture. Dev tools has a switch too, and sits outside the assistant,
+ * so the provider hears about a change through onChange.
  */
 export const alwaysListenPref = {
   get: async () => (await storage.get(ALWAYS_LISTEN_KEY).catch(() => null)) === "1",

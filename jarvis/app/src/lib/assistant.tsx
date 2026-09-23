@@ -721,8 +721,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         ? "off"
         : null;
   useEffect(() => showIsland(islandStatus), [islandStatus, inForeground]);
-  // And green on the clip while listening.
-  const clipListening = bandPhase ? bandPhase === "listening" : conversation.phase === "listening";
+  // And the clip's light on whenever the microphone is: listening, and while a
+  // reply is worked out or read, since the ear stays open through the turn.
+  // Off when the loop is parked ("waiting"), because then the mic really is off.
+  const micOn = (p: VoicePhase) => p === "listening" || p === "thinking" || p === "speaking";
+  const clipListening = bandPhase ? bandPhase === "listening" : micOn(conversation.phase);
   useEffect(() => clip.setListeningLight(clipListening), [clipListening]);
 
   // A summoned turn with nothing else keeping the microphone open: close it after a quiet spell.

@@ -250,37 +250,6 @@ export default function Settings() {
       </Section>
 
       <Section title="How to start talking">
-        {!can.wake ? (
-          <PartOfProLine
-            label="Always listen"
-            what="The microphone stays on and answers when you say its name. On your plan, double-click the band's button to talk, or tap the orb on Talk."
-          />
-        ) : (
-        <View style={styles.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.label}>Always listen</Text>
-            <Text style={styles.meta}>
-              The microphone stays on and answers when you say its name. Off: double-click the band's button to talk.
-              With it on, a double click turns it off.
-            </Text>
-          </View>
-          <Toggle
-            value={alwaysListen}
-            onValueChange={(on) =>
-              on
-                ? Alert.alert(
-                    "Always listen?",
-                    "The microphone stays on, even in the background, and hears everything around you, including other people. Turn it off here, from the Assistant tab, or with a double click on the band.",
-                    [
-                      { text: "Cancel", style: "cancel" },
-                      { text: "Turn on", style: "destructive", onPress: () => setAlwaysListen(true) },
-                    ],
-                  )
-                : setAlwaysListen(false)
-            }
-          />
-        </View>
-        )}
         <View style={styles.segment}>
           {LISTEN_MODES.map((m) => (
             <Pressable
@@ -292,11 +261,11 @@ export default function Settings() {
             </Pressable>
           ))}
         </View>
-        <Text style={styles.meta}>
+        <About>
           {listenMode === "wake" && !can.wake
             ? "Saying its name to start is part of Pro. On your plan, tap the orb on Talk and speak."
             : LISTEN_MODES.find((m) => m.mode === listenMode)?.hint}
-        </Text>
+        </About>
         <Text style={[styles.label, { marginTop: 18 }]}>Microphone</Text>
         <View style={styles.segment}>
           {MIC_SOURCES.map((m) => (
@@ -309,7 +278,7 @@ export default function Settings() {
             </Pressable>
           ))}
         </View>
-        <Text style={styles.meta}>{MIC_SOURCES.find((m) => m.source === micSource)?.hint}</Text>
+        <About>{MIC_SOURCES.find((m) => m.source === micSource)?.hint}</About>
       </Section>
 
       <Section title="Google accounts">
@@ -321,13 +290,9 @@ export default function Settings() {
       </Section>
 
       <Section title="Memory">
-        <View style={styles.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.label}>Remember things about me</Text>
-            <Text style={styles.meta}>{assistantName || "Your assistant"} learns facts from your chats.</Text>
-          </View>
+        <Setting label="Remember things about me" about={`${assistantName || "Your assistant"} learns facts from your chats.`}>
           <Toggle value={user.settings.memoryEnabled} onValueChange={toggleMemory} />
-        </View>
+        </Setting>
 
         {memories === null ? (
           <ActivityIndicator color={colors.now} />
@@ -391,10 +356,10 @@ export default function Settings() {
       <Section title="Your day">
         <LocationTimeline />
         <Button label="Transcripts — everything said" onPress={() => router.push("/transcripts" as Href)} />
-        <Text style={styles.meta}>
-          Wake and bed times, work hours, medications and routines. Going through it again adds to what's there; it
+        <About>
+          Wake and bed times, work hours, medications and routines. Going through setup again adds to what's there; it
           doesn't remove anything.
-        </Text>
+        </About>
         <Button
           label="Go through setup again"
           onPress={async () => {
@@ -411,10 +376,10 @@ export default function Settings() {
       )}
 
       <Section title="Something went wrong">
-        <Text style={styles.meta}>
+        <About>
           Tell us what happened and the app sends what it was doing at the time. No passwords or sign-in details go
           with it.
-        </Text>
+        </About>
         <Button label="Report a problem" onPress={() => router.push("/report-bug" as Href)} />
       </Section>
 
@@ -429,16 +394,12 @@ export default function Settings() {
       {!free && (
       <>
       <Section title="Texts">
-        <View style={styles.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.label}>Send texts automatically</Text>
-            <Text style={styles.meta}>
-              Hands each text to your "{SEND_TEXT_SHORTCUT}" shortcut instead of opening Messages, so it goes
-              without tapping Send. Your phone switches to Shortcuts for a moment and comes back.
-            </Text>
-          </View>
+        <Setting
+          label="Send texts automatically"
+          about={`Hands each text to your "${SEND_TEXT_SHORTCUT}" shortcut instead of opening Messages, so it goes without tapping Send. Your phone switches to Shortcuts for a moment and comes back.`}
+        >
           <Toggle value={autoSendTexts} onValueChange={toggleAutoSendTexts} />
-        </View>
+        </Setting>
         {autoSendTexts && (
           <Button label="Open Shortcuts" onPress={() => Linking.openURL("shortcuts://create-shortcut")} />
         )}
@@ -452,16 +413,12 @@ export default function Settings() {
           />
         ) : (
         <>
-        <View style={styles.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.label}>Let {assistantName || "OVOA"} work on its own</Text>
-            <Text style={styles.meta}>
-              It checks things between conversations — what's actually on today, what you said you'd do — and tells you
-              only when it's worth interrupting you. Everything it does is logged.
-            </Text>
-          </View>
+        <Setting
+          label={`Let ${assistantName || "OVOA"} work on its own`}
+          about="It checks things between conversations — what's actually on today, what you said you'd do — and tells you only when it's worth interrupting you. Everything it does is logged."
+        >
           <Toggle value={user.settings.agentEnabled} onValueChange={toggleAgent} />
-        </View>
+        </Setting>
 
         {user.settings.agentEnabled && (
           <>
@@ -483,11 +440,10 @@ export default function Settings() {
                 </Pressable>
               ))}
             </View>
-            <Text style={styles.meta}>{AUTONOMY.find((a) => a.value === user.settings.agentAutonomy)?.hint}</Text>
-            <Text style={styles.meta}>
-              At every level it can't send a message or email on its own, and can't delete anything. Those always wait
-              for you.
-            </Text>
+            <About>
+              {AUTONOMY.find((a) => a.value === user.settings.agentAutonomy)?.hint} At every level it can't send a
+              message or email on its own, and can't delete anything. Those always wait for you.
+            </About>
 
             <Text style={[styles.label, { marginTop: 8 }]}>Don't disturb me between</Text>
             <View style={styles.row}>
@@ -511,10 +467,10 @@ export default function Settings() {
                 keyboardType="numbers-and-punctuation"
               />
             </View>
-            <Text style={styles.meta}>
+            <About>
               It still works during these hours; it just saves what it found until morning. Something about to be missed
               tonight comes through anyway.
-            </Text>
+            </About>
 
             <Button label="What it's set up to do" onPress={() => router.push("/agent")} />
           </>
@@ -524,23 +480,14 @@ export default function Settings() {
       </Section>
 
       <Section title="Timeline">
-        <View style={styles.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.label}>Keep a record of my days</Text>
-            <Text style={styles.meta}>
-              What you record gets summarised into a day {assistantName || "OVOA"} can look things up in — "what did I
-              do Tuesday", "did I ever call Sarah back". Only ever what you chose to record: nothing is captured in the
-              background.
-            </Text>
-          </View>
+        <Setting
+          label="Keep a record of my days"
+          about={`What you record gets summarised into a day ${assistantName || "OVOA"} can look things up in — "what did I do Tuesday", "did I ever call Sarah back". Only ever what you chose to record: nothing is captured in the background. The words themselves are never stored on the server. They're read once to write the summary and then dropped; the recordings stay on this phone.`}
+        >
           <Toggle value={user.settings.contextEnabled} onValueChange={toggleContext} />
-        </View>
+        </Setting>
         {user.settings.contextEnabled && (
           <>
-            <Text style={styles.meta}>
-              The words themselves are never stored on the server. They're read once to write the summary and then
-              dropped; the recordings stay on this phone.
-            </Text>
             <Text style={styles.label}>Forget summaries after</Text>
             <View style={styles.segment}>
               {RETENTION.map((r) => (
@@ -581,17 +528,41 @@ export default function Settings() {
 
       <Section title="Danger zone">
         {!free && (
-        <View style={styles.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.label}>Approve for me</Text>
-            <Text style={styles.meta}>
-              Skip approval cards: {assistantName || "your assistant"} sends emails, deletes things, and changes your
-              contacts, calendar, and reminders right away. iOS still asks you to tap Send for emails, and for texts unless "Send texts automatically" is on.
-            </Text>
-          </View>
+        <Setting
+          label="Approve for me"
+          about={`Skip approval cards: ${assistantName || "your assistant"} sends emails, deletes things, and changes your contacts, calendar, and reminders right away. iOS still asks you to tap Send for emails, and for texts unless "Send texts automatically" is on.`}
+        >
           <Toggle value={user.settings.autoApprove} onValueChange={toggleAutoApprove} />
-        </View>
+        </Setting>
         )}
+        {!free &&
+          (!can.wake ? (
+            <PartOfProLine
+              label="Always listen"
+              what="The microphone stays on day and night, and answers when you say its name."
+            />
+          ) : (
+            <Setting
+              label="Always listen"
+              about={`The microphone stays on day and night, on every screen and with the app in the background, and answers when you say "${assistantName || "OVOA"}". Your iPhone listens for the name itself: nothing you or anyone else says leaves the phone until the name is heard. While the microphone is on, the band's light stays on. Turn it off here, from the Talk tab, or with a double click on the band.`}
+            >
+              <Toggle
+                value={alwaysListen}
+                onValueChange={(on) =>
+                  on
+                    ? Alert.alert(
+                        "Always listen?",
+                        `The microphone stays on day and night, even with the app in the background, and hears everyone around you. Your iPhone listens for "${assistantName || "OVOA"}" on its own; nothing is sent until it hears the name. The band's light stays on while it listens.`,
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          { text: "Turn on", style: "destructive", onPress: () => setAlwaysListen(true) },
+                        ],
+                      )
+                    : setAlwaysListen(false)
+                }
+              />
+            </Setting>
+          ))}
         <Button
           label="Delete account"
           danger
@@ -619,6 +590,42 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       <GroupLabel>{title}</GroupLabel>
       <View style={styles.section}>{children}</View>
     </>
+  );
+}
+
+/**
+ * A setting by its name alone. What it does is folded away until the name is
+ * tapped: a page of explanations is a long scroll to find one switch.
+ */
+function Setting({ label, about, children }: { label: string; about: string; children?: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={styles.row}>
+      <Pressable
+        style={{ flex: 1, gap: 4 }}
+        onPress={() => setOpen((o) => !o)}
+        hitSlop={6}
+        accessibilityRole="button"
+        accessibilityHint={open ? "Hides what this does" : "Shows what this does"}
+      >
+        <Text style={styles.label}>
+          {label} <Text style={styles.chevron}>{open ? "▾" : "▸"}</Text>
+        </Text>
+        {open && <Text style={styles.meta}>{about}</Text>}
+      </Pressable>
+      {children}
+    </View>
+  );
+}
+
+/** An explanation with no switch of its own, folded away the same way. */
+function About({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Pressable onPress={() => setOpen((o) => !o)} hitSlop={6} accessibilityRole="button" style={{ gap: 4 }}>
+      <Text style={styles.chevron}>{open ? "What this does ▾" : "What this does ▸"}</Text>
+      {open && <Text style={styles.meta}>{children}</Text>}
+    </Pressable>
   );
 }
 
@@ -709,16 +716,12 @@ function LocationTimeline() {
   };
   return (
     <>
-      <View style={styles.row}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.label}>Location timeline</Text>
-          <Text style={styles.meta}>
-            Learns home, work and the places you go, so reminders can wait for where you'll be. Where you went is kept 14
-            days; named places until you remove them.
-          </Text>
-        </View>
+      <Setting
+        label="Location timeline"
+        about="Learns home, work and the places you go, so reminders can wait for where you'll be. Where you went is kept 14 days; named places until you remove them."
+      >
         <Toggle value={on} onValueChange={toggle} />
-      </View>
+      </Setting>
       {problem && <Text style={[styles.meta, { color: colors.stop }]}>{problem}</Text>}
     </>
   );
