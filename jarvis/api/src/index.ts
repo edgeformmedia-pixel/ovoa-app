@@ -505,8 +505,9 @@ app.post("/auth/signup", async (c) => {
   // reaches only /me, sign-out, deleting it, and the code routes (verify.ts).
   // The first code goes now; the app's code step asks for another if it didn't.
   // Where no code can go out at all (a Worker without RESEND_API_KEY), it isn't
-  // held: the app's code step can be put off, as for accounts from before.
-  const id = await insertUser(c.env.DB, { email, password, name, verified: false, mustVerify: codesAvailable(c.env) });
+  // held: the app's code step can be put off, as for accounts from before
+  // (though unlike those, a proof by someone else still takes it back: insertUser).
+  const id =await insertUser(c.env.DB, { email, password, name, verified: false, mustVerify: codesAvailable(c.env) });
   const token = await createSession(c.env.DB, id);
   const code = await sendAccountCode(c.env, { email, name }).catch((err: unknown) => {
     console.error("ovoa.err signup: couldn't send the first code", err);
@@ -520,9 +521,12 @@ app.post("/auth/signup", async (c) => {
  * A new account and its settings row, in one batch. `verified`: the address
  * was proven first (emailauth.ts). The app's own signup leaves that column out
  * and proves the address afterwards, with a code (verify.ts); `mustVerify`
- * holds it until then, written in the same INSERT, so an account can't exist
- * without the hold it was meant to have. `password` null: none (Sign in with
- * Apple), a hash nothing matches (disown()).
+ * holds it until then (must_verify 1), written in the same INSERT, so an
+ * account can't exist without the hold it was meant to have. Without it the
+ * row says 2: unproven and made since sign-ups had to prove their address, but
+ * not held (migration 0045), so a proof by someone else still takes it back
+ * (provenAccount). `password` null: none (Sign in with Apple), a hash nothing
+ * matches (disown()).
  */
 async function insertUser(
   db: D1Database,
@@ -546,7 +550,7 @@ async function insertUser(
           .bind(id, email, hash, salt, name, now, now)
       : db
           .prepare("INSERT INTO users (id, email, password_hash, password_salt, name, created_at, must_verify) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(id, email, hash, salt, name, now, mustVerify ? 1 : 0),
+          .bind(id, email, hash, salt, name, now, mustVerify ? 1 : 2),
     db.prepare("INSERT INTO settings (user_id, assistant_name, updated_at) VALUES (?, ?, ?)").bind(id, "OVOA", now),
   ]);
   return id;
@@ -604,13 +608,15 @@ app.post("/auth/login", async (c) => {
 // ends one of two ways:
 //
 //   { token, user }          the address has an account whose address was
-//                            proven before: signed in, with a "web" session
+//                            proven before, or one from before sign-ups had to
+//                            prove it (now stamped proven): signed in, with a
+//                            "web" session, its password and phones untouched
 //   { ticket, email, name }  it hasn't: POST /auth/email/signup spends the ticket
 //                            with a name and the password the app will ask for.
 //                            `existing: true` when there is an account, made
-//                            with this address by someone who never proved it:
-//                            the proof has taken it back (disown), and the
-//                            password given with the ticket becomes its password
+//                            with this address since then by someone who never
+//                            proved it: the proof has taken it back (disown), and
+//                            the password given with the ticket becomes its password
 //
 // The app's own "Continue with Google" (signin.ts, further down) ends the same
 // two ways, with an "app" session, and its tickets are spent with
@@ -646,34 +652,45 @@ async function signOutEverywhere(db: D1Database, userId: string) {
  * and sessions of its own. When the address is proven that is taken back
  * before anything else: the password stops matching (verifyPassword compares
  * lengths first, as with NO_SUCH_USER), everyone is signed out, and any Google
- * account connected to it goes (whoever made it may have connected their own).
- * The prover then picks a new password (/auth/email/signup), or Apple signs
- * them in. That covers an app sign-up still waiting for its code (verify.ts)
- * as well. Existing accounts from before verification pay this once, at their
- * first proof. Proving the address of the account you're signed in to, with
- * the code in the app (POST /me/email/verify), isn't this: it only stamps it.
+ * account connected to it goes (whoever made it may have connected their own),
+ * with any Google connect still on its consent page (oauth.ts also checks the
+ * session that started one is still signed in, for a session another isolate
+ * still trusts for up to a minute). The prover then picks a new password
+ * (/auth/email/signup), or Apple signs them in. That covers an app sign-up
+ * still waiting for its code (verify.ts) as well. Accounts from before sign-ups
+ * had to prove their address (must_verify 0) aren't this: they're the people
+ * already using OVOA, so their first proof only stamps them, their password,
+ * phones and Google left alone (provenAccount). Proving the address of the account you're signed in to, with
+ * the code in the app (POST /me/email/verify), isn't this either: it only stamps it.
  */
 async function disown(db: D1Database, userId: string) {
   await db.batch([
     db.prepare("UPDATE users SET password_hash = '' WHERE id = ?").bind(userId),
     db.prepare("DELETE FROM google_accounts WHERE user_id = ?").bind(userId),
+    db.prepare("DELETE FROM oauth_states WHERE user_id = ?").bind(userId),
   ]);
   await signOutEverywhere(db, userId);
 }
 
 /**
  * The account with a just-proven address, if there is one, and whether its
- * address was proven before this. One that wasn't has been disowned.
+ * address was proven before this. One made since sign-ups had to prove it
+ * (must_verify 1 or 2) that wasn't has been disowned. One from before (0) is
+ * stamped proven and counts as proven before: nothing is taken from it.
  */
 async function provenAccount(db: D1Database, email: string) {
   const user = await db
-    .prepare("SELECT id, email_verified_at FROM users WHERE email = ?")
+    .prepare("SELECT id, email_verified_at, must_verify FROM users WHERE email = ?")
     .bind(email)
-    .first<{ id: string; email_verified_at: number | null }>();
+    .first<{ id: string; email_verified_at: number | null; must_verify: number | null }>();
   if (!user) return null;
-  const provenBefore = user.email_verified_at != null;
-  if (!provenBefore) await disown(db, user.id);
-  return { id: user.id, provenBefore };
+  if (user.email_verified_at != null) return { id: user.id, provenBefore: true };
+  if (!user.must_verify) {
+    await markVerified({ DB: db }, user.id);
+    return { id: user.id, provenBefore: true };
+  }
+  await disown(db, user.id);
+  return { id: user.id, provenBefore: false };
 }
 
 /**
@@ -848,7 +865,8 @@ app.post("/auth/email/signup", async (c) => {
   // (afterProven's `existing`), or one made with the address since the ticket.
   // The ticket proves the address is theirs, so the password picked here
   // becomes its password, whoever made it is signed out, and a Google account
-  // they connected goes (as in disown). One whose address was proven before is
+  // they connected goes, with any connect of theirs still on Google's consent
+  // page (as in disown). One whose address was proven before is
   // signed in to as it is, its password left alone.
   const claimed = !created && user.email_verified_at == null;
   if (claimed) {
@@ -858,6 +876,7 @@ app.post("/auth/email/signup", async (c) => {
         .prepare("UPDATE users SET password_hash = ?, password_salt = ?, name = ?, email_verified_at = ? WHERE id = ?")
         .bind(hash, salt, name, Date.now(), id),
       c.env.DB.prepare("DELETE FROM google_accounts WHERE user_id = ?").bind(id),
+      c.env.DB.prepare("DELETE FROM oauth_states WHERE user_id = ?").bind(id),
     ]);
     await signOutEverywhere(c.env.DB, id);
   }

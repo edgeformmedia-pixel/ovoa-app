@@ -113,6 +113,7 @@ eq("nor agreeing to AI", openWhileUnverified("POST", "/me/consent"), false);
 eq("new and unproven: held", mustVerifyNow({ must_verify: 1, email_verified_at: null }), true);
 eq("new and proven: free to go", mustVerifyNow({ must_verify: 1, email_verified_at: 5 }), false);
 eq("from before, unproven: not held by the server", mustVerifyNow({ must_verify: 0, email_verified_at: null }), false);
+eq("new where no code could go: not held either", mustVerifyNow({ must_verify: 2, email_verified_at: null }), false);
 
 {
   addUser("new", "new@mail.ovoa.ai", { mustVerify: true });

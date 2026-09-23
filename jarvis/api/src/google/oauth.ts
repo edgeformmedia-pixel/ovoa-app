@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { sha256 } from "../auth";
 import { base64url, decrypt, encrypt } from "../crypto";
 import { finishGoogleSignin, takeGoogleSigninState } from "../signin";
 import type { Env, Vars } from "../types";
@@ -219,11 +220,14 @@ googleAuthed.post("/google/connect", async (c) => {
     new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))),
   );
 
+  // Which session asked: the callback connects only while it's still signed in
+  // (migration 0045), so an account taken back from whoever made it (index.ts
+  // disown) can't have their consent page finish into it afterwards.
   await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM oauth_states WHERE expires_at < ?").bind(Date.now()),
     c.env.DB
-      .prepare("INSERT INTO oauth_states (state, user_id, code_verifier, return_url, expires_at) VALUES (?, ?, ?, ?, ?)")
-      .bind(state, c.var.userId, verifier, returnUrl, Date.now() + STATE_TTL_MS),
+      .prepare("INSERT INTO oauth_states (state, user_id, code_verifier, return_url, expires_at, session_hash) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(state, c.var.userId, verifier, returnUrl, Date.now() + STATE_TTL_MS, await sha256(c.var.token)),
   ]);
 
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -333,11 +337,21 @@ googlePublic.get("/google/callback", async (c) => {
   if (signin) return finishGoogleSignin(c.env, signin, { code, error });
 
   const row = await c.env.DB
-    .prepare("DELETE FROM oauth_states WHERE state = ? RETURNING user_id, code_verifier, return_url, expires_at")
+    .prepare("DELETE FROM oauth_states WHERE state = ? RETURNING user_id, code_verifier, return_url, expires_at, session_hash")
     .bind(state)
-    .first<{ user_id: string; code_verifier: string; return_url: string | null; expires_at: number }>();
+    .first<{ user_id: string; code_verifier: string; return_url: string | null; expires_at: number; session_hash: string | null }>();
   if (!row || row.expires_at < Date.now()) return finish(null, "error", "This link expired. Try connecting again.");
   if (error || !code) return finish(row.return_url, "error", error === "access_denied" ? "You cancelled" : error);
+  // Only for the session that started it, while it's still signed in: not once
+  // it has signed out or been signed out (a new password set elsewhere, or the
+  // address taken back from whoever made the account: index.ts disown).
+  const asker = row.session_hash
+    ? await c.env.DB
+        .prepare("SELECT 1 AS ok FROM sessions WHERE token_hash = ? AND user_id = ? AND expires_at > ?")
+        .bind(row.session_hash, row.user_id, Date.now())
+        .first<{ ok: number }>()
+    : null;
+  if (!asker) return finish(row.return_url, "error", "You were signed out. Sign in and connect again.");
 
   const { ok, body } = await tokenRequest(c.env, {
     grant_type: "authorization_code",
