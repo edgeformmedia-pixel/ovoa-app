@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { say } from "./obs";
-import { sttCostMicro, ttsCostMicro } from "./pricing";
+import { ttsCostMicro } from "./pricing";
 import type { Env, Vars } from "./types";
 
 // Plans: free, base and pro (docs/paywall/SPEC.md is the source of truth).
@@ -15,7 +15,7 @@ import type { Env, Vars } from "./types";
 //   1. Nobody who pays is locked out because ovoa.ai had a blip. The last good
 //      answer stands for a day, and until the site's key is set on this Worker
 //      everyone is treated as pro, so shipping this can't lock out a tester.
-//   2. A free person never costs a model call, a voice or a transcription: every
+//   2. A free person never costs a model call or a voice: every
 //      route that spends is behind requirePlan below, and the cron jobs that
 //      call models ask mayRunFor first.
 //   3. At its cap, Base costs under $0.25 a day and Pro under $0.65 (the
@@ -71,8 +71,7 @@ export const ROUTE_TIERS: RouteRule[] = [
   // connection, a Siri key, a job. A downgrade must never trap anything.
   { method: "DELETE", path: /./, tier: "free", why: "deleting your own data or connections" },
 
-  // Pro: the two features that cost the most to run.
-  { method: "POST", path: /^\/voice\/token$/, query: (q) => q("mode") === "wake", tier: "pro", why: "open-mic wake word streaming" },
+  // Pro: background work, which runs a model on its own schedule.
   { method: "POST", path: /^\/agent\/(jobs|goals)$/, tier: "pro", why: "setting up background work" },
   { method: "POST", path: /^\/agent\/jobs\/[^/]+\/run$/, tier: "pro", why: "running background work now" },
 
@@ -83,6 +82,9 @@ export const ROUTE_TIERS: RouteRule[] = [
   { method: "POST", path: /^\/buzz\/test$/, tier: "free", why: "band buzz test, no model" },
   { method: "*", path: /^\/push\/token$/, tier: "free", why: "push registration" },
   { method: "*", path: /^\/usage\/(stream|me)$/, tier: "free", why: "reporting and reading usage" },
+  // Speech to text moved onto the phone (voice.ts). Old builds still ask; free,
+  // so every one of them hears "update from TestFlight" rather than a 402.
+  { method: "POST", path: /^\/voice\/(transcribe|token)$/, tier: "free", why: "gone: answers 410 for old builds" },
   { method: "*", path: /^\/engines$/, tier: "free", why: "development accounts only, checked in the handler" },
   { method: "POST", path: /^\/debug\/commands$/, tier: "free", why: "DEBUG_KEY only" },
   { method: "*", path: /^\/notes(\/[^/]+)?$/, tier: "free", why: "notes" },
@@ -99,11 +101,11 @@ export const ROUTE_TIERS: RouteRule[] = [
   // Filled only by the pro agent, polled by every phone; empty for everyone else.
   { method: "*", path: /^\/commands(\/pending|\/[^/]+\/done)?$/, tier: "free", why: "the phone's command queue" },
 
-  // Base: everything that calls a model, voices, transcribes, or is part of
+  // Base: everything that calls a model, voices, or is part of
   // the assistant. Listed so the table reads whole; the default is base anyway.
   { method: "POST", path: /^\/(chat|chat\/resume|siri|siri\/key|claude)$/, tier: "base", why: "chat, Siri and ask-Claude" },
   { method: "GET", path: /^\/brief$/, tier: "base", why: "the morning brief" },
-  { method: "POST", path: /^\/voice\/(transcribe|speak|token)$/, tier: "base", why: "speech: clips, voice, live listening" },
+  { method: "POST", path: /^\/voice\/speak$/, tier: "base", why: "OVOA's voice (Deepgram)" },
   { method: "*", path: /^\/context\//, tier: "base", why: "the timeline (summaries are a model)" },
   { method: "*", path: /^\/onboarding(\/.*)?$/, tier: "base", why: "the setup conversation (a model)" },
   { method: "POST", path: /^\/apps(\/design|\/revise)?$/, tier: "base", why: "making or changing an app (a model designs it; it runs on chat)" },
@@ -365,25 +367,28 @@ export function requirePlan(): MiddlewareHandler<{ Bindings: Env; Variables: Var
 // The daily allowance
 // ---------------------------------------------------------------------------
 //
-// What a reply costs at its most expensive ordinary shape: spoken, voiced by
-// Aura-2, heard over the live microphone. From the cost pass's measurements
-// (docs/cost-pass.md, production benchmark 2026-09-22):
+// What a reply costs at its most expensive ordinary shape: spoken and voiced
+// by Aura-2. From the cost pass's measurements (docs/cost-pass.md, production
+// benchmark 2026-09-22):
 //
 //   reply models, spoken      $0.0022          measured per reply (gpt-oss-120b)
 //   voice, 220 chars Aura-2   $0.0066          220 × $0.030 / 1000
-//   microphone, 35 s Nova-3   $0.0028          35 / 60 × $0.0048
 //   ───────────────────────────────────
-//   one spoken reply          $0.0116          (a typed one is $0.0032)
+//   one spoken reply          $0.0088          (a typed one is $0.0032)
 //
-// Base: 20 replies × $0.0116 = $0.232 a day, under the $0.25 ceiling (SPEC §1;
+// Hearing the question costs nothing here: since 2026-09-23 the iPhone
+// recognises speech itself, so the $0.0028 of Nova-3 live listening that used
+// to be in this sum is gone (voice.ts).
+//
+// Base: 20 replies × $0.0088 = $0.176 a day, under the $0.25 ceiling (SPEC §1;
 //       $9.95 a month is about $0.31 a day after Stripe).
-// Pro:  55 replies × $0.0116 = $0.638 a day, under the $0.65 ceiling. That is
-//       2.75× Base, not 3×: 60 would be $0.696, over the line.
+// Pro:  55 replies × $0.0088 = $0.484 a day, under the $0.65 ceiling. Three
+//       times Base (60) would be $0.528, which now fits too.
 //
 // Replies are the limit a person can see and count. Behind them is a spend
 // ceiling, read from usage_daily, which catches everything else the day cost:
-// microphone minutes streamed with nothing said (wake mode), the morning brief,
-// a long reply with many tool rounds. New replies stop once the day's spend is
+// the morning brief, a long reply with many tool rounds, and the microphone
+// seconds old builds still report (/usage/stream). New replies stop once the day's spend is
 // within one spoken reply of the ceiling, so the reply that crosses the line
 // can't carry the day past it.
 //
@@ -395,8 +400,7 @@ export function requirePlan(): MiddlewareHandler<{ Bindings: Env; Variables: Var
 
 /** One spoken reply at list price, in micro-dollars (see the table above). */
 export const MODEL_MICRO_PER_SPOKEN_REPLY = 2_200;
-export const SPOKEN_REPLY_MICRO =
-  MODEL_MICRO_PER_SPOKEN_REPLY + ttsCostMicro("deepgram-aura-2", 220) + sttCostMicro("deepgram-nova-3-live", 35);
+export const SPOKEN_REPLY_MICRO = MODEL_MICRO_PER_SPOKEN_REPLY + ttsCostMicro("deepgram-aura-2", 220);
 
 export const BASE_REPLIES_PER_DAY = 20;
 export const PRO_REPLIES_PER_DAY = 55;

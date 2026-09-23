@@ -13,7 +13,9 @@ import type { Env } from "./types";
 const CACHE_MS = 60_000;
 
 /** The keys the server understands. Anything else is refused at the door. */
-export const SETTING_KEYS = ["engine_order", "voice_engine", "workers_model", "tts_engine", "stt_clip_engine"] as const;
+// "stt_clip_engine" was a key until 2026-09-23, when speech to text moved onto
+// the phone; a row left under it is simply never read.
+export const SETTING_KEYS = ["engine_order", "voice_engine", "workers_model", "tts_engine"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 export type ServerSettings = Partial<Record<SettingKey, string>>;

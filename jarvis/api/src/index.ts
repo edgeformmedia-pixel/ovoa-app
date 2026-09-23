@@ -51,7 +51,7 @@ import { dropRepeats, sentenceStream } from "./sentences";
 import { isPhoneTool, type PhoneCaps } from "./phone";
 import { isShortcutTool, shortcutAssistant, shortcutFiles } from "./shortcuts/assistant";
 import type { Env, Vars } from "./types";
-import { speechStream, STT_CLIP_ENGINES, sttClipEngineFrom, TTS_ENGINES, ttsEngineFrom, voice, VOICES, type TtsEngine, type VoiceId } from "./voice";
+import { speechStream, TTS_ENGINES, ttsEngineFrom, voice, VOICES, type TtsEngine, type VoiceId } from "./voice";
 import { logs } from "./logs";
 import { forgetPushToken, registerPushToken } from "./push";
 import { BUZZ_PATTERNS, sendBuzz, type BuzzPattern } from "./buzz";
@@ -681,7 +681,6 @@ authed.use("*", async (c, next) => {
   await applyRuntime(c.env);
   const mine = await settingsFor(c.env, session.userId);
   c.set("ttsEngine", ttsEngineFrom(mine.tts_engine, c.env.TTS_ENGINE));
-  c.set("sttClipEngine", sttClipEngineFrom(mine.stt_clip_engine, c.env.STT_CLIP_ENGINE));
   await next();
 });
 
@@ -2292,10 +2291,11 @@ authed.get("/agent/runs", async (c) => {
 
 // ---------- What it costs ----------
 //
-// The phone streams its microphone straight to Deepgram, so only the phone
-// knows how many seconds went. It counts the audio it actually sent
-// (app/src/lib/liveListen.ts) and reports it here in batches. Clamped, because
-// a phone with a wrong clock or a bug could otherwise claim a day per minute.
+// Builds from before 2026-09-23 streamed the microphone straight to Deepgram,
+// so only the phone knew how many seconds went, and it reports them here in
+// batches. Speech is recognised on the phone now and nothing streams, but old
+// builds keep posting, so this keeps answering. Clamped, because a phone with
+// a wrong clock or a bug could otherwise claim a day per minute.
 
 const streamUsageSchema = z.object({
   /** Seconds of audio sent since the last report. */
@@ -2358,10 +2358,6 @@ function settingProblem(key: SettingKey, value: string): string | null {
       return /^@cf\/[\w.-]+\/[\w.-]+$/.test(value.trim()) ? null : `"${value}" doesn't look like a Workers AI model id (they start with @cf/).`;
     case "tts_engine":
       return (TTS_ENGINES as readonly string[]).includes(value.trim()) ? null : `"${value}" isn't a voice engine. The choices are ${TTS_ENGINES.join(", ")}.`;
-    case "stt_clip_engine":
-      return (STT_CLIP_ENGINES as readonly string[]).includes(value.trim())
-        ? null
-        : `"${value}" isn't a clip transcriber. The choices are ${STT_CLIP_ENGINES.join(" and ")}.`;
   }
 }
 
@@ -2370,7 +2366,6 @@ const settingsPatchSchema = z.object({
   voice_engine: z.string().max(40).optional(),
   workers_model: z.string().max(80).optional(),
   tts_engine: z.string().max(40).optional(),
-  stt_clip_engine: z.string().max(40).optional(),
 });
 
 /** Everything the switchboard shows: each engine's state, the orders, and what is set for everyone and for `userId`. */

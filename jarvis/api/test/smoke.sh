@@ -509,15 +509,21 @@ check "then the server sends no audio, and says why" \
 check "everyone else still has Deepgram" "$(curl -s -H "authorization: Bearer $OTHER" "$API/me" | j "d['user']['ttsEngine']")" "deepgram-aura-2"
 curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"tts_engine\":\"\",\"userId\":\"$ME_ID\"}"
 check "and it can be put back" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['ttsEngine']")" "deepgram-aura-2"
-# Clips: a made-up transcriber is refused; with Whisper chosen and no model
-# here (Workers AI needs the real thing), the clip fails honestly rather than
-# silently going somewhere else.
-check "a made-up clip transcriber is refused" \
-  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"stt_clip_engine":"nova"}')" "400"
-curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"stt_clip_engine\":\"workers-whisper\",\"userId\":\"$ME_ID\"}"
-check "a clip with no transcriber to hand fails, not lies" \
-  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $TOKEN" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')" "502"
-curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"stt_clip_engine\":\"\",\"userId\":\"$ME_ID\"}"
+# Speech to text is on the phone now (2026-09-23): the server never asks
+# Deepgram to listen. Old builds still ask for a clip to be transcribed or a
+# live-listening token, and are told plainly to update; the old clip-engine
+# switch is gone with them.
+check "the clip transcriber switch is gone" \
+  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"stt_clip_engine":"workers-whisper"}' | j "d['error']")" "Nothing to change."
+GONE=$(curl -s -X POST -H "authorization: Bearer $TOKEN" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')
+check "an old build's clip gets 410" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $TOKEN" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')" "410"
+check "keyed on error: gone" "$(echo "$GONE" | j "d['error']")" "gone"
+check "with a sentence to show" "$(echo "$GONE" | j "d['message']")" "Update OVOA from TestFlight"
+check "an old build's live-listening token gets 410" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/voice/token?ttl=600")" "410"
+check "and the wake word's, the same" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/voice/token?mode=wake")" "410"
 
 echo
 echo "── plans: free, base and pro ──────────────────────"
@@ -549,6 +555,8 @@ check "with error needs_plan" "$(echo "$NP" | j "d['error']")" "needs_plan"
 check "needing base" "$(echo "$NP" | j "d['needs']")" "base"
 check "and a sentence to show" "$(echo "$NP" | j "len(d['message'])>20")" "True"
 check "free: voicing is 402" "$(code -X POST "${P[@]}" "$API/voice/speak" -d '{"text":"Hello there"}')" "402"
+check "free: an old build's clip hears 410, not 402" "$(code -X POST "${P[@]}" "$API/voice/transcribe" --data-binary 'x')" "410"
+check "free: and its token the same" "$(code -X POST "${P[@]}" "$API/voice/token?mode=wake")" "410"
 check "free: the brief is 402" "$(code "${P[@]}" "$API/brief")" "402"
 check "free: background work needs pro" "$(curl -s -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"x","instruction":"y","kind":"once"}' | j "d['needs']")" "pro"
 check "free: heart rate is 200" \
@@ -570,10 +578,11 @@ check "made base" "$(setplan '"base"')" "200"
 check "base: 20 replies a day" "$(curl -s "${P[@]}" "$API/me" | j "d['plan']['limits']['repliesLeftToday']")" "20"
 check "base: /chat gets past the gate" "$([ "$(code -X POST "${P[@]}" "$API/chat" -d '{"message":"hello"}')" != 402 ] && echo yes)" "yes"
 check "base: overheard open-mic talk needs pro" "$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello","ambient":true}' | j "d['needs']")" "pro"
-check "base: the wake word's stream needs pro" "$(curl -s -X POST "${P[@]}" "$API/voice/token?mode=wake" | j "d['needs']")" "pro"
-check "base: a live-listening token isn't a plan problem" "$([ "$(code -X POST "${P[@]}" "$API/voice/token")" != 402 ] && echo yes)" "yes"
 check "base: background work still needs pro" "$(code -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"x","instruction":"y","kind":"once"}')" "402"
 # An hour of open microphone is $0.29 at Nova-3's price: past Base's $0.25 day.
+# Nothing streams since speech moved onto the phone, but old builds still
+# report what they streamed, and it's the one way to spend a day's allowance
+# here without a model.
 curl -s -o /dev/null -X POST "${P[@]}" "$API/usage/stream" -d '{"seconds":3600,"connections":1}'
 sleep 1
 check "base: streamed minutes use up the day" "$(curl -s "${P[@]}" "$API/me" | j "d['plan']['limits']['repliesLeftToday']")" "0"
@@ -584,7 +593,6 @@ check "and says when it comes back" "$(echo "$CAPPED" | j "'pick up again at' in
 
 check "made pro" "$(setplan '"pro"')" "200"
 check "pro: background work gets through" "$(code -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"Check","instruction":"Look.","kind":"once"}')" "201"
-check "pro: the wake word's stream isn't a plan problem" "$([ "$(code -X POST "${P[@]}" "$API/voice/token?mode=wake")" != 402 ] && echo yes)" "yes"
 check "pro: /chat gets past the gate" "$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello"}' | j "d.get('error')!='needs_plan'")" "True"
 check "pro: 55 a day, less what the hour of mic cost" "$(curl -s "${P[@]}" "$API/me" | j "0 < d['plan']['limits']['repliesLeftToday'] <= 55")" "True"
 check "the debug view says why" "$(curl -s "${D[@]}" "$API/debug/plan?userId=$PID" | j "d['plan']['from']")" "override"

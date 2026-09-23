@@ -1,9 +1,12 @@
-// When audio may leave the phone: the wake window and the fallback's caps
-// (app/src/lib/wakeWindow.ts), checked without a microphone. The whole point
-// of Phase 3 of the cost pass is that nothing streams until the name; this is
-// where that promise is checked by a machine rather than by a person in a room.
+// When what the phone hears may reach the assistant: the wake window
+// (app/src/lib/wakeWindow.ts), checked without a microphone. The phone's ear
+// hears the room all the time; the promise is that none of it goes further than
+// the phone until the name (or the band's button, or a follow-up to a reply),
+// and this is where that promise is checked by a machine rather than by a
+// person in a room. (The old way's ten-minute auto-off and hour-a-day meter
+// went with the Deepgram stream on 2026-09-23.)
 
-import { AUTO_OFF_MS, DAILY_STREAM_CAP_S, meterAdd, meterOver, WAKE_MS, WakeWindow } from "../../app/src/lib/wakeWindow";
+import { WAKE_MS, WakeWindow } from "../../app/src/lib/wakeWindow";
 
 let fails = 0;
 function eq(label: string, got: unknown, want: unknown) {
@@ -69,31 +72,6 @@ eq("a summon opens it too", s.wake("summon", t0), true);
 eq("for its ten seconds", s.awake(t0 + WAKE_MS.summon - 1), true);
 eq("closing early closes it now", (s.close(t0 + 2_000), s.awake(t0 + 2_000)), false);
 eq("and a later time is still closed", s.awake(t0 + 5_000), false);
-
-// ---------- The fallback's auto-off ----------
-
-const f = new WakeWindow();
-eq("nothing addressed for ten minutes: stale", f.stale(t0 + AUTO_OFF_MS, t0), true);
-eq("not before", f.stale(t0 + AUTO_OFF_MS - 1, t0), false);
-f.wake("name", t0 + 5 * 60_000);
-eq("a request resets the clock", f.stale(t0 + AUTO_OFF_MS, t0), false);
-eq("ten minutes after it: stale again", f.stale(t0 + 5 * 60_000 + AUTO_OFF_MS, t0), true);
-
-// ---------- The fallback's daily allowance ----------
-
-// Local days, because "it's back tomorrow" means the user's tomorrow.
-const day1 = new Date(2026, 8, 22, 12).getTime();
-let m = meterAdd(null, 600, day1);
-eq("ten minutes on a fresh day", m.seconds, 600);
-eq("filed under the day", m.day, "2026-09-22");
-m = meterAdd(m, 3000, day1 + 3_600_000);
-eq("adds up within the day", m.seconds, 3600);
-eq("an hour is the cap", meterOver(m, day1 + 3_600_000), true);
-eq("just under is fine", meterOver(meterAdd(null, DAILY_STREAM_CAP_S - 1, day1), day1), false);
-const day2 = new Date(2026, 8, 23, 1).getTime();
-eq("a new day starts fresh", meterAdd(m, 10, day2).seconds, 10);
-eq("yesterday's total doesn't count today", meterOver(m, day2), false);
-eq("a negative number can't lower it", meterAdd(m, -500, day1).seconds, 3600);
 
 console.log(fails ? `\n${fails} failed` : "\nall passed");
 process.exit(fails ? 1 : 0);

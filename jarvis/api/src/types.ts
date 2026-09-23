@@ -42,12 +42,10 @@ export type Env = {
   /** Signs shortcuts the assistant writes (see shortcuts/sign.ts). Without it, shortcut writing is off. */
   SHORTCUT_SIGNING_URL?: string;
   SHORTCUT_SIGNING_TOKEN?: string;
-  /** Deepgram key for speech to text and text to speech. Without it, voice routes return 503. */
+  /** Deepgram key for OVOA's voice (text to speech; speech to text is on the phone). Without it, /voice/speak returns 503. */
   DEEPGRAM_API_KEY?: string;
   /** Which engine voices replies (voice.ts TTS_ENGINES). server_settings.tts_engine overrides it without a deploy. */
   TTS_ENGINE?: string;
-  /** What transcribes recorded clips: "deepgram" (default) or "workers-whisper". server_settings.stt_clip_engine overrides it. */
-  STT_CLIP_ENGINE?: string;
   /** Replies a person gets in a calendar month (cap.ts). Unset: 1000. "0": no cap. Development accounts are never capped. */
   TURN_CAP_MONTHLY?: string;
   /** Which web search route goes first (web.ts): "auto" (Gemini grounding when keyed, else DuckDuckGo), "gemini", or "duckduckgo". */
@@ -91,8 +89,6 @@ export type Vars = {
   requestId: string;
   /** The voice engine for this person's request, resolved once after sign-in (voice.ts). */
   ttsEngine?: import("./voice").TtsEngine;
-  /** What transcribes this person's recorded clips (voice.ts). */
-  sttClipEngine?: import("./voice").SttClipEngine;
   /** The person's plan, when the route needed one (plans.ts requirePlan). */
   plan?: import("./plans").Plan;
 };

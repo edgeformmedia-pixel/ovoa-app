@@ -487,8 +487,6 @@ function UsageToday() {
             <Row label="model calls" value={String(today.llmCalls)} />
             <Row label="tokens in · cached · out" value={`${k(today.inputTokens)} · ${k(today.cachedTokens)} · ${k(today.outputTokens)}`} mono />
             <Row label="voice" value={`${k(today.ttsChars)} characters`} />
-            <Row label="mic streamed" value={`${Math.round(today.streamSeconds / 60)} min`} good={today.streamSeconds < 600} />
-            <Row label="clips transcribed" value={`${today.clipSeconds} s`} />
             <Row label="web searches" value={String(today.searches)} />
             <Row label="estimated cost" value={today.estUsd} mono good={today.microUsd < 170_000} />
             {Object.entries(today.by).map(([what, cost]) => (
@@ -652,25 +650,6 @@ function EnginePicker() {
             </Pressable>
           ))}
           <Pressable style={[styles.button, !current?.tts_engine && { borderColor: colors.blue, borderWidth: 1 }]} disabled={busy} onPress={() => set({ tts_engine: "" })}>
-            <Text style={styles.buttonText}>Usual</Text>
-          </Pressable>
-        </View>
-        <Text style={styles.hint}>Clips: what transcribes a recorded clip (the band's button). Whisper costs a tenth; Deepgram stays the fallback.</Text>
-        <View style={styles.row}>
-          {[
-            ["deepgram", "Deepgram"],
-            ["workers-whisper", "Whisper (Workers AI)"],
-          ].map(([engine, label]) => (
-            <Pressable
-              key={engine}
-              style={[styles.button, (current?.stt_clip_engine ?? "") === engine && { borderColor: colors.blue, borderWidth: 1 }]}
-              disabled={busy}
-              onPress={() => set({ stt_clip_engine: engine })}
-            >
-              <Text style={styles.buttonText}>{label}</Text>
-            </Pressable>
-          ))}
-          <Pressable style={[styles.button, !current?.stt_clip_engine && { borderColor: colors.blue, borderWidth: 1 }]} disabled={busy} onPress={() => set({ stt_clip_engine: "" })}>
             <Text style={styles.buttonText}>Usual</Text>
           </Pressable>
         </View>
@@ -897,9 +876,9 @@ function BuzzOptions({ connected }: { connected: boolean }) {
 }
 
 /**
- * Always listen, kept for development only. Ambient listening was ruled out for
- * the product on 2026-09-20 (all-party consent laws), so it left Settings; the
- * switch stays here so the wake-word path can still be worked on.
+ * Always listen, the same switch as Settings → Danger zone (it went back there
+ * on 2026-09-23, running on the phone's ear so nothing leaves the phone until
+ * the name). Kept here too so the wake-word path can be worked on quickly.
  */
 function AlwaysListen() {
   const [on, setOn] = useState(false);
@@ -911,7 +890,7 @@ function AlwaysListen() {
     if (!next) return void alwaysListenPref.set(false);
     Alert.alert(
       "Always listen (development only)",
-      "The microphone stays on in the background and transcribes everything it hears, including other people. This was ruled out for the product on legal grounds; use it only on your own, for testing.",
+      "The microphone stays on in the background and the phone recognises everything it hears, including other people, on the phone itself. Nothing leaves the phone until it hears its name. Use it only on your own, for testing.",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Turn on", style: "destructive", onPress: () => void alwaysListenPref.set(true) },
@@ -922,7 +901,7 @@ function AlwaysListen() {
     <View style={styles.toggleRow}>
       <View style={{ flex: 1 }}>
         <Text style={styles.itemText}>Always listen</Text>
-        <Text style={styles.dim}>Development only. Not in Settings any more.</Text>
+        <Text style={styles.dim}>The same switch as Settings → Danger zone.</Text>
       </View>
       <Switch value={on} onValueChange={toggle} trackColor={{ true: colors.stop, false: colors.line }} />
     </View>

@@ -9,12 +9,15 @@ import Speech
 // words were for the assistant. On the heaviest day that was 380 minutes
 // streamed for 62 minutes of actual requests: 70% of what OVOA cost to run,
 // spent transcribing a room. This module turns that around. It owns the
-// microphone, runs Apple's speech recognition over the audio on the phone
-// itself (never Apple's servers), and keeps the last few seconds of audio in
-// memory. Nothing leaves the phone until JavaScript says a request has begun,
-// at which point it hands over the few seconds it kept (so "OVOA, set an alarm
-// for seven" arrives whole even though the name came mid-sentence) and then
-// the live audio, until told to stop.
+// microphone and runs Apple's speech recognition over the audio on the phone
+// itself (never Apple's servers).
+//
+// Since 2026-09-23 its words are the only way the app hears speech: the turn's
+// text is taken from onWord (lib/liveListen.ts, lib/earWords.ts), and no audio
+// leaves the phone at all. The audio hand-over below (setSending, onAudio, the
+// ring of the last few seconds) is what fed the old Deepgram stream; the app no
+// longer exposes or calls it (modules/name-ear/index.ts), and starts the ear
+// with preRollSeconds 0, so the ring keeps nothing.
 //
 // Two recognisers, by iOS version:
 //   iOS 26 and later: SpeechAnalyzer with a SpeechTranscriber. On-device only
@@ -22,10 +25,12 @@ import Speech
 //   Earlier: SFSpeechRecognizer with requiresOnDeviceRecognition, the name as
 //     a contextual string. If the device cannot recognise on its own, this
 //     module refuses to start rather than quietly using the network, and says
-//     so: the app then falls back to the old way with a time limit.
+//     so: the app then keeps listening for the name off, and a turn the
+//     person starts uses Apple's own recogniser instead (lib/liveListen.ts).
 //
 // The recogniser's words never leave this process except as an "onWord" event
-// to JavaScript, which uses them only to spot the name and logs none of them.
+// to JavaScript, which spots the name in them and, once the person is talking
+// to OVOA, sends the words of their request as text. It logs none of them.
 //
 // Written in the same shape as modules/ute-ble: plain-English errors through
 // GenericException, events with sendEvent, nothing on the JS thread that can
@@ -191,7 +196,7 @@ final class NameEar {
   private var matcher: NameMatcher
   private var audioEngine: AVAudioEngine?
   private var converter: AVAudioConverter?
-  /// 16 kHz, 16-bit, mono: what Deepgram is told to expect (liveListen.ts).
+  /// 16 kHz, 16-bit, mono: what the loudness is measured on (and what the old Deepgram stream was sent).
   private let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)!
   /// The last preRollSeconds of converted audio.
   private var ring = Data()
@@ -511,7 +516,9 @@ final class NameEar {
   private func heard(_ text: String, isFinal: Bool) {
     queue.async { [weak self] in
       guard let self else { return }
-      if text == self.lastWords { return }
+      // A final with the same words as the last volatile result still goes on:
+      // it is what tells JavaScript the stretch is settled (lib/earWords.ts).
+      if text == self.lastWords, !isFinal { return }
       // A shorter transcript is a new stretch of speech: the count starts over.
       if text.count < self.lastWords.count { self.namesHeard = 0 }
       self.lastWords = text
@@ -540,6 +547,10 @@ final class NameEar {
     request.requiresOnDeviceRecognition = true
     request.contextualStrings = [name, "OVOA"]
     request.taskHint = .dictation
+    // Full stops and question marks: the app ends a request on them (lib/turnGate.ts).
+    if #available(iOS 16.0, *) {
+      request.addsPunctuation = true
+    }
     self.request = request
     taskStartedAt = Date()
     task = recognizer.recognitionTask(with: request) { [weak self] result, error in

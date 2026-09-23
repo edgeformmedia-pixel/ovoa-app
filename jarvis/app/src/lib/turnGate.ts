@@ -1,6 +1,8 @@
 // Decides, on the phone and as the words come in, what the user said to the
-// assistant. Live transcription never stops (see liveListen.ts), so this sees
-// everything: in a full room that's mostly other people talking.
+// assistant. The phone's ear hears everything (see liveListen.ts), so this may
+// see a lot: in a full room that's mostly other people talking. Its words come
+// in Deepgram's old shape (interim, final, quiet), which earWords.ts makes of
+// the phone's own recogniser.
 //
 // Room mode (Always listen): only what follows the assistant's name counts, or
 // a reply shortly after the assistant spoke. Everything else is dropped here,
@@ -182,6 +184,8 @@ export type Turn = {
   text: string;
   /** The name was said, so there's no need to ask the server whether it was meant for the assistant. */
   addressed: boolean;
+  /** When its last words were heard: the gate's wait from there is part of what the user waits (turnTimer.ts). */
+  heardAt: number;
 };
 
 export type GateResult =
@@ -426,6 +430,6 @@ export class TurnGate {
     this.lastIgnored = null;
     this.clicked = false;
     this.sendNow = false;
-    return p ? { kind: "turn", turn: { text: p.text, addressed: p.addressed } } : null;
+    return p ? { kind: "turn", turn: { text: p.text, addressed: p.addressed, heardAt: Math.max(p.lastAt, this.interimAt) } } : null;
   }
 }

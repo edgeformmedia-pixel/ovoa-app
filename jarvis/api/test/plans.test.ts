@@ -45,9 +45,10 @@ eq("resuming a turn is base", tierForRoute("POST", "/chat/resume"), "base");
 eq("Siri is base", tierForRoute("POST", "/siri"), "base");
 eq("the brief is base", tierForRoute("GET", "/brief"), "base");
 eq("voicing is base", tierForRoute("POST", "/voice/speak"), "base");
-eq("a clip is base", tierForRoute("POST", "/voice/transcribe"), "base");
-eq("a live-listening token is base", tierForRoute("POST", "/voice/token"), "base");
-eq("the wake word's token is pro", tierForRoute("POST", "/voice/token", (k) => (k === "mode" ? "wake" : undefined)), "pro");
+// Speech to text is on the phone; old builds asking get a 410 saying so, whatever their plan.
+eq("the old clip route is free (it only answers 410)", tierForRoute("POST", "/voice/transcribe"), "free");
+eq("the old token route is free (it only answers 410)", tierForRoute("POST", "/voice/token"), "free");
+eq("with or without the wake word's mode", tierForRoute("POST", "/voice/token", (k) => (k === "mode" ? "wake" : undefined)), "free");
 eq("email and calendar are base", tierForRoute("POST", "/google/connect"), "base");
 eq("approving an email is base", tierForRoute("POST", "/actions/abc/approve"), "base");
 eq("the timeline is base", tierForRoute("POST", "/context/blocks"), "base");
@@ -231,13 +232,13 @@ const U = "user-1";
 
 // ---------- The allowance arithmetic ----------
 
-eq("one spoken reply: $0.0022 + $0.0066 + $0.0028", SPOKEN_REPLY_MICRO, 11_600);
+eq("one spoken reply: $0.0022 + $0.0066 (no live listening to pay for)", SPOKEN_REPLY_MICRO, 8_800);
 eq("Base at its cap stays under $0.25", BASE_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO <= 250_000, true);
 eq("Pro at its cap stays under $0.65", PRO_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO <= 650_000, true);
 eq("the ceilings are the spec's", `${BASE_DAILY_CEILING_MICRO} ${PRO_DAILY_CEILING_MICRO}`, "250000 650000");
 eq("Pro is at least two and a half times Base", PRO_REPLIES_PER_DAY >= 2.5 * BASE_REPLIES_PER_DAY, true);
-eq("and 3x would break the ceiling (why it isn't)", 3 * BASE_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO > 650_000, true);
-eq("new work stops one reply short of the ceiling", spendStopMicro("base"), 250_000 - 11_600);
+eq("and 3x fits under the ceiling now the phone listens", 3 * BASE_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO <= 650_000, true);
+eq("new work stops one reply short of the ceiling", spendStopMicro("base"), 250_000 - 8_800);
 eq("so the last reply can't cross it", spendStopMicro("pro") + SPOKEN_REPLY_MICRO <= PRO_DAILY_CEILING_MICRO, true);
 eq("free has nothing", ALLOWANCES.free.replies, 0);
 

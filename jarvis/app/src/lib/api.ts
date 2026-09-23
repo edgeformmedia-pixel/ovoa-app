@@ -256,7 +256,7 @@ export type EngineInfo = {
 };
 
 /** What the server's own settings say: the order typed turns try, who answers spoken turns, which Workers AI model, which voice. */
-export type ServerSettings = { engine_order?: string; voice_engine?: string; workers_model?: string; tts_engine?: string; stt_clip_engine?: string };
+export type ServerSettings = { engine_order?: string; voice_engine?: string; workers_model?: string; tts_engine?: string };
 
 export type EngineStatus = {
   engines: EngineInfo[];

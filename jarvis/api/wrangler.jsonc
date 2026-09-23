@@ -53,10 +53,6 @@
     // workers-melotts, or device (the phone speaks with its own voices).
     // server_settings.tts_engine, set from Dev tools, overrides this without a deploy.
     "TTS_ENGINE": "deepgram-aura-2",
-    // What transcribes recorded clips (the band's button, the recorded fallback):
-    // "deepgram" (Nova-3, $0.0043/min) or "workers-whisper" ($0.0005/min, with
-    // Deepgram as the fallback when it fails). server_settings.stt_clip_engine overrides it.
-    "STT_CLIP_ENGINE": "deepgram",
     // Replies a person gets in a calendar month (cap.ts): a ceiling on what one
     // account can cost, not a plan tier. "0" turns it off. DEV_EMAILS are exempt.
     // At 80% the person is told once; past it they hear one sentence saying when
@@ -88,9 +84,9 @@
   "ratelimits": [
     // Sign-in and sign-up, per address and per account being signed into.
     { "name": "RL_AUTH", "namespace_id": "1101", "simple": { "limit": 10, "period": 60 } },
-    // Chat turns, live-listening tokens, ask-Claude: per person.
+    // Chat turns and ask-Claude: per person.
     { "name": "RL_TURN", "namespace_id": "1102", "simple": { "limit": 20, "period": 60 } },
-    // Voicing and transcribing, a sentence or a short clip at a time: per person.
+    // Voicing, a sentence at a time: per person.
     { "name": "RL_SPEAK", "namespace_id": "1103", "simple": { "limit": 120, "period": 60 } },
     // Log uploads, per address. A phone sends at most one every 3 s.
     { "name": "RL_LOGS", "namespace_id": "1104", "simple": { "limit": 60, "period": 60 } }
