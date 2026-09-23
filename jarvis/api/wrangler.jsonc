@@ -57,6 +57,11 @@
     // "deepgram" (Nova-3, $0.0043/min) or "workers-whisper" ($0.0005/min, with
     // Deepgram as the fallback when it fails). server_settings.stt_clip_engine overrides it.
     "STT_CLIP_ENGINE": "deepgram",
+    // Replies a person gets in a calendar month (cap.ts): a ceiling on what one
+    // account can cost, not a plan tier. "0" turns it off. DEV_EMAILS are exempt.
+    // At 80% the person is told once; past it they hear one sentence saying when
+    // it resets. Nothing here checks membership.
+    "TURN_CAP_MONTHLY": "1000",
     // Which web search route goes first (web.ts): "auto" is Gemini's grounding
     // when there is a key (paid past 5K a month), else DuckDuckGo's snippets;
     // "duckduckgo" stops paying for grounding; "gemini" insists on it. Answers

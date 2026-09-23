@@ -48,6 +48,8 @@ export type Env = {
   TTS_ENGINE?: string;
   /** What transcribes recorded clips: "deepgram" (default) or "workers-whisper". server_settings.stt_clip_engine overrides it. */
   STT_CLIP_ENGINE?: string;
+  /** Replies a person gets in a calendar month (cap.ts). Unset: 1000. "0": no cap. Development accounts are never capped. */
+  TURN_CAP_MONTHLY?: string;
   /** Which web search route goes first (web.ts): "auto" (Gemini grounding when keyed, else DuckDuckGo), "gemini", or "duckduckgo". */
   SEARCH_ENGINE?: string;
   /** Comma-separated account emails allowed the dev-only capture-everything flag. */

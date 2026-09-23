@@ -72,12 +72,13 @@ import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
 import { askClaude, askClaudeTool, claude } from "./claude";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
+import { capVerdict, monthKey, overCapMessage, turnCapFrom, warnMessage } from "./cap";
 import { isMoneyTool, moneyAssistant, moneyRoutes, moneyTick } from "./money";
 import { MORE_TOOLS, SPOKEN_CORE, toolbelt, TYPED_CORE, type ToolGuide } from "./toolbelt";
 import { mightBeAboutThem } from "./remember";
 import { allowed, clientIp, limitByUser, tooMany } from "./limits";
 import { sliceFor } from "./sweep";
-import { engineStatus, ENGINES, isEngine, setRuntimeEngines, setUsageSink, type EnginePrefs, type LlmUsage } from "./llm";
+import { engineStatus, ENGINES, isEngine, setRuntimeEngines, setUsageSink, type Engine, type EnginePrefs, type LlmUsage } from "./llm";
 import { glmPriceFrom, usd } from "./pricing";
 import { globalSettings, setServerSetting, settingsFor, type ServerSettings, type SettingKey } from "./settings";
 import { dayOf, llmRow, pruneUsage, recordUsage, searchRow, sttStreamRow, turnRow, usageByPerson, usageForPerson } from "./usage";
@@ -1355,6 +1356,13 @@ async function chatTurn(
   requestId?: string,
 ): Promise<TurnResult | Ignored> {
   const db = env.DB;
+  // The month's replies (cap.ts). Counted before anything else runs, so a
+  // capped account costs nothing more: no model, no search, no transcript.
+  // The agent's own commands and development accounts are never capped.
+  const standing = data.source ? null : await capStanding(env, userId, validTimeZone(data.timeZone));
+  if (standing?.verdict === "over") {
+    return plainReply(overCapMessage(standing.cap, Date.now(), standing.timeZone), onSentence);
+  }
   if (data.ambient) {
     const { assistant_name } = await getSettings(db, userId);
     if (!(await isMeantForAssistant(env, userId, data.message, assistant_name))) {
@@ -1380,7 +1388,7 @@ async function chatTurn(
     ]),
   );
 
-  return runTurn(env, ctx, {
+  const result = await runTurn(env, ctx, {
     userId,
     text: data.message,
     timeZone,
@@ -1390,6 +1398,70 @@ async function chatTurn(
     onSentence,
     requestId,
   });
+  // Most of the month's replies are gone: said once, on the end of a reply
+  // they were getting anyway. A paused turn keeps it for the next one.
+  if (standing?.verdict === "warn" && result.kind === "reply") {
+    const warning = warnMessage(standing.used, standing.cap);
+    onSentence?.(warning);
+    ctx.waitUntil(markWarned(db, userId, standing.month));
+    return { ...result, reply: `${result.reply} ${warning}`, messages: result.messages.map((m) => (m.role === "assistant" ? { ...m, content: `${m.content} ${warning}` } : m)) };
+  }
+  return result;
+}
+
+// ---------- The month's replies ----------
+
+const CAP_WARNED = "turn-cap-warned";
+
+/** Replies answered this calendar month, from the usage table (a turn row each). */
+async function turnsThisMonth(db: D1Database, userId: string, month: string) {
+  const row = await db
+    .prepare("SELECT COALESCE(SUM(n), 0) AS n FROM usage_daily WHERE user_id = ? AND kind = 'turn' AND day >= ?")
+    .bind(userId, `${month}-01`)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/** Where a person stands against the month's cap, or null when nothing applies to them. */
+async function capStanding(env: Env, userId: string, timeZone: string) {
+  const cap = turnCapFrom(env);
+  if (!cap || (await isDevAccount(env, userId))) return null;
+  const now = Date.now();
+  const month = monthKey(now, timeZone);
+  const [used, warnedRow] = await Promise.all([
+    turnsThisMonth(env.DB, userId, month),
+    env.DB.prepare("SELECT 1 AS x FROM daily_marks WHERE user_id = ? AND kind = ? AND day = ?").bind(userId, CAP_WARNED, month).first(),
+  ]);
+  return { cap, used, month, timeZone, verdict: capVerdict(used, cap, !!warnedRow) };
+}
+
+const markWarned = (db: D1Database, userId: string, month: string) =>
+  db.prepare("INSERT OR IGNORE INTO daily_marks (user_id, kind, day, at) VALUES (?, ?, ?, ?)").bind(userId, CAP_WARNED, month, Date.now()).run();
+
+/**
+ * A reply that no model wrote: one sentence, streamed like any other so the
+ * phone speaks it, saved nowhere (there was no conversation).
+ */
+function plainReply(text: string, onSentence?: (sentence: string) => void): TurnResult {
+  onSentence?.(text);
+  return {
+    kind: "reply",
+    reply: text,
+    messages: [{ id: crypto.randomUUID(), role: "assistant", content: text, created_at: Date.now() }],
+    pendingActions: [],
+    meta: {
+      // Not an engine: nothing was asked. The phone shows it as the reply's source.
+      engine: "none" as Engine,
+      ms: 0,
+      contextMs: 0,
+      firstTokenMs: null,
+      firstSentenceMs: null,
+      promptChars: 0,
+      toolCount: 0,
+      tools: [],
+      usage: { input: 0, cached: 0, output: 0, calls: 0, microUsd: 0 },
+    },
+  };
 }
 
 /** Continues a paused turn with what the app looked up on the phone. */
@@ -1978,7 +2050,13 @@ authed.post("/usage/stream", async (c) => {
 });
 
 /** The signed-in person's own numbers: today and the month so far. Shown in Dev tools. */
-authed.get("/usage/me", async (c) => c.json(await usageForPerson(c.env.DB, c.var.userId)));
+authed.get("/usage/me", async (c) => {
+  const timeZone = validTimeZone((await getSettings(c.env.DB, c.var.userId)).time_zone);
+  const [usage, standing] = await Promise.all([usageForPerson(c.env.DB, c.var.userId), capStanding(c.env, c.var.userId, timeZone)]);
+  // The month's cap as it applies to this person: null for a development account, or with the cap off.
+  const cap = standing ? { limit: standing.cap, used: standing.used, month: standing.month, standing: standing.verdict } : null;
+  return c.json({ ...usage, cap });
+});
 
 // ---------- Which engine answers ----------
 //

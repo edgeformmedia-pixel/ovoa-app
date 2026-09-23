@@ -454,6 +454,12 @@ check "and are priced"                     "$(echo "$MINE" | j "d['today']['micr
 check "the mic line is named"              "$(echo "$MINE" | j "'mic' in d['today']['by']")" "True"
 check "the month includes today"           "$(echo "$MINE" | j "d['month']['streamSeconds']")" "43"
 check "someone else's usage is theirs"     "$(curl -s -H "authorization: Bearer $OTHER" "$API/usage/me" | j "d['today']['streamSeconds']")" "0"
+# The month's cap (cap.ts) rides along: a thousand replies unless wrangler.jsonc
+# says otherwise, none of them used yet, and nothing said about it.
+check "a month's cap is a thousand replies" "$(echo "$MINE" | j "d['cap']['limit']")" "1000"
+check "none used yet"                       "$(echo "$MINE" | j "d['cap']['used']")" "0"
+check "so nothing is said about it"         "$(echo "$MINE" | j "d['cap']['standing']")" "ok"
+check "filed under this month"              "$(echo "$MINE" | j "len(d['cap']['month'])")" "7"
 EVERYONE=$(curl -s "${D[@]}" "$API/debug/usage?days=2")
 check "the operator sees everyone" "$(echo "$EVERYONE" | j "d['total']['people'] >= 1")" "True"
 check "with a total in dollars"    "$(echo "$EVERYONE" | j "d['total']['estUsd'].startswith('\$')")" "True"
