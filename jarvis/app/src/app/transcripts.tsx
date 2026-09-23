@@ -32,7 +32,6 @@ export default function Transcripts() {
     return (
       <PartOfPlan
         title="Transcripts"
-        needs="base"
         bar={false}
         what="Everything you said to OVOA, and what it said back, by the hour, with a title for each stretch."
       />

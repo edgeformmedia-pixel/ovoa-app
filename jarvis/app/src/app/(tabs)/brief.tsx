@@ -21,7 +21,6 @@ export default function Brief() {
     return (
       <PartOfPlan
         title="Brief"
-        needs="base"
         what="Each morning OVOA reads you your day: the weather, your calendar, your list, and anything someone asked of you."
       />
     );

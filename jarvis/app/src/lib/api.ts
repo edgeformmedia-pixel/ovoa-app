@@ -458,6 +458,70 @@ export function notePlanNeeded(body: unknown): PlanNeeded | null {
   return needs;
 }
 
+/**
+ * What a failed reply says, for a person. A coded error (needs_plan,
+ * allowance, needs_consent, maintenance) comes with a `message` written to be
+ * shown, and that is what the ApiError carries; the code was showing up on
+ * screen as "needs_plan". Anything else is the server's error as it was.
+ */
+export function errorText(body: unknown, status: number) {
+  const b = body as { error?: unknown; message?: unknown } | null;
+  const code = typeof b?.error === "string" ? b.error : "";
+  if (/^[a-z][a-z_]*$/.test(code) && typeof b?.message === "string" && b.message) return b.message;
+  return code || `Request failed (${status})`;
+}
+
+// ---------- AI requests are stopped on the phone ----------
+//
+// The server decides every plan (api/src/plans.ts), but a phone that already
+// knows it's on the free plan never sends an AI request only to be told no:
+// it stops it here, before it's sent, with the same needs_plan the server would
+// give, and the screen shows its locked state (plan.tsx, components/Plan.tsx).
+// While the plan isn't known, everything is sent and the server decides.
+
+/**
+ * The requests that reach a model or OVOA's paid voice: the Base rules of
+ * api/src/plans.ts ROUTE_TIERS, for the routes this app calls. Everything else,
+ * and every DELETE, is free there too.
+ */
+const AI_REQUESTS: [method: string, path: RegExp][] = [
+  ["POST", /^\/(chat|chat\/resume|siri|claude)$/],
+  ["GET", /^\/brief$/],
+  ["POST", /^\/voice\/speak$/],
+  ["POST", /^\/context\/blocks$/],
+  ["GET", /^\/context\/(days|weeks)\/[^/]+$/],
+  ["*", /^\/onboarding(\/[a-z]+)?$/],
+  ["POST", /^\/apps\/(design|revise)$/],
+  ["POST", /^\/agent\/(jobs|goals)$/],
+  ["POST", /^\/agent\/jobs\/[^/]+\/run$/],
+  ["POST", /^\/transcripts\/heard$/],
+];
+
+/** The plan a request is part of when it's an AI request (always Base since v1), or null. Pure. */
+export function aiRequestNeeds(method: string, path: string): PlanNeeded | null {
+  const m = method.toUpperCase();
+  if (m === "DELETE") return null;
+  const bare = path.split("?")[0];
+  return AI_REQUESTS.some(([rm, re]) => (rm === "*" || rm === m) && re.test(bare)) ? "base" : null;
+}
+
+/** What plan.tsx knows of the plan right now: its tier, or null while it doesn't know. */
+let knownTier: (() => Tier | null) | null = null;
+export function whenPlanKnown(read: (() => Tier | null) | null) {
+  knownTier = read;
+}
+
+/** The sentence a request stopped on the phone carries. The server's needs_plan says it at more length. */
+export const LOCKED_MESSAGE = "That's for Base users.";
+
+/** The error to throw instead of sending, when this phone knows its plan doesn't include the request. */
+export function lockedOnPhone(method: string, path: string): ApiError | null {
+  const needs = aiRequestNeeds(method, path);
+  if (!needs || knownTier?.() !== "free") return null;
+  devlog("log", `${method} ${path.split("?")[0]} not sent: that's for Base users`);
+  return new ApiError(LOCKED_MESSAGE, 402, {}, needs);
+}
+
 const REQUEST_TIMEOUT_MS = 60_000;
 
 /**
@@ -503,6 +567,8 @@ function redacted(body: string | undefined) {
 
 export async function request<T>(path: string, token: string | null, init: RequestInit = {}): Promise<T> {
   const method = init.method ?? "GET";
+  const stopped = lockedOnPhone(method, path);
+  if (stopped) throw stopped;
   // Auth request bodies hold passwords, and a successful reply holds a token:
   // both stay out. A *failed* reply holds neither, and is the only thing in
   // device_logs that can tell a typo from a person who never had an account —
@@ -544,7 +610,7 @@ export async function request<T>(path: string, token: string | null, init: Reque
   if (!res.ok) {
     noteDeadSession(res.status, token, body.error);
     const needs = notePlanNeeded(body);
-    throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status, body.fields ?? {}, needs);
+    throw new ApiError(errorText(body, res.status), res.status, body.fields ?? {}, needs);
   }
   return body as T;
 }
@@ -583,6 +649,8 @@ async function streamedTurn(
   signal?: AbortSignal,
   speech?: ServerSpeech,
 ): Promise<ChatResponse> {
+  const locked = lockedOnPhone("POST", path);
+  if (locked) throw locked;
   if (speech) body = { ...body, speak: { voice: speech.voice } };
   devlog("req", `POST ${path} (streamed)`, redacted(JSON.stringify(body)));
   const started = Date.now();
@@ -612,7 +680,7 @@ async function streamedTurn(
       const err = (await res.json().catch(() => ({}))) as { error?: string };
       devlog(err.error === "needs_plan" ? "log" : "err", `${res.status} POST ${path} · ${Date.now() - started} ms`, err);
       noteDeadSession(res.status, token, err.error);
-      throw new ApiError(err.error ?? `Request failed (${res.status})`, res.status, {}, notePlanNeeded(err));
+      throw new ApiError(errorText(err, res.status), res.status, {}, notePlanNeeded(err));
     }
     // A server without streaming answers plain JSON.
     if (!res.headers.get("content-type")?.includes("ndjson") || !res.body) {

@@ -112,7 +112,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const { token, user } = useSession();
   useProviderLog("assistant");
   // What the plan includes (plan.tsx). Free: no talking at all, and the band's
-  // button records notes. Base: talking, but not the hands-free wake word.
+  // button records notes. Base (and Pro): everything, the wake word included.
   const { can } = usePlan();
   const pathname = usePathname();
   const router = useRouter();
@@ -120,7 +120,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [alwaysListenPicked, setAlwaysListenState] = useState(false);
-  // Always listen is the wake word at its most hands-free: Pro. The switch is
+  // Always listen is the wake word at its most hands-free: Base. The switch is
   // remembered either way, and comes back on its own if the plan does.
   const alwaysListen = alwaysListenPicked && can.wake;
   const [listenMode, setListenModeState] = useState<ListenMode>("wake");

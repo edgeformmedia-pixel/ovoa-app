@@ -48,16 +48,17 @@ export type NavItem = { label: string; href: Href; icon: IconName; tone: Tone };
 /**
  * The menu (2026-09-23): Talk and Apps at the top, the apps you've added
  * listed under Apps, and Settings, which holds the account too, pinned at the
- * bottom. Nothing else ever joins them.
+ * bottom. Nothing else ever joins them. It is the same menu on every plan: on
+ * the free plan Talk stays, with a lock, and opens on "That's for Base users"
+ * (app/(tabs)/chat.tsx, components/Plan.tsx).
  */
 export const TOP: NavItem[] = [
   { label: "Talk", href: "/chat", icon: "mic", tone: "teal" },
   { label: "Apps", href: "/apps" as Href, icon: "apps-outline", tone: "violet" },
 ];
 
-// The free plan has no assistant to talk to, so its first row is its day
-// (components/FreeToday.tsx) rather than Talk.
-export const FREE_TOP: NavItem[] = [{ label: "Today", href: "/", icon: "time-outline", tone: "teal" }, TOP[1]];
+/** The rows that are for Base users: shown to everyone, with a lock on the free plan. */
+const FOR_BASE = new Set<string>(["Talk"]);
 
 export const SETTINGS: NavItem = { label: "Settings", href: "/settings", icon: "settings-outline", tone: "amber" };
 
@@ -76,7 +77,7 @@ export function DrawerPanel({
   onClose,
   free = false,
 }: {
-  /** The free plan: no assistant, so its day where Talk would be. */
+  /** The free plan: Talk carries a lock (FOR_BASE). */
   free?: boolean;
   /** The route showing behind the panel, so its row can be marked. */
   current: string;
@@ -94,11 +95,13 @@ export function DrawerPanel({
   const row = (item: NavItem) => {
     const on = current === item.href;
     const tail = tails[item.label];
+    const locked = free && FOR_BASE.has(item.label);
     return (
       <View key={item.label} ref={spotRef(item.label)} collapsable={false}>
         <PressScale
           onPress={() => onGo(item.href)}
           accessibilityRole="button"
+          accessibilityLabel={locked ? `${item.label}, for Base users` : undefined}
           accessibilityState={{ selected: on }}
           style={[styles.navRow, on && styles.navRowOn, pointed === item.label && styles.navRowPointed]}
         >
@@ -106,7 +109,11 @@ export function DrawerPanel({
           <Text style={styles.navLabel} numberOfLines={1}>
             {item.label}
           </Text>
-          {!!tail && <Text style={styles.navTail}>{tail}</Text>}
+          {locked ? (
+            <Ionicons name="lock-closed" size={15} color={colors.inkMute} />
+          ) : (
+            !!tail && <Text style={styles.navTail}>{tail}</Text>
+          )}
         </PressScale>
       </View>
     );
@@ -125,7 +132,7 @@ export function DrawerPanel({
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: space.s4 }}>
-        {(free ? FREE_TOP : TOP).map(row)}
+        {TOP.map(row)}
 
         {apps.length > 0 && (
           <View ref={spotRef("Your apps")} collapsable={false}>

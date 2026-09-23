@@ -86,7 +86,7 @@ export default function MadeApp() {
     const q = question.trim();
     if (!q || thinking || !app) return;
     if (!can.chat) {
-      Alert.alert("Asking needs a plan", "Your lists, counters and logs still work. Asking OVOA comes with the Base and Pro plans.");
+      Alert.alert("That's for Base users", "Your lists, counters and logs still work. Asking OVOA is for Base users; See options in Settings shows the plans.");
       return;
     }
     stopSpeaking();

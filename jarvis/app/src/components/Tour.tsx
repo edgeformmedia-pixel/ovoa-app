@@ -25,7 +25,12 @@ import { Btn, IconTile, type IconName, type Tone } from "./ui";
 // Shown once (lib/tour.ts), straight after the setup conversation. Skippable at
 // any point; the speaker button silences it and stops it moving on its own, for
 // somewhere it can't talk. With a plan it speaks in their chosen OVOA voice; the
-// free plan has no server voice, so it uses the phone's own.
+// free plan has no server voice, so it uses the phone's own. It never asks a
+// model anything, on any plan: every word is written here.
+//
+// The free plan sees the same menu (components/Drawer.tsx), so its tour walks
+// the same rows: Talk is shown locked, with See options, and it starts and ends
+// on its day (the Day app), where the free plan lands.
 
 type Step = {
   icon: IconName;
@@ -43,7 +48,7 @@ type Step = {
 };
 
 function steps(assistant: string, free: boolean): Step[] {
-  const home: Href = free ? "/" : "/chat";
+  const home: Href = free ? ("/day" as Href) : "/chat";
   return [
     {
       icon: "sparkles-outline",
@@ -61,21 +66,32 @@ function steps(assistant: string, free: boolean): Step[] {
       body: "To get around, tap the three lines at the top left of any screen, or swipe in from the left edge. That opens the menu: Talk and Apps at the top, the apps you've added under them, and Settings at the bottom.",
       show: { menu: "open" },
     },
-    free
-      ? {
-          icon: "time-outline",
-          tone: "teal",
-          title: "Today",
-          body: "Today is your notes and your health for the day. With a plan, this is where you'd talk to me.",
-          show: { menu: "tap", row: "Today", href: "/" },
-        }
-      : {
-          icon: "mic",
-          tone: "teal",
-          title: "Talk",
-          body: "Talk is where the app opens. Tap the circle and speak. Ask me to remind you of something, plan your day, or text someone.",
-          show: { menu: "tap", row: "Talk", href: "/chat" },
-        },
+    ...(free
+      ? ([
+          {
+            icon: "lock-closed-outline",
+            tone: "teal",
+            title: "Talk",
+            body: "Talk is where you talk to me: tap the circle and speak, and I'll remind you of things, plan your day or text someone. It's for Base users, so it has a lock on it.",
+            show: { menu: "tap", row: "Talk", href: "/chat" },
+          },
+          {
+            icon: "pricetags-outline",
+            tone: "violet",
+            title: "See options",
+            body: "Anything that's for Base users has this button. It shows you the plans on the OVOA website. Your notes, your health and the apps that don't use AI stay free.",
+            show: { point: "See options", on: "/chat" },
+          },
+        ] satisfies Step[])
+      : ([
+          {
+            icon: "mic",
+            tone: "teal",
+            title: "Talk",
+            body: "Talk is where the app opens. Tap the circle and speak. Ask me to remind you of something, plan your day, or text someone.",
+            show: { menu: "tap", row: "Talk", href: "/chat" },
+          },
+        ] satisfies Step[])),
     {
       icon: "apps-outline",
       tone: "violet",
@@ -88,7 +104,7 @@ function steps(assistant: string, free: boolean): Step[] {
       tone: "teal",
       title: "Create your own",
       body: free
-        ? "At the top of Apps is Create. With a plan, you can make your own apps just by saying what you want — like a grocery helper, or a study buddy."
+        ? "At the top of Apps is Create. With Base, you can make your own apps just by saying what you want — like a grocery helper, or a study buddy."
         : "At the top of Apps is Create. Tap it, then say or type what you want, like a grocery helper that asks what you're out of. I'll make it into an app with its own screen: buttons, a checklist, a counter, whatever it needs. You can change anything about it, by hand or just by telling me.",
       show: { point: "Create", on: "/apps" as Href },
     },
@@ -105,7 +121,7 @@ function steps(assistant: string, free: boolean): Step[] {
       icon: "checkmark-circle-outline",
       tone: "green",
       title: "That's it",
-      body: free ? "That's everything. Enjoy OVOA." : "That's everything. Whenever you're ready, just talk to me.",
+      body: free ? "That's everything. Your day is where the app opens. Enjoy OVOA." : "That's everything. Whenever you're ready, just talk to me.",
       show: { go: home },
     },
   ];
@@ -387,7 +403,7 @@ function Walkthrough() {
             <View />
           )}
           {last ? (
-            <Btn label={free ? "Got it" : "Start talking"} kind="go" onPress={() => finish(free ? "/" : "/chat")} />
+            <Btn label={free ? "Got it" : "Start talking"} kind="go" onPress={() => finish(free ? ("/day" as Href) : "/chat")} />
           ) : (
             <Btn label="Next" kind="go" onPress={() => setAt(at + 1)} />
           )}

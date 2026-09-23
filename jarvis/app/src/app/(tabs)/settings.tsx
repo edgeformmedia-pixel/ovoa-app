@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { AccountSection } from "../../components/AccountSection";
 import { GoogleConnection } from "../../components/GoogleConnection";
-import { PartOfProLine } from "../../components/Plan";
+import { LockedLine } from "../../components/Plan";
 import { SiriSetup } from "../../components/SiriSetup";
 import { VoicePicker } from "../../components/VoicePicker";
 import { Btn, GroupLabel, Screen, Toggle, TopBar } from "../../components/ui";
@@ -40,8 +40,10 @@ export default function Settings() {
   const [autoSendTexts, setAutoSendTexts] = useState(false);
   const { listenMode, setListenMode, micSource, setMicSource, alwaysListen, setAlwaysListen } = useAssistant();
   const { pushProblem } = useAgent();
-  // The free plan has no assistant, so its settings aren't shown at all; Base
-  // sees the Pro-only ones (the wake word, background work) as "Part of Pro".
+  // The free plan has no assistant, so its settings aren't shown at all. Every
+  // one of them comes with Base (Pro is only more usage), so the locked lines
+  // below ("For Base users") show only where the plan's features say otherwise,
+  // as a server from before v1 still does for the wake word and background work.
   const { free, can } = usePlan();
   const devMode = useDevMode();
   const soundsOn = useSoundsOn();
@@ -245,7 +247,7 @@ export default function Settings() {
         </View>
         <About>
           {listenMode === "wake" && !can.wake
-            ? "Saying its name to start is part of Pro. On your plan, tap the orb on Talk and speak."
+            ? "Saying its name to start is for Base users. For now, tap the orb on Talk and speak."
             : LISTEN_MODES.find((m) => m.mode === listenMode)?.hint}
         </About>
         <Text style={[styles.label, { marginTop: 18 }]}>Microphone</Text>
@@ -402,7 +404,7 @@ export default function Settings() {
 
       <Section title="Background work">
         {!can.agent ? (
-          <PartOfProLine
+          <LockedLine
             label={`Let ${assistantName || "OVOA"} work on its own`}
             what="It checks things between conversations and tells you only when it's worth interrupting you."
           />
@@ -531,7 +533,7 @@ export default function Settings() {
           <Toggle value={user.settings.autoApprove} onValueChange={toggleAutoApprove} />
         </Setting>
         {!can.wake ? (
-            <PartOfProLine
+            <LockedLine
               label="Always listen"
               what="The microphone stays on day and night, and answers when you say its name."
             />

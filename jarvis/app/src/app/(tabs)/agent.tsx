@@ -38,7 +38,6 @@ export default function AgentScreen() {
     return (
       <PartOfPlan
         title="Background work"
-        needs="pro"
         what="OVOA checks on things while you're away, like what's on today and what you said you'd do, and tells you only when it matters."
       />
     );

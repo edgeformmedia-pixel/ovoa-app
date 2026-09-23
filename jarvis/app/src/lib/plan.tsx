@@ -1,6 +1,6 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AppState } from "react-native";
-import { api, whenPlanNeeded, type Plan, type PlanNeeded, type Tier } from "./api";
+import { api, whenPlanKnown, whenPlanNeeded, type Plan, type PlanNeeded, type Tier } from "./api";
 import { useAuth } from "./auth";
 import { useOptionalContext } from "./context";
 import { devlog, logFail } from "./devlog";
@@ -11,10 +11,17 @@ import { storage } from "./storage";
 //
 // One source for every gate: GET /me's `plan` (api/src/plans.ts planView,
 // docs/paywall/SPEC.md §2). The server is what actually enforces a plan; this
-// is only so the app can show a calm "part of a plan" instead of letting a
-// call fail. So when the plan isn't known yet (first launch, an older server)
-// the app behaves as it always did, and a needs_plan answer from any call puts
-// it right: the plan is taken down a step at once and asked for again.
+// is so the app can show a calm locked state ("That's for Base users", with See
+// options) instead of letting a call fail, and so a phone known to be free
+// never sends an AI request at all: it is stopped before it's sent (api.ts
+// lockedOnPhone, which reads the plan from here). When the plan isn't known yet
+// (first launch, an older server) the app behaves as it always did, and a
+// needs_plan answer from any call puts it right: the plan is taken down a step
+// at once and asked for again.
+//
+// The rules mirror the server's since v1: free has no AI; Base has every AI
+// feature, the wake word, Always listen and background work included; Pro is
+// only more of Base's daily usage.
 //
 // Kept on the phone between launches, per person, so a free phone opens on the
 // free home rather than flashing the assistant first.
@@ -37,7 +44,7 @@ export const PLAN_NAMES: Record<Tier, string> = { free: "Free", base: "Base", pr
 export type PlanState = {
   /** Null until the server has said (or an older server never will). */
   plan: Plan | null;
-  /** Known to be free: health and notes only. False while unknown. */
+  /** Known to be free: no AI (health, notes, the apps that call no model). False while unknown. */
   free: boolean;
   /** What the plan includes. Everything while the plan isn't known: the server still decides. */
   can: Plan["features"];
@@ -50,7 +57,12 @@ export type PlanState = {
 
 const PlanContext = createContext<PlanState | null>(null);
 
-/** The plan with everything above `needs` taken away: what a needs_plan answer proves. */
+/**
+ * The plan with everything above `needs` taken away: what a needs_plan answer
+ * proves. Mirrors the server's planView: every feature comes with Base, so a
+ * paid plan has all four and free has none. (No route needs Pro any more; a
+ * "pro" answer from an older server still reads as "not more than Base".)
+ */
 function lockedTo(plan: Plan | null, needs: PlanNeeded): Plan | null {
   const tier: Tier = needs === "pro" ? "base" : "free";
   if (plan && (plan.tier === tier || (needs === "pro" && plan.tier === "free"))) return plan;
@@ -61,7 +73,7 @@ function lockedTo(plan: Plan | null, needs: PlanNeeded): Plan | null {
     limits: { repliesLeftToday: 0, resetsAt: new Date(Date.now() + 86_400_000).toISOString() },
   };
   const paid = tier !== "free";
-  return { ...base, tier, features: { chat: paid, voice: paid, wake: false, agent: false } };
+  return { ...base, tier, features: { chat: paid, voice: paid, wake: paid, agent: paid } };
 }
 
 export function PlanProvider({ children }: { children: ReactNode }) {
@@ -71,6 +83,15 @@ export function PlanProvider({ children }: { children: ReactNode }) {
   const [refreshing, setRefreshing] = useState(false);
   const [asked, setAsked] = useState(false);
   const lastAsked = useRef(0);
+  // Read by api.ts on every request, so an AI request from a phone known to be
+  // free is stopped before it's sent. A ref: a request must see the plan as it
+  // is now, not as it was when some screen last rendered.
+  const planRef = useRef<Plan | null>(null);
+  planRef.current = plan;
+  useEffect(() => {
+    whenPlanKnown(() => planRef.current?.tier ?? null);
+    return () => whenPlanKnown(null);
+  }, []);
   const tokenRef = useRef(token);
   tokenRef.current = token;
   const userRef = useRef(userId);

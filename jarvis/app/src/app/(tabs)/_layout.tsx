@@ -15,9 +15,11 @@ import { colors } from "../../lib/theme";
 
 export default function TabsLayout() {
   const { token, user } = useAuth();
-  // Routines, alarms, places and the spoken fillers belong to the assistant
-  // (Base, api/src/plans.ts). On the free plan they aren't started at all,
-  // rather than asked for every few minutes and told no.
+  // Routines, alarms, places and the spoken fillers are the assistant's side of
+  // the app, which is Base's: on the free plan they aren't started at all.
+  // (Since v1 their routes are free on the server, because they call no model,
+  // so starting them for free phones would be a product call, not a server
+  // one. The fillers are OVOA's voice, which stays Base.)
   const { free } = usePlan();
   const assistant = token && !free ? token : null;
 

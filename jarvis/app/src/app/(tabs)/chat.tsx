@@ -26,7 +26,7 @@ export default function Assistant() {
     return (
       <PartOfPlan
         title="Talk"
-        needs="base"
+        spot="See options"
         what="Talk to OVOA and it answers out loud: your calendar, reminders, email, money, and what it remembers about you."
       />
     );

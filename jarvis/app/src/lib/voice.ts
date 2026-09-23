@@ -13,7 +13,7 @@ import { File, Paths } from "expo-file-system";
 import * as Speech from "expo-speech";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
-import { API_URL, ApiError, noteDeadSession, notePlanNeeded, type ServerSpeech } from "./api";
+import { API_URL, ApiError, errorText, lockedOnPhone, noteDeadSession, notePlanNeeded, type ServerSpeech } from "./api";
 import { devlog, devlogRepeat, devlogSettled, logFail } from "./devlog";
 import { pickFiller } from "./fillers";
 import { audioWhy, onScreen, whenOnScreen } from "./foreground";
@@ -254,6 +254,9 @@ async function authedFetch(
   init: { method: string; headers?: Record<string, string>; body?: any },
   logBody?: string,
 ) {
+  // OVOA's voice is Base's: a phone known to be free doesn't ask (api.ts lockedOnPhone).
+  const locked = lockedOnPhone(init.method, path);
+  if (locked) throw locked;
   devlog("req", `${init.method} ${path}`, logBody);
   const started = Date.now();
   let res: Awaited<ReturnType<typeof fetch>>;
@@ -270,7 +273,7 @@ async function authedFetch(
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     devlog(body.error === "needs_plan" ? "log" : "err", `${res.status} ${init.method} ${path} · ${Date.now() - started} ms`, body);
     noteDeadSession(res.status, token, body.error);
-    throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status, {}, notePlanNeeded(body));
+    throw new ApiError(errorText(body, res.status), res.status, {}, notePlanNeeded(body));
   }
   devlog("res", `${res.status} ${init.method} ${path} · ${Date.now() - started} ms`);
   return res;
@@ -1014,8 +1017,8 @@ const LIVE_RETRY_MS = 60_000;
  * `background` (Always listen) it only answers when called by `name`. With
  * `standby` (twist mode) the microphone runs between turns, nothing sent, so a
  * twist can start a turn while the app is in the background. `wake` false (a
- * plan without the hands-free wake word, which is Pro) keeps the phone's ear
- * off, so every turn is an ordinary one. `fillers` false: no "Let me look
+ * plan without the hands-free wake word, which comes with Base) keeps the
+ * phone's ear off, so every turn is an ordinary one. `fillers` false: no "Let me look
  * into that" while it thinks (setup, where the reply is a scripted question).
  * `answers`: each turn answers a question (setup), so a one-word answer isn't
  * taken for the question's echo (turnGate.ts).
@@ -1630,7 +1633,7 @@ const alwaysListenListeners = new Set<(on: boolean) => void>();
 onSignOut("always listen", () => alwaysListenPref.set(false));
 
 /**
- * Always listen, in Settings → Danger zone (Pro). Since 2026-09-23 it runs on
+ * Always listen, in Settings → Danger zone (Base). Since 2026-09-23 it runs on
  * the phone's own ear, so nothing leaves the phone until the name is heard:
  * that is what keeps it on the right side of the 2026-09-20 ruling against
  * ambient capture. Dev tools has a switch too, and sits outside the assistant,

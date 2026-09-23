@@ -19,7 +19,6 @@ import { useSession } from "../../lib/auth";
 import { useDevMode } from "../../lib/devMode";
 import { spotRef, usePointedAt, type SpotRect } from "../../lib/drawer";
 import { myApps, useMyApps } from "../../lib/myApps";
-import { MANAGED_AT } from "../../components/Plan";
 import { usePlan } from "../../lib/plan";
 import { colors, radius, space, type } from "../../lib/theme";
 
@@ -32,6 +31,10 @@ import { colors, radius, space, type } from "../../lib/theme";
 // Create is at the top: say or type what you want and OVOA makes it
 // (app/create.tsx). The apps you made sit with yours, by you, and open in Talk
 // with their instructions on (lib/activeApp.ts).
+//
+// Create and the add-ons that use AI are for Base users. On the free plan they
+// are listed all the same, tagged, and open on "That's for Base users" with See
+// options (components/Plan.tsx PartOfPlan); the ones that don't use AI are free.
 
 /** What every row shows, whoever made the app. */
 type Card = {
@@ -75,13 +78,8 @@ export default function Apps() {
   const mine = made.filter((a) => !q || `${a.name} ${a.about} ${me}`.toLowerCase().includes(q));
   const showCreate = !q || "create make new build my own app".includes(q);
 
-  const create = () => {
-    if (!can.chat) {
-      Alert.alert("Making apps is part of a plan", `It comes with the Base and Pro plans. ${MANAGED_AT}`);
-      return;
-    }
-    router.push("/create" as Href);
-  };
+  // On the free plan Create opens on its locked state (app/create.tsx).
+  const create = () => router.push("/create" as Href);
 
   // A made app opens on its own screen (app/made/[id].tsx).
   const openMine = (a: MyApp) => router.push({ pathname: "/made/[id]", params: { id: a.id } } as unknown as Href);
@@ -98,7 +96,7 @@ export default function Apps() {
     ]);
 
   const planTag = (a: Addon) =>
-    a.needs === "agent" && !can.agent ? "Part of Pro" : a.needs === "assistant" && !can.chat ? "Part of a plan" : undefined;
+    (a.needs === "agent" && !can.agent) || (a.needs === "assistant" && !can.chat) ? "For Base users" : undefined;
 
   const remove = (a: Addon) =>
     Alert.alert(
@@ -145,7 +143,7 @@ export default function Apps() {
             <View style={styles.body}>
               <Text style={styles.name}>Create</Text>
               <Text style={styles.about}>Say or type what you want, and OVOA makes it into an app.</Text>
-              {!can.chat && <Text style={[styles.by, styles.tag]}>Part of a plan</Text>}
+              {!can.chat && <Text style={[styles.by, styles.tag]}>For Base users</Text>}
             </View>
             <Ionicons name="mic-outline" size={22} color={colors.now} />
           </PressScale>

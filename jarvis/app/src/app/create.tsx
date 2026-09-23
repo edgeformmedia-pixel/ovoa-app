@@ -11,6 +11,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { AppEditor } from "../components/AppEditor";
 import { Glimmer, Rise, SPRING } from "../components/motion";
+import { PartOfPlan } from "../components/Plan";
 import { Btn, IconTile, Screen, toneWash, type IconName, type Tone } from "../components/ui";
 import { cue } from "../lib/cues";
 import { api, type AppDraft } from "../lib/api";
@@ -19,6 +20,7 @@ import { useSession } from "../lib/auth";
 import { useDictation } from "../lib/dictation";
 import { logFail } from "../lib/devlog";
 import { myApps } from "../lib/myApps";
+import { usePlan } from "../lib/plan";
 import { colors, radius, space, type } from "../lib/theme";
 
 // Apps → Create: say or type what you want, and OVOA makes it an app.
@@ -29,6 +31,10 @@ import { colors, radius, space, type } from "../lib/theme";
 // and every part of it theirs to change, by hand or by saying so. The app is
 // instructions for the assistant plus a screen of its own (api/src/myapps.ts),
 // and it opens on that screen (app/made/[id].tsx).
+//
+// OVOA making it is a model call, so Create is for Base users: on the free plan
+// it opens on the locked state, and nothing is sent (api.ts stops the request
+// too). Saving and editing an app by hand are free on the server.
 
 const EXAMPLES = [
   "A grocery helper that asks what I'm out of and adds it to my shopping list",
@@ -38,6 +44,20 @@ const EXAMPLES = [
 ];
 
 export default function Create() {
+  const { can } = usePlan();
+  if (!can.chat) {
+    return (
+      <PartOfPlan
+        title="Create"
+        bar={false}
+        what="Say or type what you want, like a grocery helper or a study buddy, and OVOA makes it into an app with its own screen."
+      />
+    );
+  }
+  return <MakeApp />;
+}
+
+function MakeApp() {
   const router = useRouter();
   const { token, user } = useSession();
   const [text, setText] = useState("");

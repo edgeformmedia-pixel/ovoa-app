@@ -19,9 +19,9 @@ import { storage } from "./storage";
 // own; the field is there so the catalog reads the same once it isn't.
 
 export type AddonNeeds =
-  /** Talking to the assistant: any paid plan. */
+  /** Talking to the assistant: Base (and Pro, which is only more of it). */
   | "assistant"
-  /** Background work: Pro. */
+  /** Background work: Base too since v1; its own flag because the plan still reports it apart. */
   | "agent";
 
 /**
