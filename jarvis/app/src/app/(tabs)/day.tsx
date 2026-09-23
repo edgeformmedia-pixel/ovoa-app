@@ -2,11 +2,13 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect, useRouter, type Href } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from "react-native";
+import { FreeToday } from "../../components/FreeToday";
 import { Answer, Settled, Spine, type Moment, type MomentState } from "../../components/Spine";
 import { Btn, Empty, GroupLabel, Screen, TopBar, text } from "../../components/ui";
 import { api, type Commitment, type ContextDay, type FeedCard } from "../../lib/api";
 import { useAgent } from "../../lib/agent";
 import { useSession } from "../../lib/auth";
+import { usePlan } from "../../lib/plan";
 import { logFail } from "../../lib/devlog";
 import { colors, space, type } from "../../lib/theme";
 
@@ -40,6 +42,12 @@ function clockToEpoch(at: string, date: string) {
 }
 
 export default function Day() {
+  // The free plan's day is its home: notes and health, no assistant.
+  const { free } = usePlan();
+  return free ? <FreeToday /> : <PlanDay />;
+}
+
+function PlanDay() {
   const router = useRouter();
   const { token, user } = useSession();
   const { notes, unread, markRead, pushProblem } = useAgent();

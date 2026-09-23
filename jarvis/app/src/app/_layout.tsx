@@ -8,6 +8,7 @@ import { NagOverlay } from "../components/NagOverlay";
 import { AgentProvider } from "../lib/agent";
 import { AssistantProvider } from "../lib/assistant";
 import { AuthProvider, useAuth } from "../lib/auth";
+import { PlanProvider, usePlan } from "../lib/plan";
 // For its side effect: the background push task has to be defined before anything mounts.
 import "../lib/background";
 // Likewise the Done / Snooze handler: a tap on a locked phone can start the app just for it.
@@ -78,9 +79,15 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 
 function RootStack() {
   const { loading, user, onboarding } = useAuth();
+  // Setup (connect Google, then the setup conversation) is the assistant
+  // getting to know you, and the free plan has no assistant: a free person goes
+  // straight to their day. If they join later, setup is waiting for them.
+  const { free, ready } = usePlan();
+  const googleStep = onboarding && !free;
+  const setupStep = user?.onboarded === false && !free;
   // The one predicate the signed-in screens are guarded by, named once so the
   // providers below and the guard inside the Stack can't drift apart again.
-  const signedIn = !!user && !onboarding && user.onboarded !== false;
+  const signedIn = !!user && !googleStep && !setupStep;
 
   // Which of the four states the app is in. A crash report that doesn't say
   // whether anyone was signed in costs a round trip to the phone to find out.
@@ -88,7 +95,11 @@ function RootStack() {
     devlog("log", `session: ${loading ? "loading" : signedIn ? "signed in" : user ? "onboarding" : "signed out"}`);
   }, [loading, signedIn, user]);
 
-  if (loading) {
+  // Right after signing up the plan isn't known yet, and it decides whether
+  // setup comes first: wait the moment it takes rather than flash setup at a free account.
+  const waitingForPlan = !!user && (onboarding || user.onboarded === false) && !ready;
+
+  if (loading || waitingForPlan) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center" }}>
         <ActivityIndicator color={colors.now} />
@@ -99,7 +110,7 @@ function RootStack() {
   const stack = (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.paper } }}>
       {/* Older servers don't send `onboarded`; only an explicit false shows setup. */}
-      <Stack.Protected guard={!!user && !onboarding && user.onboarded === false}>
+      <Stack.Protected guard={!!user && !googleStep && setupStep}>
         <Stack.Screen name="onboarding" />
       </Stack.Protected>
       <Stack.Protected guard={signedIn}>
@@ -114,7 +125,7 @@ function RootStack() {
         <Stack.Screen name="live" options={{ ...pushed, title: "Live" }} />
         <Stack.Screen name="claude" options={{ ...pushed, title: "Ask Claude" }} />
       </Stack.Protected>
-      <Stack.Protected guard={!!user && onboarding}>
+      <Stack.Protected guard={!!user && googleStep}>
         <Stack.Screen name="connect-google" />
       </Stack.Protected>
       <Stack.Protected guard={!user}>
@@ -184,7 +195,9 @@ export default function RootLayout() {
       <AuthProvider>
         {/* Dark glyphs: the app is white now. */}
         <StatusBar style="dark" />
-        <RootStack />
+        <PlanProvider>
+          <RootStack />
+        </PlanProvider>
         <RouteWatch />
       </AuthProvider>
     </SafeAreaProvider>

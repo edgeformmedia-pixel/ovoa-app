@@ -13,7 +13,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { api, type OnboardingStep } from "../lib/api";
+import { api, isNeedsPlan, type OnboardingStep } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { devlog, logFail } from "../lib/devlog";
 import { syncRoutines } from "../lib/routines";
@@ -125,7 +125,9 @@ export default function Onboarding() {
         await intro.current.speak(`${greeting} ${next.question}`).catch(logFail("onboarding: greeting"));
         if (!cancelled) await convo.start();
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      // Setup is part of the assistant. On the free plan the answer is needs_plan,
+      // which already moved the plan to free, and the free app opens instead of this.
+      .catch((err) => !isNeedsPlan(err) && setError(err instanceof Error ? err.message : String(err)));
     return () => {
       cancelled = true;
       intro.current.stop();

@@ -2,8 +2,62 @@ import { useEffect } from "react";
 import { api } from "./api";
 import { useAuth } from "./auth";
 import { devlog } from "./devlog";
+import { transcribeOnDevice } from "./onDeviceTranscribe";
+import { usePlan } from "./plan";
 import { getRecordings, markLost, updateRecording, useRecordings, wavFile, type Recording } from "./recordings";
 import { transcribe } from "./voice";
+
+// ---------- The free plan: a recording becomes a note ----------
+//
+// No AI on the free plan (docs/paywall/SPEC.md §1), so no server transcription
+// and no summary: the iPhone writes the words out itself (onDeviceTranscribe.ts)
+// and only the text goes up, as a plain note. The audio stays on the phone.
+
+/** What the Record tab shows when this phone couldn't write a recording out. */
+export const NO_ON_DEVICE = "Couldn't transcribe on this phone.";
+
+/**
+ * Turns one saved recording into a note, on the phone. Resolves with how it
+ * went, and writes the outcome onto the recording so the Record tab can show
+ * it (and offer it again). Never throws.
+ */
+export async function noteRecording(token: string, recording: Recording): Promise<"noted" | "empty" | "failed"> {
+  if (recording.noteId) return "noted";
+  if (working.has(recording.id)) return "failed";
+  const audio = wavFile(recording);
+  if (!audio?.exists) {
+    if (audio && !recording.lost) markLost(recording.id, "The audio for this one is no longer on the phone.");
+    return "failed";
+  }
+  working.add(recording.id);
+  updateRecording(recording.id, { capturing: true, captureError: undefined });
+  try {
+    // The decoded WAV, never the band's raw opus: that's the file the recogniser can open.
+    const heard = await transcribeOnDevice(audio.uri);
+    if (!heard) {
+      updateRecording(recording.id, { capturing: false, captureError: NO_ON_DEVICE });
+      return "failed";
+    }
+    const text = heard.text.trim();
+    if (!text) {
+      updateRecording(recording.id, { capturing: false, captureError: "Nothing was said in this one." });
+      return "empty";
+    }
+    const { id } = await api.addNote(token, { text, source: "on_device" });
+    updateRecording(recording.id, { capturing: false, noteId: id, noteText: text.slice(0, 140) });
+    devlog("log", `notes: filed a recording as a note (${text.length} chars, ${heard.onDevice ? "on the phone" : "Apple's servers"})`);
+    return "noted";
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    devlog("err", "notes: couldn't save a recording as a note", `${recording.id}\n${message}`);
+    updateRecording(recording.id, { capturing: false, captureError: "Couldn't save the note. Tap to try again." });
+    return "failed";
+  } finally {
+    working.delete(recording.id);
+  }
+}
+
+// ---------- Paid plans: a recording becomes a moment in the timeline ----------
 
 // How a recording becomes a moment in the timeline.
 //
@@ -105,7 +159,10 @@ export function retryCapture(token: string, recording: Recording) {
 export function useAutoCapture() {
   const { token, user } = useAuth();
   const recordings = useRecordings();
-  const on = !!token && !!user?.settings.contextEnabled;
+  // Not on the free plan: the timeline is a model call. Free recordings become
+  // notes one at a time, when they arrive (assistant.tsx) or when asked (Record).
+  const { free } = usePlan();
+  const on = !!token && !!user?.settings.contextEnabled && !free;
 
   useEffect(() => {
     if (!on || passRunning) return;

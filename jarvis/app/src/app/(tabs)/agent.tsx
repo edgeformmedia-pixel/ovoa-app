@@ -1,10 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from "react-native";
+import { PartOfPlan } from "../../components/Plan";
 import { Btn, GroupLabel, IconTile, Row, Screen, Tile, Tiles, Toggle, TopBar, text } from "../../components/ui";
 import { api, type AgentGoal, type AgentJob, type AgentRun, type Autonomy } from "../../lib/api";
 import { useAgent } from "../../lib/agent";
 import { useSession } from "../../lib/auth";
+import { usePlan } from "../../lib/plan";
 import { logFail } from "../../lib/devlog";
 import { colors, mono, numeric, space, type } from "../../lib/theme";
 
@@ -30,6 +32,20 @@ const OUTCOME: Record<AgentRun["outcome"], { label: string; color: string }> = {
 const clockFrom = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 
 export default function AgentScreen() {
+  const { can } = usePlan();
+  if (!can.agent) {
+    return (
+      <PartOfPlan
+        title="Background work"
+        needs="pro"
+        what="OVOA checks on things while you're away, like what's on today and what you said you'd do, and tells you only when it matters."
+      />
+    );
+  }
+  return <Agent />;
+}
+
+function Agent() {
   const { token, user, setUser } = useSession();
   const { refresh: refreshNotes } = useAgent();
   const [jobs, setJobs] = useState<AgentJob[] | null>(null);

@@ -10,10 +10,16 @@ import { startHeartRate } from "../../lib/heart";
 import { startLocationTimeline } from "../../lib/location";
 import { prepareFillers, watchVoiceForFillers } from "../../lib/fillers";
 import { startAlarmSync } from "../../lib/nag";
+import { usePlan } from "../../lib/plan";
 import { colors } from "../../lib/theme";
 
 export default function TabsLayout() {
   const { token, user } = useAuth();
+  // Routines, alarms, places and the spoken fillers belong to the assistant
+  // (Base, api/src/plans.ts). On the free plan they aren't started at all,
+  // rather than asked for every few minutes and told no.
+  const { free } = usePlan();
+  const assistant = token && !free ? token : null;
 
   // Reconnect to the ES100 as soon as the app is open, not only once Record is visited.
   useEffect(() => startClip(), []);
@@ -21,18 +27,18 @@ export default function TabsLayout() {
   useEffect(() => (token ? startDeviceReports(token) : undefined), [token]);
   useEffect(() => void registerBackgroundPush(), []);
   // Routines and medications: mirror Reminders, schedule the next two days on the phone.
-  useEffect(() => (token ? startRoutineSync(token) : undefined), [token]);
+  useEffect(() => (assistant ? startRoutineSync(assistant) : undefined), [assistant]);
   // Heart rate from the band every few minutes, and from Health; places, when the timeline is on.
   useEffect(() => (token ? startHeartRate(token) : undefined), [token]);
-  useEffect(() => (token ? startLocationTimeline(token) : undefined), [token]);
+  useEffect(() => (assistant ? startLocationTimeline(assistant) : undefined), [assistant]);
   // Tonight's alarms: kept awake for, and set to go off here even with no network.
-  useEffect(() => (token ? startAlarmSync(token, user?.name ?? "") : undefined), [token, user?.name]);
+  useEffect(() => (assistant ? startAlarmSync(assistant, user?.name ?? "") : undefined), [assistant, user?.name]);
   // "One second while I get that": voiced once, kept on the phone, played instantly.
   useEffect(() => {
-    if (!token) return;
-    void prepareFillers(token);
-    return watchVoiceForFillers(token);
-  }, [token]);
+    if (!assistant) return;
+    void prepareFillers(assistant);
+    return watchVoiceForFillers(assistant);
+  }, [assistant]);
   // Anything recorded but not yet in the timeline gets filed, while it's on.
   useAutoCapture();
 

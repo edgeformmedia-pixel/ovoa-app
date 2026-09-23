@@ -4,6 +4,8 @@ import { useCallback, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { api, type LineSource, type TranscriptBlock, type TranscriptDay, type TranscriptLine } from "../lib/api";
 import { useSession } from "../lib/auth";
+import { usePlan } from "../lib/plan";
+import { PartOfPlan } from "../components/Plan";
 import { devlog, logFail } from "../lib/devlog";
 import { colors } from "../lib/theme";
 
@@ -24,6 +26,21 @@ const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padSt
 const time = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
 export default function Transcripts() {
+  const { can } = usePlan();
+  if (!can.chat) {
+    return (
+      <PartOfPlan
+        title="Transcripts"
+        needs="base"
+        bar={false}
+        what="Everything you said to OVOA, and what it said back, by the hour, with a title for each stretch."
+      />
+    );
+  }
+  return <TranscriptList />;
+}
+
+function TranscriptList() {
   const { token } = useSession();
   const [date, setDate] = useState(() => new Date());
   const [day, setDay] = useState<TranscriptDay | null>(null);

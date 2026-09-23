@@ -13,7 +13,7 @@ import { File, Paths } from "expo-file-system";
 import * as Speech from "expo-speech";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
-import { API_URL, ApiError, noteDeadSession, type ServerSpeech } from "./api";
+import { API_URL, ApiError, noteDeadSession, notePlanNeeded, type ServerSpeech } from "./api";
 import { devlog, devlogRepeat, devlogSettled, logFail } from "./devlog";
 import { pickFiller } from "./fillers";
 import { audioWhy, onScreen, whenOnScreen } from "./foreground";
@@ -259,9 +259,9 @@ async function authedFetch(
   }
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    devlog("err", `${res.status} ${init.method} ${path} · ${Date.now() - started} ms`, body);
+    devlog(body.error === "needs_plan" ? "log" : "err", `${res.status} ${init.method} ${path} · ${Date.now() - started} ms`, body);
     noteDeadSession(res.status, token, body.error);
-    throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status);
+    throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status, {}, notePlanNeeded(body));
   }
   devlog("res", `${res.status} ${init.method} ${path} · ${Date.now() - started} ms`);
   return res;
@@ -993,7 +993,9 @@ const LIVE_RETRY_MS = 60_000;
  * With `interruptible`, the user can talk over the reply to cut it off. With
  * `background` (Always listen) it only answers when called by `name`. With
  * `standby` (twist mode) the microphone runs between turns, nothing sent, so a
- * twist can start a turn while the app is in the background.
+ * twist can start a turn while the app is in the background. `wake` false (a
+ * plan without the hands-free wake word, which is Pro) keeps the phone's ear
+ * off, so every turn is an ordinary one.
  */
 export function useConversation(
   token: string,
@@ -1004,7 +1006,7 @@ export function useConversation(
     signal?: AbortSignal,
     extra?: { speech?: ServerSpeech; room?: boolean },
   ) => Promise<string | null>,
-  { interruptible = false, background = false, standby = false, name = "OVOA" } = {},
+  { interruptible = false, background = false, standby = false, name = "OVOA", wake = true } = {},
 ) {
   const recorder = useAudioRecorder(RECORDING);
   const [phase, setPhaseState] = useState<VoicePhase>("off");
@@ -1058,7 +1060,9 @@ export function useConversation(
    * build has it and nothing else needs the microphone kept running between
    * turns (the twist standby and Always listen both do, and keep the old way).
    */
-  const useNameEar = () => nameEarOk.current && !keepsAudio();
+  const wakeRef = useRef(wake);
+  wakeRef.current = wake;
+  const useNameEar = () => wakeRef.current && nameEarOk.current && !keepsAudio();
 
   useEffect(() => {
     speaker.current = createSpeaker(token);
@@ -1266,7 +1270,7 @@ export function useConversation(
           gate.summon(until);
         },
         onSleep: () => setWords(""),
-      }, { reuse: keepsAudio(), wakeWord });
+      }, { reuse: keepsAudio(), wakeWord, room: background });
       earRef.current = ear;
       // A button press that started this listening: the ear opens for it now.
       if (Date.now() < summonedUntil.current) ear.wake("summon");

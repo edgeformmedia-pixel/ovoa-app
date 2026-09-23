@@ -283,40 +283,52 @@ function levelOf(data: ArrayBuffer) {
 
 // ---------- The token, fetched ahead ----------
 
-let cachedToken: { token: string; keyterms: string[]; expiresAt: number } | null = null;
-let fetchingToken: Promise<void> | null = null;
+/**
+ * What the token is for. "wake" is hands-free listening for the name (the
+ * phone's ear, or Always listen's room mode), which is part of Pro; the server
+ * gates it on `?mode=wake` (api/src/plans.ts), so asking for it by its name is
+ * what keeps a Base plan from getting it. "talk" is an ordinary spoken turn.
+ */
+export type EarMode = "wake" | "talk";
+
+type CachedToken = { token: string; keyterms: string[]; expiresAt: number };
+/** One per mode: a talk token must never be reused for wake listening. */
+const cachedTokens: Record<EarMode, CachedToken | null> = { wake: null, talk: null };
+const fetchingTokens: Record<EarMode, Promise<void> | null> = { wake: null, talk: null };
 /** After a failed fetch, not before this: the server may be down, and a tick is 250 ms. */
 let nextTokenTryAt = 0;
 
-/** A token good for a while, from the server. Shared by every ear on this phone. */
-async function fetchToken(apiToken: string) {
-  fetchingToken ??= (async () => {
+/** A token good for a while, from the server. Shared by every ear on this phone that listens the same way. */
+async function fetchToken(apiToken: string, mode: EarMode) {
+  fetchingTokens[mode] ??= (async () => {
     try {
       const { token, keyterms = [], expiresIn } = await request<{ token: string; keyterms?: string[]; expiresIn?: number }>(
-        `/voice/token?ttl=${TOKEN_TTL_S}`,
+        `/voice/token?ttl=${TOKEN_TTL_S}${mode === "wake" ? "&mode=wake" : ""}`,
         apiToken,
         { method: "POST" },
       );
       // A server from before the ttl existed answers with a 30-second token.
-      cachedToken = { token, keyterms, expiresAt: Date.now() + Math.max(10, expiresIn ?? 30) * 1000 };
+      cachedTokens[mode] = { token, keyterms, expiresAt: Date.now() + Math.max(10, expiresIn ?? 30) * 1000 };
     } finally {
-      fetchingToken = null;
+      fetchingTokens[mode] = null;
     }
   })();
-  await fetchingToken;
+  await fetchingTokens[mode];
 }
 
 /** The cached token when it will still be valid at connect time; a fresh one otherwise. */
-async function tokenFor(apiToken: string) {
-  if (!cachedToken || cachedToken.expiresAt - Date.now() < 5_000) await fetchToken(apiToken);
-  return cachedToken!;
+async function tokenFor(apiToken: string, mode: EarMode) {
+  const cached = cachedTokens[mode];
+  if (!cached || cached.expiresAt - Date.now() < 5_000) await fetchToken(apiToken, mode);
+  return cachedTokens[mode]!;
 }
 
 /** Fetched in the background whenever the cached one is about to run out. Backs off after a failure. */
-function refreshTokenSoon(apiToken: string) {
-  if (fetchingToken || Date.now() < nextTokenTryAt) return;
-  if (!cachedToken || cachedToken.expiresAt - Date.now() < TOKEN_REFRESH_S * 1000) {
-    fetchToken(apiToken).catch((err) => {
+function refreshTokenSoon(apiToken: string, mode: EarMode) {
+  if (fetchingTokens[mode] || Date.now() < nextTokenTryAt) return;
+  const cached = cachedTokens[mode];
+  if (!cached || cached.expiresAt - Date.now() < TOKEN_REFRESH_S * 1000) {
+    fetchToken(apiToken, mode).catch((err) => {
       nextTokenTryAt = Date.now() + 15_000;
       devlog("warn", "couldn't fetch a live transcription token ahead of time", err instanceof Error ? err.message : String(err));
     });
@@ -362,14 +374,18 @@ export async function openEar(
   {
     reuse = false,
     wakeWord = null,
+    room = false,
   }: {
     /** Use the mic as it is if it's running: in the background iOS may not let it start again. */
     reuse?: boolean;
     /** Listen for this name on the phone, and stream only after it. */
     wakeWord?: { name: string } | null;
+    /** Always listen: the connection stays open waiting for the name. Wake mode, like wakeWord. */
+    room?: boolean;
   } = {},
 ): Promise<Ear> {
   const native = !!wakeWord;
+  const mode: EarMode = native || room ? "wake" : "talk";
   if (!native && !stream) throw new Error("This build has no microphone stream");
   const pending: ArrayBuffer[] = [];
   let ws: WebSocket | null = null;
@@ -424,7 +440,7 @@ export async function openEar(
 
   /** Opens one connection; resolves when it's open, rejects if it never opens. */
   const connect = async () => {
-    const { token, keyterms } = await tokenFor(apiToken);
+    const { token, keyterms } = await tokenFor(apiToken, mode);
     const params = new URLSearchParams({
       model: "nova-3",
       language: "en",
@@ -580,8 +596,8 @@ export async function openEar(
     }
     if (native) {
       if (sending && !window.awake(now)) sleep();
-      if (window.awake(now)) refreshTokenSoon(apiToken);
-      else if (!cachedToken || cachedToken.expiresAt - now < TOKEN_REFRESH_S * 1000) refreshTokenSoon(apiToken);
+      if (window.awake(now)) refreshTokenSoon(apiToken, mode);
+      else if (!cachedTokens[mode] || cachedTokens[mode]!.expiresAt - now < TOKEN_REFRESH_S * 1000) refreshTokenSoon(apiToken, mode);
       // The ear's heartbeat is its loudness report. Silence from it means the
       // engine stopped: off screen that is iOS, and only the app coming back
       // fixes it; on screen it is started again, backing off between tries.
@@ -789,7 +805,7 @@ export async function openEar(
       }
       lastEarLevelAt = Date.now();
       // The token now, so the first waking opens the connection without a round trip.
-      refreshTokenSoon(apiToken);
+      refreshTokenSoon(apiToken, mode);
       void started;
     } else {
       if (meterOver(meter, Date.now())) throw cappedError();

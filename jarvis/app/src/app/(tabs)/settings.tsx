@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import { GoogleConnection } from "../../components/GoogleConnection";
+import { PartOfProLine, YourPlan } from "../../components/Plan";
 import { SiriSetup } from "../../components/SiriSetup";
 import { VoicePicker } from "../../components/VoicePicker";
 import { Btn, GroupLabel, Screen, Toggle, TopBar } from "../../components/ui";
@@ -20,6 +21,7 @@ import { disableTimeline, enableTimeline, timelinePref } from "../../lib/locatio
 import { useAgent } from "../../lib/agent";
 import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
+import { usePlan } from "../../lib/plan";
 import { autoSendTextsPref, SEND_TEXT_SHORTCUT } from "../../lib/storage";
 import { colors, space, type } from "../../lib/theme";
 
@@ -37,6 +39,9 @@ export default function Settings() {
   const [newPw, setNewPw] = useState("");
   const { listenMode, setListenMode, micSource, setMicSource, alwaysListen, setAlwaysListen } = useAssistant();
   const { pushProblem } = useAgent();
+  // The free plan has no assistant, so its settings aren't shown at all; Base
+  // sees the Pro-only ones (the wake word, background work) as "Part of Pro".
+  const { free, can } = usePlan();
   const [quiet, setQuiet] = useState({
     start: minutesToClock(user?.settings.quietStart ?? 1320),
     end: minutesToClock(user?.settings.quietEnd ?? 420),
@@ -70,8 +75,9 @@ export default function Settings() {
   };
 
   useEffect(() => {
+    if (free) return;
     api.memories(token).then((r) => setMemories(r.memories)).catch(() => setMemories([]));
-  }, [token]);
+  }, [token, free]);
 
   if (!user) return null; // signing out
 
@@ -216,11 +222,17 @@ export default function Settings() {
     <View style={styles.page}>
       <TopBar title="Settings" />
       <Screen keyboardShouldPersistTaps="handled">
+      <Section title="Your plan">
+        <YourPlan />
+      </Section>
+
       <Section title="Account">
         <Text style={styles.meta}>{user.email}</Text>
         <Field label="Your name" value={name} onChangeText={setName} />
       </Section>
 
+      {!free && (
+      <>
       <Section title="Assistant">
         <Field label="Assistant name" value={assistantName} onChangeText={setAssistantName} />
         <Field
@@ -238,6 +250,12 @@ export default function Settings() {
       </Section>
 
       <Section title="How to start talking">
+        {!can.wake ? (
+          <PartOfProLine
+            label="Always listen"
+            what="The microphone stays on and answers when you say its name. On your plan, double-click the band's button to talk, or tap the orb on Talk."
+          />
+        ) : (
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Always listen</Text>
@@ -262,6 +280,7 @@ export default function Settings() {
             }
           />
         </View>
+        )}
         <View style={styles.segment}>
           {LISTEN_MODES.map((m) => (
             <Pressable
@@ -273,7 +292,11 @@ export default function Settings() {
             </Pressable>
           ))}
         </View>
-        <Text style={styles.meta}>{LISTEN_MODES.find((m) => m.mode === listenMode)?.hint}</Text>
+        <Text style={styles.meta}>
+          {listenMode === "wake" && !can.wake
+            ? "Saying its name to start is part of Pro. On your plan, tap the orb on Talk and speak."
+            : LISTEN_MODES.find((m) => m.mode === listenMode)?.hint}
+        </Text>
         <Text style={[styles.label, { marginTop: 18 }]}>Microphone</Text>
         <View style={styles.segment}>
           {MIC_SOURCES.map((m) => (
@@ -355,12 +378,16 @@ export default function Settings() {
         />
       </Section>
 
+      </>
+      )}
+
       <Section title="Password">
         <Field label="Current password" value={currentPw} onChangeText={setCurrentPw} secureTextEntry />
         <Field label="New password" value={newPw} onChangeText={setNewPw} secureTextEntry />
         <Button label="Change password" onPress={changePassword} disabled={!currentPw || !newPw} />
       </Section>
 
+      {!free && (
       <Section title="Your day">
         <LocationTimeline />
         <Button label="Transcripts — everything said" onPress={() => router.push("/transcripts" as Href)} />
@@ -381,6 +408,8 @@ export default function Settings() {
         />
       </Section>
 
+      )}
+
       <Section title="Something went wrong">
         <Text style={styles.meta}>
           Tell us what happened and the app sends what it was doing at the time. No passwords or sign-in details go
@@ -397,6 +426,8 @@ export default function Settings() {
         <Button label="Sign out" onPress={signOut} />
       </Section>
 
+      {!free && (
+      <>
       <Section title="Texts">
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
@@ -414,6 +445,13 @@ export default function Settings() {
       </Section>
 
       <Section title="Background work">
+        {!can.agent ? (
+          <PartOfProLine
+            label={`Let ${assistantName || "OVOA"} work on its own`}
+            what="It checks things between conversations and tells you only when it's worth interrupting you."
+          />
+        ) : (
+        <>
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Let {assistantName || "OVOA"} work on its own</Text>
@@ -481,6 +519,8 @@ export default function Settings() {
             <Button label="What it's set up to do" onPress={() => router.push("/agent")} />
           </>
         )}
+        </>
+        )}
       </Section>
 
       <Section title="Timeline">
@@ -536,7 +576,11 @@ export default function Settings() {
         )}
       </Section>
 
+      </>
+      )}
+
       <Section title="Danger zone">
+        {!free && (
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Approve for me</Text>
@@ -547,6 +591,7 @@ export default function Settings() {
           </View>
           <Toggle value={user.settings.autoApprove} onValueChange={toggleAutoApprove} />
         </View>
+        )}
         <Button
           label="Delete account"
           danger

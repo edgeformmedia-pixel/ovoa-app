@@ -5,9 +5,10 @@ import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { Btn, GroupLabel, Row, Screen, TopBar, text } from "../../components/ui";
 import { useSession } from "../../lib/auth";
-import { retryCapture } from "../../lib/capture";
+import { noteRecording, retryCapture } from "../../lib/capture";
 import * as clip from "../../lib/clip";
 import { logFail } from "../../lib/devlog";
+import { usePlan } from "../../lib/plan";
 import { deleteRecording, markLost, renameRecording, useRecordings, wavFile, type Recording } from "../../lib/recordings";
 import { colors, mono, numeric, space, type } from "../../lib/theme";
 
@@ -186,6 +187,7 @@ export default function RecordScreen() {
 }
 
 function Recorder({ state }: { state: clip.ClipState }) {
+  const { free } = usePlan();
   const rec = state.recording;
   const connected = state.phase === "connected";
   const [now, setNow] = useState(Date.now());
@@ -223,7 +225,9 @@ function Recorder({ state }: { state: clip.ClipState }) {
               : `Recording on the clip${rec.byDevice ? " (started with its button)" : ""}`
             : state.busy
               ? `${state.busy}…`
-              : "Press the clip's button, or tap here"}
+              : free
+                ? "Double-press the clip's button, or tap here. It becomes a note."
+                : "Press the clip's button, or tap here"}
       </Text>
       {!!rec && (
         <View style={styles.buttons}>
@@ -276,8 +280,39 @@ function TimelineState({ recording, onRetry }: { recording: Recording; onRetry: 
   return null;
 }
 
+/**
+ * The free plan: whether this recording became a note, written out on the
+ * phone (capture.ts noteRecording). One that hasn't can be made into one.
+ */
+function NoteState({ recording, onNote }: { recording: Recording; onNote: () => void }) {
+  if (recording.capturing) return <Text style={text.meta}>Writing it out on your phone…</Text>;
+  if (recording.noteText) {
+    return (
+      <Text style={[text.meta, { color: colors.done }]} numberOfLines={2}>
+        {recording.noteText}
+      </Text>
+    );
+  }
+  if (recording.lost) {
+    return (
+      <Text style={[text.meta, { color: colors.late }]} numberOfLines={2}>
+        {recording.lost}
+      </Text>
+    );
+  }
+  if (!recording.wavName) return null;
+  return (
+    <Pressable onPress={onNote} hitSlop={6}>
+      <Text style={[text.meta, recording.captureError ? { color: colors.late } : { color: colors.inkDim }]} numberOfLines={2}>
+        {recording.captureError ? `${recording.captureError} Tap to try again.` : "Tap to make it a note"}
+      </Text>
+    </Pressable>
+  );
+}
+
 function RecordingList({ recordings }: { recordings: Recording[] }) {
   const { token, user } = useSession();
+  const { free } = usePlan();
   const player = useAudioPlayer(null);
   const status = useAudioPlayerStatus(player);
   const [current, setCurrent] = useState<string | null>(null);
@@ -372,8 +407,12 @@ function RecordingList({ recordings }: { recordings: Recording[] }) {
                 {clock(duration)}
                 {recording.lost ? " · audio gone" : recording.decodeError ? " · not playable" : ""}
               </Text>
-              {user.settings.contextEnabled && (
-                <TimelineState recording={recording} onRetry={() => retryCapture(token, recording)} />
+              {free ? (
+                <NoteState recording={recording} onNote={() => void noteRecording(token, recording)} />
+              ) : (
+                user.settings.contextEnabled && (
+                  <TimelineState recording={recording} onRetry={() => retryCapture(token, recording)} />
+                )
               )}
               {active && (
                 <View style={styles.bar}>

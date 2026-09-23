@@ -2,8 +2,10 @@ import { usePathname, useRouter } from "expo-router";
 import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as Notifications from "expo-notifications";
 import { AppState } from "react-native";
-import { api, type ChatResponse, type PendingAction, type PhoneResult, type ServerSpeech } from "./api";
+import { api, isNeedsPlan, type ChatResponse, type PendingAction, type PhoneResult, type ServerSpeech } from "./api";
 import { useSession } from "./auth";
+import { noteRecording } from "./capture";
+import { usePlan } from "./plan";
 import { setKeepsHeard } from "./heard";
 import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type Approval } from "./phoneActions";
 import { useOptionalContext, useProviderLog } from "./context";
@@ -100,12 +102,18 @@ export function useAssistant() {
 export function AssistantProvider({ children }: { children: ReactNode }) {
   const { token, user } = useSession();
   useProviderLog("assistant");
+  // What the plan includes (plan.tsx). Free: no talking at all, and the band's
+  // button records notes. Base: talking, but not the hands-free wake word.
+  const { can } = usePlan();
   const pathname = usePathname();
   const router = useRouter();
   const onAssistantTab = pathname === ASSISTANT_PATH;
 
   const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [alwaysListen, setAlwaysListenState] = useState(false);
+  const [alwaysListenPicked, setAlwaysListenState] = useState(false);
+  // Always listen is the wake word at its most hands-free: Pro. The switch is
+  // remembered either way, and comes back on its own if the plan does.
+  const alwaysListen = alwaysListenPicked && can.wake;
   const [listenMode, setListenModeState] = useState<ListenMode>("wake");
   const [micSource, setMicSourceState] = useState<MicSource>("phone");
   const [held, setHeld] = useState(0);
@@ -321,12 +329,13 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const clipPaired = clip.useClipPaired();
   // Twist mode without Always listen: keep the mic (and the app) running so a twist works from other apps.
   // In band mode the phone's microphone is never used, so there's no standby to keep alive.
-  const standby = twistOn && !alwaysListen && clipPaired && micSource === "phone";
+  const standby = can.voice && twistOn && !alwaysListen && clipPaired && micSource === "phone";
   const conversation = useConversation(token, ask, {
     interruptible: alwaysListen,
     background: alwaysListen,
     standby,
     name: user?.settings.assistantName || "OVOA",
+    wake: can.wake,
   });
   const { start, end, summon, currentPhase, finishNow } = conversation;
 
@@ -354,6 +363,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     micSourcePref.get().then(setMicSourceState);
   }, []);
 
+  // The band's own microphone answers questions when it's picked, and on the
+  // free plan it's always what the button uses: every press records a note.
+  const bandOn = clipPaired && (micSource === "band" || !can.voice);
+  const talks = can.voice;
+
   const setMicSource = useCallback((source: MicSource) => {
     setMicSourceState(source);
     micSourcePref.set(source).catch(logFail("assistant: micSourcePref.set"));
@@ -373,9 +387,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         const audio = wavFile(entry);
         if (!audio?.exists) throw new Error(entry.decodeError ?? "the clip's recording couldn't be decoded");
         devlog("file", `band mic: sending ${audio.name}, ${Math.round(audio.size / 1024)} KB`, audio.uri);
-        // transcribe() deletes the audio it sends, and a question isn't worth keeping,
-        // so the clip's recording doesn't stay in the Recordings list either.
-        const text = await transcribe(token, audio.uri, "audio/wav");
+        // A question isn't worth keeping, so the clip's recording doesn't stay in the
+        // Recordings list: it goes once the words are back. Kept until then, so that a
+        // plan that turns out not to include talking can still make a note of it.
+        const text = await transcribe(token, audio.uri, "audio/wav", { keep: true });
         deleteRecording(entry.id);
         if (entry.sessionId) clip.deleteFromClip(entry.sessionId).catch(logFail("assistant: clip.deleteFromClip"));
         if (!text) {
@@ -437,6 +452,15 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       } catch (err) {
         if (filler) clearTimeout(filler);
         server?.done();
+        // The plan doesn't include talking (it has just changed, and the phone
+        // hadn't heard yet): not a failure. The recording becomes a note instead.
+        if (isNeedsPlan(err)) {
+          devlog("voice", "band mic: talking isn't part of this plan; keeping it as a note");
+          const outcome = await noteRecording(token, entry);
+          clip.buzz(outcome === "noted" ? 1 : 2);
+          endTurn(outcome);
+          return;
+        }
         const message = err instanceof Error ? err.message : String(err);
         devlog("err", "band mic: the turn failed", message);
         failTurn(message);
@@ -451,9 +475,30 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     [token],
   );
 
+  /**
+   * The free plan's band recording: written out on the phone and kept as a note.
+   * Never the AI reply. One buzz when it's saved, two when it couldn't be (the
+   * Record tab then says why and offers it again).
+   */
+  const bandNote = useCallback(
+    async (entry: Recording) => {
+      setBandPhase("thinking");
+      try {
+        const outcome = await noteRecording(token, entry);
+        devlog("voice", `band note: ${outcome}`);
+        clip.buzz(outcome === "noted" ? 1 : 2);
+        if (outcome === "noted") endTurn();
+        else failTurn(outcome === "empty" ? "nothing was said" : "couldn't make a note of it");
+      } finally {
+        setBandPhase(null);
+      }
+    },
+    [token],
+  );
+
   // Band mode on or off in the clip, and the finished recordings it hands over.
   useEffect(() => {
-    const on = micSource === "band" && clipPaired;
+    const on = bandOn;
     clip.setBandMode(on);
     if (!on) return;
     const off = clip.onBandRecording((entry, err) => {
@@ -467,13 +512,13 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         clip.buzz(2);
         return;
       }
-      void bandAnswer(entry);
+      void (talks ? bandAnswer(entry) : bandNote(entry));
     });
     return () => {
       clip.setBandMode(false);
       off();
     };
-  }, [micSource, clipPaired, bandAnswer]);
+  }, [bandOn, talks, bandAnswer, bandNote]);
 
   const bandClick = useCallback(() => {
     if (bandPhaseRef.current === "thinking" || bandPhaseRef.current === "speaking") {
@@ -531,9 +576,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   const onClick = useCallback(
     (source: string) => {
-      if (micSource === "band" && clipPaired) {
+      if (bandOn) {
         devlog("voice", `click: ${source} (band microphone)`);
         bandClick();
+        return;
+      }
+      // Nothing to talk to on this plan, and no band to take a note with.
+      if (!talks) {
+        devlog("voice", `click: ${source} ignored (talking isn't part of this plan)`);
         return;
       }
       const phase = currentPhase();
@@ -553,7 +603,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       if (phase === "off") summonedOpen.current = true;
       summon();
     },
-    [summon, currentPhase, finishNow, end, micSource, clipPaired, bandClick],
+    [summon, currentPhase, finishNow, end, bandOn, talks, bandClick],
   );
   const onClickRef = useRef(onClick);
   onClickRef.current = onClick;
@@ -571,7 +621,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
           devlog("voice", "double click: Always listen off");
           return;
         }
-        if (micSource === "band" && clipPaired) {
+        if (bandOn) {
           if (bandPhaseRef.current === "thinking" || bandPhaseRef.current === "speaking") bandSpeaker.current?.stop();
           bandRecording.current = true;
           setBandPhase("listening");
@@ -618,7 +668,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       if (currentPhase() === "speaking") return conversation.interrupt();
       if (currentPhase() === "listening" && summonedOpen.current) finishNow();
     },
-    [micSource, clipPaired, currentPhase, finishNow],
+    [bandOn, currentPhase, finishNow],
   );
   const onGestureRef = useRef(onGesture);
   onGestureRef.current = onGesture;
@@ -629,7 +679,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   // agent proposed while the app was closed. Also on every return to the app:
   // an overnight proposal would otherwise sit unseen until the next chat turn.
   useEffect(() => {
-    if (!onAssistantTab) return;
+    if (!onAssistantTab || !can.chat) return;
     const pull = () =>
       api
         .pendingActions(token)
@@ -643,7 +693,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       if (state === "active") pull();
     });
     return () => sub.remove();
-  }, [token, onAssistantTab]);
+  }, [token, onAssistantTab, can.chat]);
 
   // The Assistant tab's orb stops in the background; Always listen keeps going
   // (the app has the "audio" background mode). "inactive" also fires for the
@@ -656,7 +706,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     return () => sub.remove();
   }, []);
 
-  const shouldListen = held === 0 && (alwaysListen || (inForeground && !!enabled && onAssistantTab));
+  const shouldListen = talks && held === 0 && (alwaysListen || (inForeground && !!enabled && onAssistantTab));
 
   // Listening on or off, in the Dynamic Island: while a conversation runs, or twist standby is on.
   // Retried when the app comes to the front (a Live Activity can only start from there).

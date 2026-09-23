@@ -3,9 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { ApprovalCard } from "../../components/ApprovalCard";
 import { DevLogPanel } from "../../components/DevLogPanel";
+import { PartOfPlan } from "../../components/Plan";
 import { TopBar } from "../../components/ui";
 import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
+import { usePlan } from "../../lib/plan";
 import { colors, lift, space, type } from "../../lib/theme";
 import type { VoicePhase } from "../../lib/voice";
 
@@ -15,6 +17,20 @@ import type { VoicePhase } from "../../lib/voice";
 // teal rail, the same way a moment on the spine does.
 
 export default function Assistant() {
+  const { can } = usePlan();
+  if (!can.voice) {
+    return (
+      <PartOfPlan
+        title="Talk"
+        needs="base"
+        what="Talk to OVOA and it answers out loud: your calendar, reminders, email, money, and what it remembers about you."
+      />
+    );
+  }
+  return <Talk />;
+}
+
+function Talk() {
   const { user } = useSession();
   const a = useAssistant();
   const [showLogs, setShowLogs] = useState(false);

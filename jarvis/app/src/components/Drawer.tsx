@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAgent } from "../lib/agent";
 import { useSession } from "../lib/auth";
 import { DrawerContext, type DrawerHandle } from "../lib/drawer";
+import { usePlan } from "../lib/plan";
 import { colors, lift, numeric, space, type } from "../lib/theme";
 import { IconTile, type IconName, type Tone } from "./ui";
 
@@ -66,6 +67,17 @@ export const DEV: NavItem[] = [
   { label: "Ask Claude", href: "/claude" as Href, icon: "sparkles-outline", tone: "violet" },
 ];
 
+// The free plan's menu: its day, its recordings, safety, and the way out.
+// Talk, Brief, Background work and Transcripts are the assistant's, and the
+// home screen's one card says so; the menu doesn't list them to say it again.
+// Home is the day itself on the free plan (components/FreeToday.tsx).
+export const FREE_MAIN: NavItem[] = [
+  { label: "Today", href: "/", icon: "time-outline", tone: "violet" },
+  { label: "Record", href: "/record", icon: "radio-button-on", tone: "blue" },
+  { label: "Safety", href: "/safety", icon: "shield-checkmark-outline", tone: "green" },
+];
+const ASSISTANT_ONLY = new Set(["Transcripts", "Live listen", "Ask Claude"]);
+
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
 // ---------- the panel ----------
@@ -76,7 +88,10 @@ export function DrawerPanel({
   recent,
   onGo,
   onClose,
+  free = false,
 }: {
+  /** The free plan: no assistant, so no Talk and no assistant screens. */
+  free?: boolean;
   /** The route showing behind the panel, so its row can be marked. */
   current: string;
   /** Only the values actually to hand; the rest of the rows go without. */
@@ -118,7 +133,7 @@ export function DrawerPanel({
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: space.s4 }}>
-        {MAIN.map(row)}
+        {(free ? FREE_MAIN : MAIN).map(row)}
 
         {/* "Today" is what OVOA actually said today, not a list of screens. An
             agent that had nothing to say shows nothing here, which is the point
@@ -137,25 +152,27 @@ export function DrawerPanel({
         )}
 
         <Text style={styles.label}>More</Text>
-        {MORE.map(row)}
+        {MORE.filter((i) => !free || !ASSISTANT_ONLY.has(i.label)).map(row)}
 
         <Text style={styles.label}>Developer</Text>
-        {DEV.map(row)}
+        {DEV.filter((i) => !free || !ASSISTANT_ONLY.has(i.label)).map(row)}
       </ScrollView>
 
-      <View style={styles.talk}>
-        <Pressable
-          onPress={() => onGo("/chat")}
-          style={({ pressed }) => [styles.pill, pressed && { opacity: 0.8 }]}
-          accessibilityRole="button"
-        >
-          <Ionicons name="mic" size={19} color={colors.paper} />
-          <Text style={styles.pillText}>Talk</Text>
-        </Pressable>
-        <Pressable onPress={() => onGo("/agent" as Href)} hitSlop={8} style={styles.round} accessibilityLabel="Background work">
-          <Ionicons name="git-branch-outline" size={18} color={colors.ink} />
-        </Pressable>
-      </View>
+      {!free && (
+        <View style={styles.talk}>
+          <Pressable
+            onPress={() => onGo("/chat")}
+            style={({ pressed }) => [styles.pill, pressed && { opacity: 0.8 }]}
+            accessibilityRole="button"
+          >
+            <Ionicons name="mic" size={19} color={colors.paper} />
+            <Text style={styles.pillText}>Talk</Text>
+          </Pressable>
+          <Pressable onPress={() => onGo("/agent" as Href)} hitSlop={8} style={styles.round} accessibilityLabel="Background work">
+            <Ionicons name="git-branch-outline" size={18} color={colors.ink} />
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
@@ -167,6 +184,7 @@ export function AppDrawer({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { user } = useSession();
   const { notes, unread } = useAgent();
+  const { free, can } = usePlan();
 
   const today = new Date().toLocaleDateString("en-CA");
   const recent = notes
@@ -179,6 +197,8 @@ export function AppDrawer({ children }: { children: ReactNode }) {
   const tails = {
     Day: unread ? `${unread} new` : undefined,
     Safety: user?.settings.fallDetection ? "Armed" : "Off",
+    // Background work is part of Pro; on Base its row says so rather than opening onto a surprise.
+    Background: can.agent ? undefined : "Pro",
   };
 
   return (
@@ -188,6 +208,7 @@ export function AppDrawer({ children }: { children: ReactNode }) {
           current={pathname}
           tails={tails}
           recent={recent}
+          free={free}
           onClose={close}
           onGo={(href) => {
             close();

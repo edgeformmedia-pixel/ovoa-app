@@ -223,6 +223,9 @@ export type ContextWeek =
       nothing?: undefined;
     };
 
+/** A note as GET /notes returns it. `ts` is when it was written, in ms. */
+export type Note = { id: string; ts: number; text: string; tags: string[]; remind_at: number | null; done: number };
+
 export type Commitment = { said: string; text: string; theirWords: string | null; who: string | null; when: string | null };
 
 /**
@@ -352,9 +355,54 @@ export const timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 export class ApiError extends Error {
   /** Per-field messages, when the server said which box is wrong. Signup does. */
-  constructor(message: string, readonly status: number, readonly fields: Record<string, string> = {}) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly fields: Record<string, string> = {},
+    /** Set when the server answered needs_plan: which plan the call is part of. */
+    readonly needs: PlanNeeded | null = null,
+  ) {
     super(message);
   }
+}
+
+// ---------- Plans ----------
+
+export type Tier = "free" | "base" | "pro";
+export type PlanNeeded = "base" | "pro";
+
+/** What GET /me says this person is on (api/src/plans.ts planView). */
+export type Plan = {
+  tier: Tier;
+  status: "trialing" | "active" | "past_due" | "canceled" | "comp" | "none";
+  trialEndsAt: string | null;
+  renewsAt: string | null;
+  /** repliesLeftToday is null for a development account, which has no daily limit. */
+  limits: { repliesLeftToday: number | null; resetsAt: string };
+  features: { chat: boolean; voice: boolean; wake: boolean; agent: boolean };
+};
+
+/** A call the person's plan doesn't include. Keyed off the server's `error`, never the status alone. */
+export const isNeedsPlan = (err: unknown): err is ApiError => err instanceof ApiError && err.needs !== null;
+
+/**
+ * Who to tell when a call comes back needs_plan (plan.tsx refreshes the plan,
+ * and the screens show their locked state). One listener, like whenSessionDies.
+ */
+let planNeeded: ((needs: PlanNeeded) => void) | null = null;
+export function whenPlanNeeded(handler: ((needs: PlanNeeded) => void) | null) {
+  planNeeded = handler;
+}
+
+/** Reads the server's 402 body off a failed reply and passes it on. Null when it isn't one. */
+export function notePlanNeeded(body: unknown): PlanNeeded | null {
+  const b = body as { error?: unknown; needs?: unknown } | null;
+  if (b?.error !== "needs_plan") return null;
+  const needs: PlanNeeded = b.needs === "pro" ? "pro" : "base";
+  try {
+    planNeeded?.(needs);
+  } catch {}
+  return needs;
 }
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -432,14 +480,18 @@ export async function request<T>(path: string, token: string | null, init: Reque
   }
   clearTimeout(timer);
   const body = await res.json().catch(() => ({}));
+  // Not part of their plan is an ordinary answer, not a fault, and is logged as
+  // one, so a free phone's log isn't a wall of errors.
+  const locked = !res.ok && body?.error === "needs_plan";
   devlog(
-    res.ok ? "res" : "err",
+    res.ok ? "res" : locked ? "log" : "err",
     `${res.status} ${method} ${path} · ${Date.now() - started} ms`,
-    secret && res.ok ? undefined : body,
+    secret && res.ok ? undefined : locked ? `needs ${body.needs}` : body,
   );
   if (!res.ok) {
     noteDeadSession(res.status, token, body.error);
-    throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status, body.fields ?? {});
+    const needs = notePlanNeeded(body);
+    throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status, body.fields ?? {}, needs);
   }
   return body as T;
 }
@@ -505,9 +557,9 @@ async function streamedTurn(
     });
     if (!res.ok) {
       const err = (await res.json().catch(() => ({}))) as { error?: string };
-      devlog("err", `${res.status} POST ${path} · ${Date.now() - started} ms`, err);
+      devlog(err.error === "needs_plan" ? "log" : "err", `${res.status} POST ${path} · ${Date.now() - started} ms`, err);
       noteDeadSession(res.status, token, err.error);
-      throw new ApiError(err.error ?? `Request failed (${res.status})`, res.status);
+      throw new ApiError(err.error ?? `Request failed (${res.status})`, res.status, {}, notePlanNeeded(err));
     }
     // A server without streaming answers plain JSON.
     if (!res.headers.get("content-type")?.includes("ndjson") || !res.body) {
@@ -587,7 +639,10 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   logout: (token: string) => request("/auth/logout", token, { method: "POST" }),
-  me: (token: string) => request<{ user: User }>("/me", token),
+  /** `plan` is missing from servers from before the plans. */
+  me: (token: string) => request<{ user: User; plan?: Plan }>("/me", token),
+  /** Asks ovoa.ai again now instead of using the last ten minutes' answer ("Refresh" in Settings). */
+  refreshPlan: (token: string) => request<{ plan: Plan }>("/me/plan/refresh", token, { method: "POST" }),
   /**
    * The zone rides along with every settings change: the server needs it to
    * schedule background work in the user's own day, and a chat turn used to be
@@ -864,6 +919,8 @@ export const api = {
    */
   addNote: (token: string, note: { text: string; source?: "on_device" | "typed"; tags?: string[]; remindAt?: string }) =>
     request<{ id: string }>("/notes", token, { method: "POST", body: JSON.stringify(note) }),
+  /** Open notes, newest first (up to 100). Free. */
+  notes: (token: string) => request<{ notes: Note[] }>("/notes", token),
   contextDay: (token: string, date: string) =>
     request<ContextDay>(`/context/days/${date}?timeZone=${encodeURIComponent(timeZone())}`, token),
   /** The week that `date` falls in. One call instead of seven. */

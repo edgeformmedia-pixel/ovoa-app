@@ -1,9 +1,11 @@
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { ActivityIndicator, RefreshControl, StyleSheet, Text, View } from "react-native";
+import { PartOfPlan } from "../../components/Plan";
 import { Btn, Screen, TopBar, text } from "../../components/ui";
 import { api, type MorningBrief } from "../../lib/api";
 import { useSession } from "../../lib/auth";
+import { usePlan } from "../../lib/plan";
 import { colors, space, type } from "../../lib/theme";
 
 // What OVOA would say to you this morning, exactly as it would say it. The
@@ -13,6 +15,20 @@ import { colors, space, type } from "../../lib/theme";
 // for it at all.
 
 export default function Brief() {
+  const { can } = usePlan();
+  if (!can.chat) {
+    return (
+      <PartOfPlan
+        title="Brief"
+        needs="base"
+        what="Each morning OVOA reads you your day: the weather, your calendar, your list, and anything someone asked of you."
+      />
+    );
+  }
+  return <MorningBrief />;
+}
+
+function MorningBrief() {
   const { token, user } = useSession();
   const [brief, setBrief] = useState<MorningBrief | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");

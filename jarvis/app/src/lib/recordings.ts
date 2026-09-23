@@ -42,6 +42,9 @@ export type Recording = {
   /** The timeline block written from this one, once it has been filed. */
   blockId?: string;
   blockTitle?: string;
+  /** The note written from this one on the free plan (capture.ts noteRecording), and its first words. */
+  noteId?: string;
+  noteText?: string;
   /** Why filing it didn't work. Set means "don't keep retrying on every launch". */
   captureError?: string;
   /** The audio is gone from disk. A dead end: nothing retries a lost recording. */
