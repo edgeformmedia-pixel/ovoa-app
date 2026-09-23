@@ -1,7 +1,38 @@
 # F34 — Food: calorie tracking by talking
 
-Spec only — nothing here is built yet. Ships as a **"by OVOA" add-on** (installable from Apps, needs Base
-because it calls the model). The user's decisions at the bottom override this spec where they differ.
+## What v1 built (2026-09-23)
+
+The release pass (docs/release-v1-prompt.md Phase 8) built a smaller version of this spec. Where this section
+and the older text below disagree, this section is what the code does.
+
+- **Food memory is on for everyone on Base**, with nothing to install. The tracking level is
+  `profile.food_detail`: NULL means nothing is set up, and food is noted quietly (never asks, says no number,
+  doesn't say it logged anything). Installing **Calorie** sets it to `normal` (or the last level they chose);
+  removing it clears it and remembers the choice in `food_detail_last`. An eating goal in setup
+  (`setFoodLevel`) or "be more exact" by voice sets it too, and the app then installs Calorie itself.
+- **Levels:** quick never asks and says "about 900"; normal asks one question when it matters and says
+  "about"; strict asks for the details and says the plain number ("roughly" if the estimate was clamped).
+  "Just log it" ends the questions. On screen every number is plain.
+- **Server:** `migrations/0040_food.sql` (`food_log`, `food_catalog`, four `profile` columns; no dishes, no
+  `food_days`, no `health_id`) and `api/src/food.ts`. Tools: `food_log` and `food_amend` (carried on every
+  turn, spoken and typed), `food_target` (goal and level) and `food_today` (a `more_tools` away). A food day
+  starts at local midnight, like every other day in OVOA.
+- **Clamp:** wider bounds than the table below, and out-of-bounds goes to the nearest bound, not the midpoint.
+- **Under-eating:** at most once a week, said the next time they talk, when the last seven days are clearly
+  lower (under 75%) than their own usual (the days before that): "That's lower than usual, did I miss
+  anything?" Only for someone with a level set. No numbers, no advice.
+- **Retention:** 14 days for `food_log`; catalog rows go once unused for 14 days. The day's total lives on in
+  the day summary (`foodDayLine`), with a number only for someone who set up tracking.
+- **Screen:** the Calorie add-on (`app/src/app/(tabs)/calorie.tsx`) replaces the feed card. Its routes
+  (`/food`, `/food/settings`, `/food/log/:id`) call no model and are free.
+- **Not in v1:** dishes and servings, missed-meal nudges, the wind-down line, the brief and weekly-report
+  lines, body measurements and a computed target (a target is only a number they state), Health active-energy
+  credit, Health write-back, photos, the offline queue.
+
+---
+
+Spec only below: the first design, kept for the reasoning. Ships as a **"by OVOA" add-on** (installable from
+Apps, needs Base because it calls the model). The user's decisions at the bottom override this spec where they differ.
 Server = `jarvis/api` (Worker + D1). App = `jarvis/app` (Expo).
 Reuses: `capabilities()` (`api/src/capabilities.ts`), the assistant tool pattern (`api/src/notes.ts` is the
 closest model), `profile` (0017), `daily_marks` (0019), HealthKit (`app/src/lib/health.ts`),

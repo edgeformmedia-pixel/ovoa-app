@@ -32,6 +32,7 @@ export const MINUTES_SAVED: Record<string, number> = {
   routine_fired: 0,
   workout_log: 2,
   favor_caught: 2,
+  food: 0.5,
   agent_run: 0,
   command: 0,
   buzz: 0,
@@ -67,6 +68,8 @@ const TOOL_KINDS: Record<string, string> = {
   routine_add: "reminder",
   routine_confirm: "routine_done",
   todo_done: "task",
+  food_log: "food",
+  food_amend: "food",
 };
 
 export const kindForTool = (name: string): string | null => TOOL_KINDS[name] ?? null;
@@ -105,7 +108,11 @@ export async function logAction(
 
 /** A tool call, in words: "calendar_create_event: Dentist" is enough for a feed line. */
 export function describeToolCall(name: string, args: Record<string, unknown>) {
-  const what = [args.title, args.subject, args.name, args.text, args.to]
+  // food_log's items have the names: "food log: oatmeal, coffee".
+  const items = Array.isArray(args.items)
+    ? args.items.map((i) => (i && typeof i === "object" ? (i as Record<string, unknown>).name : null)).filter((n) => typeof n === "string").join(", ")
+    : undefined;
+  const what = [args.title, args.subject, args.name, args.text, args.to, items, args.which]
     .find((v) => typeof v === "string" && v.trim()) as string | undefined;
   const label = name.replace(/^(phone|agent)_/, "").replace(/_/g, " ");
   return what ? `${label}: ${what.trim().slice(0, 120)}` : label;
