@@ -38,7 +38,7 @@ const EXPECT_SHARE = 0.8;
 /** Public, keyless: OpenStreetMap's geocoder and OSRM's demo router. Enough for one person's calendar. */
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 const OSRM = "https://router.project-osrm.org/route/v1/driving";
-const UA = "OVOA personal assistant (jarvis-api.edgeformmedia.workers.dev)";
+const UA = "OVOA personal assistant (api.ovoa.ai)";
 
 async function mark(db: D1Database, userId: string, kind: string, day: string) {
   const res = await db.prepare("INSERT OR IGNORE INTO daily_marks (user_id, kind, day, at) VALUES (?, ?, ?, ?)").bind(userId, kind, day, Date.now()).run();

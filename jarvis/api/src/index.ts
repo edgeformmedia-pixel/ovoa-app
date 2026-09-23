@@ -78,6 +78,7 @@ import { isMoneyTool, moneyAssistant, moneyRoutes, moneyTick } from "./money";
 import { MORE_TOOLS, SPOKEN_CORE, toolbelt, TYPED_CORE, type ToolGuide } from "./toolbelt";
 import { mightBeAboutThem } from "./remember";
 import { allowed, clientIp, limitByUser, tooMany } from "./limits";
+import { withMaintenance } from "./maintenance";
 import {
   checkCode,
   CODE_TTL_MS,
@@ -2669,10 +2670,13 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
  * Cron. Every few minutes the agent looks for work that has come due and pushes
  * whatever it decided to say; once a night it tidies up and enforces the
  * retention window the user set. The schedule is in wrangler.jsonc.
+ *
+ * Both handlers sit behind the MAINTENANCE switch (maintenance.ts), which
+ * answers every request 503 and skips every tick while data is being moved.
  */
-export default {
+export default withMaintenance({
   fetch: app.fetch,
   scheduled: (event: ScheduledController, env: Env, ctx: ExecutionContext) => {
     ctx.waitUntil(runTick(env, event.cron, event.scheduledTime).catch((err) => console.error("ovoa.err cron failed outright", err)));
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env>);

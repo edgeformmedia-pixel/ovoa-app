@@ -2,7 +2,10 @@ import { fetch as streamingFetch } from "expo/fetch";
 import { openAppId } from "./activeApp";
 import { devlog } from "./devlog";
 
-export const API_URL =process.env.EXPO_PUBLIC_API_URL ?? "https://jarvis-api.edgeformmedia.workers.dev";
+// The server (jarvis/api) on the ovoa.ai account since the v1 move. Builds from
+// before it use jarvis-api.edgeformmedia.workers.dev, which forwards here until
+// 2026-10-14 (jarvis/forwarder).
+export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "https://api.ovoa.ai";
 
 export type Settings = {
   assistantName: string;

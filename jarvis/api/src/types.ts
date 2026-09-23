@@ -38,6 +38,8 @@ export type Env = {
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET?: string;
   TOKEN_ENC_KEY: string;
+  /** "on" answers every request 503 and skips the crons while data moves between accounts (maintenance.ts). */
+  MAINTENANCE?: string;
   PUBLIC_URL: string;
   /** Signs shortcuts the assistant writes (see shortcuts/sign.ts). Without it, shortcut writing is off. */
   SHORTCUT_SIGNING_URL?: string;
