@@ -136,14 +136,20 @@ export const googleTools: Tool[] = [
       });
       if (a.query) params.set("q", a.query);
       const r = await g(ctx, `${CAL}?${params}`);
-      return (r.items ?? []).map((e: any) => ({
-        id: e.id,
-        title: e.summary,
-        start: e.start?.dateTime ?? e.start?.date,
-        end: e.end?.dateTime ?? e.end?.date,
-        location: e.location,
-        attendees: e.attendees?.map((x: any) => x.email),
-      }));
+      // Trimmed for the model, which reads all of this on every later round of
+      // the turn: a location cut short, guests by count past the first three,
+      // and nothing that is empty.
+      return (r.items ?? []).map((e: any) => {
+        const guests: string[] = e.attendees?.map((x: any) => x.email).filter(Boolean) ?? [];
+        return {
+          id: e.id,
+          title: e.summary,
+          start: e.start?.dateTime ?? e.start?.date,
+          end: e.end?.dateTime ?? e.end?.date,
+          ...(e.location && { location: String(e.location).slice(0, 80) }),
+          ...(guests.length && { attendees: guests.length > 3 ? [...guests.slice(0, 3), `and ${guests.length - 3} more`] : guests }),
+        };
+      });
     },
   },
   {
@@ -226,12 +232,14 @@ export const googleTools: Tool[] = [
     name: "gmail_search",
     description:
       "Search the user's Gmail using Gmail search syntax (e.g. 'is:unread', 'from:amy newer_than:7d'). Returns sender, subject, date, snippet.",
-    parameters: obj({ query: str("Gmail search query"), maxResults: int("Up to 20") }, ["query"]),
+    parameters: obj({ query: str("Gmail search query"), maxResults: int("Up to 20; ten unless more are needed") }, ["query"]),
     run: async (ctx, a) => {
       const list = await g(
         ctx,
         `https://gmail.googleapis.com/gmail/v1/users/me/messages?${new URLSearchParams({ q: a.query, maxResults: String(clamp(a.maxResults, 10, 20)) })}`,
       );
+      // Trimmed for the model: the snippet cut at 160 characters (Gmail's own are
+      // about 200), and the recipient only kept when it isn't just the user.
       return Promise.all(
         (list.messages ?? []).map(async ({ id }: { id: string }) => {
           const m = await g(
@@ -239,14 +247,15 @@ export const googleTools: Tool[] = [
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`,
           );
           const h = m.payload?.headers;
+          const to = header(h, "To");
           return {
             id,
             from: header(h, "From"),
-            to: header(h, "To"),
+            ...(to && to.includes(",") && { to: to.slice(0, 120) }),
             subject: header(h, "Subject"),
             date: header(h, "Date"),
-            unread: m.labelIds?.includes("UNREAD"),
-            snippet: m.snippet,
+            ...(m.labelIds?.includes("UNREAD") && { unread: true }),
+            snippet: String(m.snippet ?? "").slice(0, 160),
           };
         }),
       );

@@ -43,6 +43,25 @@ turns come to about $0.0002 spoken and $0.0003 typed.
 - Every engine sends the same prompt, so input tokens are the same story
   everywhere: about 7K on a spoken turn and 12K on a typed one before Phase 6.
 
+## After Phase 6 (prompt shape, measured locally on a fresh account, 2026-09-22)
+
+Characters the model reads before its first word, from the `ovoa.prompt` log
+line, same fresh account and phone capabilities as the benchmark above:
+
+| turn | before | after | change |
+|---|---|---|---|
+| typed: instructions | 6,560 | 5,520 | families whose tools aren't carried leave the prompt |
+| typed: tool JSON | 24,600 (all ~55 tools) | 14,600 (31 core + more_tools) | typed toolbelt |
+| typed: total | 31,300 | 20,300 | **−35%** |
+| spoken: instructions | 7,370 | 5,140 | shorter money prompt, uncarried families out |
+| spoken: tool JSON | 7,530 (16) | 6,700 (14) | alarm_cancel, calendar_create, morning_brief ride along only when named |
+| spoken: total | 15,000 | 11,850 | **−21%** |
+
+Rounds also fell where the request names its tool: "cancel my seven o'clock
+alarm" took four model calls before (two of them more_tools) and takes two
+now, because the alarm tools are loaded from the words before the first call.
+Tokens per reply in production are in docs/cost-pass.md.
+
 ## Recommendation
 
 Keep today's order until DeepSeek has credit and Phase 6 has landed, then

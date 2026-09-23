@@ -51,14 +51,16 @@ const b = new WakeWindow();
 b.wake("name", t0);
 b.wake("turn", t0 + 4_000);
 let tick = t0 + 4_000;
+let last = tick;
 while (tick < t0 + 184_000) {
   b.wake("busy", tick);
+  last = tick;
   tick += 150;
 }
 eq("open right through it", b.awake(t0 + 183_000), true);
 eq("still only the one opening", b.opens, 1);
-eq("open ten seconds after it stops", b.awake(tick + WAKE_MS.busy - 1), true);
-eq("closed after that", b.awake(tick + WAKE_MS.busy), false);
+eq("open ten seconds after it stops", b.awake(last + WAKE_MS.busy - 1), true);
+eq("closed after that", b.awake(last + WAKE_MS.busy), false);
 
 // ---------- The button ----------
 

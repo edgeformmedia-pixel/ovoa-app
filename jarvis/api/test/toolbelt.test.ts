@@ -6,7 +6,7 @@
 // the model either gives up or guesses, and both are worse than the slow prompt
 // we started with. So these check the words a person would really say.
 
-import { pickTools, SPOKEN_CORE, toolbelt } from "../src/toolbelt";
+import { namedTools, pickTools, SPOKEN_CORE, toolbelt, TYPED_CORE } from "../src/toolbelt";
 import type { ToolSpec } from "../src/llm";
 
 let fails = 0;
@@ -77,6 +77,58 @@ eq("and says so rather than silently doing nothing", again.loaded.length === 0 |
 const miss = belt.load("order a pizza");
 eq("a miss says so plainly", miss.loaded.length, 0);
 eq("and tells the model to stop trying", miss.note.includes("don't try again"), true);
+
+// ---------- What the request itself names ----------
+
+// Before the model has read a word: a tool whose name is in the request rides
+// along from the start, so "cancel my alarm" never pays a round trip for
+// alarm_list. A request that names nothing gets nothing.
+const named = [
+  ...CATALOGUE,
+  t("alarm_list", "Lists the alarms that are set."),
+  t("alarm_stop", "Stops an alarm that is ringing."),
+  t("alarm_cancel", "Cancels an alarm."),
+  t("workout_summary", "How training has gone lately."),
+  t("location_timeline", "Where they have been."),
+];
+eq("'cancel my seven o'clock alarm' names the alarm tools", has(namedTools(named, "cancel my seven o'clock alarm"), "alarm_cancel"), true);
+eq("and the one that says cancel comes first", namedTools(named, "cancel my seven o'clock alarm")[0]?.name, "alarm_cancel");
+eq("'what time is it' names nothing ('time' is not 'timeline')", namedTools(named, "what time is it").length, 0);
+eq("a generic word alone ('send it') names nothing", namedTools(named, "send it").length, 0);
+eq("'log my workout' names the workout tools", has(namedTools(named, "log my workout"), "workout_log"), true);
+eq("at most two", namedTools(named, "alarm workout email").length <= 2, true);
+const stems = [...named, t("note_add", "Saves a note."), t("phone_reminder_create", "A reminder on the phone.")];
+eq("'add milk to my notes' names the note tool", has(namedTools(stems, "add milk and eggs to my notes"), "note_add"), true);
+eq("'remind me to call Mom' names the reminder", has(namedTools(stems, "remind me to call Mom at four"), "phone_reminder_create"), true);
+
+// ---------- The typed belt and the instructions that travel with tools ----------
+
+const typedAll = [
+  ...named,
+  t("todo_add", "Adds to the list."),
+  t("phone_calendar_events", "What's on the phone's calendar."),
+];
+const guides = [
+  { tools: typedAll.filter((x) => x.name.startsWith("workout_")), prompt: "WORKOUT GUIDE" },
+  { tools: typedAll.filter((x) => x.name.startsWith("todo_")), prompt: "TODO GUIDE" },
+  { tools: typedAll.filter((x) => x.name.startsWith("transcript_")), prompt: "TRANSCRIPT GUIDE" },
+];
+const typed = toolbelt(typedAll, TYPED_CORE, guides);
+eq("a typed turn carries its core", has(typed.tools, "todo_add") && has(typed.tools, "phone_calendar_events"), true);
+eq("and not the rest", has(typed.tools, "workout_log"), false);
+eq("with a way to ask", has(typed.tools, "more_tools"), true);
+eq("a guide whose tools are carried stays in the prompt", typed.carriedGuides.some((g) => g.prompt === "TODO GUIDE"), true);
+eq("a guide whose tools are not carried leaves it", typed.carriedGuides.some((g) => g.prompt === "WORKOUT GUIDE"), false);
+const brought = typed.load("log a workout");
+eq("asking brings the tools", brought.loaded.includes("workout_log"), true);
+eq("and their instructions with them", brought.note.includes("WORKOUT GUIDE"), true);
+eq("not the instructions for something else", brought.note.includes("TRANSCRIPT GUIDE"), false);
+const pre = toolbelt(typedAll, TYPED_CORE, guides);
+// alarm_cancel and alarm_list are in the typed core already; alarm_stop is the one the request brings in.
+eq("a request that names a tool has it from the start", pre.preload("cancel my alarm").includes("alarm_stop"), true);
+eq("counted as loaded", pre.loaded.includes("alarm_stop"), true);
+eq("the carried one was there all along", has(pre.tools, "alarm_cancel"), true);
+eq("a request that names nothing preloads nothing", toolbelt(typedAll, TYPED_CORE, guides).preload("what time is it").length, 0);
 
 console.log(fails ? `\n${fails} FAILED` : "\nall passed");
 process.exit(fails ? 1 : 0);

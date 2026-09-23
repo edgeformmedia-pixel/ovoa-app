@@ -252,7 +252,11 @@ export const isEngine = (name: string): name is Engine => (ENGINES as string[]).
 const ENGINE_NAMES: Record<Engine, string> = { gemini: "Gemini", deepseek: "DeepSeek", glm: "GLM", workers: "Workers AI" };
 
 const MAX_TOOL_ROUNDS = 8;
-const MAX_TOOL_RESULT_CHARS = 12_000;
+// Halved 2026-09-22: every character here is read again on every later round of
+// the turn, and the replies that needed the second half of a 12,000-character
+// result were not found. The tools trim their own results first (Google mail and
+// calendar lists); this is the backstop.
+const MAX_TOOL_RESULT_CHARS = 6_000;
 
 const stripThinking = (text: string) => text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
 

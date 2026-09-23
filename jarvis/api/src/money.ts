@@ -617,7 +617,16 @@ export const MONEY_PROMPT = [
   "Without a balance or a payday there is nothing to work from: ask for the one missing thing in a short question instead of guessing.",
 ].join(" ");
 
-export function moneyAssistant(env: Env, userId: string, timeZone: string) {
+/**
+ * The same, for a spoken turn: what to say and what to record, without the
+ * worked examples. Read before every spoken word, so it earns its length.
+ */
+export const MONEY_PROMPT_SPOKEN = [
+  "You keep a rough picture of their money from what they've told you, not a bank. Asked whether they can buy something, call money_afford and say the verdict first, then the one fact behind it, then the trade (what they'd skip). The decision is theirs; \"tight\" means tight, not no.",
+  "Money mentioned in passing (paid, spent, a bill, a plan) is recorded quietly with the money tools. Without a balance or a payday, ask for the one missing thing.",
+].join(" ");
+
+export function moneyAssistant(env: Env, userId: string, timeZone: string, { voice = false } = {}) {
   const db = env.DB;
   const today = () => buckets(Date.now(), timeZone).day;
 
@@ -750,7 +759,7 @@ export function moneyAssistant(env: Env, userId: string, timeZone: string) {
     return { error: `Unknown tool ${name}` };
   };
 
-  return { tools: TOOLS, callTool, prompt: MONEY_PROMPT };
+  return { tools: TOOLS, callTool, prompt: voice ? MONEY_PROMPT_SPOKEN : MONEY_PROMPT };
 }
 
 // ---------- Routes ----------
