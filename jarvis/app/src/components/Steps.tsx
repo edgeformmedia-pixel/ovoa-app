@@ -1,12 +1,13 @@
 import { useFocusEffect } from "expo-router";
 import { Pedometer } from "expo-sensors";
 import { useCallback, useEffect, useState } from "react";
-import { Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Linking, Platform, StyleSheet, Text, View } from "react-native";
 import { api, type StepDay } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { logFail } from "../lib/devlog";
 import { kmForSteps, lastSevenDays, stepPermission } from "../lib/steps";
 import { colors, mono, numeric, space, type } from "../lib/theme";
+import { CountUp, PressScale, Ring } from "./motion";
 import { Btn, GroupLabel, text } from "./ui";
 
 // Today's steps against the goal, the week behind it, and the goal itself.
@@ -67,14 +68,15 @@ export function Steps() {
 
   return counting ? (
     <>
+      {/* Today against the goal as a ring that sweeps round, the count rolling up beside it. */}
       <View style={styles.hero}>
-        <Text style={styles.big}>{today.toLocaleString()}</Text>
-        <View style={styles.of}>
+        <Ring progress={progress} size={132} stroke={14} color={progress >= 1 ? colors.done : colors.now}>
+          <Text style={styles.pct}>{Math.round(progress * 100)}%</Text>
+        </Ring>
+        <View style={styles.heroText}>
+          <CountUp value={today} style={styles.big} />
           <Text style={styles.ofText}>of {goal.toLocaleString()} steps</Text>
-          <Text style={styles.ofText}>{kmForSteps(today).toFixed(1)} km</Text>
-        </View>
-        <View style={styles.track}>
-          <View style={[styles.fill, { width: `${progress * 100}%` }]} />
+          <CountUp value={kmForSteps(today)} format={(n) => `${n.toFixed(1)} km`} style={styles.ofText} />
         </View>
       </View>
 
@@ -110,9 +112,9 @@ export function Steps() {
       <GroupLabel>Daily goal</GroupLabel>
       <View style={styles.chips}>
         {GOALS.map((g) => (
-          <Pressable key={g} onPress={() => setGoal(g)} style={[styles.chip, g === goal && styles.chipOn]}>
+          <PressScale key={g} sink={0.92} onPress={() => setGoal(g)} style={[styles.chip, g === goal && styles.chipOn]}>
             <Text style={[styles.chipText, g === goal && styles.chipTextOn]}>{g / 1000}k</Text>
-          </Pressable>
+          </PressScale>
         ))}
       </View>
     </>
@@ -132,13 +134,11 @@ export function Steps() {
 }
 
 const styles = StyleSheet.create({
-  hero: { gap: space.s2, paddingBottom: space.s4 },
+  hero: { flexDirection: "row", alignItems: "center", gap: space.s5, paddingBottom: space.s5 },
+  heroText: { flex: 1, gap: 2 },
   big: { ...type.display, color: colors.ink, ...numeric },
-  of: { flexDirection: "row", justifyContent: "space-between" },
+  pct: { ...type.head, color: colors.ink, ...numeric },
   ofText: { ...type.meta, color: colors.inkDim, ...numeric },
-  track: { height: 6, borderRadius: 3, backgroundColor: colors.wash2, overflow: "hidden", marginTop: space.s1 },
-  // Not teal: a progress fill is not "now, or your turn".
-  fill: { height: "100%", borderRadius: 3, backgroundColor: colors.ink },
 
   week: { flexDirection: "row", alignItems: "flex-end", gap: 10, height: 64 },
   goalLine: { position: "absolute", left: 0, right: 0, height: 1, backgroundColor: colors.rail },

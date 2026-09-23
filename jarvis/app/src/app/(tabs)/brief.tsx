@@ -7,6 +7,7 @@ import { api, type MorningBrief } from "../../lib/api";
 import { useSession } from "../../lib/auth";
 import { usePlan } from "../../lib/plan";
 import { colors, space, type } from "../../lib/theme";
+import { SkeletonList } from "../../components/motion";
 
 // What OVOA would say to you this morning, exactly as it would say it. The
 // server builds it — api/src/rhythm.ts, buildMorningBrief — and this screen
@@ -77,7 +78,7 @@ function MorningBrief() {
           <RefreshControl refreshing={state === "loading" && !!brief} onRefresh={() => void load(undefined, true)} tintColor={colors.now} />
         }
       >
-        {state === "loading" && !brief && <ActivityIndicator color={colors.now} style={{ marginTop: space.s8 }} />}
+        {state === "loading" && !brief && <SkeletonList rows={5} />}
 
         {state === "error" && !brief && (
           <>

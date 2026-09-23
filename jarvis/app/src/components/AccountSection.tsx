@@ -1,15 +1,16 @@
 import { useState } from "react";
 import { Alert, StyleSheet, Text, TextInput, View } from "react-native";
-import { YourPlan } from "../../components/Plan";
-import { Btn, GroupLabel, Row, Screen, TopBar } from "../../components/ui";
-import { api } from "../../lib/api";
-import { useSession } from "../../lib/auth";
-import { colors, space, type } from "../../lib/theme";
+import { YourPlan } from "./Plan";
+import { Btn, GroupLabel, Row } from "./ui";
+import { api } from "../lib/api";
+import { useSession } from "../lib/auth";
+import { colors, space, type } from "../lib/theme";
 
 // Who you are to OVOA: your plan, your name and email, your password, and the
-// ways out. Split from Settings, which is now only how OVOA behaves.
+// ways out. The top of Settings (2026-09-23: Account and Settings were one
+// menu row too many, so Account became Settings' first section).
 
-export default function Account() {
+export function AccountSection() {
   const { token, user, setUser, signOut, clear } = useSession();
   const [name, setName] = useState(user?.name ?? "");
   const [saving, setSaving] = useState(false);
@@ -56,9 +57,7 @@ export default function Account() {
     ]);
 
   return (
-    <View style={styles.page}>
-      <TopBar title="Account" />
-      <Screen keyboardShouldPersistTaps="handled">
+    <>
         <GroupLabel>Your plan</GroupLabel>
         <YourPlan />
 
@@ -86,8 +85,7 @@ export default function Account() {
           <Btn label="Sign out" onPress={signOut} style={styles.btn} />
           <Btn label="Delete account" kind="danger" onPress={deleteAccount} style={styles.btn} />
         </View>
-      </Screen>
-    </View>
+    </>
   );
 }
 
@@ -107,7 +105,6 @@ function Field({ label, ...props }: { label: string } & React.ComponentProps<typ
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: colors.paper },
   section: { gap: space.s3 },
   label: { ...type.body, color: colors.ink },
   btn: { alignSelf: "flex-start" },

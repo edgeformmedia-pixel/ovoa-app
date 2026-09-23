@@ -2,8 +2,11 @@ import { Stack, usePathname, type ErrorBoundaryProps } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AppDrawer } from "../components/Drawer";
+import { Earcons } from "../components/Earcons";
+import { ExpandOverlay } from "../components/Expand";
 import { NagOverlay } from "../components/NagOverlay";
 import { Tour } from "../components/Tour";
 import { AgentProvider } from "../lib/agent";
@@ -161,9 +164,12 @@ function RootStack() {
                 through the menu. Inside the drawer so it can open it and
                 point at its rows, and drawn over it. */}
             <Tour />
+            {/* Over the drawer and every screen: a card growing into its app. */}
+            <ExpandOverlay />
           </AppDrawer>
           {/* After the drawer, so an alarm going off covers the menu too. */}
           <NagOverlay />
+          <Earcons />
         </AssistantProvider>
       </AgentProvider>
     </SafetyProvider>
@@ -199,6 +205,8 @@ function RouteWatch() {
 
 export default function RootLayout() {
   return (
+    // Gesture Handler needs its root at the very top: swiping approval cards uses it.
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaProvider>
       <AuthProvider>
         {/* Dark glyphs: the app is white now. */}
@@ -209,5 +217,6 @@ export default function RootLayout() {
         <RouteWatch />
       </AuthProvider>
     </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

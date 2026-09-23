@@ -1,9 +1,10 @@
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { devlog } from "../lib/devlog";
 import { HEART_WINDOW_HOURS, healthAvailable, healthPermission, todayHealth, type TodayHealth } from "../lib/health";
 import { colors, mono, numeric, radius, space, type } from "../lib/theme";
+import { DrawnLine, Skeleton } from "./motion";
 import { Btn, GroupLabel, IconTile, Tile, Tiles, text } from "./ui";
 
 // Apple Health on the Activity screen: heart, sleep, energy and today's
@@ -97,7 +98,21 @@ export function HealthCards() {
   }
 
   if (state === "loading" || !health) {
-    return <ActivityIndicator color={colors.now} style={{ marginVertical: space.s6 }} />;
+    // The tiles' shape while Health answers, rather than a spinner.
+    return (
+      <>
+        <GroupLabel>Heart &amp; sleep</GroupLabel>
+        <Tiles>
+          {[0, 1, 2, 3].map((i) => (
+            <View key={i} style={styles.skelTile}>
+              <Skeleton width={30} height={30} radius={9} />
+              <Skeleton width="55%" height={11} />
+              <Skeleton width="40%" height={20} />
+            </View>
+          ))}
+        </Tiles>
+      </>
+    );
   }
 
   const { heartRate, heart, restingHeartRate, heartRateMin, heartRateMax } = health;
@@ -122,17 +137,17 @@ export function HealthCards() {
       <GroupLabel>Heart &amp; sleep</GroupLabel>
       <Tiles>
         {!!heartRate && (
-          <Tile icon="heart-outline" tone="coral" label={`Heart · ${ago(heartRate.at)}`} value={`${heartRate.bpm}`} suffix=" bpm">
+          <Tile icon="heart-outline" tone="coral" label={`Heart · ${ago(heartRate.at)}`} value={`${heartRate.bpm}`} count={heartRate.bpm} suffix=" bpm">
             {heart.length > 1 && <HeartGraph points={heart} />}
           </Tile>
         )}
-        {!!restingHeartRate && <Tile icon="bed-outline" tone="violet" label="Resting" value={`${restingHeartRate}`} suffix=" bpm" />}
+        {!!restingHeartRate && <Tile icon="bed-outline" tone="violet" label="Resting" value={`${restingHeartRate}`} count={restingHeartRate} suffix=" bpm" />}
         {health.sleepHours !== undefined && <Tile icon="moon-outline" tone="blue" label="Sleep" value={`${health.sleepHours}`} suffix=" h" />}
         {health.activeEnergyKcal !== undefined && (
-          <Tile icon="flame-outline" tone="amber" label="Active" value={`${Math.round(health.activeEnergyKcal)}`} suffix=" kcal" />
+          <Tile icon="flame-outline" tone="amber" label="Active" value={`${Math.round(health.activeEnergyKcal)}`} count={Math.round(health.activeEnergyKcal)} suffix=" kcal" />
         )}
         {health.exerciseMinutes !== undefined && (
-          <Tile icon="timer-outline" tone="green" label="Exercise" value={`${Math.round(health.exerciseMinutes)}`} suffix=" min" />
+          <Tile icon="timer-outline" tone="green" label="Exercise" value={`${Math.round(health.exerciseMinutes)}`} count={Math.round(health.exerciseMinutes)} suffix=" min" />
         )}
         {health.hrvMs !== undefined && <Tile icon="analytics-outline" tone="pink" label="HRV (SDNN)" value={`${Math.round(health.hrvMs)}`} suffix=" ms" />}
         {health.standHours !== undefined && <Tile icon="walk-outline" tone="teal" label="Stand" value={`${Math.round(health.standHours)}`} suffix=" h" />}
@@ -208,26 +223,12 @@ const Stat = ({ value, unit }: { value: string; unit: string }) => (
 );
 
 /** The readings as bars, scaled to the range they cover plus a little room. */
+/** The last few hours of heart rate as a line that draws itself in, the newest reading pulsing at its end. */
 function HeartGraph({ points }: { points: { at: number; bpm: number }[] }) {
-  const values = points.map((p) => p.bpm);
-  const low = Math.max(30, Math.min(...values) - 5);
-  const high = Math.max(...values) + 5;
-  const span = Math.max(1, high - low);
+  const [width, setWidth] = useState(0);
   return (
-    <View style={styles.graph}>
-      {points.map((p, i) => (
-        <View
-          key={`${p.at}-${i}`}
-          style={[
-            styles.graphBar,
-            {
-              height: `${Math.max(6, ((p.bpm - low) / span) * 100)}%`,
-              // The newest reading is the one being read as "now".
-              backgroundColor: i === points.length - 1 ? colors.stop : colors.wash2,
-            },
-          ]}
-        />
-      ))}
+    <View style={styles.graph} onLayout={(e) => setWidth(Math.round(e.nativeEvent.layout.width))}>
+      {width > 0 && <DrawnLine values={points.map((p) => p.bpm)} width={width} height={styles.graph.height} />}
     </View>
   );
 }
@@ -256,6 +257,6 @@ const styles = StyleSheet.create({
   stat: { ...type.meta, color: colors.inkDim, ...numeric },
   statValue: { color: colors.ink, fontWeight: "600" },
 
-  graph: { flexDirection: "row", alignItems: "flex-end", gap: 2, height: 46, marginTop: space.s2 },
-  graphBar: { flex: 1, minHeight: 2, borderRadius: 2 },
+  graph: { height: 46, marginTop: space.s2 },
+  skelTile: { flexBasis: "47%", flexGrow: 1, backgroundColor: colors.wash, borderRadius: radius.tile, padding: space.s4, gap: space.s2 },
 });

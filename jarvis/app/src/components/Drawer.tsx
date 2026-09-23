@@ -3,7 +3,6 @@ import { useRouter, usePathname, type Href } from "expo-router";
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Animated,
-  Easing,
   PanResponder,
   Pressable,
   ScrollView,
@@ -13,16 +12,23 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ADDONS } from "../lib/addons";
-import { DrawerContext, usePointedAt, type DrawerHandle } from "../lib/drawer";
+import { setOpenApp } from "../lib/activeApp";
+import { ADDONS, useInstalledAddons } from "../lib/addons";
+import { useSession } from "../lib/auth";
+import { useDevMode } from "../lib/devMode";
+import { useMyApps } from "../lib/myApps";
+import { BlurView } from "expo-blur";
+import { DrawerContext, spotRef, usePointedAt, type DrawerHandle } from "../lib/drawer";
 import { PLAN_NAMES, usePlan } from "../lib/plan";
 import { colors, lift, numeric, space, type } from "../lib/theme";
+import { PressScale } from "./motion";
 import { IconTile, type IconName, type Tone } from "./ui";
 
 // The whole of navigation. Hand-rolled on core Animated + PanResponder rather
-// than @react-navigation/drawer: that would make gesture-handler and
-// reanimated direct dependencies and cost a new dev build before any of this
-// could be run, and the app is tested in Expo Go every day.
+// than @react-navigation/drawer, from when the app avoided gesture-handler and
+// reanimated. It has both now (2026-09-23, the motion pass) but the gesture
+// here is tuned and works, so it stays; the panel settles on a spring and is
+// frosted glass (expo-blur).
 //
 // Split in three on purpose: DrawerPanel is a pure view that can be rendered
 // and looked at on its own, AppDrawer is the one that reads the app's state,
@@ -35,30 +41,29 @@ const SNAP = 0.4;
 /** A flick this fast decides it whatever the distance. */
 const FLICK = 0.35;
 
-const EASE = Easing.bezier(0.32, 0.72, 0, 1);
+/** Extra panel off the left edge, so a spring that overshoots never opens a gap. */
+const OVERHANG = 24;
 
 export type NavItem = { label: string; href: Href; icon: IconName; tone: Tone };
 
 /**
- * The whole menu. Four rows, and nothing else ever joins them: every other
- * screen is an app you add from Apps (lib/addons.ts), and opens from there.
+ * The menu (2026-09-23): Talk and Apps at the top, the apps you've added
+ * listed under Apps, and Settings, which holds the account too, pinned at the
+ * bottom. Nothing else ever joins them.
  */
-export const MENU: NavItem[] = [
+export const TOP: NavItem[] = [
   { label: "Talk", href: "/chat", icon: "mic", tone: "teal" },
   { label: "Apps", href: "/apps" as Href, icon: "apps-outline", tone: "violet" },
-  { label: "Account", href: "/account" as Href, icon: "person-circle-outline", tone: "blue" },
-  { label: "Settings", href: "/settings", icon: "settings-outline", tone: "amber" },
 ];
 
 // The free plan has no assistant to talk to, so its first row is its day
-// (components/FreeToday.tsx) rather than Talk; the other three are the same.
-export const FREE_MENU: NavItem[] = [
-  { label: "Today", href: "/", icon: "time-outline", tone: "teal" },
-  ...MENU.slice(1),
-];
+// (components/FreeToday.tsx) rather than Talk.
+export const FREE_TOP: NavItem[] = [{ label: "Today", href: "/", icon: "time-outline", tone: "teal" }, TOP[1]];
 
-/** Every app's screen, so the menu can mark Apps while one of them is open. */
-const APP_ROUTES = new Set(ADDONS.map((a) => String(a.href)));
+export const SETTINGS: NavItem = { label: "Settings", href: "/settings", icon: "settings-outline", tone: "amber" };
+
+/** One of their apps, as the menu lists it under Apps. */
+export type MenuApp = { key: string; label: string; icon: IconName; tone: Tone; href?: Href; open: () => void };
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
@@ -67,6 +72,7 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
 export function DrawerPanel({
   current,
   tails,
+  apps,
   onGo,
   onClose,
   free = false,
@@ -77,17 +83,41 @@ export function DrawerPanel({
   current: string;
   /** Only the values actually to hand; the rest of the rows go without. */
   tails: Record<string, string | undefined>;
+  /** Their apps, in the order they added them. */
+  apps: MenuApp[];
   onGo: (href: Href) => void;
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
   // The spoken tour pointing at a row to show how the menu works.
   const pointed = usePointedAt();
-  const on = (item: NavItem) =>
-    current === item.href || (item.label === "Apps" && APP_ROUTES.has(current));
+
+  const row = (item: NavItem) => {
+    const on = current === item.href;
+    const tail = tails[item.label];
+    return (
+      <View key={item.label} ref={spotRef(item.label)} collapsable={false}>
+        <PressScale
+          onPress={() => onGo(item.href)}
+          accessibilityRole="button"
+          accessibilityState={{ selected: on }}
+          style={[styles.navRow, on && styles.navRowOn, pointed === item.label && styles.navRowPointed]}
+        >
+          <IconTile name={item.icon} tone={item.tone} />
+          <Text style={styles.navLabel} numberOfLines={1}>
+            {item.label}
+          </Text>
+          {!!tail && <Text style={styles.navTail}>{tail}</Text>}
+        </PressScale>
+      </View>
+    );
+  };
 
   return (
-    <View style={[styles.panelBody, { paddingTop: insets.top + space.s4, paddingBottom: insets.bottom + space.s4 }]}>
+    <View
+      ref={spotRef("Menu")}
+      style={[styles.panelBody, { paddingTop: insets.top + space.s4, paddingBottom: insets.bottom + space.s3 }]}
+    >
       <View style={styles.head}>
         <Text style={styles.brand}>OVOA</Text>
         <Pressable onPress={onClose} hitSlop={10} style={styles.round} accessibilityLabel="Close menu">
@@ -96,34 +126,34 @@ export function DrawerPanel({
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: space.s4 }}>
-        {(free ? FREE_MENU : MENU).map((item) => {
-          const tail = tails[item.label];
-          return (
-            <Pressable
-              key={item.label}
-              onPress={() => onGo(item.href)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: on(item) }}
-              style={({ pressed }) => [
-                styles.navRow,
-                on(item) && styles.navRowOn,
-                pointed === item.label && styles.navRowPointed,
-                pressed && { opacity: 0.6 },
-              ]}
-            >
-              <IconTile name={item.icon} tone={item.tone} />
-              <Text style={styles.navLabel} numberOfLines={1}>
-                {item.label}
-              </Text>
-              {pointed === item.label ? (
-                <Ionicons name="hand-left" size={20} color={colors.now} />
-              ) : (
-                !!tail && <Text style={styles.navTail}>{tail}</Text>
-              )}
-            </Pressable>
-          );
-        })}
+        {(free ? FREE_TOP : TOP).map(row)}
+
+        {apps.length > 0 && (
+          <View ref={spotRef("Your apps")} collapsable={false}>
+            <Text style={styles.label}>Your apps</Text>
+            {apps.map((a) => {
+              const on = !!a.href && current === a.href;
+              return (
+                <PressScale
+                  key={a.key}
+                  onPress={a.open}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: on }}
+                  style={[styles.appRow, on && styles.navRowOn]}
+                >
+                  <IconTile name={a.icon} tone={a.tone} size={26} />
+                  <Text style={styles.appLabel} numberOfLines={1}>
+                    {a.label}
+                  </Text>
+                </PressScale>
+              );
+            })}
+          </View>
+        )}
       </ScrollView>
+
+      {/* Settings at the foot, where it's found without being in the way. */}
+      <View style={styles.foot}>{row(SETTINGS)}</View>
     </View>
   );
 }
@@ -134,28 +164,44 @@ export function AppDrawer({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { free, plan } = usePlan();
+  const { token, user } = useSession();
+  const devMode = useDevMode();
+  const installed = useInstalledAddons();
+  const made = useMyApps(token);
 
   // Only what is cheaply and truthfully to hand.
   const tails = {
-    Account: plan ? PLAN_NAMES[plan.tier] : undefined,
+    Settings: plan ? PLAN_NAMES[plan.tier] : undefined,
   };
 
   return (
     <DrawerHost
-      panel={(close) => (
-        <DrawerPanel
-          current={pathname}
-          tails={tails}
-          free={free}
-          onClose={close}
-          onGo={(href) => {
-            close();
-            // navigate, not push: opening the same screen twice from the menu
-            // must never stack two of it.
-            router.navigate(href);
-          }}
-        />
-      )}
+      panel={(close) => {
+        // navigate, not push: opening the same screen twice from the menu must
+        // never stack two of it.
+        const go = (href: Href) => {
+          close();
+          router.navigate(href);
+        };
+        const apps: MenuApp[] = [
+          ...installed
+            .map((id) => ADDONS.find((a) => a.id === id))
+            .filter((a): a is (typeof ADDONS)[number] => !!a && (devMode || !a.dev))
+            .map((a) => ({ key: a.id, label: a.name, icon: a.icon, tone: a.tone, href: a.href, open: () => go(a.href) })),
+          // The ones they made open in Talk with their instructions on (lib/activeApp.ts).
+          ...made.map((a) => ({
+            key: a.id,
+            label: a.name,
+            icon: a.icon as IconName,
+            tone: a.tone,
+            open: () => {
+              setOpenApp({ id: a.id, name: a.name, opener: a.opener });
+              go("/chat");
+            },
+          })),
+        ];
+        return <DrawerPanel current={pathname} tails={tails} apps={user ? apps : []} free={free} onClose={close} onGo={go} />;
+      }}
     >
       {children}
     </DrawerHost>
@@ -187,7 +233,9 @@ export function DrawerHost({
     (to: 0 | 1) => {
       openRef.current = to === 1;
       setOpen(to === 1);
-      Animated.timing(progress, { toValue: to, duration: 280, easing: EASE, useNativeDriver: true }).start();
+      // A spring, so it lands rather than stops. It may go a little past open;
+      // the panel is drawn wider than it looks (OVERHANG) so that never shows a gap.
+      Animated.spring(progress, { toValue: to, useNativeDriver: true, damping: 22, stiffness: 240, mass: 0.9 }).start();
     },
     [progress],
   );
@@ -257,12 +305,18 @@ export function DrawerHost({
           style={[
             styles.panel,
             {
-              width: panelWidth,
-              transform: [{ translateX: Animated.multiply(Animated.subtract(progress, 1), panelWidth) }],
+              left: -OVERHANG,
+              width: panelWidth + OVERHANG,
+              transform: [{ translateX: Animated.multiply(Animated.subtract(progress, 1), panelWidth + OVERHANG) }],
             },
           ]}
         >
-          {panel(handle.close)}
+          {/* Frosted glass: what's behind shows through, blurred, like Control Center. */}
+          <View style={styles.glass}>
+            <BlurView intensity={50} tint="light" style={StyleSheet.absoluteFill} />
+            <View style={[StyleSheet.absoluteFill, styles.frost]} />
+            <View style={{ flex: 1, paddingLeft: OVERHANG }}>{panel(handle.close)}</View>
+          </View>
         </Animated.View>
       </View>
     </DrawerContext.Provider>
@@ -284,19 +338,20 @@ const styles = StyleSheet.create({
   },
   fill: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
 
-  scrim: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 9, backgroundColor: "rgba(12,14,18,0.30)" },
+  scrim: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 9, backgroundColor: "rgba(12,14,18,0.22)" },
 
   panel: {
     position: "absolute",
     zIndex: 10,
     top: 0,
     bottom: 0,
-    left: 0,
-    backgroundColor: colors.paper,
     borderTopRightRadius: 26,
     borderBottomRightRadius: 26,
     ...lift,
   },
+  glass: { flex: 1, borderTopRightRadius: 26, borderBottomRightRadius: 26, overflow: "hidden" },
+  // Mostly white, so it's still the paper-white app; the blur is in the last fifth.
+  frost: { backgroundColor: "rgba(255,255,255,0.78)" },
   panelBody: { flex: 1, paddingHorizontal: space.s4 },
 
   head: { flexDirection: "row", alignItems: "center", paddingHorizontal: space.s3, paddingBottom: space.s5 },
@@ -325,4 +380,22 @@ const styles = StyleSheet.create({
   navRowPointed: { backgroundColor: colors.nowWash, borderWidth: 2, borderColor: colors.now, marginVertical: -2 },
   navLabel: { ...type.body, color: colors.ink, flex: 1 },
   navTail: { ...type.meta, color: colors.inkMute, ...numeric },
+  label: {
+    ...type.meta,
+    fontWeight: "600",
+    color: colors.inkMute,
+    paddingHorizontal: space.s3,
+    paddingTop: space.s5,
+    paddingBottom: space.s1,
+  },
+  appRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.s3,
+    paddingVertical: 7,
+    paddingHorizontal: space.s3,
+    borderRadius: 12,
+  },
+  appLabel: { ...type.sub, color: colors.ink, flex: 1 },
+  foot: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line, paddingTop: space.s3 },
 });

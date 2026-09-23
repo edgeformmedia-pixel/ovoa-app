@@ -41,3 +41,34 @@ export function usePointedAt() {
   }, []);
   return label;
 }
+
+// ---------- where things are, for the spotlight ----------
+//
+// The tour's spotlight (components/Tour.tsx) needs to know where on screen the
+// thing it's talking about is: a menu row, the menu itself, Apps' Create card.
+// Each registers how to measure itself, and is measured at the moment it's
+// pointed at, after the menu has slid open, not when it was laid out.
+
+export type SpotRect = { x: number; y: number; width: number; height: number };
+type Measurable = { measureInWindow: (cb: (x: number, y: number, width: number, height: number) => void) => void };
+
+const spots = new Map<string, Measurable>();
+
+/** For a `ref` callback: `ref={spotRef("Apps")}`. */
+export const spotRef = (label: string) => (node: Measurable | null) => {
+  if (node) spots.set(label, node);
+  else spots.delete(label);
+};
+
+/** Where `label` is on screen right now, or null if it isn't there. */
+export function measureSpot(label: string): Promise<SpotRect | null> {
+  const node = spots.get(label);
+  if (!node) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      node.measureInWindow((x, y, width, height) => resolve(width > 0 ? { x, y, width, height } : null));
+    } catch {
+      resolve(null);
+    }
+  });
+}

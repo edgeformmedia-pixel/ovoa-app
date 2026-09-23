@@ -8,6 +8,7 @@ import { usePlan } from "../lib/plan";
 import { PartOfPlan } from "../components/Plan";
 import { devlog, logFail } from "../lib/devlog";
 import { colors } from "../lib/theme";
+import { SkeletonList } from "../components/motion";
 
 // Everything said, by day: the day's title, then each hour with its title, then
 // each five minutes with its title, then the words themselves. Search reaches
@@ -159,7 +160,7 @@ function TranscriptList() {
             </Pressable>
           </View>
 
-          {loading && <ActivityIndicator color={colors.now} />}
+          {loading && <SkeletonList rows={4} />}
           {error && <Text style={styles.error}>{error}</Text>}
 
           {day && (day.title || day.summary) && (

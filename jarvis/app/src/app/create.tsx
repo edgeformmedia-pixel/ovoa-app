@@ -1,8 +1,20 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { Btn, IconTile, Screen, type IconName } from "../components/ui";
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
+import { Rise, SPRING } from "../components/motion";
+import { Btn, IconTile, Screen, toneWash, type IconName, type Tone } from "../components/ui";
+import { cue } from "../lib/cues";
 import { setOpenApp } from "../lib/activeApp";
 import { api, type AppDraft } from "../lib/api";
 import { useAssistant } from "../lib/assistant";
@@ -95,6 +107,7 @@ export default function Create() {
     setSaving(true);
     try {
       const app = await myApps.save(token, draft);
+      cue("created");
       if (open) {
         setOpenApp({ id: app.id, name: app.name, opener: app.opener });
         router.dismissTo("/chat");
@@ -110,13 +123,19 @@ export default function Create() {
   if (draft) {
     return (
       <Screen>
-        <Text style={styles.heading}>Here's your app</Text>
+        <Rise>
+          <Text style={styles.heading}>Here's your app</Text>
+        </Rise>
+        {/* Being made is a moment: the pieces fly together into its icon, the
+            name types itself, and the rest settles in after. */}
         <View style={styles.preview}>
-          <IconTile name={draft.icon as IconName} tone={draft.tone} size={56} />
+          <Assemble icon={draft.icon as IconName} tone={draft.tone} />
           <View style={{ flex: 1, gap: 2 }}>
-            <Text style={styles.name}>{draft.name}</Text>
-            <Text style={styles.meta}>by {user?.name?.trim() || "you"}</Text>
-            <Text style={styles.about}>{draft.about}</Text>
+            <Typed text={draft.name} style={styles.name} delay={650} />
+            <Rise index={14}>
+              <Text style={styles.meta}>by {user?.name?.trim() || "you"}</Text>
+              <Text style={styles.about}>{draft.about}</Text>
+            </Rise>
           </View>
         </View>
 
@@ -193,8 +212,7 @@ export default function Create() {
 
       {making ? (
         <View style={styles.making}>
-          <ActivityIndicator color={colors.now} />
-          <Text style={styles.meta}>Making your app…</Text>
+          <Glimmer text="Making your app…" />
         </View>
       ) : (
         <Btn
@@ -209,7 +227,100 @@ export default function Create() {
   );
 }
 
+/** Four pieces of the icon's tile fly in from the corners and lock together, then the icon appears on it. */
+function Assemble({ icon, tone }: { icon: IconName; tone: Tone }) {
+  const reduce = useReducedMotion();
+  const together = useSharedValue(reduce ? 1 : 0);
+  const glyph = useSharedValue(reduce ? 1 : 0);
+  useEffect(() => {
+    if (reduce) return;
+    together.value = withSpring(1, SPRING);
+    glyph.value = withDelay(420, withSpring(1, SPRING));
+  }, [reduce, together, glyph]);
+
+  const S = 56;
+  const half = S / 2;
+  const from = [
+    [-60, -44, -40],
+    [64, -52, 50],
+    [-64, 50, 30],
+    [58, 60, -60],
+  ];
+  const pieces = from.map(([dx, dy, rot], i) =>
+    // The same four hooks every render, in order.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useAnimatedStyle(() => {
+      const k = 1 - together.value;
+      return {
+        opacity: Math.min(1, together.value * 1.6),
+        transform: [{ translateX: dx * k }, { translateY: dy * k }, { rotate: `${rot * k}deg` }, { scale: 0.5 + together.value * 0.5 }],
+      };
+    }),
+  );
+  const glyphStyle = useAnimatedStyle(() => ({ opacity: glyph.value, transform: [{ scale: 0.4 + glyph.value * 0.6 }] }));
+  const corner = S * 0.3;
+
+  return (
+    <View style={{ width: S, height: S }}>
+      {pieces.map((style, i) => (
+        <Animated.View
+          key={i}
+          style={[
+            {
+              position: "absolute",
+              width: half,
+              height: half,
+              left: i % 2 ? half : 0,
+              top: i > 1 ? half : 0,
+              backgroundColor: toneWash(tone),
+              borderTopLeftRadius: i === 0 ? corner : 0,
+              borderTopRightRadius: i === 1 ? corner : 0,
+              borderBottomLeftRadius: i === 2 ? corner : 0,
+              borderBottomRightRadius: i === 3 ? corner : 0,
+            },
+            style,
+          ]}
+        />
+      ))}
+      <Animated.View style={[{ position: "absolute", left: 0, top: 0 }, glyphStyle]}>
+        <IconTile name={icon} tone={tone} size={S} />
+      </Animated.View>
+    </View>
+  );
+}
+
+/** Text that types itself out, a letter at a time, after `delay`. */
+function Typed({ text, style, delay = 0 }: { text: string; style: object; delay?: number }) {
+  const reduce = useReducedMotion();
+  const [n, setN] = useState(reduce ? text.length : 0);
+  useEffect(() => {
+    if (reduce) return setN(text.length);
+    setN(0);
+    let i = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const next = () => {
+      i += 1;
+      setN(i);
+      if (i < text.length) timer = setTimeout(next, 45);
+    };
+    timer = setTimeout(next, delay);
+    return () => clearTimeout(timer);
+  }, [text, delay, reduce]);
+  return <Text style={style}>{text.slice(0, n) || " "}</Text>;
+}
+
+/** A line that glimmers while something is being made, instead of a spinner. */
+function Glimmer({ text }: { text: string }) {
+  const glow = useSharedValue(0.35);
+  useEffect(() => {
+    glow.value = withRepeat(withSequence(withTiming(1, { duration: 650 }), withTiming(0.35, { duration: 650 })), -1);
+  }, [glow]);
+  const style = useAnimatedStyle(() => ({ opacity: glow.value }));
+  return <Animated.Text style={[styles.glimmer, style]}>{text}</Animated.Text>;
+}
+
 const styles = StyleSheet.create({
+  glimmer: { ...type.body, color: colors.now },
   heading: { ...type.title, color: colors.ink, paddingTop: space.s2 },
   sub: { ...type.sub, color: colors.inkDim },
   label: { ...type.meta, fontWeight: "600", color: colors.inkMute, paddingTop: space.s3 },

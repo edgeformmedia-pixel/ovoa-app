@@ -9,6 +9,7 @@ import { useSession } from "../../lib/auth";
 import { usePlan } from "../../lib/plan";
 import { logFail } from "../../lib/devlog";
 import { colors, mono, numeric, space, type } from "../../lib/theme";
+import { SkeletonList } from "../../components/motion";
 
 // What OVOA is set up to do on its own, what it is keeping in mind, and every
 // time it has acted. The last one is the point: an agent you cannot audit is
@@ -204,7 +205,7 @@ function Agent() {
 
         <GroupLabel>Standing jobs</GroupLabel>
         {jobs === null ? (
-          <ActivityIndicator color={colors.now} />
+          <SkeletonList rows={3} />
         ) : jobs.length === 0 ? (
           <Text style={text.sub}>
             Nothing standing. Ask {name} to check something for you — &ldquo;every morning tell me what&apos;s on&rdquo;,

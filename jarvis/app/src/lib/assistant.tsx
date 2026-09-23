@@ -2,6 +2,7 @@ import { usePathname, useRouter } from "expo-router";
 import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as Notifications from "expo-notifications";
 import { AppState } from "react-native";
+import { cue } from "./cues";
 import { api, isNeedsPlan, type ChatResponse, type PendingAction, type PhoneResult, type ServerSpeech } from "./api";
 import { useSession } from "./auth";
 import { noteRecording } from "./capture";
@@ -152,6 +153,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         }
       }
       await api.approveAction(token, id, phoneResult);
+      cue(phoneResult && !phoneResult.ok ? "error" : "done");
     } catch (err) {
       conversation.setError(err instanceof Error ? err.message : "Couldn't approve");
     }

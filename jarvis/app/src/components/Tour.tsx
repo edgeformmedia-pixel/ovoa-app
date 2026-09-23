@@ -1,15 +1,17 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter, type Href } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useSession } from "../lib/auth";
 import { logFail } from "../lib/devlog";
-import { pointAt, useDrawer } from "../lib/drawer";
+import { measureSpot, pointAt, useDrawer, type SpotRect } from "../lib/drawer";
 import { usePlan } from "../lib/plan";
 import { tourPref, useTourSeen } from "../lib/tour";
 import { colors, lift, radius, space, type } from "../lib/theme";
 import { createSpeaker, speakOnDevice } from "../lib/voice";
+import { SPRING } from "./motion";
 import { Btn, IconTile, type IconName, type Tone } from "./ui";
 
 // The quick tour, spoken, and shown rather than described.
@@ -55,7 +57,7 @@ function steps(assistant: string, free: boolean): Step[] {
       icon: "menu",
       tone: "blue",
       title: "The menu",
-      body: "To get around, tap the three lines at the top left of any screen, or swipe in from the left edge. That opens the menu. It only has four things in it.",
+      body: "To get around, tap the three lines at the top left of any screen, or swipe in from the left edge. That opens the menu: Talk and Apps at the top, the apps you've added under them, and Settings at the bottom.",
       show: { menu: "open" },
     },
     free
@@ -77,7 +79,7 @@ function steps(assistant: string, free: boolean): Step[] {
       icon: "apps-outline",
       tone: "violet",
       title: "Apps",
-      body: "Apps is everything else — your morning brief, your day, activity, recording, safety and more. Search for one and tap install to add it. Each one says how much of your daily usage it uses. Press and hold an app to remove it.",
+      body: "Apps is everything else — your morning brief, your day, activity, recording, safety and more. Search for one and tap install to add it, and it shows up in the menu too. Each one says how much of your daily usage it uses. Press and hold an app to remove it.",
       show: { menu: "tap", row: "Apps", href: "/apps" as Href },
     },
     {
@@ -90,19 +92,12 @@ function steps(assistant: string, free: boolean): Step[] {
       show: { point: "Create", on: "/apps" as Href },
     },
     {
-      icon: "person-circle-outline",
-      tone: "blue",
-      title: "Account",
-      body: "Account has your plan, your name and email, your password, and signing out.",
-      show: { menu: "tap", row: "Account", href: "/account" as Href },
-    },
-    {
       icon: "settings-outline",
       tone: "amber",
       title: "Settings",
       body: free
-        ? "Settings is for reporting a problem and the switches for this phone. You can play this tour again from here, too."
-        : "Settings is how I sound and listen, what I remember, and what I'm allowed to do on my own. You can play this tour again from here, too.",
+        ? "Settings starts with your account: your plan, your name, your password, and signing out. Under that are the switches for this phone. You can play this tour again from here, too."
+        : "Settings starts with your account: your plan, your name, your password, and signing out. Under that is how I sound and listen, what I remember, and what I'm allowed to do on my own. You can play this tour again from here, too.",
       show: { menu: "tap", row: "Settings", href: "/settings" },
     },
     {
@@ -117,6 +112,14 @@ function steps(assistant: string, free: boolean): Step[] {
 
 /** Long enough to see the menu open and the row ringed before it's tapped. */
 const POINT_MS = 1600;
+/** How long the menu or a new screen takes to settle before the spotlight measures it. */
+const SETTLE_MS = 420;
+/** The dim's border: wider than any phone, so its outer edge is never on screen. */
+const DIM = 2000;
+/** Room around what's lit, so it isn't tight to the edges. */
+const HOLE_PAD = 6;
+/** Where the cut-out goes when there's nothing to show: past every edge. */
+const HOLE_OUT = 60;
 /** Between finishing one card and starting the next. */
 const BEAT_MS = 700;
 
@@ -158,6 +161,45 @@ function Walkthrough() {
       ? speaker.current.speak(text)
       : speakOnDevice(text, (stop) => (stopDevice.current = stop));
 
+  // The spotlight: the screen dimmed except a soft cut-out around what's being
+  // talked about, springing from one thing to the next. With nothing to show
+  // it opens out past the edges of the screen, and the dim fades away.
+  const { width: W, height: H } = useWindowDimensions();
+  const hx = useSharedValue(-HOLE_OUT);
+  const hy = useSharedValue(-HOLE_OUT);
+  const hw = useSharedValue(W + HOLE_OUT * 2);
+  const hh = useSharedValue(H + HOLE_OUT * 2);
+  const shade = useSharedValue(0);
+  const spotlight = (r: SpotRect | null) => {
+    const t = r
+      ? { x: r.x - HOLE_PAD, y: r.y - HOLE_PAD, w: r.width + HOLE_PAD * 2, h: r.height + HOLE_PAD * 2 }
+      : { x: -HOLE_OUT, y: -HOLE_OUT, w: W + HOLE_OUT * 2, h: H + HOLE_OUT * 2 };
+    hx.value = withSpring(t.x, SPRING);
+    hy.value = withSpring(t.y, SPRING);
+    hw.value = withSpring(t.w, SPRING);
+    hh.value = withSpring(t.h, SPRING);
+    shade.value = withTiming(r ? 1 : 0, { duration: 350 });
+  };
+  const holeStyle = useAnimatedStyle(() => ({
+    left: hx.value - DIM,
+    top: hy.value - DIM,
+    width: hw.value + DIM * 2,
+    height: hh.value + DIM * 2,
+    opacity: shade.value,
+  }));
+  const glowStyle = useAnimatedStyle(() => ({
+    left: hx.value,
+    top: hy.value,
+    width: hw.value,
+    height: hh.value,
+    opacity: shade.value,
+  }));
+  /** Shines on `label` once whatever is moving (the menu, a new screen) has settled. */
+  const shineOn = async (label: string, after: number, live: () => boolean) => {
+    await wait(after);
+    if (live()) spotlight(await measureSpot(label));
+  };
+
   // One card: show it, say it, and move on when it's been said.
   useEffect(() => {
     let cancelled = false;
@@ -165,23 +207,29 @@ function Walkthrough() {
 
     const act = async () => {
       if (!show) return;
+      const live = () => !cancelled;
       if ("go" in show) {
         pointAt(null);
+        spotlight(null);
         drawer.close();
         router.navigate(show.go);
       } else if ("point" in show) {
         drawer.close();
         router.navigate(show.on);
         pointAt(show.point);
+        await shineOn(show.point, SETTLE_MS, live);
       } else if (show.menu === "open") {
         drawer.open();
+        await shineOn("Menu", SETTLE_MS, live);
       } else {
         // What they'll do themselves: open the menu, find the row, tap it.
         drawer.open();
         pointAt(show.row);
+        await shineOn(show.row, SETTLE_MS, live);
         await wait(POINT_MS);
         if (cancelled) return;
         pointAt(null);
+        spotlight(null);
         drawer.close();
         router.navigate(show.href);
       }
@@ -218,14 +266,17 @@ function Walkthrough() {
   const finish = (go?: Href) => {
     hush();
     pointAt(null);
+    spotlight(null);
     drawer.close();
     tourPref.done();
     if (go) router.navigate(go);
   };
 
   return (
-    // Barely dimmed: the point is to see the menu and the screens behind it.
     <View style={styles.scrim}>
+      {/* One view with an enormous border is the dim; its hollow middle is the cut-out. */}
+      <Animated.View pointerEvents="none" style={[styles.dim, holeStyle]} />
+      <Animated.View pointerEvents="none" style={[styles.glow, glowStyle]} />
       <View style={[styles.card, { marginBottom: insets.bottom + space.s4 }]}>
         <View style={styles.top}>
           <Text style={styles.count}>
@@ -287,9 +338,21 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     zIndex: 20,
-    backgroundColor: "rgba(12,14,18,0.08)",
+    // Clear: the spotlight does the dimming, and only while there's something to point at.
+    backgroundColor: "transparent",
     justifyContent: "flex-end",
     paddingHorizontal: space.s4,
+  },
+  dim: { position: "absolute", borderWidth: DIM, borderColor: "rgba(12,14,18,0.55)", borderRadius: DIM + 16 },
+  glow: {
+    position: "absolute",
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: colors.now,
+    shadowColor: colors.now,
+    shadowOpacity: 0.7,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
   },
   card: {
     backgroundColor: colors.paper,

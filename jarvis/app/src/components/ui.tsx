@@ -4,6 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, View, type StyleProp, 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useDrawer } from "../lib/drawer";
 import { colors, numeric, radius, space, type } from "../lib/theme";
+import { CountUp, PressScale } from "./motion";
 
 // Every part the white design is built out of. Screens compose these and add
 // nothing of their own but layout: if a screen reaches for a hex value or a
@@ -26,6 +27,9 @@ const TONES: Record<Tone, { wash: string; ink: string }> = {
   blue: { wash: colors.blueWash, ink: colors.blue },
   pink: { wash: colors.pinkWash, ink: colors.pink },
 };
+
+/** A tone's pale colour, for anything that stands in for its tile at a larger size. */
+export const toneWash = (tone: Tone) => TONES[tone].wash;
 
 export function IconTile({ name, tone, size = 30 }: { name: IconName; tone: Tone; size?: number }) {
   const t = TONES[tone];
@@ -92,6 +96,7 @@ export function Tile({
   value,
   small,
   suffix,
+  count,
   onPress,
   children,
 }: {
@@ -99,6 +104,8 @@ export function Tile({
   tone: Tone;
   label: string;
   value: string;
+  /** A number to count up to on the way in, shown in place of `value` (which is still the fallback). */
+  count?: number;
   /** For values that are words rather than numbers, which need the room. */
   small?: boolean;
   suffix?: string;
@@ -110,7 +117,7 @@ export function Tile({
       <IconTile name={icon} tone={tone} />
       <Text style={styles.tileLabel}>{label}</Text>
       <Text style={[styles.tileValue, small && styles.tileValueSm]} numberOfLines={1} adjustsFontSizeToFit>
-        {value}
+        {count !== undefined ? <CountUp value={count} style={[styles.tileValue, small && styles.tileValueSm]} /> : value}
         {!!suffix && <Text style={styles.tileSuffix}>{suffix}</Text>}
       </Text>
       {children}
@@ -118,9 +125,9 @@ export function Tile({
   );
   if (!onPress) return <View style={styles.tile}>{body}</View>;
   return (
-    <Pressable style={({ pressed }) => [styles.tile, pressed && styles.pressed]} onPress={onPress}>
+    <PressScale style={styles.tile} onPress={onPress}>
       {body}
-    </Pressable>
+    </PressScale>
   );
 }
 
@@ -157,9 +164,9 @@ export function Row({
   );
   if (!onPress) return <View style={[styles.row, first && styles.rowFirst]}>{body}</View>;
   return (
-    <Pressable style={({ pressed }) => [styles.row, first && styles.rowFirst, pressed && styles.pressed]} onPress={onPress}>
+    <PressScale sink={0.98} style={[styles.row, first && styles.rowFirst]} onPress={onPress}>
       {body}
-    </Pressable>
+    </PressScale>
   );
 }
 
@@ -205,16 +212,17 @@ export function Btn({
   style?: StyleProp<ViewStyle>;
 }) {
   return (
-    <Pressable
+    <PressScale
+      sink={0.93}
       onPress={onPress}
       disabled={disabled || busy}
       accessibilityRole="button"
-      style={({ pressed }) => [
+      style={[
         styles.btn,
         kind === "go" && styles.btnGo,
         kind === "quiet" && styles.btnQuiet,
         kind === "danger" && styles.btnDanger,
-        (pressed || disabled || busy) && { opacity: disabled ? 0.4 : 0.7 },
+        busy && { opacity: 0.7 },
         style,
       ]}
     >
@@ -228,7 +236,7 @@ export function Btn({
       >
         {busy ? "…" : label}
       </Text>
-    </Pressable>
+    </PressScale>
   );
 }
 

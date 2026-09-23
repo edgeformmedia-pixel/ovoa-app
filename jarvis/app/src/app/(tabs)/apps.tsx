@@ -1,8 +1,10 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter, type Href } from "expo-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { Empty, GroupLabel, IconTile, Screen, TopBar, type IconName, type Tone } from "../../components/ui";
+import { expandFrom } from "../../components/Expand";
+import { PressScale, Rise } from "../../components/motion";
+import { Empty, GroupLabel, IconTile, Screen, TopBar, toneWash, type IconName, type Tone } from "../../components/ui";
 import { setOpenApp } from "../../lib/activeApp";
 import {
   ADDONS,
@@ -16,7 +18,7 @@ import {
 import type { MyApp } from "../../lib/api";
 import { useSession } from "../../lib/auth";
 import { useDevMode } from "../../lib/devMode";
-import { usePointedAt } from "../../lib/drawer";
+import { spotRef, usePointedAt, type SpotRect } from "../../lib/drawer";
 import { myApps, useMyApps } from "../../lib/myApps";
 import { MANAGED_AT } from "../../components/Plan";
 import { usePlan } from "../../lib/plan";
@@ -132,16 +134,13 @@ export default function Apps() {
         </View>
 
         {showCreate && (
-          <Pressable
+          <View ref={spotRef("Create")} collapsable={false}>
+          <PressScale
             onPress={create}
             accessibilityRole="button"
             accessibilityLabel="Create an app"
             accessibilityHint="Say or type what you want, and OVOA makes it"
-            style={({ pressed }) => [
-              styles.create,
-              pointed === "Create" && styles.createPointed,
-              pressed && { opacity: 0.8 },
-            ]}
+            style={[styles.create, pointed === "Create" && styles.createPointed]}
           >
             <View style={styles.createIcon}>
               <Ionicons name="add" size={28} color={colors.paper} />
@@ -151,33 +150,32 @@ export default function Apps() {
               <Text style={styles.about}>Say or type what you want, and OVOA makes it into an app.</Text>
               {!can.chat && <Text style={[styles.by, styles.tag]}>Part of a plan</Text>}
             </View>
-            {pointed === "Create" ? (
-              <Ionicons name="hand-left" size={22} color={colors.now} />
-            ) : (
-              <Ionicons name="mic-outline" size={22} color={colors.now} />
-            )}
-          </Pressable>
+            <Ionicons name="mic-outline" size={22} color={colors.now} />
+          </PressScale>
+          </View>
         )}
 
         {(yours.length > 0 || mine.length > 0) && (
           <>
             <GroupLabel>Your apps</GroupLabel>
-            {yours.map((a) => (
+            {yours.map((a, i) => (
               <AddonRow
                 key={a.id}
+                index={i}
                 addon={a}
                 tag={planTag(a)}
                 action="Open"
-                onPress={() => router.navigate(a.href)}
+                onPress={(from) => expandFrom(from, toneWash(a.tone), () => router.navigate(a.href))}
                 onLongPress={() => remove(a)}
               />
             ))}
-            {mine.map((a) => (
+            {mine.map((a, i) => (
               <AddonRow
                 key={a.id}
+                index={yours.length + i}
                 addon={madeCard(a, me)}
                 action="Open"
-                onPress={() => openMine(a)}
+                onPress={(from) => expandFrom(from, toneWash(a.tone), () => openMine(a))}
                 onLongPress={() => deleteMine(a)}
               />
             ))}
@@ -187,9 +185,10 @@ export default function Apps() {
         {more.length > 0 && (
           <>
             <GroupLabel>Add-ons</GroupLabel>
-            {more.map((a) => (
+            {more.map((a, i) => (
               <AddonRow
                 key={a.id}
+                index={yours.length + mine.length + i}
                 addon={a}
                 tag={planTag(a)}
                 action="Install"
@@ -219,26 +218,38 @@ export default function Apps() {
 
 function AddonRow({
   addon,
+  index,
   tag,
   action,
   onPress,
   onLongPress,
 }: {
   addon: Card;
+  /** Its place in the list, so the list cascades in. */
+  index: number;
   /** Which plan it comes with, when this person's doesn't include it. */
   tag?: string;
   action: "Open" | "Install";
-  onPress: () => void;
+  /** Given where the card is on screen, so opening can grow out of it. */
+  onPress: (from: SpotRect | null) => void;
   onLongPress?: () => void;
 }) {
+  const box = useRef<View>(null);
+  const press = () => {
+    const node = box.current;
+    if (!node) return onPress(null);
+    node.measureInWindow((x, y, width, height) => onPress(width > 0 ? { x, y, width, height } : null));
+  };
   return (
-    <Pressable
-      onPress={onPress}
+    <Rise index={index}>
+    <View ref={box} collapsable={false}>
+    <PressScale
+      onPress={press}
       onLongPress={onLongPress}
       accessibilityRole="button"
       accessibilityLabel={`${action} ${addon.name}, by ${addon.by}`}
       accessibilityHint={addon.about}
-      style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}
+      style={styles.card}
     >
       <IconTile name={addon.icon} tone={addon.tone} size={46} />
       <View style={styles.body}>
@@ -267,7 +278,9 @@ function AddonRow({
       <View style={styles.action}>
         <Text style={styles.actionText}>{action}</Text>
       </View>
-    </Pressable>
+    </PressScale>
+    </View>
+    </Rise>
   );
 }
 

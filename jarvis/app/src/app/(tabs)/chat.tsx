@@ -1,8 +1,10 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useEffect, useRef, useState } from "react";
-import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { ApprovalCard } from "../../components/ApprovalCard";
 import { DevLogPanel } from "../../components/DevLogPanel";
+import { WordsIn } from "../../components/motion";
+import { OrbView, type OrbMode } from "../../components/OrbView";
 import { PartOfPlan } from "../../components/Plan";
 import { TopBar } from "../../components/ui";
 import { setOpenApp, useOpenApp } from "../../lib/activeApp";
@@ -10,7 +12,7 @@ import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
 import { useDevMode } from "../../lib/devMode";
 import { usePlan } from "../../lib/plan";
-import { colors, lift, space, type } from "../../lib/theme";
+import { colors, space, type } from "../../lib/theme";
 import type { VoicePhase } from "../../lib/voice";
 
 // The assistant, by voice only. Listening itself runs in AssistantProvider.
@@ -98,29 +100,11 @@ function Talk() {
           accessibilityRole="button"
           accessibilityLabel={on ? `Stop listening to ${assistantName}` : `Start listening to ${assistantName}`}
         >
-          {on && (
-            <View
-              style={[
-                styles.halo,
-                { transform: [{ scale: 1 + loudness * 0.3 }], opacity: 0.35 + loudness * 0.5 },
-                a.phase === "speaking" && { backgroundColor: colors.agentWash },
-              ]}
-            />
-          )}
-          <View style={[styles.orb, !on && styles.orbOff]}>
-            <Ring spinning={a.phase === "thinking"} lit={on} />
-            <Ionicons
-              name={!on ? "mic-off-outline" : a.phase === "speaking" ? "volume-high" : "mic-outline"}
-              size={40}
-              color={on ? colors.ink : colors.inkMute}
-            />
-          </View>
+          <OrbView mode={orbMode(on, a.phase)} level={loudness} size={showLogs ? 150 : ORB} />
         </Pressable>
 
         <Text style={styles.phase}>{label(on, a.phase, a.status)}</Text>
-        <Text style={styles.words} numberOfLines={4}>
-          {a.words || " "}
-        </Text>
+        <WordsIn text={a.words} style={styles.words} />
         <Text style={styles.hint}>{hint(on, a.alwaysListen, a.phase)}</Text>
         {!!a.error && <Text style={styles.error}>{a.error}</Text>}
       </View>
@@ -153,36 +137,13 @@ function Talk() {
   );
 }
 
-/**
- * The orb's ring. Two arcs rather than the study's conic gradient — nothing
- * here draws one without react-native-svg, and a border gives the two colours
- * that matter and can be spun, which is what Thinking needs it to do.
- */
-function Ring({ spinning, lit }: { spinning: boolean; lit: boolean }) {
-  const turn = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (!spinning) {
-      turn.stopAnimation();
-      turn.setValue(0);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.timing(turn, { toValue: 1, duration: 1600, easing: Easing.linear, useNativeDriver: true }),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [spinning, turn]);
-
-  return (
-    <Animated.View
-      style={[
-        styles.ring,
-        !lit && { borderColor: colors.line, borderTopColor: colors.line, borderRightColor: colors.line },
-        { transform: [{ rotate: turn.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] }) }] },
-      ]}
-    />
-  );
+/** What the globe shows for where the conversation is (components/Orb.tsx). */
+function orbMode(on: boolean, phase: VoicePhase): OrbMode {
+  if (!on) return "off";
+  if (phase === "listening") return "listening";
+  if (phase === "thinking") return "thinking";
+  if (phase === "speaking") return "speaking";
+  return "idle";
 }
 
 function label(on: boolean, phase: VoicePhase, status: string | null) {
@@ -201,8 +162,8 @@ function hint(on: boolean, always: boolean, phase: VoicePhase) {
   return phase === "speaking" ? "Tap to interrupt" : "Tap to stop listening";
 }
 
-const ORB = 172;
-const HALO = 208;
+/** The globe's canvas; the points sit well inside it, and the glow fills the rest. */
+const ORB = 240;
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.paper },
@@ -248,31 +209,7 @@ const styles = StyleSheet.create({
   voice: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.s3, paddingHorizontal: space.s5 },
   voiceSmall: { flex: 0, paddingVertical: space.s5, gap: space.s2 },
 
-  orbWrap: { width: HALO, height: HALO, alignItems: "center", justifyContent: "center", marginBottom: space.s3 },
-  halo: { position: "absolute", width: HALO, height: HALO, borderRadius: HALO / 2, backgroundColor: colors.nowWash },
-  orb: {
-    width: ORB,
-    height: ORB,
-    borderRadius: ORB / 2,
-    backgroundColor: colors.paper,
-    alignItems: "center",
-    justifyContent: "center",
-    ...lift,
-  },
-  orbOff: { opacity: 0.6 },
-  ring: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    borderRadius: ORB / 2,
-    borderWidth: 3,
-    // Teal into violet, the two ends of the study's gradient.
-    borderColor: colors.agent,
-    borderTopColor: colors.now,
-    borderRightColor: colors.now,
-  },
+  orbWrap: { alignItems: "center", justifyContent: "center" },
 
   phase: { ...type.phase, color: colors.ink },
   words: { ...type.body, color: colors.inkDim, textAlign: "center", minHeight: 48, maxWidth: 320 },

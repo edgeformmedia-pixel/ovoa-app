@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { AccountSection } from "../../components/AccountSection";
 import { GoogleConnection } from "../../components/GoogleConnection";
 import { PartOfProLine } from "../../components/Plan";
 import { SiriSetup } from "../../components/SiriSetup";
@@ -24,6 +25,7 @@ import { useSession } from "../../lib/auth";
 import { devModePref, useDevMode } from "../../lib/devMode";
 import { usePlan } from "../../lib/plan";
 import { tourPref } from "../../lib/tour";
+import { soundsPref, useSoundsOn } from "../../lib/cues";
 import { autoSendTextsPref, SEND_TEXT_SHORTCUT } from "../../lib/storage";
 import { colors, space, type } from "../../lib/theme";
 
@@ -42,6 +44,7 @@ export default function Settings() {
   // sees the Pro-only ones (the wake word, background work) as "Part of Pro".
   const { free, can } = usePlan();
   const devMode = useDevMode();
+  const soundsOn = useSoundsOn();
   const [quiet, setQuiet] = useState({
     start: minutesToClock(user?.settings.quietStart ?? 1320),
     end: minutesToClock(user?.settings.quietEnd ?? 420),
@@ -208,8 +211,8 @@ export default function Settings() {
     <View style={styles.page}>
       <TopBar title="Settings" />
       <Screen keyboardShouldPersistTaps="handled">
-      {/* Your plan, name, email, password, signing out and deleting the
-          account are on Account now (app/(tabs)/account.tsx). */}
+      {/* The account first: plan, name, email, password, and the ways out. */}
+      <AccountSection />
       {!free && (
       <>
       <Section title="Assistant">
@@ -366,9 +369,18 @@ export default function Settings() {
         {devMode && <Button label="Sensors, inputs & ES100" onPress={() => router.push("/dev-tools")} />}
       </Section>
 
+      <Section title="Sounds">
+        <Setting
+          label="Sound effects"
+          about="Soft glass chimes when OVOA starts listening, when it's done something, when it needs you and when something goes wrong. The taps you feel stay on either way."
+        >
+          <Toggle value={soundsOn} onValueChange={(on) => void soundsPref.set(on)} />
+        </Setting>
+      </Section>
+
       <Section title="Getting around">
         <About>
-          The menu is Talk, Apps, Account and Settings. Everything else is an app you add from Apps. The tour walks
+          The menu is Talk and Apps, the apps you have added, and Settings at the bottom. The tour walks
           through it again.
         </About>
         <Button label="Show the tour again" onPress={() => void tourPref.replay()} />
@@ -509,7 +521,7 @@ export default function Settings() {
       </>
       )}
 
-      {/* Deleting the account moved to Account; what's left here is the assistant's. */}
+      {/* Deleting the account is up in the account section; what is left here is the assistant's. */}
       {!free && (
       <Section title="Danger zone">
         <Setting
