@@ -12,7 +12,11 @@ WHAT THE PRODUCT IS
 OVOA is a personal voice assistant with two main components:
 
 1. JARVIS/API (Cloudflare Worker backend)
-   - Hono + Zod running at https://jarvis-api.edgeformmedia.workers.dev
+   - Hono + Zod running at https://api.ovoa.ai, on the ovoa.ai Cloudflare account
+     (e58b0ec5305410f9d3cd70f461f39cb6) since the v1 move. The old address,
+     jarvis-api.edgeformmedia.workers.dev, is a forwarder (jarvis/forwarder) on
+     the old edgeformmedia account, which keeps only that and the old D1 as a
+     backup until 2026-10-14.
    - D1 database (jarvis-db)
    - Handles chat turns, tool calling, background agent jobs
    - Interfaces with three LLM engines: DeepSeek (primary) → Gemini → Workers AI
@@ -50,7 +54,9 @@ CRITICAL GROUND RULES (Will save you hours)
 ================================================================================
 
 1. ALWAYS MIGRATE + DEPLOY after server changes
-   - After any jarvis/api file changes: run in jarvis/api/
+   - After any jarvis/api file changes: run in jarvis/api/, with the ovoa.ai
+     account's wrangler login (wrangler.jsonc pins that account)
+     export XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa
      npm run db:migrate && npm run deploy
    - User expects this without being asked
 
@@ -104,6 +110,7 @@ LOCAL TESTING (no Cloudflare auth):
 
 PRODUCTION DEPLOYMENT:
   cd jarvis/api
+  export XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa   # the ovoa.ai account's login
   npm run db:migrate        # Always run migrations first
   npm run deploy            # Deploy the Worker
 

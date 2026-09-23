@@ -169,7 +169,7 @@ run can't complete.
 
 ```bash
 curl -H "x-debug-key: $DEBUG_KEY" \
-  "https://jarvis-api.edgeformmedia.workers.dev/debug/logs?since=2h&kind=err"
+  "https://api.ovoa.ai/debug/logs?since=2h&kind=err"
 ```
 
 One answer covering both halves: what the phone uploaded (`device_logs`) and

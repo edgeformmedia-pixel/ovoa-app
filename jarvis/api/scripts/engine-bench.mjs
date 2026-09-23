@@ -3,7 +3,7 @@
 // the right tool was called, tokens per reply and what it cost.
 //
 //     cd jarvis/api
-//     XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-edgeformmedia node scripts/engine-bench.mjs \
+//     XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa node scripts/engine-bench.mjs \
 //         --label "glm (Z.ai)" --engine_order glm,workers --voice_engine glm
 //
 // It signs up a throwaway account, gives that account alone the engine choices
@@ -30,7 +30,7 @@ const args = Object.fromEntries(
     return acc;
   }, []),
 );
-const API = args.api ?? "https://jarvis-api.edgeformmedia.workers.dev";
+const API = args.api ?? "https://api.ovoa.ai";
 const LABEL = args.label ?? "default";
 const WAIT_S = Number(args.wait ?? 65);
 const PREFS = Object.fromEntries(["engine_order", "voice_engine", "workers_model"].filter((k) => args[k]).map((k) => [k, args[k]]));

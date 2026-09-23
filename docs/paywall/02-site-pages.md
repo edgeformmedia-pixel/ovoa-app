@@ -41,4 +41,4 @@ Every page tells one true story:
 - Click through each checkout button against the fake Stripe.
 
 ## Finish
-Commit and push `main`, then deploy the test Worker (edgeformmedia profile, as in 01). Tell the user Lovable needs a Publish.
+Commit and push `main`, then deploy the test Worker (the ovoa.ai account's profile, as in 01). Tell the user Lovable needs a Publish.

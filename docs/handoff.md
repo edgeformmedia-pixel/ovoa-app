@@ -15,7 +15,9 @@ half-finished on disk. Read this, then continue from "What to do next".
 A personal voice assistant. Two halves:
 
 - `jarvis/api` — Cloudflare Worker (Hono + Zod), D1 database `jarvis-db`,
-  deployed at `https://jarvis-api.edgeformmedia.workers.dev`. Chat turns, tool
+  deployed at `https://api.ovoa.ai` (the ovoa.ai Cloudflare account since the
+  v1 move; the old `jarvis-api.edgeformmedia.workers.dev` forwards there until
+  2026-10-14). Chat turns, tool
   calling across three model engines (Gemini → DeepSeek → Workers AI), the
   background agent, Google integration, Deepgram STT/TTS proxying.
 - `jarvis/app` — Expo (SDK 57) iOS app. Talks to the API, drives an **ES100
@@ -27,7 +29,8 @@ A personal voice assistant. Two halves:
 ## Ground rules that will save you time
 
 - **Always `npm run db:migrate && npm run deploy` in `jarvis/api` after server
-  changes.** The user expects this without being asked.
+  changes**, with `XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa` (the ovoa.ai
+  account's login; `wrangler.jsonc` pins that account). The user expects this without being asked.
 - **OneDrive makes recursive `find` / `grep -r` time out** (node_modules).
   Use `git ls-files` and the Grep tool instead.
 - **The Bash tool collapses backslashes inside heredocs.** A python/node
@@ -41,7 +44,7 @@ A personal voice assistant. Two halves:
   `npm run smoke` (47 checks, needs no Cloudflare auth).
 - **Read the phone's real logs instead of guessing.** The app uploads its whole
   dev log to D1 every 3 s:
-  `npx wrangler d1 execute jarvis-db --remote --json --command "SELECT time, kind, text, detail FROM device_logs ORDER BY id DESC LIMIT 200"`
+  `XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npx wrangler d1 execute jarvis-db --remote --json --command "SELECT time, kind, text, detail FROM device_logs ORDER BY id DESC LIMIT 200"`
 - HealthKit and the BLE module need a **development build** (Codemagic →
   TestFlight), not Expo Go. The user tests on a real iPhone.
 

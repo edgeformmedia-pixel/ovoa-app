@@ -225,7 +225,7 @@ GLM's key is already in production (`wrangler secret put GLM_API_KEY`, done
 2026-09-22). To put GLM first for typed turns without a deploy:
 
 ```bash
-curl -X PUT https://jarvis-api.edgeformmedia.workers.dev/debug/engines -H "x-debug-key: $DEBUG_KEY" -H "content-type: application/json" -d '{"engine_order":"glm,gemini,deepseek,workers"}'
+curl -X PUT https://api.ovoa.ai/debug/engines -H "x-debug-key: $DEBUG_KEY" -H "content-type: application/json" -d '{"engine_order":"glm,gemini,deepseek,workers"}'
 ```
 
 Or Dev tools → Which engine answers, for just you or for everyone. The

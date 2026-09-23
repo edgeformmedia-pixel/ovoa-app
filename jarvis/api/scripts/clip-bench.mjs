@@ -2,7 +2,7 @@
 // production, and prints what each heard and how long it took.
 //
 //     cd jarvis/api
-//     XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-edgeformmedia node scripts/clip-bench.mjs a.wav b.m4a ...
+//     XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa node scripts/clip-bench.mjs a.wav b.m4a ...
 //
 // Like engine-bench.mjs: a throwaway account, its own row in server_settings
 // (written with wrangler, no debug key needed), a wait for the settings cache,
@@ -15,7 +15,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 
-const API = process.env.API ?? "https://jarvis-api.edgeformmedia.workers.dev";
+const API = process.env.API ?? "https://api.ovoa.ai";
 const files = process.argv.slice(2);
 if (!files.length) {
   console.error("give me some clips");

@@ -74,7 +74,7 @@ stays the spoken engine and GLM is the typed one.
 Switching is a Dev tools tap or one request, no deploy:
 
 ```bash
-curl -X PUT https://jarvis-api.edgeformmedia.workers.dev/debug/engines \
+curl -X PUT https://api.ovoa.ai/debug/engines \
   -H "x-debug-key: $DEBUG_KEY" -H "content-type: application/json" \
   -d '{"engine_order":"glm,deepseek,gemini,workers","voice_engine":"workers"}'
 ```

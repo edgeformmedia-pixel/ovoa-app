@@ -5,15 +5,20 @@ fall and SOS safety alerts.
 
 ```
 jarvis/
-  api/   Cloudflare Worker (Hono) + D1 database "jarvis-db"
-  app/   Expo (SDK 57) app with expo-router
+  api/        Cloudflare Worker (Hono) + D1 database "jarvis-db"
+  app/        Expo (SDK 57) app with expo-router
+  forwarder/  the old workers.dev address, handed on to api.ovoa.ai until 2026-10-14
 ```
 
 The folder, Worker (`jarvis-api`), and database (`jarvis-db`) keep their
 original names so the live deployment keeps working. Nothing the user sees says
 "Jarvis".
 
-Live API: https://jarvis-api.edgeformmedia.workers.dev
+Live API: https://api.ovoa.ai, on the ovoa.ai Cloudflare account
+(`e58b0ec5305410f9d3cd70f461f39cb6`) since the v1 move. Builds from before the
+move call `https://jarvis-api.edgeformmedia.workers.dev`, which is now a
+forwarder ([`forwarder/`](forwarder/)) on the old edgeformmedia account. That
+account keeps only the forwarder and the old D1 as a backup, until 2026-10-14.
 
 ## App tabs
 
@@ -149,7 +154,7 @@ accounts**.
   account, the assistant checks each and says where each result came from.
 - **How it connects:** OAuth web client `736336639952-…` in Google Cloud
   project `ovoaappios`, with redirect URI
-  `https://jarvis-api.edgeformmedia.workers.dev/google/callback`. The app
+  `https://api.ovoa.ai/google/callback` (`PUBLIC_URL`). The app
   opens `POST /google/connect`'s URL in an auth session. The Worker swaps the
   code for tokens (with PKCE) and sends the browser back to `exp://…` (Expo
   Go) or `ovoa://…` (installed app).
@@ -405,8 +410,17 @@ the key when asked.
 ```powershell
 cd jarvis\api
 npm install
+$env:XDG_CONFIG_HOME = "C:/Users/thoma/.wrangler-ovoa"
+npm run db:migrate
 npm run deploy
 ```
+
+`api/wrangler.jsonc` pins the ovoa.ai account (`account_id`), so every remote
+wrangler command run from `jarvis/api` (deploys, `secret put`, `d1 ... --remote`)
+lands there or fails. Run them with that account's login: the profile in
+`XDG_CONFIG_HOME` above. The forwarder at the old address deploys from
+`jarvis/api` too, with the old account's profile:
+`XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-edgeformmedia npx wrangler deploy -c ../forwarder/wrangler.jsonc`.
 
 Schema changes: add a file to `api/migrations/`, then run
 `npm run db:migrate`.
