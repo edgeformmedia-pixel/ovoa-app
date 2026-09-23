@@ -67,8 +67,8 @@ export function GoogleConnection({ token }: { token: string }) {
     <View style={styles.wrap}>
       {accounts.length === 0 ? (
         <Text style={styles.meta}>
-          Connect to let the assistant use your {GOOGLE_APPS.join(", ")}. It asks before sending, deleting, or
-          inviting anyone.
+          Connect to let the assistant use your {GOOGLE_APPS.join(", ")}. In Drive it only sees the files it creates.
+          It asks before sending, deleting, or inviting anyone.
         </Text>
       ) : (
         <>

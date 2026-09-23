@@ -10,6 +10,7 @@ import { startHeartRate } from "../../lib/heart";
 import { startLocationTimeline } from "../../lib/location";
 import { prepareFillers, watchVoiceForFillers } from "../../lib/fillers";
 import { startAlarmSync } from "../../lib/nag";
+import { startCalorieSync } from "../../lib/food";
 import { usePlan } from "../../lib/plan";
 import { colors } from "../../lib/theme";
 
@@ -41,6 +42,9 @@ export default function TabsLayout() {
     void prepareFillers(assistant);
     return watchVoiceForFillers(assistant);
   }, [assistant]);
+  // Calorie joins the menu when the server has a food tracking level for them
+  // (an eating goal in setup, or "be more exact"), here and on each return.
+  useEffect(() => (assistant ? startCalorieSync(assistant) : undefined), [assistant]);
   // Anything recorded but not yet in the timeline gets filed, while it's on.
   useAutoCapture();
 
@@ -51,7 +55,7 @@ export default function TabsLayout() {
   // Talk, Apps, the apps they've added, and Settings; see components/Drawer.tsx.
   //
   // SafetyProvider, AgentProvider, AssistantProvider and NagOverlay live in
-  // app/_layout.tsx: /agent, /transcripts, /live, /claude, /dev-tools, /es100
+  // app/_layout.tsx: /agent, /transcripts, /live, /dev-tools, /es100
   // and /motion-lab are siblings of (tabs) in the root stack rather than
   // children, so from here they sat outside the providers and /agent threw on
   // every open (device_logs, 2026-09-21).
@@ -74,6 +78,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="record" options={{ title: "Record" }} />
       <Tabs.Screen name="safety" options={{ title: "Safety" }} />
       <Tabs.Screen name="agent" options={{ title: "Background work" }} />
+      <Tabs.Screen name="calorie" options={{ title: "Calorie" }} />
       <Tabs.Screen name="settings" options={{ title: "Settings" }} />
     </Tabs>
   );

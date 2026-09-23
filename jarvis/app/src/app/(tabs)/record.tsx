@@ -13,9 +13,9 @@ import { usePlan } from "../../lib/plan";
 import { deleteRecording, markLost, renameRecording, useRecordings, wavFile, type Recording } from "../../lib/recordings";
 import { colors, mono, numeric, space, type } from "../../lib/theme";
 
-// Record on the ES100 clip with buttons, bring the audio over to the phone, and
-// play it back. The clip's own button works too: whatever it records is pulled
-// in when it stops.
+// Record on the ES100 clip (the OVOA Band, as people see it) with buttons, bring
+// the audio over to the phone, and play it back. The clip's own button works too:
+// whatever it records is pulled in when it stops.
 
 const phaseText: Record<clip.ClipPhase, string> = {
   unavailable: "Needs the installed OVOA app",
@@ -80,7 +80,8 @@ export default function RecordScreen() {
         {connected ? (
           <>
             <GroupLabel>The clip</GroupLabel>
-            <Row icon="bluetooth-outline" tone="blue" title={state.device?.name || "ES100 clip"} value="Connected" first />
+            {/* Its own name (ES100-…) is the supplier's; people know it as the OVOA Band. */}
+            <Row icon="bluetooth-outline" tone="blue" title="OVOA Band" value="Connected" first />
             <Row
               icon={state.battery?.charging ? "battery-charging-outline" : "battery-half-outline"}
               tone="green"

@@ -61,7 +61,7 @@ eq("changing one by asking is base", tierForRoute("POST", "/apps/revise"), "base
 eq("setting up background work is base", tierForRoute("POST", "/agent/jobs"), "base");
 eq("running it now is base", tierForRoute("POST", "/agent/jobs/j1/run"), "base");
 eq("a standing goal is base", tierForRoute("POST", "/agent/goals"), "base");
-eq("ask-Claude isn't listed, so base", tierForRoute("POST", "/claude"), "base");
+eq("a route nothing lists is base (Ask Claude's old one, say)", tierForRoute("POST", "/claude"), "base");
 eq("overheard lines are base", tierForRoute("POST", "/transcripts/heard"), "base");
 eq("no route needs pro: Pro is usage, not features", ROUTE_TIERS.filter((r) => r.tier === "pro").length, 0);
 
@@ -100,6 +100,9 @@ eq("settings are free", tierForRoute("PATCH", "/me"), "free");
 eq("refreshing the plan is free", tierForRoute("POST", "/me/plan/refresh"), "free");
 eq("notes are free", tierForRoute("POST", "/notes"), "free");
 eq("a note is free", tierForRoute("PATCH", "/notes/n1"), "free");
+eq("the Calorie screen is free (no model)", tierForRoute("GET", "/food"), "free");
+eq("fixing a food entry is free", tierForRoute("PATCH", "/food/log/f1"), "free");
+eq("and so is Calorie's level", tierForRoute("PUT", "/food/settings"), "free");
 eq("heart rate is free", tierForRoute("POST", "/hr"), "free");
 eq("workouts are free", tierForRoute("GET", "/workouts"), "free");
 eq("steps are free", tierForRoute("PUT", "/steps"), "free");

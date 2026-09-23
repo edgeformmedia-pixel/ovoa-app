@@ -17,6 +17,7 @@ import {
 import type { MyApp } from "../../lib/api";
 import { useSession } from "../../lib/auth";
 import { useDevMode } from "../../lib/devMode";
+import { CALORIE_ID, calorieToggled } from "../../lib/food";
 import { spotRef, usePointedAt, type SpotRect } from "../../lib/drawer";
 import { myApps, useMyApps } from "../../lib/myApps";
 import { usePlan } from "../../lib/plan";
@@ -98,13 +99,29 @@ export default function Apps() {
   const planTag = (a: Addon) =>
     (a.needs === "agent" && !can.agent) || (a.needs === "assistant" && !can.chat) ? "For Base users" : undefined;
 
+  // Calorie is the one whose state lives on the server too: installing it is
+  // what makes OVOA count and ask (lib/food.ts).
+  const install = (a: Addon) => {
+    void installedAddons.install(a.id);
+    if (a.id === CALORIE_ID) void calorieToggled(token, true);
+  };
+
   const remove = (a: Addon) =>
     Alert.alert(
       `Remove ${a.name}?`,
-      "It comes off your apps. Anything it switched on stays on until you turn it off, and you can add it back any time.",
+      a.id === CALORIE_ID
+        ? "It comes off your apps, and OVOA goes back to noting food quietly, with no numbers. Add it back any time and it asks the way you chose."
+        : "It comes off your apps. Anything it switched on stays on until you turn it off, and you can add it back any time.",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Remove", style: "destructive", onPress: () => void installedAddons.remove(a.id) },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () => {
+            void installedAddons.remove(a.id);
+            if (a.id === CALORIE_ID) void calorieToggled(token, false);
+          },
+        },
       ],
     );
 
@@ -187,7 +204,7 @@ export default function Apps() {
                 addon={a}
                 tag={planTag(a)}
                 action="Install"
-                onPress={() => void installedAddons.install(a.id)}
+                onPress={() => install(a)}
               />
             ))}
           </>

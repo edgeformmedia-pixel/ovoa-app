@@ -71,12 +71,12 @@ import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "
 import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
-import { askClaude, askClaudeTool, claude } from "./claude";
 import { appAssistant, appFor, describeScreen, isAppTool, myApps, type MadeApp } from "./myapps";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
 import { capVerdict, monthKey, overCapMessage, warnMessage } from "./cap";
 import { isMoneyTool, moneyAssistant, moneyRoutes, moneyTick } from "./money";
+import { foodAssistant, foodRoutes, foodTurn, isFoodTool, logFood, LOWER_THAN_USUAL_NOTE } from "./food";
 import { MORE_TOOLS, SPOKEN_CORE, toolbelt, TYPED_CORE, type ToolGuide } from "./toolbelt";
 import { mightBeAboutThem } from "./remember";
 import { allowed, clientIp, limitByUser, tooMany } from "./limits";
@@ -1043,7 +1043,7 @@ async function runTurn(
   // googleAssistant needs auto-approve from the settings, but only once a tool
   // runs, so its own read goes out at the same time.
   const settingsRead = getSettings(db, userId);
-  const [settings, user, history, memories, activity, google, profile, mine] = await Promise.all([
+  const [settings, user, history, memories, activity, google, profile, mine, food] = await Promise.all([
     settingsRead,
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
     db
@@ -1057,6 +1057,8 @@ async function runTurn(
     getProfile(db, userId),
     // This person's own engine choices, if a developer set any (settings.ts). Cached, so free.
     settingsFor(env, userId),
+    // How closely they track food, and whether this is the week's "lower than usual" turn (food.ts).
+    foodTurn(db, userId, timeZone),
   ]);
   const autoApprove = !!settings.auto_approve && !fromAgent;
   const contextMs = Date.now() - started;
@@ -1076,6 +1078,9 @@ async function runTurn(
   const extraTools = extrasAssistant(env, userId, timeZone);
   const alarmTools = alarmAssistant(env, userId, timeZone);
   const moneyTools = moneyAssistant(env, userId, timeZone, { voice: !!voice });
+  const foodTools = foodAssistant(env, userId, timeZone, { voice: !!voice, level: food.level });
+  // Once a week at most, and only to someone who's there to hear it.
+  const askLowerThanUsual = !fromAgent && !resume && (await food.claimLower());
   // The open app's own screen: its checklist, counter and log (myapps.ts).
   const appTools = app ? appAssistant(env, userId, app.id, timeZone) : null;
 
@@ -1102,6 +1107,7 @@ async function runTurn(
           describeScreen(app, timeZone),
         ].filter(Boolean)
       : []),
+    ...(askLowerThanUsual ? [LOWER_THAN_USUAL_NOTE] : []),
   ].join("\n");
   turns.push({ role: "user", text: `[${moment}]\n\n${text}` });
 
@@ -1123,7 +1129,7 @@ async function runTurn(
     ...extraTools.tools,
     ...alarmTools.tools,
     ...moneyTools.tools,
-    askClaudeTool,
+    ...foodTools.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -1145,6 +1151,7 @@ async function runTurn(
     people: { tools: peopleTools.tools, prompt: peopleTools.prompt },
     alarms: { tools: alarmTools.tools, prompt: alarmTools.prompt },
     money: { tools: moneyTools.tools, prompt: moneyTools.prompt },
+    food: { tools: foodTools.tools, prompt: foodTools.prompt },
     transcripts: {
       tools: transcriptTools.tools,
       prompt: settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : "",
@@ -1210,6 +1217,7 @@ async function runTurn(
     ["people", guided(guides.people)],
     ["alarms", guided(guides.alarms)],
     ["money", guided(guides.money)],
+    ["food", guided(guides.food)],
     ["transcripts", guided(guides.transcripts)],
     ["command", fromAgent
       ? [
@@ -1324,8 +1332,8 @@ async function runTurn(
                                     ? alarmTools.callTool
                                   : isMoneyTool(name)
                                     ? moneyTools.callTool
-                                  : name === askClaudeTool.name
-                                    ? async () => askClaude(env, String(args.prompt ?? ""), { voice })
+                                  : isFoodTool(name)
+                                    ? foodTools.callTool
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name
@@ -2599,6 +2607,18 @@ authed.post("/debug/commands", async (c) => {
   return c.json(await enqueueCommand(c.env, c.var.userId, body.text, "agent", "debug"));
 });
 
+/**
+ * Logs food as food_log would, so the Calorie routes can be tested without a
+ * model: the same clamp, catalog and dedupe. Body: food_log's arguments. Needs DEBUG_KEY.
+ */
+authed.post("/debug/food/log", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
+  const row = await c.env.DB.prepare("SELECT time_zone FROM settings WHERE user_id = ?").bind(c.var.userId).first<{ time_zone: string | null }>();
+  const done = await logFood(c.env.DB, c.var.userId, validTimeZone(row?.time_zone), body);
+  return c.json(done, "error" in done ? 400 : 200);
+});
+
 authed.route("/", commands);
 authed.route("/", routines);
 authed.route("/", onboarding);
@@ -2606,13 +2626,13 @@ authed.route("/", myApps);
 authed.route("/", notes);
 authed.route("/", todos);
 authed.route("/", moneyRoutes);
+authed.route("/", foodRoutes);
 authed.route("/", feed);
 authed.route("/", location);
 authed.route("/", heart);
 authed.route("/", transcripts);
 authed.route("/", people);
 authed.route("/", alarms);
-authed.route("/", claude);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);

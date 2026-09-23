@@ -98,13 +98,17 @@ export function shortcutAssistant(env: Env, userId: string, autoApprove: boolean
   const pending: PendingAction[] = [];
   const db = env.DB;
 
+  // v1 ships with SHORTCUT_SIGNING_URL unset: the only shortcut OVOA provides is
+  // the one people build themselves to send texts (Settings → Texts), and
+  // assistant-written shortcuts are a future update. With no tools this guide is
+  // never carried (toolbelt.ts), so the model simply has nothing to offer.
   if (!signingConfigured(env)) {
     return {
       tools: [] as ToolSpec[],
       pending,
       callTool: (async () => ({ error: "Shortcut building isn't set up" })) as CallTool,
       prompt:
-        "You can't write new iPhone shortcuts yet: the server has no shortcut signing service set up (it needs a Mac or a RoutineHub HubSign membership). If asked, say so. You can still run the user's existing shortcuts by name with phone_shortcut_run.",
+        "You can't write new iPhone shortcuts; that's coming in a future update. If asked, say so. You can still run the user's existing shortcuts by name with phone_shortcut_run.",
     };
   }
 

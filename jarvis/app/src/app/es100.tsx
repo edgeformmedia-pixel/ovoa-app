@@ -26,7 +26,7 @@ export default function ES100() {
           <Ionicons name="bluetooth" size={44} color={colors.inkMute} />
           <Text style={styles.title}>Not available here</Text>
           <Text style={styles.dim}>
-            The ES100 needs the installed OVOA app — a development build with the UTE SDK compiled in. Expo Go
+            The OVOA Band needs the installed OVOA app — a development build with the UTE SDK compiled in. Expo Go
             can't load it.
           </Text>
         </View>
@@ -37,7 +37,7 @@ export default function ES100() {
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.body}>
-        <Text style={styles.title}>ES100</Text>
+        <Text style={styles.title}>OVOA Band</Text>
         <Text style={styles.dim}>
           {state.sdkVersion ? `SDK ${state.sdkVersion}` : "starting…"} · {state.phase}
           {state.savedDeviceId ? ` · saved ${state.savedDeviceId.slice(0, 8)}` : ""}

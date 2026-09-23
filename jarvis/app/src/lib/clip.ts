@@ -307,21 +307,23 @@ function ensureStarted() {
     });
 }
 
+// People know the clip as the OVOA Band, but iOS's Bluetooth list shows the name the
+// hardware advertises, ES100, so the steps say both.
 function staleBond() {
   set({
     problem:
-      "Your iPhone has an old pairing for the clip. Open Settings → Bluetooth, tap ⓘ next to ES100 → Forget This Device, then connect again and press the clip's button when it vibrates.",
+      "Your iPhone has an old pairing for your OVOA Band. Open Settings → Bluetooth, tap ⓘ next to ES100 (that's your OVOA Band) → Forget This Device, then connect again and press the band's button when it vibrates.",
   });
   say("iPhone's saved pairing with the clip is out of date; it must be forgotten in Settings");
   if (staleBondAlerted) return;
   staleBondAlerted = true;
   Alert.alert(
-    "Forget the ES100 in Bluetooth settings",
-    "Your iPhone still has an old pairing for the clip, which the clip has deleted, so iOS refuses to connect.\n\n" +
+    "Forget your OVOA Band in Bluetooth settings",
+    "Your iPhone still has an old pairing for your OVOA Band, which the band has deleted, so iOS refuses to connect.\n\n" +
       "1. Open Settings → Bluetooth.\n" +
-      "2. Tap the ⓘ next to ES100 → Forget This Device.\n" +
+      "2. Tap the ⓘ next to ES100 (your OVOA Band is listed as ES100) → Forget This Device.\n" +
       "3. Come back and tap Connect.\n" +
-      "4. Accept the iPhone's pairing pop-up, then press the clip's button when it vibrates.",
+      "4. Accept the iPhone's pairing pop-up, then press the band's button when it vibrates.",
   );
 }
 

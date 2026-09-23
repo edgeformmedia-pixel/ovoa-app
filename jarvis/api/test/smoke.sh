@@ -258,6 +258,36 @@ check "and the note with it"       "$(curl -s "${A[@]}" "$API/notes?tag=todo" | 
 check "not someone else's list"    "$(curl -s -H "authorization: Bearer $OTHER" "$API/todos?date=$TOMORROW" | j "len(d['todos'])")" "0"
 
 echo
+echo "── food and the Calorie screen ────────────────────"
+# food.ts. Logging is a chat turn, which needs a model, so the debug route
+# logs exactly as food_log does: the same clamp, catalog and repeat check.
+FOODLOG() { curl -s -X POST "${A[@]}" "${D[@]}" "$API/debug/food/log" -d "$1"; }
+check "nothing logged, nothing set up" "$(curl -s "${A[@]}" "$API/food" | j "(d['level'], d['chosen'], d['today']['kcal'])")" "(None, False, 0)"
+LOGGED=$(FOODLOG '{"items":[{"name":"Olive oil","grams":14,"kcal":40,"category":"fat"},{"name":"Chicken burrito","grams":400,"kcal":900,"protein":40,"category":"mixed"}]}')
+check "a tablespoon of oil at 40 kcal is corrected" "$(echo "$LOGGED" | j "[(i['kcal'], i['estimated']) for i in d['items'] if i['name']=='Olive oil'][0]")" "(91, 'clamped')"
+check "the day adds up" "$(curl -s "${A[@]}" "$API/food" | j "(d['today']['kcal'], d['today']['protein'], len(d['today']['entries']))")" "(991, 40, 2)"
+check "said again a minute later, it isn't logged twice" "$(FOODLOG '{"items":[{"name":"chicken burrito","grams":400,"kcal":900,"category":"mixed"}]}' | j "d['repeats']")" "['chicken burrito']"
+AGAIN=$(FOODLOG '{"items":[{"name":"Chicken Burrito","grams":400,"kcal":1000,"category":"mixed"}],"again":true}')
+check "a real second one is, and the catalog prices it the same" "$(echo "$AGAIN" | j "(d['items'][0]['kcal'], d['items'][0]['source'])")" "(900, 'catalog')"
+BID=$(echo "$AGAIN" | j "d['items'][0]['id']")
+check "half of it" "$(curl -s -X PATCH "${A[@]}" "$API/food/log/$BID" -d '{"fraction":0.5}' | j "d['after']")" "450"
+check "a weight change carries the calories" "$(curl -s -X PATCH "${A[@]}" "$API/food/log/$BID" -d '{"grams":100}' | j "d['after']")" "225"
+OID=$(curl -s "${A[@]}" "$API/food" | j "[e['id'] for e in d['today']['entries'] if e['name']=='Olive oil'][0]")
+check "someone else can't fix it" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H "authorization: Bearer $OTHER" -H 'content-type: application/json' "$API/food/log/$OID" -d '{"grams":5}')" "404"
+check "or remove it" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "authorization: Bearer $OTHER" "$API/food/log/$OID")" "404"
+check "or see it" "$(curl -s -H "authorization: Bearer $OTHER" "$API/food" | j "d['today']['entries']")" "[]"
+check "removed" "$(curl -s -X DELETE "${A[@]}" "$API/food/log/$OID" | j "d['ok']")" "True"
+check "and gone from the day" "$(curl -s "${A[@]}" "$API/food" | j "(d['today']['kcal'], len(d['today']['entries']))")" "(1125, 2)"
+check "eaten twice makes the most-eaten list" "$(curl -s "${A[@]}" "$API/food" | j "d['top']")" "[{'name': 'Chicken Burrito', 'times': 2}]"
+check "installing Calorie turns on normal" "$(curl -s -X PUT "${A[@]}" "$API/food/settings" -d '{"installed":true}' | j "(d['level'], d['chosen'])")" "('normal', False)"
+check "the first question sets the level" "$(curl -s -X PUT "${A[@]}" "$API/food/settings" -d '{"level":"quick"}' | j "(d['level'], d['chosen'])")" "('quick', True)"
+check "removing it goes back to quiet" "$(curl -s -X PUT "${A[@]}" "$API/food/settings" -d '{"installed":false}' | j "d['level']")" "None"
+check "adding it back keeps the level" "$(curl -s -X PUT "${A[@]}" "$API/food/settings" -d '{"installed":true}' | j "d['level']")" "quick"
+check "a daily goal" "$(curl -s -X PUT "${A[@]}" "$API/food/settings" -d '{"kcal":2000}' | j "d['target']['kcal']")" "2000"
+check "a made-up level is refused" "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${A[@]}" "$API/food/settings" -d '{"level":"extreme"}')" "400"
+check "logging needs the debug key" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/debug/food/log" -d '{"items":[]}')" "404"
+
+echo
 echo "── the feed ───────────────────────────────────────"
 FEED=$(curl -s "${A[@]}" "$API/feed")
 check "it starts with today"        "$(echo "$FEED" | j "d['cards'][0]['kind']")" "summary"
@@ -337,7 +367,6 @@ check "the alarm tick runs" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?
 check "not someone else's alarms" "$(curl -s -H "authorization: Bearer $OTHER" "$API/alarms" | j "len(d['alarms'])")" "0"
 check "cancelled" "$(curl -s -X DELETE "${A[@]}" "$API/alarms/$AID" | j "d['ok']")" "True"
 check "a nag can be answered" "$(curl -s -X POST "${A[@]}" "$API/nags/done" -d '{"key":"note:nope"}' | j "d['ok']")" "True"
-check "Claude without a key says so" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/claude" -d '{"prompt":"hi"}')" "503"
 
 echo
 echo "── capture everything is dev-only ─────────────────"
@@ -616,6 +645,7 @@ check "free: editing it by hand" \
   "$(code -X PUT "${P[@]}" "$API/apps/$MADE_ID" -d '{"name":"Shopping","about":"What I am out of.","icon":"cart-outline","tone":"teal","instructions":"Keep my shopping list."}')" "200"
 check "free: old builds' speech routes aren't a plan problem" \
   "$([ "$(code -X POST "${P[@]}" "$API/voice/token")" != 402 ] && [ "$(code -X POST -H "authorization: Bearer $OTHER" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')" != 402 ] && echo yes)" "yes"
+check "free: the Calorie screen is 200 (it reads, no model)" "$(code "${P[@]}" "$API/food")" "200"
 check "free: deleting history always works" "$(code -X DELETE "${P[@]}" "$API/chat/messages")" "200"
 check "free: refreshing the plan works" "$(curl -s -X POST "${P[@]}" "$API/me/plan/refresh" | j "d['plan']['tier']")" "free"
 

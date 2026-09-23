@@ -123,11 +123,10 @@ function RootStack() {
             back arrow is how you leave them; the drawer screens have a
             hamburger of their own instead. */}
         <Stack.Screen name="dev-tools" options={{ ...pushed, title: "Dev tools" }} />
-        <Stack.Screen name="es100" options={{ ...pushed, title: "ES100" }} />
+        <Stack.Screen name="es100" options={{ ...pushed, title: "OVOA Band" }} />
         <Stack.Screen name="motion-lab" options={{ ...pushed, title: "Motion lab" }} />
         <Stack.Screen name="transcripts" options={{ ...pushed, title: "Transcripts" }} />
         <Stack.Screen name="live" options={{ ...pushed, title: "Live" }} />
-        <Stack.Screen name="claude" options={{ ...pushed, title: "Ask Claude" }} />
         <Stack.Screen name="create" options={{ ...pushed, title: "Create an app" }} />
         {/* A made app on its own screen: its own header, its own colour. */}
         <Stack.Screen name="made/[id]" />
@@ -145,7 +144,7 @@ function RootStack() {
   );
 
   // Every screen behind the sign-in guard needs these, not only the tabs. They
-  // used to be mounted in (tabs)/_layout, but agent, transcripts, live, claude,
+  // used to be mounted in (tabs)/_layout, but agent, transcripts, live,
   // dev-tools, es100 and motion-lab are siblings of (tabs) in this stack rather
   // than children of it, so /agent rendered outside AgentProvider and threw
   // "useAgent must be used inside AgentProvider" every time it was opened

@@ -205,7 +205,7 @@ const actionTools: PhoneTool[] = [
   tool({
     name: "phone_shortcut_run",
     description:
-      "Run a shortcut from the iPhone's Shortcuts app by its exact name, optionally passing it text. Works for the user's own shortcuts and ones you wrote. Never use it to send a text message or to run a shortcut whose job is sending one: use phone_message_compose, which knows the recipient and the format the shortcut expects.",
+      "Run a shortcut from the iPhone's Shortcuts app by its exact name, optionally passing it text. Works for shortcuts already in their Shortcuts app. Never use it to send a text message or to run a shortcut whose job is sending one: use phone_message_compose, which knows the recipient and the format the shortcut expects.",
     props: { name: str("The shortcut's exact name"), input: str("Text to pass to the shortcut as its input") },
     fields: { name: "text", input: "text" },
     required: ["name"],

@@ -51,6 +51,9 @@ export const TYPED_CORE = new Set([
   "todo_add",
   "todo_list",
   "todo_done",
+  // Food, which is mentioned in passing and never by a tool's name.
+  "food_log",
+  "food_amend",
   // Money, routines, people.
   "money_afford",
   "money_status",
@@ -93,6 +96,9 @@ export const SPOKEN_CORE = new Set([
   // Catching a thought.
   "note_add",
   "todo_list",
+  // "I had a burrito" names no tool, so food rides along (food.ts).
+  "food_log",
+  "food_amend",
   // Looking something up.
   "web_search",
 ]);
@@ -136,6 +142,12 @@ const SYNONYMS: Record<string, string[]> = {
   meds: ["medication", "routine"],
   medicine: ["medication", "routine"],
   remember: ["memory", "context", "remember"],
+  ate: ["food"],
+  eat: ["food"],
+  eaten: ["food"],
+  meal: ["food"],
+  calories: ["food"],
+  calorie: ["food"],
 };
 
 const STOPWORDS = new Set([

@@ -54,9 +54,6 @@ function sources(dir = SRC): string[] {
 
 /** The engine module: the only files allowed to talk to a model. */
 const ENGINE = new Set(["llm.ts", "gemini.ts"]);
-// Ask Claude calls Anthropic through its SDK, outside the gate. Removed in Phase 7;
-// allowed here only while the file still exists, and this line goes with it.
-if (existsSync(join(SRC, "claude.ts"))) ENGINE.add("claude.ts");
 
 const MODEL_HOSTS = ["api.z.ai", "open.bigmodel.cn", "generativelanguage.googleapis.com", "api.deepseek.com", "api.anthropic.com"];
 const MODEL_SDKS = ["@anthropic-ai/sdk", "openai", "@google/genai", "@google/generative-ai"];

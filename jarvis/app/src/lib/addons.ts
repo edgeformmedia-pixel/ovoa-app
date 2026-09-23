@@ -150,11 +150,26 @@ export const ADDONS: Addon[] = [
     needs: "assistant",
     keywords: "history words search conversation",
   },
+  {
+    // Installing it also tells the server to count and ask (lib/food.ts), and
+    // the server can install it: an eating goal in setup, or "be more exact".
+    id: "calorie",
+    name: "Calorie",
+    by: "OVOA",
+    about: "Say what you ate and OVOA keeps count: calories and protein, today and the last two weeks.",
+    usage: "some",
+    usageWhy: "OVOA works out the calories in the reply when you mention food.",
+    icon: "restaurant-outline",
+    tone: "green",
+    href: "/calorie" as Href,
+    needs: "assistant",
+    keywords: "food calories protein eat meal nutrition tracker",
+  },
 
   // Developer: listed only in dev mode, and installed from the start for it.
   {
     id: "dev-tools",
-    name: "Sensors & ES100",
+    name: "Sensors & OVOA Band",
     by: "OVOA",
     about: "The band's raw inputs and sensors, for testing.",
     usage: "none",
@@ -179,21 +194,6 @@ export const ADDONS: Addon[] = [
     needs: "assistant",
     preinstalled: true,
     keywords: "developer microphone audio",
-  },
-  {
-    id: "claude",
-    name: "Ask Claude",
-    by: "OVOA",
-    about: "Ask Claude directly, without OVOA in between.",
-    usage: "some",
-    usageWhy: "Each question counts as a reply.",
-    icon: "sparkles-outline",
-    tone: "violet",
-    href: "/claude" as Href,
-    dev: true,
-    needs: "assistant",
-    preinstalled: true,
-    keywords: "developer ai model",
   },
 ];
 
@@ -222,6 +222,9 @@ function publish(ids: string[]) {
   storage.set(KEY, JSON.stringify(ids)).catch(logFail("addons: saving"));
 }
 
+/** Ids this build still has. An add-on that was taken out (Ask Claude, "claude") is dropped from a phone that had it. */
+const known = (id: unknown): id is string => typeof id === "string" && ADDONS.some((a) => a.id === id);
+
 export const installedAddons = {
   /** A phone that never chose gets the preinstalled set. */
   get: async (): Promise<string[]> => {
@@ -229,7 +232,7 @@ export const installedAddons = {
     const raw = await storage.get(KEY).catch(() => null);
     try {
       const parsed = raw ? JSON.parse(raw) : null;
-      current = Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : DEFAULTS;
+      current = Array.isArray(parsed) ? parsed.filter(known) : DEFAULTS;
     } catch {
       current = DEFAULTS;
     }

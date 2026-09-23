@@ -169,14 +169,16 @@ accounts**.
   7 days; when that happens, the Worker deletes that row, promotes another
   account to default, and the app shows **Connect** again.
 - **Scopes:** openid/email/profile, `spreadsheets`, `calendar`,
-  `gmail.modify`, `drive`, `documents`, `tasks`, `contacts`. Gmail and Drive
-  are restricted scopes: a public launch needs Google verification plus a
-  yearly CASA security assessment.
+  `gmail.modify`, `drive.file`, `documents`, `tasks`, `contacts`. Drive is
+  `drive.file`: only files OVOA created, never the rest of someone's Drive.
+  Gmail is a restricted scope: a public launch needs Google verification plus
+  a yearly CASA security assessment.
 - **Assistant tools** (`api/src/google/tools.ts`): calendar list, create,
   update and delete; Gmail search, read, draft, send, mark read and trash;
-  Drive search and trash; Sheets info, read, append, update and create; Docs
-  read, create and append; Tasks list, add and complete; Contacts search. GLM
-  and Gemini both call tools through `chatWithTools` in `llm.ts`.
+  Drive search and trash (OVOA's own files only); Sheets info, read, append,
+  update and create; Docs read, create and append; Tasks list, add and
+  complete; Contacts search. GLM and Gemini both call tools through
+  `chatWithTools` in `llm.ts`.
 - **Approvals:** tools with a `confirm` step (send email, trash, delete,
   invite guests) aren't run right away. They're saved to `pending_actions`
   and appear in chat as an **Approve / Cancel** card. `POST

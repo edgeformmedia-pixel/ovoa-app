@@ -371,7 +371,7 @@ export default function Settings() {
         >
           <Toggle value={devMode} onValueChange={(on) => void devModePref.set(on)} />
         </Setting>
-        {devMode && <Button label="Sensors, inputs & ES100" onPress={() => router.push("/dev-tools")} />}
+        {devMode && <Button label="Sensors, inputs & OVOA Band" onPress={() => router.push("/dev-tools")} />}
       </Section>
 
       <Section title="Sounds">
@@ -674,7 +674,7 @@ const MIC_SOURCES = [
   { source: "phone", label: "Phone", hint: "The iPhone's microphone hears you. It answers as soon as you stop talking." },
   {
     source: "band",
-    label: "ES100 band",
+    label: "OVOA Band",
     hint: "The clip records what you say on its own microphone. Click to start, click again when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.",
   },
 ] as const;
@@ -684,7 +684,7 @@ const LISTEN_MODES = [
   {
     mode: "twist",
     label: "Clip click",
-    hint: "Double-click the ES100's button: it buzzes and listens. Press once to send what you said; press once while it answers to cut it off. Works from other apps too, on an iPhone that recognises speech on its own.",
+    hint: "Double-click the OVOA Band's button: it buzzes and listens. Press once to send what you said; press once while it answers to cut it off. Works from other apps too, on an iPhone that recognises speech on its own.",
   },
 ] as const;
 

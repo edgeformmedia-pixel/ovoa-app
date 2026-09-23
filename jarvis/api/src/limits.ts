@@ -23,7 +23,6 @@ type Limiter = keyof Pick<Env, "RL_AUTH" | "RL_TURN" | "RL_SPEAK" | "RL_LOGS">;
 const ROUTE_LIMITS: [RegExp, Limiter, string][] = [
   // A turn, however it arrives. 20 a minute is a question every three seconds.
   [/^\/(chat|chat\/resume|siri)$/, "RL_TURN", "turn"],
-  [/^\/claude$/, "RL_TURN", "claude"],
   // One per sentence from builds that voice replies themselves.
   [/^\/voice\/speak$/, "RL_SPEAK", "speak"],
   // Builds from before 2026-09-23 report the microphone seconds they streamed,

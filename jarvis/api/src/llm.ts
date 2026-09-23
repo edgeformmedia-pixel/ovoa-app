@@ -2,11 +2,10 @@ import { generate as geminiGenerate, grounded as geminiGrounded, quickThinking, 
 
 // The reply engines: which model answers, in what order, and what each call
 // cost. Every model call goes through here, web search grounding included
-// (searchGrounded; web.ts asks it), apart from Ask Claude (claude.ts, which
-// goes in Phase 7). Each one asks the gate first (setModelGate, below): the
-// person's plan, the day's spend and their consent are checked before an engine
-// is chosen or a byte is sent. test/gate.test.ts fails if a model host or
-// gemini.ts is reached from anywhere else.
+// (searchGrounded; web.ts asks it). Each one asks the gate first (setModelGate,
+// below): the person's plan, the day's spend and their consent are checked
+// before an engine is chosen or a byte is sent. test/gate.test.ts fails if a
+// model host or gemini.ts is reached from anywhere else.
 //
 // Two engines, and one order for every use: typed and spoken turns, memory and
 // summaries, the setup conversation, app design, agent jobs and food all try
