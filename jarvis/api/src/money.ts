@@ -439,6 +439,8 @@ export async function recordPaycheck(db: D1Database, userId: string, cents: numb
  * A bill found in the user's mail (extras.ts, F25). Matched on the payee, so a
  * bill that arrives every month updates the one row rather than piling up, and
  * one the user set up by hand keeps their amount if the mail didn't have one.
+ * found_due is the date the mail gave: a mail bill is kept until 14 days past
+ * the last one (retention.ts), however far next_due has rolled on since.
  */
 export async function recordBillFromMail(db: D1Database, userId: string, name: string, due: string, cents: number | null) {
   const existing = await db
@@ -447,15 +449,17 @@ export async function recordBillFromMail(db: D1Database, userId: string, name: s
     .first<{ id: string; amount_cents: number | null }>();
   if (existing) {
     await db
-      .prepare("UPDATE money_bills SET next_due = ?, amount_cents = COALESCE(?, amount_cents), active = 1 WHERE id = ?")
-      .bind(due, cents, existing.id)
+      .prepare("UPDATE money_bills SET next_due = ?, found_due = ?, amount_cents = COALESCE(?, amount_cents), active = 1 WHERE id = ?")
+      .bind(due, due, cents, existing.id)
       .run();
     return existing.id;
   }
   const id = crypto.randomUUID();
   await db
-    .prepare("INSERT INTO money_bills (id, user_id, name, amount_cents, cadence, next_due, source, created_at) VALUES (?, ?, ?, ?, 'monthly', ?, 'mail', ?)")
-    .bind(id, userId, name.slice(0, 80), cents, due, Date.now())
+    .prepare(
+      "INSERT INTO money_bills (id, user_id, name, amount_cents, cadence, next_due, found_due, source, created_at) VALUES (?, ?, ?, ?, 'monthly', ?, ?, 'mail', ?)",
+    )
+    .bind(id, userId, name.slice(0, 80), cents, due, due, Date.now())
     .run();
   return id;
 }

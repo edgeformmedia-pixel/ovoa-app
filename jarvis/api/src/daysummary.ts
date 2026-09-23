@@ -186,6 +186,61 @@ export async function writeDaySummary(env: Env, userId: string, day: string, tim
   return "written" as const;
 }
 
+const HOUR_MS = 3_600_000;
+const BLOCK_MS = 5 * 60_000;
+
+/**
+ * Words between `from` and `to` were forgotten ("Forget that", "Forget the
+ * last hour": index.ts), so what was written from them goes too: the 5-minute
+ * and hour titles over that stretch (the titler writes them again from any
+ * lines left, transcripts.ts), the timeline's cached titles for each day and
+ * hour it touched, and each touched day's own title and summary. Inside
+ * SUMMARY_LOOKBACK_DAYS the nightly writer writes the day again from what's
+ * left. Older, the summary was all that was left of the day, so it's written
+ * again now from the day's remaining kept blocks, and stays cleared when that
+ * can't be done. Resolves once cleared; `rewriting` is those rewrites, still
+ * running (for waitUntil).
+ */
+export async function forgetWritten(env: Env, userId: string, from: number, to: number, timeZone: string, now = Date.now()) {
+  const db = env.DB;
+  const days: string[] = [];
+  const last = buckets(Math.max(from, to - 1), timeZone).day;
+  for (let day = buckets(from, timeZone).day; day <= last && days.length < 60; day = addDays(day, 1)) days.push(day);
+  await db.batch([
+    db
+      .prepare("DELETE FROM transcript_titles WHERE user_id = ? AND grain = '5m' AND start >= ? AND start < ?")
+      .bind(userId, Math.floor(from / BLOCK_MS) * BLOCK_MS, to),
+    db
+      .prepare("DELETE FROM transcript_titles WHERE user_id = ? AND grain = 'hour' AND start >= ? AND start < ?")
+      .bind(userId, Math.floor(from / HOUR_MS) * HOUR_MS, to),
+    ...days.flatMap((day) => [
+      db
+        .prepare(
+          "UPDATE transcript_titles SET title = NULL, summary = NULL, covers = 0, summarised_at = NULL, updated_at = ? WHERE user_id = ? AND grain = 'day' AND bucket = ?",
+        )
+        .bind(now, userId, day),
+      db
+        .prepare("DELETE FROM context_rollups WHERE user_id = ? AND ((grain = 'day' AND bucket = ?) OR (grain = 'hour' AND bucket LIKE ?))")
+        .bind(userId, day, `${day}T%`),
+    ]),
+  ]);
+  const oldest = addDays(buckets(now, timeZone).day, -SUMMARY_LOOKBACK_DAYS);
+  const rewriting = Promise.all(
+    days
+      .filter((day) => day < oldest)
+      .map(async (day) => {
+        try {
+          if ((await writeDaySummary(env, userId, day, timeZone, now)) === "empty") {
+            await db.prepare("DELETE FROM transcript_titles WHERE user_id = ? AND grain = 'day' AND bucket = ?").bind(userId, day).run();
+          }
+        } catch (err) {
+          if (!isModelRefused(err) && !isAiUnreachable(err)) console.error("daysummary: couldn't write a day again after a forget", err);
+        }
+      }),
+  );
+  return { rewriting };
+}
+
 /**
  * The days still without a summary, for everyone with something to summarise:
  * [user, day, time zone], oldest day first. Local days from SUMMARY_LOOKBACK_DAYS

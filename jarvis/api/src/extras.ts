@@ -164,6 +164,8 @@ async function scanBills(env: Env, userId: string, timeZone: string) {
       text: `Pay ${b.payee}${b.amount ? ` (${b.amount})` : ""} — due ${b.due}`,
       tags: ["todo", "bill"],
       remindAt,
+      // Found, not asked for: deleted after 14 days (retention.ts), unlike their own notes.
+      source: "mail",
     });
     await logAction(env.DB, userId, "reminder", `Bill found: ${b.payee}, due ${b.due}`, "system");
     made++;

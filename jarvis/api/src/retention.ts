@@ -29,8 +29,9 @@ import type { Env } from "./types";
 // hang off (a block with a promise still being kept stays with it, and a
 // block's delete would otherwise take its promises with it), and orphaned
 // nudges go after the promises. Routine streaks are brought forward before
-// their events go (routines.ts settleStreak). Visits go before the unnamed
-// places that no visit points at any more.
+// their events go (routines.ts settleStreak), and a routine whose streak
+// couldn't be keeps its events for another night. Visits go before the
+// unnamed places that no visit points at any more.
 //
 // The full-text index on the timeline (context_search) follows context_blocks
 // on its own: the delete trigger in migrations/0010_context.sql hands FTS5 its
@@ -128,15 +129,26 @@ export const RULES: Rule[] = [
   // ---- What OVOA built or found on its own ----
   // Built lists and copies; 'user' rows are the ones they added.
   { name: "todos", table: "todos", where: "source != 'user' AND created_at < ?", args: (c) => [c.cutoff] },
-  // Bill reminders found in mail (extras.ts), once any reminder has had its day.
+  // Bill reminders found in mail (extras.ts, source 'mail'), once any reminder
+  // has had its day. Before they had their own source they were 'typed', like
+  // a note the user asked for, so those older ones are known by extras' exact
+  // wording ("Pay Acme (£20) — due 2026-10-01"), not by any note about paying.
   {
     name: "notes.bills",
     table: "notes",
-    where: `ts < ? AND tags LIKE '%"bill"%' AND text LIKE 'Pay %' AND (remind_at IS NULL OR remind_at < ?)`,
+    where: `(source = 'mail' OR (source = 'typed' AND tags LIKE '%"bill"%' AND text LIKE 'Pay % — due ____-__-__'))
+        AND ts < ? AND (remind_at IS NULL OR remind_at < ?)`,
     args: (c) => [c.cutoff, c.cutoff],
   },
-  // Bills found in mail (money.ts recordBillFromMail). The ones they told OVOA are 'user'.
-  { name: "money_bills.mail", table: "money_bills", where: "source = 'mail' AND created_at < ?", args: (c) => [c.cutoff] },
+  // Bills found in mail (money.ts recordBillFromMail), 14 days past the last
+  // due date their mail gave: one that's still coming, or that mail brings
+  // every month, stays. The ones they told OVOA are 'user'.
+  {
+    name: "money_bills.mail",
+    table: "money_bills",
+    where: "source = 'mail' AND created_at < ? AND COALESCE(found_due, next_due) < ?",
+    args: (c) => [c.cutoff, c.cutoffDay],
+  },
   at("started_at", "agent_runs"),
   at("created_at", "agent_notes"),
   { name: "agent_budget", table: "agent_budget", where: "day < ?", args: (c) => [c.cutoffDay] },
@@ -349,7 +361,11 @@ async function startNameClocks(db: D1Database, c: Cutoffs) {
   return meta.changes ?? 0;
 }
 
-/** Every routine with events about to go has them folded into its streak first. */
+/**
+ * Every routine with events about to go has them folded into its streak first.
+ * One that can't be (a D1 error on it) doesn't stop the rest: it's named in
+ * `failed`, and its events wait for another night (purgeExpired).
+ */
 async function settleRoutines(db: D1Database, c: Cutoffs) {
   const { results } = await db
     .prepare(
@@ -360,8 +376,16 @@ async function settleRoutines(db: D1Database, c: Cutoffs) {
     .bind(c.cutoff)
     .all<{ routine_id: string; time_zone: string | null }>();
   let moved = 0;
-  for (const r of results) if (await settleStreak(db, r.routine_id, validTimeZone(r.time_zone), c.cutoff)) moved++;
-  return moved;
+  const failed: string[] = [];
+  for (const r of results) {
+    try {
+      if (await settleStreak(db, r.routine_id, validTimeZone(r.time_zone), c.cutoff)) moved++;
+    } catch (err) {
+      failed.push(r.routine_id);
+      console.error("ovoa.err retention: a routine's streak couldn't be brought forward", err);
+    }
+  }
+  return { moved, failed };
 }
 
 /**
@@ -394,8 +418,25 @@ export async function purgeExpired(env: Env, now = Date.now(), budgetMs = BUDGET
   };
 
   await step("name_candidates.clock", () => startNameClocks(db, c));
-  await step("routines.settled", () => settleRoutines(db, c));
+  // Routine events only go once folded into their streak: the routines that
+  // couldn't be keep theirs tonight, and if the step itself failed, all do.
+  const settle = { failed: null as string[] | null };
+  await step("routines.settled", async () => {
+    const { moved, failed } = await settleRoutines(db, c);
+    settle.failed = failed;
+    if (failed.length) throw new Error(`${failed.length} routine streak(s) couldn't be brought forward; their events wait`);
+    return moved;
+  });
   for (const rule of RULES) {
+    if (rule.name === "routine_events") {
+      const failed = settle.failed;
+      if (failed === null) continue;
+      if (failed.length) {
+        const kept = `${rule.where} AND routine_id NOT IN (${failed.map(() => "?").join(", ")})`;
+        await step(rule.name, () => deleteInChunks(db, { ...rule, where: kept, args: (x) => [...rule.args(x), ...failed] }, c, deadline));
+        continue;
+      }
+    }
     await step(rule.name, () => deleteInChunks(db, rule, c, deadline));
     // People with the rest of what was learned from conversations.
     if (rule.name === "name_candidates") await step("people", () => trimPeople(db, c));

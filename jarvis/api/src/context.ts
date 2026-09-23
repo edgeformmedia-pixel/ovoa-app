@@ -453,7 +453,7 @@ export function contextAssistant(env: Env, userId: string, timeZone: string, ena
     return {
       tools: [] as ToolSpec[],
       prompt:
-        "The user keeps no context timeline. If they ask what they did on a past day, say it can be turned on in Settings under Context.",
+        "The user keeps no timeline. If they ask what they did on a past day, use transcript_day, which has the summary kept for that day. If there's none, say that turning on Keep a record of my days, in Settings under Timeline, keeps more of their days.",
       callTool: (async () => ({ error: "Context is off" })) as CallTool,
     };
   }

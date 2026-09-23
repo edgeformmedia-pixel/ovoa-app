@@ -70,8 +70,8 @@ import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
 import { appAssistant, appFor, describeScreen, isAppTool, myApps, type MadeApp } from "./myapps";
-import { isTranscriptTool, storeLine, titleTranscripts, transcriptAssistant, transcripts } from "./transcripts";
-import { writeDaySummaries } from "./daysummary";
+import { isTranscriptTool, linesOf, storeLine, storeLines, titleTranscripts, transcriptAssistant, transcripts } from "./transcripts";
+import { forgetWritten, writeDaySummaries } from "./daysummary";
 import { COUNTS_RETAIN_DAYS, purgeExpired, RETAIN_DAYS } from "./retention";
 import { isWebTool, webAssistant } from "./web";
 import { capVerdict, monthKey, overCapMessage, warnMessage } from "./cap";
@@ -1530,7 +1530,7 @@ async function runTurn(
   if (settings.memory_enabled && mightBeAboutThem(text)) {
     ctx.waitUntil(
       // Refused by the gate (consent withdrawn, say): nothing to remember with, and nothing wrong.
-      updateMemories(env, userId, memories, text, reply).catch((err) => isModelRefused(err) || console.error("memory update failed", err)),
+      updateMemories(env, userId, memories, text, reply, settings.assistant_name).catch((err) => isModelRefused(err) || console.error("memory update failed", err)),
     );
   }
 
@@ -2050,6 +2050,8 @@ async function updateMemories(
   existing: { id: string; content: string; source: MemorySource }[],
   userText: string,
   reply: string,
+  /** What they call OVOA: "Max remember…" is an instruction too. */
+  assistantName?: string,
 ) {
   // Over the limit, the same call also compacts: the whole list goes in (not
   // just the newest MAX_MEMORIES the turn saw), and the model is asked to bring
@@ -2057,7 +2059,7 @@ async function updateMemories(
   const total = await countMemories(env.DB, userId);
   const over = total > MAX_MEMORIES;
   const all = over ? await listAllMemories(env.DB, userId) : existing;
-  const asked = askedToRemember(userText);
+  const asked = askedToRemember(userText, assistantName);
   const raw = await generateText(env, {
     model: env.MEMORY_MODEL,
     json: { schema: memoryUpdateSchema },
@@ -2156,7 +2158,13 @@ authed.post("/context/blocks", async (c) => {
   if (!settings.context_enabled) return c.json({ error: "Context is off" }, 403);
 
   const timeZone = validTimeZone(parsed.data.timeZone ?? settings.time_zone ?? undefined);
-  if (parsed.data.transcript) await storeLine(c.env.DB, userId, parsed.data.transcript, "recording", parsed.data.startedAt);
+  // Kept whole: a line is at most 4,000 characters, so a long recording goes
+  // in as several, a millisecond apart from its start, inside the span
+  // DELETE /context/blocks/:id deletes.
+  if (parsed.data.transcript) {
+    const start = parsed.data.startedAt;
+    await storeLines(c.env.DB, userId, linesOf(parsed.data.transcript).map((text, i) => ({ text, ts: start + i })), "recording");
+  }
   const block = await recordBlock(
     c.env,
     userId,
@@ -2225,7 +2233,9 @@ authed.patch("/context/commitments/:id", async (c) => {
 /**
  * "Forget that." Takes the block and anything pulled out of it, and a
  * recording's words with it: those are kept until deleted (retention.ts), so
- * this is where they go.
+ * this is where they go. At least a second from its start, for a recording
+ * whose length the phone didn't know, since its lines sit a millisecond apart
+ * from there. What was written from those words goes too (forgetWritten).
  */
 authed.delete("/context/blocks/:id", async (c) => {
   const db = c.env.DB;
@@ -2234,15 +2244,19 @@ authed.delete("/context/blocks/:id", async (c) => {
     .bind(c.req.param("id"), c.var.userId)
     .first<{ started_at: number; ended_at: number }>();
   if (gone) {
+    const end = Math.max(gone.ended_at, gone.started_at + 1000);
     await db
       .prepare("DELETE FROM raw_captures WHERE user_id = ? AND source = 'recording' AND ts >= ? AND ts <= ?")
-      .bind(c.var.userId, gone.started_at, gone.ended_at)
+      .bind(c.var.userId, gone.started_at, end)
       .run();
+    const settings = await getSettings(db, c.var.userId);
+    const { rewriting } = await forgetWritten(c.env, c.var.userId, gone.started_at, end + 1, validTimeZone(settings.time_zone ?? undefined));
+    c.executionCtx.waitUntil(rewriting);
   }
   return c.json({ ok: true });
 });
 
-/** "Forget the last hour." Everything recorded since a moment, and the words said since then. */
+/** "Forget the last hour." Everything recorded since a moment, the words said since then, and what was written from them. */
 authed.delete("/context/blocks", async (c) => {
   const since = Number(c.req.query("since"));
   if (!Number.isFinite(since) || since <= 0) return c.json({ error: "since is required" }, 400);
@@ -2250,6 +2264,9 @@ authed.delete("/context/blocks", async (c) => {
     c.env.DB.prepare("DELETE FROM context_blocks WHERE user_id = ? AND started_at >= ?").bind(c.var.userId, since),
     c.env.DB.prepare("DELETE FROM raw_captures WHERE user_id = ? AND ts >= ?").bind(c.var.userId, since),
   ]);
+  const settings = await getSettings(c.env.DB, c.var.userId);
+  const { rewriting } = await forgetWritten(c.env, c.var.userId, since, Date.now(), validTimeZone(settings.time_zone ?? undefined));
+  c.executionCtx.waitUntil(rewriting);
   return c.json({ ok: true, forgot: meta.changes ?? 0 });
 });
 

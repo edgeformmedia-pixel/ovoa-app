@@ -30,14 +30,30 @@ export function mightBeAboutThem(said: string) {
 // An instruction, not the word: "do you remember what I said?" and "I can't
 // remember where I put it" are not asking for anything to be kept.
 
-/** "remember…", "don't forget…", "keep in mind…" at the start of a sentence or after "please", "and", "OVOA"… */
-const REMEMBER_THIS =
-  /(?:^|[.!?;:,]\s*|\b(?:please|pls|also|and|so|oh|ok|okay|hey|just|ovoa)[,!]?\s+)(?:remember|don't forget|do not forget|never forget|keep in mind|make a note|note that|note down)\b(?!\s+(?:what|where|when|who|whom|how|why|if|whether)\b)/;
+/**
+ * What can come just before "remember": "please", "and", "OVOA", "I want you
+ * to", "make sure you"… The assistant's own name, when they gave it one, is
+ * added per call: speech transcripts rarely put a comma after it ("Max
+ * remember that I'm vegan").
+ */
+const LEAD_INS = "please|pls|also|and|so|oh|ok|okay|hey|just|ovoa|(?:i )?(?:want|need) you to|i'?d like you to|i would like you to|make sure(?: you)?";
+const VERBS = "remember|don't forget|do not forget|never forget|keep in mind|make a note|note that|note down";
+/** "remember what I said" is a question about the past, not something to keep. */
+const NOT_A_QUESTION = String.raw`(?!\s+(?:what|where|when|who|whom|how|why|if|whether)\b)`;
+const rememberThis = (leadIns: string) =>
+  new RegExp(String.raw`(?:^|[.!?;:,]\s*|\b(?:${leadIns})[,!]?\s+)(?:${VERBS})\b${NOT_A_QUESTION}`);
+/** "remember…", "don't forget…", "keep in mind…" at the start of a sentence or after a lead-in. */
+const REMEMBER_THIS = rememberThis(LEAD_INS);
 /** "can you remember that…", "would you keep in mind my…" */
 const WILL_YOU_REMEMBER =
   /\b(?:can|could|will|would) you (?:please )?(?:remember|keep in mind|note)\s+(?:that|this|my|i|i'm|im|i've|ive|we|we're|our|me)\b/;
 
-export function askedToRemember(said: string) {
-  const s = said.toLowerCase().replace(/[‘’]/g, "'").trim();
-  return REMEMBER_THIS.test(s) || WILL_YOU_REMEMBER.test(s);
+const plain = (s: string) => s.toLowerCase().replace(/[‘’]/g, "'").trim();
+
+/** `assistantName`: what they call OVOA, which can lead in too ("Max, remember…", "Max remember…"). */
+export function askedToRemember(said: string, assistantName?: string) {
+  const s = plain(said);
+  const name = assistantName ? plain(assistantName) : "";
+  const re = name && name !== "ovoa" ? rememberThis(`${LEAD_INS}|${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) : REMEMBER_THIS;
+  return re.test(s) || WILL_YOU_REMEMBER.test(s);
 }

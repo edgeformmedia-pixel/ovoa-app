@@ -44,9 +44,19 @@ for (const said of [
   "keep in mind my knee is bad",
   "OK so remember: I hate cilantro",
   "I moved last month. Remember that.",
+  "I want you to remember that I'm vegan",
+  "I need you to remember my sister is Sarah",
+  "make sure you remember I'm vegan",
+  "I'd like you to remember I'm vegan",
 ]) {
   eq(`asked to remember: "${said}"`, askedToRemember(said), true);
 }
+// Their name for OVOA leads in too, with or without the comma a transcript leaves out.
+for (const said of ["Max remember that I'm vegan", "Hey Max remember I'm vegan", "Max, don't forget I work nights"]) {
+  eq(`asked, by name: "${said}"`, askedToRemember(said, "Max"), true);
+}
+eq("but not without knowing the name", askedToRemember("Max remember that I'm vegan"), false);
+eq("a name with a dot in it is only itself", askedToRemember("Dr Max remember I'm vegan", "Dr. Max"), false);
 
 for (const said of [
   "I'm vegan",
@@ -56,6 +66,8 @@ for (const said of [
   "remember what my sister's name is?",
   "what's the weather",
   "my sister is Sarah",
+  "do you want me to remember the gate code?",
+  "I need you to remember what I said about the job",
 ]) {
   eq(`not asked: "${said}"`, askedToRemember(said), false);
 }

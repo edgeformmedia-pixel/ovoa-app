@@ -30,6 +30,8 @@ const BLOCKS_PER_TICK = 20;
 /** Today's title is rewritten at most this often while the day is still going. */
 const DAY_REFRESH_MS = 15 * 60_000;
 const MAX_PROMPT_CHARS = 8000;
+/** The longest line kept (storeLine and storeLines cut there). */
+export const LINE_MAX = 4000;
 
 export const blockStart = (ts: number) => Math.floor(ts / BLOCK_MS) * BLOCK_MS;
 
@@ -48,9 +50,30 @@ export async function storeLine(db: D1Database, userId: string, text: string, so
   if (!allowed) return false;
   await db
     .prepare("INSERT INTO raw_captures (id, user_id, ts, text, source) VALUES (?, ?, ?, ?, ?)")
-    .bind(crypto.randomUUID(), userId, ts, clean.slice(0, 4000), source)
+    .bind(crypto.randomUUID(), userId, ts, clean.slice(0, LINE_MAX), source)
     .run();
   return true;
+}
+
+/**
+ * A long text as lines of at most LINE_MAX, so none of it is cut: a
+ * recording's transcript can be 20,000 characters (POST /context/blocks).
+ * Split after a sentence where there's one in the second half of the stretch,
+ * else at a space, else where it has to be.
+ */
+export function linesOf(text: string, max = LINE_MAX) {
+  const out: string[] = [];
+  let rest = text.trim();
+  while (rest.length > max) {
+    const stretch = rest.slice(0, max + 1);
+    const sentence = Math.max(stretch.lastIndexOf(". "), stretch.lastIndexOf("? "), stretch.lastIndexOf("! "));
+    let cut = sentence >= max / 2 ? sentence + 1 : stretch.lastIndexOf(" ");
+    if (cut <= 0) cut = max;
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) out.push(rest);
+  return out;
 }
 
 /**
@@ -65,7 +88,7 @@ export async function storeLines(
   source: LineSource,
 ) {
   const clean = lines
-    .map((l) => ({ text: l.text.trim().slice(0, 4000), ts: l.ts }))
+    .map((l) => ({ text: l.text.trim().slice(0, LINE_MAX), ts: l.ts }))
     .filter((l) => l.text);
   if (!clean.length) return 0;
   const s = await db

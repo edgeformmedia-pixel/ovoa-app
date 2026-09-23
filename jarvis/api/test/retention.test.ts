@@ -8,10 +8,11 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { contextAssistant } from "../src/context";
-import { keptDaySummary, summaryInput, writeDaySummary } from "../src/daysummary";
+import { forgetWritten, keptDaySummary, summaryInput, writeDaySummary } from "../src/daysummary";
 import { purgeExpired, RETAIN_DAYS, RULES, STEPS, TABLES } from "../src/retention";
 import { dayOutcomes, foldStreak, STREAK_SETTLED_DAYS, streak, streakFrom } from "../src/routines";
 import { addDays, atLocalTime, buckets } from "../src/time";
+import { LINE_MAX, linesOf } from "../src/transcripts";
 import type { Env } from "../src/types";
 
 let fails = 0;
@@ -200,15 +201,21 @@ run(
   U, OLD, U, OLD, U, NEW,
 );
 run(
-  `INSERT INTO notes (id, user_id, ts, text, tags, remind_at) VALUES
-     ('n_user', ?, ?, 'wifi is on the fridge', '[]', NULL),
-     ('n_bill_old', ?, ?, 'Pay Acme — due 2026-01-01', '["todo","bill"]', ?),
-     ('n_bill_waiting', ?, ?, 'Pay Acme — due 2099-01-01', '["todo","bill"]', ?)`,
-  U, OLD, U, OLD, OLD, U, OLD, now + 30 * DAY,
+  `INSERT INTO notes (id, user_id, ts, text, tags, remind_at, source) VALUES
+     ('n_user', ?, ?, 'wifi is on the fridge', '[]', NULL, 'typed'),
+     ('n_bill_old', ?, ?, 'Pay Acme (£20) — due 2026-01-01', '["todo","bill"]', ?, 'typed'),
+     ('n_bill_mail', ?, ?, 'Pay Acme — due 2026-02-01', '["todo","bill"]', ?, 'mail'),
+     ('n_bill_waiting', ?, ?, 'Pay Acme — due 2099-01-01', '["todo","bill"]', ?, 'mail'),
+     ('n_pay_plumber', ?, ?, 'Pay the plumber $200', '["bill"]', NULL, 'typed')`,
+  U, OLD, U, OLD, OLD, U, OLD, OLD, U, OLD, now + 30 * DAY, U, OLD,
 );
 run(
-  "INSERT INTO money_bills (id, user_id, name, next_due, source, created_at) VALUES ('bill_user', ?, 'Rent', '2099-01-01', 'user', ?), ('bill_mail', ?, 'Acme', '2099-01-01', 'mail', ?)",
-  U, OLD, U, OLD,
+  `INSERT INTO money_bills (id, user_id, name, next_due, found_due, source, created_at) VALUES
+     ('bill_user', ?, 'Rent', '2099-01-01', NULL, 'user', ?),
+     ('bill_mail', ?, 'Acme', '2099-01-01', '2000-01-01', 'mail', ?),
+     ('bill_mail_coming', ?, 'Water', '2099-01-01', '2099-01-01', 'mail', ?),
+     ('bill_mail_before', ?, 'Gas', '2000-01-01', NULL, 'mail', ?)`,
+  U, OLD, U, OLD, U, OLD, U, OLD,
 );
 run("INSERT INTO agent_runs (id, user_id, trigger, started_at) VALUES ('r_old', ?, 'job', ?), ('r_new', ?, 'job', ?)", U, OLD, U, NEW);
 run("INSERT INTO action_log (id, user_id, ts, kind, summary, source) VALUES ('a_old', ?, ?, 'x', 'x', 'chat'), ('a_new', ?, ?, 'x', 'x', 'chat')", U, OLD, U, NEW);
@@ -342,10 +349,14 @@ eq("a to-do they added stays", has("todos", "t_user"), true);
 eq("an old built one goes", has("todos", "t_built_old"), false);
 eq("a new built one stays", has("todos", "t_built_new"), true);
 eq("a note they made stays", has("notes", "n_user"), true);
-eq("an old bill reminder found in mail goes", has("notes", "n_bill_old"), false);
+eq("an old bill reminder found in mail goes (from before it had its own source)", has("notes", "n_bill_old"), false);
+eq("and one marked as found in mail", has("notes", "n_bill_mail"), false);
 eq("one whose reminder hasn't come yet stays", has("notes", "n_bill_waiting"), true);
+eq("a note they asked for about paying someone stays", has("notes", "n_pay_plumber"), true);
 eq("a bill they told OVOA stays", has("money_bills", "bill_user"), true);
-eq("one found in mail 20 days ago goes", has("money_bills", "bill_mail"), false);
+eq("one found in mail whose mail's date is long past goes, however far it rolled on", has("money_bills", "bill_mail"), false);
+eq("one found in mail and still to come stays", has("money_bills", "bill_mail_coming"), true);
+eq("one found before found_due goes by its own date", has("money_bills", "bill_mail_before"), false);
 eq("old agent runs go", has("agent_runs", "r_old"), false);
 eq("new ones stay", has("agent_runs", "r_new"), true);
 eq("the old action log goes", has("action_log", "a_old"), false);
@@ -434,6 +445,62 @@ eq("with the timeline and what they said", !!input?.includes('10:00 AM Vet call:
   block("b_on_summary_day", at, "voice", "work", "kept recording");
   const withBlock = (await timeline.callTool("context_day", { date: day })) as { title?: string; blocks?: unknown[] };
   eq("a kept block's day is titled by its summary", [withBlock.title, withBlock.blocks?.length].join("|"), "Food noted|1");
+}
+
+// ---------- Forgetting what was written from forgotten words ----------
+
+{
+  const title = (grain: string, bucket: string, start: number, summarised: number | null = null) =>
+    run(
+      "INSERT INTO transcript_titles (user_id, grain, bucket, start, title, summary, sources, covers, updated_at, summarised_at) VALUES (?, ?, ?, ?, 'T', 'S', '', 3, ?, ?)",
+      U, grain, bucket, start, now, summarised,
+    );
+  const row = (grain: string, bucket: string) =>
+    sqlite.prepare("SELECT title, summarised_at FROM transcript_titles WHERE user_id = ? AND grain = ? AND bucket = ?").get(U, grain, bucket) as
+      | { title: string | null; summarised_at: number | null }
+      | undefined;
+  const HOUR = 3_600_000;
+  const recent = addDays(today, -2);
+  const at = atLocalTime(recent, 10 * 60 + 7, TZ);
+  title("5m", "f_in", Math.floor(at / 300_000) * 300_000);
+  title("5m", "f_before", Math.floor(at / 300_000) * 300_000 - 2 * HOUR);
+  title("hour", "f_hour", Math.floor(at / HOUR) * HOUR);
+  title("day", recent, atLocalTime(recent, 0, TZ), now);
+  run("INSERT INTO context_rollups (user_id, grain, bucket, title, updated_at) VALUES (?, 'day', ?, 'x', ?), (?, 'hour', ?, 'x', ?)", U, recent, now, U, `${recent}T10`, now);
+  const old = addDays(today, -30);
+  const oldAt = atLocalTime(old, 9 * 60, TZ);
+  title("day", old, atLocalTime(old, 0, TZ), now);
+  // An old day that still has a kept recording: written again from it, which
+  // needs a model, and there's none here, so it stays cleared.
+  const kept = addDays(today, -31);
+  const keptAt = atLocalTime(kept, 9 * 60, TZ);
+  title("day", kept, atLocalTime(kept, 0, TZ), now);
+  block("b_forget_kept", keptAt + 3_600_000, "voice", "work", "piano lesson");
+
+  await (await forgetWritten(env, U, at, at + 60_000, TZ, now)).rewriting;
+  eq("the forgotten stretch's 5-minute title goes", row("5m", "f_in"), undefined);
+  eq("one from before it stays", row("5m", "f_before")?.title, "T");
+  eq("so does its hour's", row("hour", "f_hour"), undefined);
+  eq("the day's summary is cleared, for the nightly writer to write again", [row("day", recent)?.title, row("day", recent)?.summarised_at], [null, null]);
+  eq(
+    "and the timeline's cached titles for the day go",
+    (sqlite.prepare("SELECT COUNT(*) AS n FROM context_rollups WHERE user_id = ? AND bucket LIKE ?").get(U, `${recent}%`) as { n: number }).n,
+    0,
+  );
+  await (await forgetWritten(env, U, oldAt, oldAt + 60_000, TZ, now)).rewriting;
+  eq("an old day with nothing else left loses its summary", [await keptDaySummary(DB, U, old), row("day", old)], [null, undefined]);
+  await (await forgetWritten(env, U, keptAt, keptAt + 60_000, TZ, now)).rewriting;
+  eq("one that can't be written again stays cleared, not as it was", [await keptDaySummary(DB, U, kept), row("day", kept)?.title], [null, null]);
+}
+
+// ---------- A long recording's words, kept whole ----------
+
+eq("a long text is split into lines the store keeps whole", linesOf("a".repeat(9000)).map((l) => l.length), [4000, 4000, 1000]);
+{
+  const text = Array.from({ length: 300 }, (_, i) => `Sentence number ${i} is about as long as a sentence tends to be.`).join(" ");
+  const lines = linesOf(text);
+  eq("at sentence ends", lines.every((l) => l.length <= LINE_MAX && l.endsWith(".")), true);
+  eq("and nothing is lost", lines.join(" ") === text, true);
 }
 
 if (fails) {

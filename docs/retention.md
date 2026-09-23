@@ -97,7 +97,7 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 | routines | keep | set up by the user (meds `kind = 'med'`). Carries the running streak (`streak`, `streak_day`) | |
 | routine_events | delete | 14 d after `due_at`, after `routines.ts settleStreak` has folded them into the routine's streak | |
 | alarms | keep | set up by the user | |
-| notes | mixed | the user's notes (typed, on_device) kept. Bill reminders found in mail (extras.ts: tags `bill`, text "Pay …") 14 d after `ts`, once their reminder has had its day | |
+| notes | mixed | the user's notes (typed, on_device) kept. Bill reminders found in mail (extras.ts, `source = 'mail'`; older ones by extras' exact wording "Pay … — due YYYY-MM-DD") 14 d after `ts`, once their reminder has had its day | |
 | todos | mixed | `source = 'user'` kept; built rows (`commitment`, `note`, `routine`, `carried`) 14 d after `created_at` | |
 | daily_marks | delete | **35 d** after `at` | |
 | location_points | delete | 14 d after `ts` | |
@@ -112,7 +112,7 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 | safety_events | delete | 14 d after `created_at` | |
 | shortcuts | delete | written by the AI (signing is off): 14 d after `created_at` | |
 | money_settings, money_accounts, money_income, money_paychecks, money_spend, money_plans | keep | the money picture the user gave | |
-| money_bills | mixed | `source = 'user'` kept; `mail` (found in Gmail) 14 d after `created_at` | |
+| money_bills | mixed | `source = 'user'` kept; `mail` (found in Gmail) 14 d past the last due date its mail gave (`found_due`, migration 0043; `next_due` for older rows) | |
 | user_apps | keep | made apps and their screens (`blocks`, `state`) | |
 | food_log | delete | 14 d after `ts` | the day's food lives on in the day summary |
 | food_catalog | delete | 14 d after `used_at` | |
@@ -137,8 +137,14 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
   `streak_day`, `context_commitments.settled_at`, `transcript_titles.summarised_at`, and time-first indexes on
   messages, context_blocks, action_log, hr_samples, location_points and visits. No UPDATE backfills, so the
   copied data (scripts/move-db.mjs) needs nothing run after it.
+- Migration **0043_mail_bills.sql**: `money_bills.found_due`, the due date the mail last gave, so a bill found in
+  mail is kept while it's current. No backfill either.
 - "Forget that" on a timeline moment now also deletes that recording's words, and "Forget the last hour"
-  deletes the words said since then, since a recording's words are now kept until deleted.
+  deletes the words said since then, since a recording's words are now kept until deleted. Both also delete what
+  was written from those words: the 5-minute and hour titles, the timeline's cached titles, and the day's title
+  and summary, which the nightly writer writes again from what's left (or, for a day past 14 days, written again
+  at once from its kept blocks, and left cleared if that can't be done). Deleting a recording in the Record tab
+  does "Forget that" on it first. A long recording's words are kept whole, as several lines.
 - **A memory is `asked`** only when the model marks it so and the message really was an instruction to
   remember (`remember.ts askedToRemember`: "remember that…", "don't forget…", "keep in mind…", "can you
   remember that…"; not "do you remember…?" or "I can't remember…"), or when it replaces or merges an asked
@@ -148,8 +154,9 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 
 - Workouts detected from heart rate (manual ones are kept).
 - Fall and SOS events (`safety_events`).
-- Bills and bill reminders found in mail (`money_bills` source `mail`, and their notes). A mail bill found
-  again next month is added again.
+- Bills and bill reminders found in mail (`money_bills` source `mail`, and their notes). A mail bill stays
+  while its mail is current (14 days past the last due date the mail gave); found again next month, it is
+  kept going.
 - Shortcuts the assistant wrote.
 - What each Google account is for (`account_profiles`); relearned nightly for Base users while connected.
 - Follow-up jobs the agent scheduled for itself (`agent_jobs` source `agent` without `about`): kept until they
