@@ -33,6 +33,9 @@ const ROUTE_LIMITS: [RegExp, Limiter, string][] = [
   // The phone's count of microphone seconds it streamed, sent every minute or
   // so (app liveListen.ts). Counted with the log uploads: same shape, same pace.
   [/^\/usage\/stream$/, "RL_LOGS", "usage"],
+  // Asking the site again for a person's plan, after a checkout (plans.ts).
+  // Counted with sign-ins: ten a minute is a pull to refresh every six seconds.
+  [/^\/me\/plan\/refresh$/, "RL_AUTH", "plan"],
 ];
 
 /** The caller's address, for routes where nobody is signed in yet. */

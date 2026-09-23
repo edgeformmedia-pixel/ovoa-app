@@ -6,6 +6,7 @@ import { generateText, type CallTool, type ToolSpec } from "./llm";
 import { distanceM, placeFor, type Place } from "./location";
 import { push } from "./push";
 import { buckets, clock, localMinutes } from "./time";
+import { mayRunFor } from "./plans";
 import type { Env, Vars } from "./types";
 
 // Heart rate (F11) and the workouts found in it (F12). See migrations/0021_heart.sql.
@@ -207,9 +208,12 @@ export async function detectWorkouts(env: Env, userId: string) {
     const kind = place?.kind === "gym" && s.kind === "cardio" ? "strength" : s.kind;
     const id = crypto.randomUUID();
     const minutes = Math.round((s.end - s.start) / 60_000);
-    const summary = await summarize(env, userId, { ...s, kind, baseline, minutes, place: place?.name ?? null, timeZone }).catch(
-      () => `${minutes} minute ${KIND_WORDS[kind]}, average ${s.avg} bpm, peak ${s.peak}.`,
-    );
+    const plain = `${minutes} minute ${KIND_WORDS[kind]}, average ${s.avg} bpm, peak ${s.peak}.`;
+    // Health is free, but the model's sentence about it is Base's (plans.ts):
+    // free gets the plain one, which is also what anyone gets when the model fails.
+    const summary = (await mayRunFor(env, userId, "base"))
+      ? await summarize(env, userId, { ...s, kind, baseline, minutes, place: place?.name ?? null, timeZone }).catch(() => plain)
+      : plain;
     await db
       .prepare(
         `INSERT INTO workouts (id, user_id, start_at, end_at, kind, avg_hr, peak_hr, zones_json, place_id, summary, source, created_at)

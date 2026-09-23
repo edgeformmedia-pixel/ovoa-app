@@ -259,6 +259,24 @@ export async function usageForPerson(db: D1Database, userId: string, now = Date.
   return { today: describe(day), month: describe(month) };
 }
 
+/**
+ * What the reply limits need, in one read: replies this month (from
+ * `monthStart`, for the monthly fair-use cap in cap.ts), and replies and spend
+ * today (UTC, for the plan's daily allowance in plans.ts).
+ */
+export async function replyCounts(db: D1Database, userId: string, monthStart: string, today: string) {
+  const row = await db
+    .prepare(
+      `SELECT COALESCE(SUM(CASE WHEN kind = 'turn' AND day >= ?1 THEN n END), 0) AS month_turns,
+              COALESCE(SUM(CASE WHEN kind = 'turn' AND day = ?2 THEN n END), 0) AS today_turns,
+              COALESCE(SUM(CASE WHEN day = ?2 THEN est_micro_usd END), 0) AS today_micro
+         FROM usage_daily WHERE user_id = ?3 AND day >= MIN(?1, ?2)`,
+    )
+    .bind(monthStart, today, userId)
+    .first<{ month_turns: number; today_turns: number; today_micro: number }>();
+  return { monthTurns: row?.month_turns ?? 0, todayTurns: row?.today_turns ?? 0, todayMicro: row?.today_micro ?? 0 };
+}
+
 function foldTotals(into: DayTotals, d: DayTotals) {
   into.turns += d.turns;
   into.llmCalls += d.llmCalls;

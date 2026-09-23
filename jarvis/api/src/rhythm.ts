@@ -13,6 +13,7 @@ import { moneyBriefLine } from "./money";
 import { listTodos } from "./todos";
 import type { Env } from "./types";
 import { inSlice, type Slice } from "./sweep";
+import { lazyCheck } from "./plans";
 
 // The daily rhythm (F18-F22). See migrations/0024_rhythm.sql.
 //
@@ -174,7 +175,7 @@ export async function buildMorningBrief(env: Env, userId: string, timeZone: stri
  * the band started reading heart rate, after half an hour before their wake
  * time; and in any case an hour after it.
  */
-async function morningTick(env: Env, u: TickUser) {
+async function morningTick(env: Env, u: TickUser, covered: () => Promise<boolean>) {
   const now = Date.now();
   const wake = u.wake ?? DEFAULT_WAKE;
   const today = buckets(now, u.timeZone).day;
@@ -186,7 +187,10 @@ async function morningTick(env: Env, u: TickUser) {
     !!(await env.DB.prepare("SELECT 1 FROM hr_samples WHERE user_id = ? AND source = 'band' AND ts > ? LIMIT 1")
       .bind(u.userId, wakeAt - 30 * 60_000)
       .first());
-  if (!up || !(await mark(env.DB, u.userId, "brief", today))) return false;
+  // The brief is written by a model: Base's (plans.ts). Asked only once it's
+  // time for one, and before the day's mark, so a person who upgrades at 9 still
+  // gets that morning's.
+  if (!up || !(await covered()) || !(await mark(env.DB, u.userId, "brief", today))) return false;
   const brief = await buildMorningBrief(env, u.userId, u.timeZone);
   await push(env, u.userId, { title: "Good morning", body: brief.text.slice(0, 180), data: { type: "brief" } });
   await push(env, u.userId, { silent: true, data: { type: "speak", id: crypto.randomUUID(), text: brief.text } });
@@ -558,7 +562,7 @@ export async function rhythmTick(env: Env, slice?: Slice) {
       google: !!r.google,
     };
     try {
-      if (await morningTick(env, u)) counts.briefs++;
+      if (await morningTick(env, u, lazyCheck(env, u.userId, "base"))) counts.briefs++;
       if (await windDownTick(env, u)) counts.windDowns++;
       counts.commutes += await commuteTick(env, u);
       counts.oddities += await oddityTick(env, u);

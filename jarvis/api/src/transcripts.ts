@@ -4,6 +4,7 @@ import { validTimeZone } from "./google/assistant";
 import { digestBlock, type Extracted } from "./people";
 import { generateText, type CallTool, type ToolSpec } from "./llm";
 import { atLocalTime, buckets, clock, dayRange } from "./time";
+import { blockedFor } from "./plans";
 import type { Env, Vars } from "./types";
 
 // Transcripts: everything said, titled every five minutes, every hour, every
@@ -216,8 +217,20 @@ export async function titleTranscripts(env: Env) {
     .all<{ user_id: string; start: number; n: number; time_zone: string | null; context_enabled: number; block_id: string | null; user_name: string }>();
 
   const hours = new Map<string, { userId: string; hour: string; timeZone: string }>();
+  // Titles are written by a model, which is Base's (plans.ts). Asked once per person per tick.
+  const blocked = new Map<string, Promise<null | "plan" | "allowance">>();
   for (const b of due) {
     const timeZone = validTimeZone(b.time_zone);
+    if (!blocked.has(b.user_id)) blocked.set(b.user_id, blockedFor(env, b.user_id, "base"));
+    const why = await blocked.get(b.user_id);
+    if (why === "plan") {
+      // Filed untitled, so it stops coming back as due and holding up everyone
+      // else's blocks behind it. The words are still there to read.
+      await upsert(db, b.user_id, "5m", new Date(b.start).toISOString(), b.start, { title: null, summary: null }, "", b.n);
+      continue;
+    }
+    // Over today's allowance: left due, and titled tomorrow.
+    if (why) continue;
     const { results: lines } = await db
       .prepare("SELECT ts, text, source FROM raw_captures WHERE user_id = ? AND ts >= ? AND ts < ? ORDER BY ts")
       .bind(b.user_id, b.start, b.start + BLOCK_MS)

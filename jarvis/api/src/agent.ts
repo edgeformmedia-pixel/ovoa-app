@@ -15,6 +15,7 @@ import {
   localMinutes,
   localWeekday,
 } from "./time";
+import { blockedFor } from "./plans";
 import type { Env } from "./types";
 import { isWebTool, webAssistant } from "./web";
 
@@ -862,6 +863,31 @@ async function runJob(env: Env, job: JobRow) {
     .prepare("UPDATE agent_jobs SET next_run_at = ?, last_run_at = ?, run_count = run_count + 1, status = ? WHERE id = ?")
     .bind(next ?? now + 86_400_000, now, next ? job.status : "done", job.id)
     .run();
+
+  // Background work is Pro's, and comes out of the day's allowance like
+  // everything else (plans.ts). Written down like any other skipped run.
+  const blocked = await blockedFor(env, job.user_id, "pro");
+  if (blocked) {
+    await db
+      .prepare(
+        `INSERT INTO agent_runs (id, user_id, job_id, trigger, started_at, outcome, detail)
+         VALUES (?, ?, ?, 'job', ?, 'skipped', ?)`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        job.user_id,
+        job.id,
+        now,
+        blocked === "plan" ? "Background work is part of the Pro plan." : "Today's allowance on the plan was already used.",
+      )
+      .run();
+    // Not on Pro: looked at again in a day, not every tick, like a job whose
+    // agent was turned off. Over the allowance: its next ordinary run stands.
+    if (blocked === "plan") {
+      await db.prepare("UPDATE agent_jobs SET next_run_at = ? WHERE id = ?").bind(now + 86_400_000, job.id).run();
+    }
+    return;
+  }
 
   if (!(await claimBudget(env, job.user_id, settings.agent_daily_runs))) {
     await db

@@ -62,6 +62,12 @@
     // At 80% the person is told once; past it they hear one sentence saying when
     // it resets. Nothing here checks membership.
     "TURN_CAP_MONTHLY": "1000",
+    // Where the site answers "which plan is this email on?" (plans.ts, SPEC §2).
+    // Point it at the site's test Worker to try a flow end to end. The key is the
+    // secret MEMBERSHIP_API_KEY; until it is set everyone is treated as pro, so
+    // no tester is locked out by the plans shipping before the site does. The
+    // daily allowances per plan are constants in plans.ts, with the arithmetic.
+    "MEMBERSHIP_URL": "https://ovoa.ai/api/public/membership",
     // Which web search route goes first (web.ts): "auto" is Gemini's grounding
     // when there is a key (paid past 5K a month), else DuckDuckGo's snippets;
     // "duckduckgo" stops paying for grounding; "gemini" insists on it. Answers
@@ -98,6 +104,6 @@
     }
   ]
   // Secrets (set with `npx wrangler secret put NAME`): GEMINI_API_KEY, DEEPSEEK_API_KEY, GLM_API_KEY, GOOGLE_CLIENT_SECRET,
-  // TOKEN_ENC_KEY, DEEPGRAM_API_KEY, DEBUG_KEY, and SHORTCUT_SIGNING_URL (+ optional SHORTCUT_SIGNING_TOKEN) to turn on
+  // TOKEN_ENC_KEY, DEEPGRAM_API_KEY, DEBUG_KEY, MEMBERSHIP_API_KEY, and SHORTCUT_SIGNING_URL (+ optional SHORTCUT_SIGNING_TOKEN) to turn on
   // shortcut writing (see README).
 }

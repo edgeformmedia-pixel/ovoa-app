@@ -1,5 +1,6 @@
 import { generateText } from "../llm";
 import { localMinutes } from "../time";
+import { mayRunFor } from "../plans";
 import type { Env } from "../types";
 import { googleAccessToken, listGoogleAccounts, type GoogleAccount } from "./oauth";
 import { toolsByName } from "./tools";
@@ -110,6 +111,8 @@ export async function relearnAccounts(env: Env) {
   for (const u of results) {
     const accounts = await listGoogleAccounts(env.DB, u.user_id);
     if (accounts.length < 2) continue;
+    // Learning an account is a model call: Base's (plans.ts).
+    if (!(await mayRunFor(env, u.user_id, "base"))) continue;
     for (const a of accounts) {
       await learnAccountProfile(env, u.user_id, a, u.time_zone ?? "UTC").catch((err) => console.error("routing: couldn't learn an account", err));
       learned++;

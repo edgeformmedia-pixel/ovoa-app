@@ -38,15 +38,35 @@ const cleanTags = (v: unknown) =>
     .filter(Boolean)
     .slice(0, 8);
 
+/**
+ * Where a note's words came from (migrations/0036). "on_device": a recording
+ * (the band's, or dictation) turned into text by the iPhone's own speech
+ * recognition, so no audio ever reached this server; that is how free notes
+ * are made (docs/paywall/05). "server": transcribed here (/voice/transcribe).
+ * "typed": everything else.
+ */
+export const NOTE_SOURCES = ["typed", "on_device", "server"] as const;
+export type NoteSource = (typeof NOTE_SOURCES)[number];
+
 export async function addNote(
   db: D1Database,
   userId: string,
-  n: { text: string; tags?: string[]; place?: string | null; remindAt?: number | null; placeId?: string | null },
+  n: { text: string; tags?: string[]; place?: string | null; remindAt?: number | null; placeId?: string | null; source?: NoteSource },
 ) {
   const id = crypto.randomUUID();
   await db
-    .prepare("INSERT INTO notes (id, user_id, ts, text, tags, place, remind_at, place_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, userId, Date.now(), n.text.slice(0, 2000), JSON.stringify(n.tags ?? []), n.place ?? null, n.remindAt ?? null, n.placeId ?? null)
+    .prepare("INSERT INTO notes (id, user_id, ts, text, tags, place, remind_at, place_id, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(
+      id,
+      userId,
+      Date.now(),
+      n.text.slice(0, 2000),
+      JSON.stringify(n.tags ?? []),
+      n.place ?? null,
+      n.remindAt ?? null,
+      n.placeId ?? null,
+      n.source ?? "typed",
+    )
     .run();
   return id;
 }
@@ -211,12 +231,16 @@ notes.get("/notes", async (c) => {
 });
 
 notes.post("/notes", async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { text?: unknown; tags?: unknown; remindAt?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as { text?: unknown; tags?: unknown; remindAt?: unknown; source?: unknown } | null;
   const text = typeof body?.text === "string" ? body.text.trim() : "";
   if (!text) return c.json({ error: "text is required" }, 400);
+  // Text only, always: a note never carries audio, whoever transcribed it. Free
+  // (plans.ts), including the notes the phone transcribed itself.
+  const source = body?.source ?? "typed";
+  if (!(NOTE_SOURCES as readonly unknown[]).includes(source)) return c.json({ error: `source must be one of ${NOTE_SOURCES.join(", ")}` }, 400);
   const tz = await c.env.DB.prepare("SELECT time_zone FROM settings WHERE user_id = ?").bind(c.var.userId).first<{ time_zone: string | null }>();
   const remindAt = typeof body?.remindAt === "string" ? resolveDue(body.remindAt, validTimeZone(tz?.time_zone)) : null;
-  const id = await addNote(c.env.DB, c.var.userId, { text, tags: cleanTags(body?.tags), remindAt });
+  const id = await addNote(c.env.DB, c.var.userId, { text, tags: cleanTags(body?.tags), remindAt, source: source as NoteSource });
   await logAction(c.env.DB, c.var.userId, "note", `Noted: ${text.slice(0, 120)}`, "chat", id);
   return c.json({ id }, 201);
 });

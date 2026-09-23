@@ -12,6 +12,7 @@ import { push } from "./push";
 import { addDays, atLocalTime, buckets, clock, dayRange, localMinutes, localWeekday } from "./time";
 import type { Env } from "./types";
 import { inSlice, type Slice } from "./sweep";
+import { lazyCheck } from "./plans";
 
 // Phase 5 (F23-F33): the extras. Each is small and each stands on its own;
 // they share a file because they share a tick and a handful of helpers.
@@ -324,13 +325,16 @@ export async function extrasTick(env: Env, slice?: Slice) {
     const minute = localMinutes(now, timeZone);
     const day = buckets(now, timeZone).day;
     const week = buckets(now, timeZone).week;
+    // Email, calendar and the weekly report are the assistant's: Base's (plans.ts).
+    // Asked only when one of them is actually due, so a quiet sweep reads nothing more.
+    const covered = lazyCheck(env, r.user_id, "base");
     try {
-      if (r.google) {
+      if (r.google && (await covered())) {
         done.preps += await meetingPrep(env, r.user_id, timeZone);
         if (minute >= 10 * 60 && minute < 11 * 60 && (await mark(env.DB, r.user_id, "followups", day))) done.followUps += await followUps(env, r.user_id);
         if (localWeekday(now, timeZone) === 1 && minute >= 9 * 60 && (await mark(env.DB, r.user_id, "bills", week))) done.bills += await scanBills(env, r.user_id, timeZone);
       }
-      if (localWeekday(now, timeZone) === 0 && minute >= 18 * 60 && (await mark(env.DB, r.user_id, "weekly", week))) {
+      if (localWeekday(now, timeZone) === 0 && minute >= 18 * 60 && (await covered()) && (await mark(env.DB, r.user_id, "weekly", week))) {
         if (await weeklyReport(env, r.user_id, timeZone)) done.weekly++;
       }
     } catch (err) {

@@ -81,7 +81,21 @@ import { sliceFor } from "./sweep";
 import { engineStatus, ENGINES, isEngine, setRuntimeEngines, setUsageSink, type Engine, type EnginePrefs, type LlmUsage } from "./llm";
 import { glmPriceFrom, usd } from "./pricing";
 import { globalSettings, setServerSetting, settingsFor, type ServerSettings, type SettingKey } from "./settings";
-import { dayOf, llmRow, pruneUsage, recordUsage, searchRow, sttStreamRow, turnRow, usageByPerson, usageForPerson } from "./usage";
+import { dayOf, llmRow, pruneUsage, recordUsage, replyCounts, searchRow, sttStreamRow, turnRow, usageByPerson, usageForPerson } from "./usage";
+import {
+  allowanceFor,
+  allowanceMessage,
+  atLeast,
+  isDevEmail,
+  isTier,
+  loadPlan,
+  needsPlan,
+  planFor,
+  planView,
+  requirePlan,
+  setPlanOverride,
+  type Tier,
+} from "./plans";
 
 // Every model call that has no usage callback of its own lands here, priced
 // and filed against the person it was tagged with (usage.ts). Once per
@@ -492,6 +506,12 @@ authed.use("*", async (c, next) => {
 // After sign-in, so the expensive routes count against the person (limits.ts).
 authed.use("*", limitByUser());
 
+// After the rate limit, so a runaway is stopped before it costs a plan lookup.
+// Every signed-in route needs the plan ROUTE_TIERS gives it (plans.ts), and a
+// person without it gets the 402 the app knows how to show. Free routes pass
+// without reading anything.
+authed.use("*", requirePlan());
+
 authed.post("/auth/logout", async (c) => {
   await deleteSession(c.env.DB, c.var.token);
   return c.json({ ok: true });
@@ -509,8 +529,31 @@ authed.get("/me", async (c) => {
     await deleteSession(c.env.DB, c.var.token);
     return c.json({ error: "Not signed in" }, 401);
   }
-  return c.json({ user });
+  return c.json({ user, plan: await planForMe(c.env, c.var.userId) });
 });
+
+/** The person's plan as GET /me gives it (SPEC §2), asking the site first when `force`. */
+async function planForMe(env: Env, userId: string, force = false) {
+  const loaded = await loadPlan(env, userId, { force });
+  const plan = loaded?.plan ?? (await planFor(env, userId));
+  const now = Date.now();
+  // A development account has no daily limit (null); free has none left; anyone
+  // else is counted from today's usage rows.
+  const allowance =
+    loaded && isDevEmail(env, loaded.email)
+      ? null
+      : plan.tier === "free"
+        ? allowanceFor("free", 0, 0)
+        : await replyCounts(env.DB, userId, dayOf(now), dayOf(now)).then((n) => allowanceFor(plan.tier, n.todayTurns, n.todayMicro));
+  return planView(plan, allowance, now);
+}
+
+/**
+ * Asks the site again now, skipping the ten-minute cache: the app calls this
+ * after a checkout, and on a pull to refresh on its plan screen. Rate limited
+ * (limits.ts). If the site can't be reached, the answer is what was known.
+ */
+authed.post("/me/plan/refresh", async (c) => c.json({ plan: await planForMe(c.env, c.var.userId, true) }));
 
 const updateMeSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
@@ -606,17 +649,8 @@ authed.patch("/me", async (c) => {
   return c.json({ user: await publicUser(c.env, id) });
 });
 
-/**
- * The accounts allowed the always-listening experiments. Named in wrangler.jsonc
- * rather than in the database, so no request can grant it.
- */
-function isDevEmail(env: Env, email: string) {
-  const allowed = (env.DEV_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-  return allowed.length > 0 && allowed.includes(email.toLowerCase());
-}
+// isDevEmail (plans.ts): the accounts allowed the always-listening experiments
+// and never capped. Named in wrangler.jsonc, so no request can grant it.
 
 async function isDevAccount(env: Env, userId: string) {
   const user = await env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(userId).first<{ email: string }>();
@@ -764,6 +798,8 @@ type TurnInput = {
   /** "agent": a queued command from the background agent rather than the user. */
   source?: "agent";
   resume?: { state: LoopState; results: Record<string, unknown> };
+  /** The person's plan. Below pro, the tools that set up background work are left out. */
+  tier?: Tier;
   /** Streaming: receives each sentence of the reply as soon as it's written. */
   onSentence?: (sentence: string) => void;
   /** The cf-ray from observe(), so this turn's line can be joined to its request's. */
@@ -777,7 +813,7 @@ type TurnInput = {
 async function runTurn(
   env: Env,
   ctx: Pick<ExecutionContext, "waitUntil">,
-  { userId, text, timeZone, caps, voice, source, resume, onSentence, requestId }: TurnInput,
+  { userId, text, timeZone, caps, voice, source, tier, resume, onSentence, requestId }: TurnInput,
 ) {
   const fromAgent = source === "agent";
   const started = Date.now();
@@ -860,7 +896,11 @@ async function runTurn(
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
-    (t) => (!fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name)) && (!voice || !NOT_SPOKEN.has(t.name)),
+    (t) =>
+      (!fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name)) &&
+      (!voice || !NOT_SPOKEN.has(t.name)) &&
+      // Background work is Pro's (plans.ts): on Base, the model can't offer to set it up.
+      (!tier || atLeast(tier, "pro") || !isAgentTool(t.name)),
   );
   // Instructions that travel with their tools (toolbelt.ts): in the prompt while
   // the tools are carried, handed over with the tools when more_tools brings
@@ -1336,14 +1376,18 @@ authed.post("/chat", async (c) => {
   if (!parsed.success) return c.json({ error: "Message is required" }, 400);
   const { data } = parsed;
   const rid = c.var.requestId;
+  const tier = (c.var.plan ?? (await planFor(c.env, c.var.userId))).tier;
+  // Overheard by the always-open microphone: that is the open-mic mode, which
+  // is Pro's. The route itself is Base (plans.ts), so this one flag is checked here.
+  if (data.ambient && !atLeast(tier, "pro")) return needsPlan(c, "pro");
   if (data.stream) {
     return streamTurn(
       c,
-      (onSentence) => chatTurn(c.env, c.executionCtx, c.var.userId, data, onSentence, rid),
+      (onSentence) => chatTurn(c.env, c.executionCtx, c.var.userId, data, tier, onSentence, rid),
       data.voice ? data.speak?.voice : undefined,
     );
   }
-  const result = await chatTurn(c.env, c.executionCtx, c.var.userId, data, undefined, rid);
+  const result = await chatTurn(c.env, c.executionCtx, c.var.userId, data, tier, undefined, rid);
   return c.json("ignored" in result ? IGNORED : turnResponse(result));
 });
 
@@ -1352,16 +1396,20 @@ async function chatTurn(
   ctx: Pick<ExecutionContext, "waitUntil">,
   userId: string,
   data: z.infer<typeof chatSchema>,
+  tier: Tier,
   onSentence?: (sentence: string) => void,
   requestId?: string,
 ): Promise<TurnResult | Ignored> {
   const db = env.DB;
-  // The month's replies (cap.ts). Counted before anything else runs, so a
-  // capped account costs nothing more: no model, no search, no transcript.
-  // The agent's own commands and development accounts are never capped.
-  const standing = data.source ? null : await capStanding(env, userId, validTimeZone(data.timeZone));
-  if (standing?.verdict === "over") {
-    return plainReply(overCapMessage(standing.cap, Date.now(), standing.timeZone), onSentence);
+  // Today's allowance on their plan (plans.ts) and the month's fair-use cap
+  // (cap.ts), from one read. Counted before anything else runs, so a capped
+  // account costs nothing more: no model, no search, no transcript. The agent's
+  // own commands and development accounts are never capped.
+  const limitZone = validTimeZone(data.timeZone);
+  const standing = data.source ? null : await standingFor(env, userId, limitZone, tier);
+  if (standing?.day?.over) return plainReply(allowanceMessage(standing.day, Date.now(), limitZone), onSentence);
+  if (standing?.month?.verdict === "over") {
+    return plainReply(overCapMessage(standing.month.cap, Date.now(), standing.month.timeZone), onSentence);
   }
   if (data.ambient) {
     const { assistant_name } = await getSettings(db, userId);
@@ -1395,15 +1443,17 @@ async function chatTurn(
     caps: data.phone ?? ACTIONS_ONLY,
     voice: data.voice,
     source: data.source,
+    tier,
     onSentence,
     requestId,
   });
   // Most of the month's replies are gone: said once, on the end of a reply
   // they were getting anyway. A paused turn keeps it for the next one.
-  if (standing?.verdict === "warn" && result.kind === "reply") {
-    const warning = warnMessage(standing.used, standing.cap);
+  const monthly = standing?.month;
+  if (monthly?.verdict === "warn" && result.kind === "reply") {
+    const warning = warnMessage(monthly.used, monthly.cap);
     onSentence?.(warning);
-    ctx.waitUntil(markWarned(db, userId, standing.month));
+    ctx.waitUntil(markWarned(db, userId, monthly.month));
     return { ...result, reply: `${result.reply} ${warning}`, messages: result.messages.map((m) => (m.role === "assistant" ? { ...m, content: `${m.content} ${warning}` } : m)) };
   }
   return result;
@@ -1413,26 +1463,27 @@ async function chatTurn(
 
 const CAP_WARNED = "turn-cap-warned";
 
-/** Replies answered this calendar month, from the usage table (a turn row each). */
-async function turnsThisMonth(db: D1Database, userId: string, month: string) {
-  const row = await db
-    .prepare("SELECT COALESCE(SUM(n), 0) AS n FROM usage_daily WHERE user_id = ? AND kind = 'turn' AND day >= ?")
-    .bind(userId, `${month}-01`)
-    .first<{ n: number }>();
-  return row?.n ?? 0;
-}
-
-/** Where a person stands against the month's cap, or null when nothing applies to them. */
-async function capStanding(env: Env, userId: string, timeZone: string) {
+/**
+ * Where a person stands, from one read of the usage table (a turn row per
+ * answered reply, and every cost): `month` against the monthly fair-use cap
+ * (cap.ts), null with the cap off; `day` against their plan's daily allowance
+ * (plans.ts). Both null for a development account, which is never capped.
+ */
+async function standingFor(env: Env, userId: string, timeZone: string, tier: Tier) {
+  if (await isDevAccount(env, userId)) return { month: null, day: null };
   const cap = turnCapFrom(env);
-  if (!cap || (await isDevAccount(env, userId))) return null;
   const now = Date.now();
   const month = monthKey(now, timeZone);
-  const [used, warnedRow] = await Promise.all([
-    turnsThisMonth(env.DB, userId, month),
-    env.DB.prepare("SELECT 1 AS x FROM daily_marks WHERE user_id = ? AND kind = ? AND day = ?").bind(userId, CAP_WARNED, month).first(),
+  const [counts, warnedRow] = await Promise.all([
+    replyCounts(env.DB, userId, `${month}-01`, dayOf(now)),
+    cap
+      ? env.DB.prepare("SELECT 1 AS x FROM daily_marks WHERE user_id = ? AND kind = ? AND day = ?").bind(userId, CAP_WARNED, month).first()
+      : Promise.resolve(null),
   ]);
-  return { cap, used, month, timeZone, verdict: capVerdict(used, cap, !!warnedRow) };
+  return {
+    month: cap ? { cap, used: counts.monthTurns, month, timeZone, verdict: capVerdict(counts.monthTurns, cap, !!warnedRow) } : null,
+    day: allowanceFor(tier, counts.todayTurns, counts.todayMicro),
+  };
 }
 
 const markWarned = (db: D1Database, userId: string, month: string) =>
@@ -1496,6 +1547,7 @@ authed.post("/chat/resume", async (c) => {
       caps: phoneCapsSchema.parse(caps),
       voice: !!caps.voice,
       source: caps.source === "agent" ? "agent" : undefined,
+      tier: c.var.plan?.tier,
       resume: { state: JSON.parse(row.state), results },
       onSentence,
       requestId: c.var.requestId,
@@ -1515,12 +1567,19 @@ authed.post("/siri", async (c) => {
   const text = typeof body?.message === "string" ? body.message.trim().slice(0, 2000) : "";
   if (!text) return c.text("I didn't catch that.", 400);
   const settings = await getSettings(c.env.DB, c.var.userId);
+  const timeZone = validTimeZone(settings.time_zone);
+  const tier = (c.var.plan ?? (await planFor(c.env, c.var.userId))).tier;
+  // The same allowance and cap as the app's own turns.
+  const standing = await standingFor(c.env, c.var.userId, timeZone, tier);
+  if (standing.day?.over) return c.text(allowanceMessage(standing.day, Date.now(), timeZone));
+  if (standing.month?.verdict === "over") return c.text(overCapMessage(standing.month.cap, Date.now(), timeZone));
 
   const result = await runTurn(c.env, c.executionCtx, {
     userId: c.var.userId,
     text,
-    timeZone: validTimeZone(settings.time_zone),
+    timeZone,
     caps: ACTIONS_ONLY,
+    tier,
   });
   if (result.kind === "paused") return c.text("Open the OVOA app to do that.");
   const next = settings.auto_approve ? "Open OVOA to finish." : "Open OVOA to approve.";
@@ -2052,10 +2111,15 @@ authed.post("/usage/stream", async (c) => {
 /** The signed-in person's own numbers: today and the month so far. Shown in Dev tools. */
 authed.get("/usage/me", async (c) => {
   const timeZone = validTimeZone((await getSettings(c.env.DB, c.var.userId)).time_zone);
-  const [usage, standing] = await Promise.all([usageForPerson(c.env.DB, c.var.userId), capStanding(c.env, c.var.userId, timeZone)]);
+  const tier = (await planFor(c.env, c.var.userId)).tier;
+  const [usage, standing] = await Promise.all([usageForPerson(c.env.DB, c.var.userId), standingFor(c.env, c.var.userId, timeZone, tier)]);
   // The month's cap as it applies to this person: null for a development account, or with the cap off.
-  const cap = standing ? { limit: standing.cap, used: standing.used, month: standing.month, standing: standing.verdict } : null;
-  return c.json({ ...usage, cap });
+  const m = standing.month;
+  const cap = m ? { limit: m.cap, used: m.used, month: m.month, standing: m.verdict } : null;
+  // Today's plan allowance: null for a development account.
+  const d = standing.day;
+  const allowance = d ? { tier, limit: d.limit, used: d.used, left: d.left, over: d.over } : null;
+  return c.json({ ...usage, cap, allowance });
 });
 
 // ---------- Which engine answers ----------
@@ -2174,6 +2238,45 @@ app.get("/debug/usage", async (c) => {
   const people = await usageByPerson(c.env.DB, from);
   const microUsd = people.reduce((n, p) => n + p.total.microUsd, 0);
   return c.json({ from, days, people, total: { microUsd, estUsd: usd(microUsd), people: people.length } });
+});
+
+/**
+ * A person's plan override, for the developer, App Review and testers: it beats
+ * whatever the site says (plans.ts). Needs DEBUG_KEY.
+ *
+ *   GET /debug/plan?email=...                          what they're on, and why
+ *   PUT /debug/plan  {"email":"...","override":"pro"}  or "base", "free", or null to clear
+ *
+ * `userId` works in place of `email`. Other isolates see a change within a minute.
+ */
+async function debugPlanUser(env: Env, by: { email?: unknown; userId?: unknown }) {
+  const email = typeof by.email === "string" ? by.email.trim().toLowerCase() : "";
+  const userId = typeof by.userId === "string" ? by.userId.slice(0, 64) : "";
+  if (!email && !userId) return null;
+  return env.DB.prepare(`SELECT id, email FROM users WHERE ${email ? "email = ?" : "id = ?"}`)
+    .bind(email || userId)
+    .first<{ id: string; email: string }>();
+}
+
+app.get("/debug/plan", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const user = await debugPlanUser(c.env, { email: c.req.query("email"), userId: c.req.query("userId") });
+  if (!user) return c.json({ error: "No such account" }, 404);
+  const loaded = await loadPlan(c.env, user.id, { force: c.req.query("fresh") === "1" });
+  return c.json({ userId: user.id, plan: loaded?.plan ?? null, view: await planForMe(c.env, user.id) });
+});
+
+app.put("/debug/plan", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const body = (await c.req.json().catch(() => null)) as { email?: unknown; userId?: unknown; override?: unknown } | null;
+  if (!body || !("override" in body) || (body.override !== null && !isTier(body.override))) {
+    return c.json({ error: 'Send {"email" or "userId", "override": "free" | "base" | "pro" | null}.' }, 400);
+  }
+  const user = await debugPlanUser(c.env, body);
+  if (!user) return c.json({ error: "No such account" }, 404);
+  await setPlanOverride(c.env, user.id, body.override as Tier | null);
+  say("plan", { outcome: "override", user: user.id, override: (body.override as string | null) ?? "cleared" });
+  return c.json({ userId: user.id, override: body.override, plan: await planForMe(c.env, user.id) });
 });
 
 /** Queues a command as if the agent had, so the channel can be tested without a model. Needs DEBUG_KEY. */

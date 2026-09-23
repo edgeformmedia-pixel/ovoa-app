@@ -52,6 +52,13 @@ export type Env = {
   TURN_CAP_MONTHLY?: string;
   /** Which web search route goes first (web.ts): "auto" (Gemini grounding when keyed, else DuckDuckGo), "gemini", or "duckduckgo". */
   SEARCH_ENGINE?: string;
+  /**
+   * The site's membership API (plans.ts, docs/paywall/SPEC.md §2). The key is a
+   * secret; until it is set everyone is treated as pro. The URL is a var so it
+   * can point at the site's test Worker.
+   */
+  MEMBERSHIP_API_KEY?: string;
+  MEMBERSHIP_URL?: string;
   /** Comma-separated account emails allowed the dev-only capture-everything flag. */
   DEV_EMAILS?: string;
   /** For "ask Claude" (claude.ts). Without it that tool says it isn't set up. */
@@ -76,4 +83,6 @@ export type Vars = {
   ttsEngine?: import("./voice").TtsEngine;
   /** What transcribes this person's recorded clips (voice.ts). */
   sttClipEngine?: import("./voice").SttClipEngine;
+  /** The person's plan, when the route needed one (plans.ts requirePlan). */
+  plan?: import("./plans").Plan;
 };
