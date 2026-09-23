@@ -129,6 +129,9 @@ function RootStack() {
         <Stack.Screen name="live" options={{ ...pushed, title: "Live" }} />
         <Stack.Screen name="claude" options={{ ...pushed, title: "Ask Claude" }} />
         <Stack.Screen name="create" options={{ ...pushed, title: "Create an app" }} />
+        {/* A made app on its own screen: its own header, its own colour. */}
+        <Stack.Screen name="made/[id]" />
+        <Stack.Screen name="made/edit" options={{ ...pushed, title: "Edit app" }} />
       </Stack.Protected>
       <Stack.Protected guard={!!user && googleStep}>
         <Stack.Screen name="connect-google" />

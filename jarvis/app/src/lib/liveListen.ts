@@ -4,6 +4,7 @@ import * as NameEar from "../../modules/name-ear";
 import { API_URL, request } from "./api";
 import { devlog, devlogRepeat, devlogSettled } from "./devlog";
 import { audioWhy, onScreen } from "./foreground";
+import { onSignOut } from "./signOut";
 import { storage } from "./storage";
 import { nameCount } from "./turnGate";
 import { DAILY_STREAM_CAP_S, dayKey, meterAdd, meterOver, WakeWindow, type DailyMeter, type WakeReason } from "./wakeWindow";
@@ -141,6 +142,14 @@ async function loadMeter() {
     meter = null;
   }
 }
+
+// Someone new on this phone gets the day's listening afresh: an hour used up by
+// the last account (or a day of testing) otherwise stopped the new one's setup.
+onSignOut("stream meter", async () => {
+  meter = null;
+  meterLoaded = true;
+  await storage.remove(STREAM_METER_KEY);
+});
 
 /** Saving is a keychain write: every half minute is plenty, plus once when an ear closes. */
 const METER_SAVE_MS = 30_000;

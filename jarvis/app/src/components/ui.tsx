@@ -30,6 +30,8 @@ const TONES: Record<Tone, { wash: string; ink: string }> = {
 
 /** A tone's pale colour, for anything that stands in for its tile at a larger size. */
 export const toneWash = (tone: Tone) => TONES[tone].wash;
+/** A tone's strong colour: a made app's own accent, on its own screen (app/made). */
+export const toneInk = (tone: Tone) => TONES[tone].ink;
 
 export function IconTile({ name, tone, size = 30 }: { name: IconName; tone: Tone; size?: number }) {
   const t = TONES[tone];

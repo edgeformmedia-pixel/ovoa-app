@@ -215,6 +215,13 @@ export class TurnGate {
     private room: boolean,
     /** Whether talking over a reply cuts it off. */
     private talkOver: boolean,
+    /**
+     * Answers to questions (setup): short replies like "seven", "yes" or
+     * "skip" are the whole point, so after a question only words that are all
+     * the question's own count as its echo, and nothing said while an answer
+     * is being saved is carried into the next question.
+     */
+    private answers = false,
   ) {}
 
   /** What to show as being heard right now. */
@@ -275,6 +282,8 @@ export class TurnGate {
   onFinal(text: string, sentenceEnd: boolean, now: number): GateResult {
     this.interim = "";
     if (this.phase === "thinking") {
+      // An answer to a question that hasn't been asked yet would be filed under the wrong one.
+      if (this.answers) return { kind: "ignored", text, why: "still saving the last answer" };
       // Kept rather than thrown away: while the assistant is working, what the user
       // carries on saying is usually the rest of what they were asking for. It is
       // picked up again by listen().
@@ -313,9 +322,11 @@ export class TurnGate {
     if (now < this.echoUntil) {
       // The echo arrives late, and may come joined to what the user said.
       const rest = withoutEcho(text, this.reply);
-      if (!rest || (!this.pending && !saysName(rest, this.name) && !saidOverReply(rest, this.reply))) {
-        return { kind: "ignored", text, why: "the reply's own echo" };
-      }
+      const echo = this.answers && !this.room
+        ? // Any word the question didn't say makes it theirs: "Seven." after "When do you get up?"
+          !rest || !wordsOf(rest).some((w) => !new Set<string>(wordsOf(this.reply)).has(w))
+        : !rest || (!this.pending && !saysName(rest, this.name) && !saidOverReply(rest, this.reply));
+      if (echo) return { kind: "ignored", text, why: "the reply's own echo" };
       text = rest;
     }
     if (this.pending) {

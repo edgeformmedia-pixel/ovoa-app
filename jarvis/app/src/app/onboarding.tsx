@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { requestRecordingPermissionsAsync } from "expo-audio";
 import { useEffect, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
@@ -49,8 +50,17 @@ export default function Onboarding() {
   const [text, setText] = useState("");
   const [typing, setTyping] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [calling, setCalling] = useState(false);
+  const [calling, setCallingState] = useState(false);
+  const [introSpeaking, setIntroSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Read from the voice loop's callback, which keeps the render it was made in.
+  const callingRef = useRef(false);
+  const typingRef = useRef(false);
+  typingRef.current = typing;
+  const setCalling = (on: boolean) => {
+    callingRef.current = on;
+    setCallingState(on);
+  };
   const scroll = useRef<ScrollView>(null);
   const assistant = user?.settings.assistantName ?? "OVOA";
 
@@ -84,8 +94,14 @@ export default function Onboarding() {
       if (res.understood) say({ from: "ovoa", text: res.understood });
       if (res.next.done) {
         setCurrent(null);
+        // Said before the screen goes, not after: returned to the loop, it was
+        // never heard (the screen had already gone) or, typed, it talked over the tour.
+        convo.end();
+        const bye = "That's everything I need. Thanks, I'll take it from here.";
+        say({ from: "ovoa", text: bye });
+        if (callingRef.current) await speakIntro([res.understood, bye].filter(Boolean).join(" "));
         await finish();
-        return "That's everything I need. Thanks — I'll take it from here.";
+        return null;
       }
       setCurrent(res.next);
       say({ from: "ovoa", text: res.next.question });
@@ -105,10 +121,22 @@ export default function Onboarding() {
   // wake false: Talk's wake word ear waits for "OVOA" before anything counts,
   // so setup heard every answer as room talk and never replied. And no "Let me
   // look into that" fillers: the reply here is the next question, not a search.
-  const convo = useConversation(token, answer, { interruptible: true, wake: false, fillers: false });
+  // answers: a one-word answer ("Seven.", "Skip.") is not taken for the question's echo (turnGate.ts).
+  const convo = useConversation(token, answer, { interruptible: true, wake: false, fillers: false, answers: true });
   // The hook's own speaker belongs to the loop; the greeting happens before the
   // loop starts, so it gets one of its own and finishes before start() is called.
   const intro = useRef(createSpeaker(token));
+  /** A line said outside the loop (the greeting, a question after Skip): the globe shows it speaking. */
+  const speakIntro = async (line: string) => {
+    setIntroSpeaking(true);
+    try {
+      await intro.current.speak(line, { filler: false });
+    } catch (err) {
+      logFail("onboarding: speaking")(err);
+    } finally {
+      setIntroSpeaking(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -124,9 +152,13 @@ export default function Onboarding() {
             : "Picking up where we left off.";
         say({ from: "ovoa", text: greeting });
         say({ from: "ovoa", text: next.question });
+        // Microphone access asked for first: asked after the greeting, the prompt
+        // came up just as they started answering, and that first answer was lost.
+        await requestRecordingPermissionsAsync().catch(logFail("onboarding: microphone permission"));
+        if (cancelled) return;
         setCalling(true);
-        await intro.current.speak(`${greeting} ${next.question}`, { filler: false }).catch(logFail("onboarding: greeting"));
-        if (!cancelled) await convo.start();
+        await speakIntro(`${greeting} ${next.question}`);
+        if (!cancelled && !typingRef.current) await convo.start();
       })
       // Setup is part of the assistant. On the free plan the answer is needs_plan,
       // which already moved the plan to free, and the free app opens instead of this.
@@ -144,6 +176,10 @@ export default function Onboarding() {
   const skip = async () => {
     const current = stepRef.current;
     if (!current || busy) return;
+    // The microphone closes while the next question is read, and opens again
+    // after: left open, it heard the question and sent it as the next answer.
+    const listening = callingRef.current && !typingRef.current;
+    convo.end();
     setBusy(true);
     try {
       const res = await api.onboardingSkip(token, current.step);
@@ -154,9 +190,12 @@ export default function Onboarding() {
       }
       setCurrent(res.next);
       say({ from: "ovoa", text: res.next.question });
-      if (calling) await intro.current.speak(res.next.question, { filler: false }).catch(logFail("onboarding: next question"));
+      setBusy(false);
+      if (callingRef.current) await speakIntro(res.next.question);
+      if (listening && !typingRef.current) void convo.start();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      if (listening) void convo.start();
     } finally {
       setBusy(false);
     }
@@ -179,14 +218,14 @@ export default function Onboarding() {
     void answer(said).then(async (reply) => {
       // Typed answers are read back only while the call is live; someone who
       // switched to the keyboard is probably somewhere they can't listen either.
-      if (reply && calling) await intro.current.speak(reply, { filler: false }).catch(logFail("onboarding: reply"));
+      if (reply && callingRef.current) await speakIntro(reply);
     });
   };
 
   const talking = convo.phase === "listening";
   // Map roughly -60..-10 dBFS onto the halo, the same as the assistant's orb.
   const loudness = talking ? Math.max(0, Math.min(1, (convo.level + 60) / 50)) : 0;
-  const phase = busy ? "thinking" : convo.phase;
+  const phase = busy ? "thinking" : introSpeaking ? "speaking" : convo.phase;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -210,10 +249,13 @@ export default function Onboarding() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={styles.stage}>
           {/* The same particle globe as Talk; smaller while the keyboard is up. */}
-          <OrbView mode={orbMode(calling, phase)} level={loudness} size={typing ? 96 : 170} />
+          <OrbView mode={orbMode(calling, phase)} level={loudness} size={typing ? 72 : 170} />
 
-          {/* The question, big, because it's the thing being answered. */}
-          <Text style={styles.question}>{step?.question ?? (busy ? "One moment…" : "")}</Text>
+          {/* The question, big, because it's the thing being answered; smaller
+              with the keyboard up, so the box and its send button stay on screen. */}
+          <Text style={[styles.question, typing && styles.questionSmall]} numberOfLines={typing ? 4 : undefined}>
+            {step?.question ?? (busy ? "One moment…" : "")}
+          </Text>
           {!!convo.words && (
             <Text style={styles.heard} numberOfLines={3}>
               {convo.words}
@@ -230,31 +272,6 @@ export default function Onboarding() {
           ))}
         </ScrollView>
 
-        {typing && (
-          <View style={styles.inputRow}>
-            <TextInput
-              style={styles.input}
-              value={text}
-              onChangeText={setText}
-              placeholder="Type your answer…"
-              placeholderTextColor={colors.inkMute}
-              onSubmitEditing={sendTyped}
-              returnKeyType="send"
-              submitBehavior="submit"
-              editable={!busy && !!step}
-              autoFocus
-              // No AutoFill: iOS offered passwords and contacts over the send
-              // button, straight after the sign-in screen.
-              textContentType="none"
-              autoComplete="off"
-              importantForAutofill="no"
-            />
-            <Pressable style={styles.send} onPress={sendTyped} disabled={busy || !text.trim()} accessibilityLabel="Send">
-              <Ionicons name="arrow-up" size={20} color={colors.paper} />
-            </Pressable>
-          </View>
-        )}
-
         <View style={styles.controls}>
           <CallButton
             icon={typing ? "mic" : "keypad"}
@@ -270,6 +287,33 @@ export default function Onboarding() {
           <CallButton icon="play-skip-forward" label="Skip" onPress={skip} disabled={busy || !step} />
           <CallButton icon="call" label="Later" tone="danger" onPress={hangUp} disabled={busy} />
         </View>
+        {/* Last, right above the keyboard: nothing can sit between the box and it. */}
+        {typing && (
+          <View style={styles.inputRow}>
+            <TextInput
+              style={styles.input}
+              value={text}
+              onChangeText={setText}
+              placeholder="Type your answer…"
+              placeholderTextColor={colors.inkMute}
+              onSubmitEditing={sendTyped}
+              returnKeyType="send"
+              submitBehavior="submit"
+              // Not tied to `busy`: taking the box away mid-send closed the keyboard after every answer.
+              editable={!!step}
+              autoFocus
+              // No AutoFill: iOS offered passwords and contacts over the send
+              // button, straight after the sign-in screen.
+              textContentType="none"
+              autoComplete="off"
+              importantForAutofill="no"
+            />
+            <Pressable style={styles.send} onPress={sendTyped} disabled={busy || !text.trim()} accessibilityLabel="Send">
+              <Ionicons name="arrow-up" size={20} color={colors.paper} />
+            </Pressable>
+          </View>
+        )}
+
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -335,6 +379,7 @@ const styles = StyleSheet.create({
 
   stage: { alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 12 },
   question: { color: colors.ink, fontSize: 21, lineHeight: 28, textAlign: "center", paddingHorizontal: 8 },
+  questionSmall: { fontSize: 17, lineHeight: 23 },
   heard: { color: colors.now, fontSize: 16, lineHeight: 22, textAlign: "center", opacity: 0.9 },
   error: { color: colors.stop, textAlign: "center" },
 
@@ -345,7 +390,7 @@ const styles = StyleSheet.create({
   you: { alignSelf: "flex-end", backgroundColor: colors.now },
   bubbleText: { color: colors.ink, fontSize: 15, lineHeight: 21 },
 
-  inputRow: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingTop: 8 },
+  inputRow: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingTop: 4, paddingBottom: 8 },
   input: {
     flex: 1,
     minHeight: 44,

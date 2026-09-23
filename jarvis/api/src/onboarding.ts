@@ -121,10 +121,11 @@ const timedThings = (what: string) => ({
     type: "object",
     properties: {
       title: { type: "string", description: `The ${what}, short, in their words` },
-      times: { type: "array", items: time },
+      times: { type: "array", items: time, description: "Empty if they didn't say when" },
       days: { ...weekdays, description: "Only if they said particular days" },
     },
-    required: ["title", "times"],
+    // Not times: something named with no time is still kept, and asked about (addRoutines).
+    required: ["title"],
   },
 });
 
@@ -144,13 +145,23 @@ const toTimes = (v: unknown) => (Array.isArray(v) ? v.map(parseClock).filter((m)
 const strings = (v: unknown) =>
   Array.isArray(v) ? v.map((s) => String(s).trim()).filter(Boolean).slice(0, 12) : [];
 
-async function addRoutines(env: Env, userId: string, list: unknown, kind: NewRoutine["kind"]) {
+/** What a list of timed things came to: the ones set up, and the ones with no time to set them at. */
+type Added = { made: string[]; missed: string[] };
+
+async function addRoutines(env: Env, userId: string, list: unknown, kind: NewRoutine["kind"]): Promise<Added> {
   const made: string[] = [];
+  const missed: string[] = [];
   for (const item of Array.isArray(list) ? list.slice(0, 10) : []) {
     const r = item as { title?: unknown; times?: unknown; days?: unknown };
     const title = String(r.title ?? "").trim();
     const times = toTimes(r.times);
-    if (!title || !times.length) continue;
+    if (!title) continue;
+    // Named but no time ("vitamin D", with nothing about when): said back, not
+    // dropped in silence behind a "No medications" that isn't true.
+    if (!times.length) {
+      missed.push(title);
+      continue;
+    }
     await createRoutine(env.DB, userId, {
       kind,
       title,
@@ -162,8 +173,33 @@ async function addRoutines(env: Env, userId: string, list: unknown, kind: NewRou
     made.push(`${title} at ${times.map(clockFromMinutes).join(" and ")}`);
   }
   if (made.length) await routinesChanged(env, userId);
-  return made;
+  return { made, missed };
 }
+
+/** "I'll remind you: …", plus anything that couldn't be set up without a time, or `none`. */
+function addedLine({ made, missed }: Added, lead: string, none: string) {
+  const parts = [
+    made.length ? `${lead}${made.join("; ")}.` : "",
+    missed.length ? `I didn't catch a time for ${missed.join(" or ")}; tell me when and I'll set it up.` : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(" ") : none;
+}
+
+/** What a step says when nothing was saved. An ack next to one of these is dropped: it can only overclaim. */
+const NONE = {
+  meds: "No medications to remind you about.",
+  pets: "No pet reminders.",
+  gym: "No workouts to plan around.",
+  routines: "Nothing else for now.",
+};
+const NOTHING_SAVED = new Set<string>([
+  ...Object.values(NONE),
+  "Keeping your name as it is.",
+  "No nicknames, noted.",
+  "I'll ask about that another time.",
+  "No fixed work hours, noted.",
+  "No emergency contact for now; you can add one on the Safety tab.",
+]);
 
 const STEP_SPECS: Record<Step, StepSpec> = {
   name: {
@@ -242,16 +278,14 @@ const STEP_SPECS: Record<Step, StepSpec> = {
       "Do you take any medication or supplements I should remind you about? Tell me what and when — they'll go into a Medications list in Apple Reminders, which stays the real copy.",
     schema: { type: "object", properties: { meds: timedThings("medication") } },
     apply: async (env, userId, d) => {
-      const made = await addRoutines(env, userId, d.meds, "med");
-      return made.length ? `I'll remind you: ${made.join("; ")}.` : "No medications to remind you about.";
+      return addedLine(await addRoutines(env, userId, d.meds, "med"), "I'll remind you: ", NONE.meds);
     },
   },
   pets: {
     question: () => "Any pets that need walking or feeding at set times?",
     schema: { type: "object", properties: { tasks: timedThings("pet task, e.g. 'Walk Rex'") } },
     apply: async (env, userId, d) => {
-      const made = await addRoutines(env, userId, d.tasks, "pet");
-      return made.length ? `Pet reminders: ${made.join("; ")}.` : "No pet reminders.";
+      return addedLine(await addRoutines(env, userId, d.tasks, "pet"), "Pet reminders: ", NONE.pets);
     },
   },
   gym: {
@@ -267,27 +301,29 @@ const STEP_SPECS: Record<Step, StepSpec> = {
     },
     apply: async (env, userId, d) => {
       const where = String(d.where ?? "").trim().slice(0, 120);
-      // "7 days a week, 1-2pm" names no gym, and used to read as no workouts at all.
-      const works = d.works_out === true || !!where || parseClock(d.time) !== null || toDays(d.days).length > 0;
-      if (!works) return "No workouts to plan around.";
-      const what = where || "Workout";
       const days = toDays(d.days);
-      const when = days.length === 7 || !days.length ? "every day" : days.map((i) => WEEKDAYS[i].slice(0, 3)).join(", ");
-      await saveProfile(env.DB, userId, { gym: `${what}, ${when}${parseClock(d.time) !== null ? ` at ${d.time}` : ""}` });
       const at = parseClock(d.time);
+      // "7 days a week, 1-2pm" names no gym, and used to read as no workouts at all.
+      // An outright "no" still wins over anything else the model filled in.
+      const works = d.works_out !== false && (d.works_out === true || !!where || at !== null || days.length > 0);
+      if (!works) return NONE.gym;
+      const what = where || "Workouts";
+      // Only what they said: no days given is no days claimed.
+      const when = days.length === 7 ? "every day" : days.length ? `on ${days.map((i) => WEEKDAYS[i][0].toUpperCase() + WEEKDAYS[i].slice(1, 3)).join(", ")}` : "";
+      const said = [what, when, at !== null ? `at ${clockFromMinutes(at)}` : ""].filter(Boolean).join(" ");
+      await saveProfile(env.DB, userId, { gym: said });
       if (at !== null) {
         await addRoutines(env, userId, [{ title: where ? `Workout (${where})` : "Workout", times: [d.time], days: d.days }], "habit");
-        return `${what} ${when} — I'll plan around it and nudge you at ${clockFromMinutes(at)}.`;
+        return `${said}. I'll plan around it and nudge you at ${clockFromMinutes(at)}${days.length && days.length < 7 ? " on those days" : days.length ? "" : " each day (tell me the days if it's not every day)"}.`;
       }
-      return `${what} ${when}, noted.`;
+      return `${said}, noted.`;
     },
   },
   routines: {
     question: () => "Anything else you'd like a daily nudge for — water, stretching, anything at all?",
     schema: { type: "object", properties: { routines: timedThings("routine") } },
     apply: async (env, userId, d) => {
-      const made = await addRoutines(env, userId, d.routines, "habit");
-      return made.length ? `Set up: ${made.join("; ")}.` : "Nothing else for now.";
+      return addedLine(await addRoutines(env, userId, d.routines, "habit"), "Set up: ", NONE.routines);
     },
   },
   emergency: {
@@ -328,6 +364,15 @@ async function advance(env: Env, userId: string, from: Step) {
   return onboardingNext(env, userId);
 }
 
+/** How an answer is read, whichever step it's for. */
+const GUIDE = [
+  "'Every day' or '7 days a week' means all seven days of the week; 'weekdays' means Monday to Friday. A range like '1-2pm' starts at 13:00.",
+  "A part of the day is a time: morning 08:00, noon or lunch 12:00, afternoon 15:00, evening or dinner 18:00, night or bedtime 21:00. 'Twice a day' is 08:00 and 20:00.",
+  "If they said no, none, skip, or didn't answer the question, return empty values. Never invent anything.",
+];
+const ACK_GUIDE =
+  "ack: one short, natural sentence reacting to what they said, the way a friend who's paying attention would (the tone of 'Every day? That's real dedication.', in your own words). Specific to their answer, never generic like 'Got it, thanks for sharing'. It must not promise anything or say what you'll do (another line says exactly what was saved). No question, no emoji.";
+
 const withAck = (schema: Record<string, unknown>) => ({
   ...schema,
   properties: { ...(schema.properties as object), ack: { type: "string" } },
@@ -337,30 +382,37 @@ const withAck = (schema: Record<string, unknown>) => ({
 export async function onboardingAnswer(env: Env, userId: string, step: Step, text: string) {
   const spec = STEP_SPECS[step];
   const tz = await env.DB.prepare("SELECT time_zone FROM settings WHERE user_id = ?").bind(userId).first<{ time_zone: string | null }>();
-  const raw = await generateText(env, {
-    model: env.MEMORY_MODEL,
-    // Every answer also gets a reaction in the assistant's own words, so setup
-    // sounds like someone listening rather than a form being filled in.
-    json: { schema: withAck(spec.schema) },
-    fast: true,
-    usage: { userId, purpose: "onboarding" },
-    system: [
-      "You read one answer from a new user setting up their personal assistant, and pull out only what they actually said.",
-      "Times are 24-hour HH:MM in their own time zone" + (tz?.time_zone ? ` (${tz.time_zone})` : "") + ". 'Eight' in the morning is 08:00; 'ten at night' is 22:00.",
-      "'Every day' or '7 days a week' means all seven weekdays. A range like '1-2pm' starts at 13:00.",
-      "If they said no, none, skip, or didn't answer the question, return empty values. Never invent anything.",
-      "ack: one short, warm sentence reacting to what they said, like a thoughtful assistant who is paying attention (for example how it helps you look after them). Don't repeat the details back, don't ask a question, no emoji.",
-    ].join("\n"),
-    turns: [{ role: "user", text: JSON.stringify({ question: await questionFor(env, userId, step), answer: text }) }],
-  });
-  let data: Extracted;
-  try {
-    data = JSON.parse(raw) as Extracted;
-  } catch {
-    throw new Error("I didn't quite get that. Could you say it another way?");
+  const question = await questionFor(env, userId, step);
+  const read = (withReaction: boolean) =>
+    generateText(env, {
+      model: env.MEMORY_MODEL,
+      // Every answer also gets a reaction in the assistant's own words, so setup
+      // sounds like someone listening rather than a form being filled in.
+      json: { schema: withReaction ? withAck(spec.schema) : spec.schema },
+      fast: true,
+      usage: { userId, purpose: "onboarding" },
+      system: [
+        "You read one answer from a new user setting up their personal assistant, and pull out only what they actually said.",
+        "Times are 24-hour HH:MM in their own time zone" + (tz?.time_zone ? ` (${tz.time_zone})` : "") + ". 'Eight' in the morning is 08:00; 'ten at night' is 22:00.",
+        ...GUIDE,
+        ...(withReaction ? [ACK_GUIDE] : []),
+      ].join("\n"),
+      turns: [{ role: "user", text: JSON.stringify({ question, answer: text }) }],
+    });
+  let data: Extracted | null = null;
+  // A reply that isn't JSON is read again, plainly: the free-text reaction is the
+  // likeliest thing to break it, and losing it is better than losing the answer.
+  for (const withReaction of [true, false]) {
+    try {
+      data = JSON.parse(await read(withReaction)) as Extracted;
+      break;
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+    }
   }
+  if (!data) throw new Error("I didn't quite get that. Could you say it another way?");
   const facts = await spec.apply(env, userId, data);
-  const ack = typeof data.ack === "string" ? data.ack.trim().slice(0, 200) : "";
+  const ack = typeof data.ack === "string" && !NOTHING_SAVED.has(facts) ? data.ack.trim().slice(0, 200) : "";
   const understood = ack ? `${ack} ${facts}` : facts;
   return { understood, next: await advance(env, userId, step) };
 }

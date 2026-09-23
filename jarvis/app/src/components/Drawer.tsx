@@ -12,13 +12,12 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { setOpenApp } from "../lib/activeApp";
 import { ADDONS, useInstalledAddons } from "../lib/addons";
 import { useSession } from "../lib/auth";
 import { useDevMode } from "../lib/devMode";
 import { useMyApps } from "../lib/myApps";
 import { BlurView } from "expo-blur";
-import { DrawerContext, spotRef, usePointedAt, type DrawerHandle } from "../lib/drawer";
+import { DrawerContext, drawerLocked, spotRef, usePointedAt, type DrawerHandle } from "../lib/drawer";
 import { PLAN_NAMES, usePlan } from "../lib/plan";
 import { colors, lift, numeric, space, type } from "../lib/theme";
 import { PressScale } from "./motion";
@@ -188,16 +187,14 @@ export function AppDrawer({ children }: { children: ReactNode }) {
             .map((id) => ADDONS.find((a) => a.id === id))
             .filter((a): a is (typeof ADDONS)[number] => !!a && (devMode || !a.dev))
             .map((a) => ({ key: a.id, label: a.name, icon: a.icon, tone: a.tone, href: a.href, open: () => go(a.href) })),
-          // The ones they made open in Talk with their instructions on (lib/activeApp.ts).
+          // The ones they made open on their own screen (app/made/[id].tsx).
           ...made.map((a) => ({
             key: a.id,
             label: a.name,
             icon: a.icon as IconName,
             tone: a.tone,
-            open: () => {
-              setOpenApp({ id: a.id, name: a.name, opener: a.opener });
-              go("/chat");
-            },
+            href: `/made/${a.id}` as Href,
+            open: () => go(`/made/${a.id}` as Href),
           })),
         ];
         return <DrawerPanel current={pathname} tails={tails} apps={user ? apps : []} free={free} onClose={close} onGo={go} />;
@@ -230,13 +227,16 @@ export function DrawerHost({
   const startX = useRef(0);
 
   const settle = useCallback(
-    (to: 0 | 1) => {
-      openRef.current = to === 1;
-      setOpen(to === 1);
-      // A spring, so it lands rather than stops. It may go a little past open;
-      // the panel is drawn wider than it looks (OVERHANG) so that never shows a gap.
-      Animated.spring(progress, { toValue: to, useNativeDriver: true, damping: 22, stiffness: 240, mass: 0.9 }).start();
-    },
+    (to: 0 | 1) =>
+      new Promise<void>((resolve) => {
+        openRef.current = to === 1;
+        setOpen(to === 1);
+        // A spring, so it lands rather than stops. It may go a little past open;
+        // the panel is drawn wider than it looks (OVERHANG) so that never shows a gap.
+        // Resolves when it has landed (or was overtaken): the tour measures rows
+        // only then, because a native-driven slide isn't in the layout until it ends.
+        Animated.spring(progress, { toValue: to, useNativeDriver: true, damping: 22, stiffness: 240, mass: 0.9 }).start(() => resolve());
+      }),
     [progress],
   );
 
@@ -244,7 +244,7 @@ export function DrawerHost({
     () => ({
       open: () => settle(1),
       close: () => settle(0),
-      toggle: () => settle(openRef.current ? 0 : 1),
+      toggle: () => void settle(openRef.current ? 0 : 1),
     }),
     [settle],
   );
@@ -262,6 +262,7 @@ export function DrawerHost({
         // The predicate needs a clearly sideways drag, so a vertical scroll is
         // never stolen.
         onMoveShouldSetPanResponderCapture: (_e, g) => {
+          if (drawerLocked()) return false;
           const sideways = Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5;
           if (!sideways) return false;
           return openRef.current ? g.dx < 0 : startX.current <= EDGE && g.dx > 0;
@@ -285,9 +286,9 @@ export function DrawerHost({
         onPanResponderRelease: (_e, g) => {
           const from = openRef.current ? panelWidth : 0;
           const at = clamp((from + g.dx) / panelWidth, 0, 1);
-          settle((Math.abs(g.vx) > FLICK ? g.vx > 0 : at > SNAP) ? 1 : 0);
+          void settle((Math.abs(g.vx) > FLICK ? g.vx > 0 : at > SNAP) ? 1 : 0);
         },
-        onPanResponderTerminate: () => settle(openRef.current ? 1 : 0),
+        onPanResponderTerminate: () => void settle(openRef.current ? 1 : 0),
       }),
     [panelWidth, progress, settle],
   );

@@ -142,7 +142,16 @@ async function deviceVoiceFor(voice: VoiceId): Promise<string | undefined> {
  * or cut off through `onStop`. Free, offline, and about as fast as a voice can start.
  */
 export async function speakOnDevice(text: string, onStop?: (stop: () => void) => void, onStart?: () => void) {
+  // The stop is handed over before the voice is looked up: a stop that came
+  // during that lookup used to be missed, and the line was said anyway (the
+  // tour, with Next pressed quickly, talked over its own next card).
+  let stopped = false;
+  let stopNow = () => {
+    stopped = true;
+  };
+  onStop?.(() => stopNow());
   const voice = await deviceVoiceFor(await voicePref.get()).catch(() => undefined);
+  if (stopped) return;
   return new Promise<void>((resolve) => {
     let done = false;
     const finish = () => {
@@ -150,10 +159,10 @@ export async function speakOnDevice(text: string, onStop?: (stop: () => void) =>
       done = true;
       resolve();
     };
-    onStop?.(() => {
+    stopNow = () => {
       Speech.stop();
       finish();
-    });
+    };
     try {
       Speech.speak(text, { voice, onStart, onDone: finish, onStopped: finish, onError: (err) => {
         devlog("err", "the phone's voice couldn't speak", err instanceof Error ? err.message : String(err));
@@ -741,7 +750,13 @@ export function createSpeaker(token: string) {
     return { say, end, done, clip, voiced };
   };
 
-  const speak = async (text: string, { keepMic = false, filler = true } = {}) => {
+  /**
+   * Reads a whole text that is already known. No filler by default: a filler
+   * covers thinking, and a text read out (the tour, a question, a voice sample)
+   * has none. The one caller that wants one (a reply read under the microphone)
+   * says so.
+   */
+  const speak = async (text: string, { keepMic = false, filler = false } = {}) => {
     const reply = open({ keepMic, filler });
     speechChunks(text).forEach(reply.say);
     reply.end();
@@ -933,9 +948,10 @@ async function speakInterruptible(
   reply: string,
   cancelled: () => boolean,
   onLevel: (level: number) => void,
+  filler = true,
 ) {
   const state = { done: false, said: null as string | null };
-  const playing = speaker.speak(reply, { keepMic: true }).finally(() => (state.done = true));
+  const playing = speaker.speak(reply, { keepMic: true, filler }).finally(() => (state.done = true));
   const checks: Promise<void>[] = [];
 
   while (!state.done && state.said === null && !cancelled()) {
@@ -1001,6 +1017,8 @@ const LIVE_RETRY_MS = 60_000;
  * plan without the hands-free wake word, which is Pro) keeps the phone's ear
  * off, so every turn is an ordinary one. `fillers` false: no "Let me look
  * into that" while it thinks (setup, where the reply is a scripted question).
+ * `answers`: each turn answers a question (setup), so a one-word answer isn't
+ * taken for the question's echo (turnGate.ts).
  */
 export function useConversation(
   token: string,
@@ -1011,7 +1029,7 @@ export function useConversation(
     signal?: AbortSignal,
     extra?: { speech?: ServerSpeech; room?: boolean },
   ) => Promise<string | null>,
-  { interruptible = false, background = false, standby = false, name = "OVOA", wake = true, fillers = true } = {},
+  { interruptible = false, background = false, standby = false, name = "OVOA", wake = true, fillers = true, answers = false } = {},
 ) {
   const recorder = useAudioRecorder(RECORDING);
   const [phase, setPhaseState] = useState<VoicePhase>("off");
@@ -1093,14 +1111,19 @@ export function useConversation(
   const start = useCallback(async () => {
     setError(null);
     setStoppedBy(null);
+    // The session is taken before the permission prompt, not after: an end()
+    // that lands while it's up (the tour holding Talk's microphone, the screen
+    // left) has to stop this start too. Taken after, the loop started anyway
+    // and Talk listened through the whole tour.
+    const mine = ++session.current;
+    const cancelled = () => session.current !== mine;
     const { granted } = await requestRecordingPermissionsAsync();
+    if (cancelled()) return true;
     if (!granted) {
       devlog("err", "microphone permission denied");
       setError("Allow microphone access in Settings to talk to the assistant.");
       return false;
     }
-    const mine = ++session.current;
-    const cancelled = () => session.current !== mine;
     const previous = running.current;
     let finished = () => {};
     running.current = new Promise<void>((r) => (finished = r));
@@ -1221,7 +1244,7 @@ export function useConversation(
       // the follow-up window, when the connection is open and the room may talk.
       const wakeWord = useNameEar() ? { name: nameRef.current } : null;
       const room = background || !!wakeWord;
-      const gate = new TurnGate(nameRef.current, room, bargeIn.current);
+      const gate = new TurnGate(nameRef.current, room, bargeIn.current, answers);
       gateRef.current = gate;
       if (Date.now() < summonedUntil.current) gate.summon(summonedUntil.current);
       const state = { down: null as Error | null, waiting: null as ((turn: Turn | null) => void) | null };
@@ -1400,7 +1423,7 @@ export function useConversation(
       if (cancelled() || !reply) return;
       setPhase("speaking");
       setWords("");
-      carried = await speakInterruptible(token, recorder, speaker.current, reply, cancelled, setLevel);
+      carried = await speakInterruptible(token, recorder, speaker.current, reply, cancelled, setLevel, fillers);
     };
 
     let loopFailures = 0;
@@ -1632,6 +1655,9 @@ export const listeningPref = {
   get: async () => (await storage.get(LISTENING_KEY).catch(() => null)) === "1",
   set: (on: boolean) => storage.set(LISTENING_KEY, on ? "1" : "0"),
 };
+
+// Someone new on this phone starts with Talk's microphone off, not the last person's switch.
+onSignOut("talk orb", () => storage.remove(LISTENING_KEY));
 
 export type ListenMode = "wake" | "twist" | "both";
 const LISTEN_MODE_KEY = "ovoa.listenMode";

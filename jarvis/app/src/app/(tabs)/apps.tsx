@@ -5,7 +5,6 @@ import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-nativ
 import { expandFrom } from "../../components/Expand";
 import { PressScale, Rise } from "../../components/motion";
 import { Empty, GroupLabel, IconTile, Screen, TopBar, toneWash, type IconName, type Tone } from "../../components/ui";
-import { setOpenApp } from "../../lib/activeApp";
 import {
   ADDONS,
   installedAddons,
@@ -84,10 +83,8 @@ export default function Apps() {
     router.push("/create" as Href);
   };
 
-  const openMine = (a: MyApp) => {
-    setOpenApp({ id: a.id, name: a.name, opener: a.opener });
-    router.navigate("/chat");
-  };
+  // A made app opens on its own screen (app/made/[id].tsx).
+  const openMine = (a: MyApp) => router.push({ pathname: "/made/[id]", params: { id: a.id } } as unknown as Href);
 
   const deleteMine = (a: MyApp) =>
     Alert.alert(`Delete ${a.name}?`, "You made it, so deleting it can't be undone. You can always make another.", [

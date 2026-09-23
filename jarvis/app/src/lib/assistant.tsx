@@ -18,6 +18,7 @@ import * as clip from "./clip";
 import { showIsland, type IslandStatus } from "./island";
 import { deleteRecording, wavFile, type Recording } from "./recordings";
 import { micSourcePref, type MicSource } from "./storage";
+import { useTourSeen } from "./tour";
 import { endTurn, failTurn, mark as markTurn, markStopTalking, noteServer, startTurn } from "./turnTimer";
 import {
   alwaysListenPref,
@@ -65,6 +66,12 @@ type AssistantState = {
   cancel: (id: string) => Promise<void>;
   /** Pauses listening while `fn` runs, e.g. to play a voice sample. */
   hold: <T>(fn: () => Promise<T>) => Promise<T>;
+  /**
+   * Asks from a made app's own screen (app/made/[id].tsx): the app's
+   * instructions and screen ride along, and any approval card shows there
+   * rather than pulling them over to Talk. Null if a turn is already running.
+   */
+  askInApp: (text: string, appId: string) => Promise<string | null>;
 };
 
 const AssistantContext = createContext<AssistantState | null>(null);
@@ -94,6 +101,7 @@ const NO_ASSISTANT: AssistantState = {
   approve: async () => {},
   cancel: async () => {},
   hold: async (fn) => fn(),
+  askInApp: async () => null,
 };
 
 export function useAssistant() {
@@ -118,6 +126,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const [listenMode, setListenModeState] = useState<ListenMode>("wake");
   const [micSource, setMicSourceState] = useState<MicSource>("phone");
   const [held, setHeld] = useState(0);
+  /** The same count, readable from the band and click handlers without a re-render. */
+  const heldRef = useRef(0);
+  // Talk stays quiet until the tour has been seen: it opens on Talk, and an open
+  // microphone heard the tour's own voice and answered it.
+  const tourSeen = useTourSeen();
   const [inForeground, setInForeground] = useState(true);
   const [status, setStatus] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<PendingAction[]>([]);
@@ -183,11 +196,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const addApprovals = (actions: PendingAction[]) => {
+  const addApprovals = (actions: PendingAction[], { stay = false } = {}) => {
     setApprovals((a) => [...a, ...actions.filter((x) => !a.some((y) => y.id === x.id))]);
     actions.forEach(queueAuto);
-    // Cards only show on the Assistant tab; bring the user there if one needs them.
-    if (actions.some((a) => !a.auto) && !tabRef.current) router.navigate(ASSISTANT_PATH);
+    // Cards show on the Assistant tab, and on a made app's screen when it asked;
+    // otherwise bring the user to Talk if one needs them.
+    if (actions.some((a) => !a.auto) && !tabRef.current && !stay) router.navigate(ASSISTANT_PATH);
   };
 
   /**
@@ -200,7 +214,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     addressed: boolean,
     onSentence?: (sentence: string) => void,
     signal?: AbortSignal,
-    { source, speech, room }: { source?: "agent"; speech?: ServerSpeech; room?: boolean } = {},
+    { source, speech, room, app }: { source?: "agent"; speech?: ServerSpeech; room?: boolean; app?: string } = {},
   ): Promise<string | null> => {
     if (busy.current) return null;
     busy.current = true;
@@ -225,7 +239,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         : undefined;
       let res: ChatResponse = timed
         ? await api.sendStreamed(token, text, caps, ambient, timed, signal, speech)
-        : await api.send(token, text, caps, !source, ambient, source);
+        : await api.send(token, text, caps, !source && !app, ambient, source, app);
       if (res.meta) noteServer(res.meta);
       if (res.ignored) {
         // Only that it happened: the words were the room's, and they stay on the phone.
@@ -255,7 +269,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     } finally {
       busy.current = false;
       setStatus(null);
-      if (parked.length) addApprovals(parked);
+      if (parked.length) addApprovals(parked, { stay: !!app });
     }
   };
 
@@ -514,6 +528,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         clip.buzz(2);
         return;
       }
+      // Held (the tour, a voice sample, a made app listening): not a question for Talk.
+      if (talks && heldRef.current > 0) {
+        setBandPhase(null);
+        devlog("voice", "band mic: ignored while something else has the microphone");
+        endTurn("held");
+        clip.buzz(2);
+        return;
+      }
       void (talks ? bandAnswer(entry) : bandNote(entry));
     });
     return () => {
@@ -586,6 +608,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       // Nothing to talk to on this plan, and no band to take a note with.
       if (!talks) {
         devlog("voice", `click: ${source} ignored (talking isn't part of this plan)`);
+        return;
+      }
+      // Something else has the microphone (the tour, a made app, a voice sample).
+      if (heldRef.current > 0) {
+        devlog("voice", `click: ${source} ignored while the microphone is held`);
         return;
       }
       const phase = currentPhase();
@@ -708,7 +735,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     return () => sub.remove();
   }, []);
 
-  const shouldListen = talks && held === 0 && (alwaysListen || (inForeground && !!enabled && onAssistantTab));
+  const shouldListen =
+    talks && held === 0 && tourSeen === true && (alwaysListen || (inForeground && !!enabled && onAssistantTab));
 
   // Listening on or off, in the Dynamic Island: while a conversation runs, or twist standby is on.
   // Retried when the app comes to the front (a Live Activity can only start from there).
@@ -798,10 +826,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   };
 
   const hold = useCallback(async <T,>(fn: () => Promise<T>) => {
+    heldRef.current++;
     setHeld((h) => h + 1);
     try {
       return await fn();
     } finally {
+      heldRef.current--;
       setHeld((h) => h - 1);
     }
   }, []);
@@ -831,6 +861,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     approve,
     cancel,
     hold,
+    askInApp: (text, appId) => ask(text, true, undefined, undefined, { app: appId }),
   };
 
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;

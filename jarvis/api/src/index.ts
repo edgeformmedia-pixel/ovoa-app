@@ -70,7 +70,7 @@ import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
 import { askClaude, askClaudeTool, claude } from "./claude";
-import { appFor, myApps } from "./myapps";
+import { appAssistant, appFor, describeScreen, isAppTool, myApps, type MadeApp } from "./myapps";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
 import { capVerdict, monthKey, overCapMessage, turnCapFrom, warnMessage } from "./cap";
@@ -807,8 +807,8 @@ type TurnInput = {
   onSentence?: (sentence: string) => void;
   /** The cf-ray from observe(), so this turn's line can be joined to its request's. */
   requestId?: string;
-  /** A made app open in Talk: followed for this message only (myapps.ts). */
-  app?: { name: string; instructions: string } | null;
+  /** A made app that's open: followed for this message only (myapps.ts). */
+  app?: MadeApp | null;
 };
 
 /**
@@ -860,6 +860,8 @@ async function runTurn(
   const extraTools = extrasAssistant(env, userId, timeZone);
   const alarmTools = alarmAssistant(env, userId, timeZone);
   const moneyTools = moneyAssistant(env, userId, timeZone, { voice: !!voice });
+  // The open app's own screen: its checklist, counter and log (myapps.ts).
+  const appTools = app ? appAssistant(env, userId, app.id, timeZone) : null;
 
   const historyChars = voice ? VOICE_HISTORY_CHARS : HISTORY_CHARS;
   const turns: Turn[] = history.results.reverse().map((m) => ({
@@ -881,7 +883,8 @@ async function runTurn(
     ...(app
       ? [
           `They are using their own app "${app.name}", which they made in OVOA. Follow its instructions for this message, and stay yourself while doing it. Do what it asks with your tools, and never say something is done unless a tool did it:\n${app.instructions}`,
-        ]
+          describeScreen(app, timeZone),
+        ].filter(Boolean)
       : []),
   ].join("\n");
   turns.push({ role: "user", text: `[${moment}]\n\n${text}` });
@@ -946,6 +949,8 @@ async function runTurn(
   const preloaded = belt.preload(text);
   // Before anything more_tools brings in: this is the number that was actually
   // read before the first word, which is the one worth watching on the phone.
+  // Always in hand while an app is open, whatever the belt carries: it's what the app is for.
+  if (appTools) tools.push(...appTools.tools);
   const carriedTools = tools.length;
   const guided = (guide: ToolGuide) => (belt.carriedGuides.includes(guide) ? guide.prompt : "");
 
@@ -1078,7 +1083,9 @@ async function runTurn(
           if (found?.via) searches.push(found.via);
           return found;
         }
-        const result = await (isPhoneTool(name)
+        const result = await (appTools && isAppTool(name)
+          ? appTools.callTool
+          : isPhoneTool(name)
           ? phone.callTool
           : isShortcutTool(name)
             ? shortcuts.callTool
@@ -1205,7 +1212,8 @@ async function runTurn(
         userId,
         text,
         timeZone,
-        JSON.stringify({ ...caps, voice, source }),
+        // The open app rides along, so the turn carries on as that app once the phone answers.
+        JSON.stringify({ ...caps, voice, source, app: app?.id }),
         JSON.stringify(outcome.state),
         JSON.stringify(outcome.calls.map((call) => call.id)),
         Date.now(),
@@ -1554,6 +1562,7 @@ authed.post("/chat/resume", async (c) => {
   }
 
   const caps = JSON.parse(row.caps);
+  const resumedApp = typeof caps.app === "string" ? await appFor(c.env.DB, userId, caps.app) : null;
   const run = (onSentence?: (s: string) => void) =>
     runTurn(c.env, c.executionCtx, {
       userId,
@@ -1563,6 +1572,7 @@ authed.post("/chat/resume", async (c) => {
       voice: !!caps.voice,
       source: caps.source === "agent" ? "agent" : undefined,
       tier: c.var.plan?.tier,
+      app: resumedApp,
       resume: { state: JSON.parse(row.state), results },
       onSentence,
       requestId: c.var.requestId,

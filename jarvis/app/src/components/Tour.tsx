@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAssistant } from "../lib/assistant";
 import { useSession } from "../lib/auth";
 import { logFail } from "../lib/devlog";
-import { measureSpot, pointAt, useDrawer, type SpotRect } from "../lib/drawer";
+import { measureSpot, pointAt, setDrawerLocked, useDrawer, type SpotRect } from "../lib/drawer";
 import { usePlan } from "../lib/plan";
 import { tourPref, useTourSeen } from "../lib/tour";
 import { colors, lift, radius, space, type } from "../lib/theme";
@@ -89,7 +89,7 @@ function steps(assistant: string, free: boolean): Step[] {
       title: "Create your own",
       body: free
         ? "At the top of Apps is Create. With a plan, you can make your own apps just by saying what you want — like a grocery helper, or a study buddy."
-        : "At the top of Apps is Create. Tap it, then say or type what you want — like a grocery helper that asks what you're out of. I'll make it into an app, show it to you, and it goes in your apps. When you open it, I follow its instructions while we talk.",
+        : "At the top of Apps is Create. Tap it, then say or type what you want, like a grocery helper that asks what you're out of. I'll make it into an app with its own screen: buttons, a checklist, a counter, whatever it needs. You can change anything about it, by hand or just by telling me.",
       show: { point: "Create", on: "/apps" as Href },
     },
     {
@@ -125,6 +125,12 @@ const HOLE_OUT = 60;
 const BEAT_MS = 700;
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** `n` animation frames: long enough for a finished animation's layout to be measurable. */
+const frames = (n: number) =>
+  new Promise<void>((resolve) => {
+    const step = () => (--n <= 0 ? resolve() : requestAnimationFrame(step));
+    requestAnimationFrame(step);
+  });
 
 /** About how long a card takes to read to yourself: a third of a second a word, and never under three seconds. */
 const readingMs = (text: string) => Math.max(3000, text.split(/\s+/).length * 330);
@@ -144,11 +150,12 @@ function Walkthrough() {
   const [at, setAt] = useState(0);
   const [voiceOn, setVoiceOn] = useState(true);
   const [speaking, setSpeaking] = useState(false);
+  const [cardUp, setCardUp] = useState(false);
 
   // Talk's microphone stays shut for the whole tour. Left open, it heard the
   // tour's own voice as a question and answered it ("Let me look into that")
   // over the top of the next card.
-  const { hold } = useAssistant();
+  const { hold, enabled, toggleEnabled } = useAssistant();
   useEffect(() => {
     let release = () => {};
     void hold(() => new Promise<void>((r) => (release = r)));
@@ -190,6 +197,9 @@ function Walkthrough() {
     hw.value = withSpring(t.w, SPRING);
     hh.value = withSpring(t.h, SPRING);
     shade.value = withTiming(r ? 1 : 0, { duration: 350 });
+    // The card moves out of the way of what's lit: to the top when that's in the
+    // lower half (Settings, pinned to the bottom of the menu), else the bottom.
+    setCardUp(!!r && r.y + r.height / 2 > H * 0.55);
   };
   const holeStyle = useAnimatedStyle(() => ({
     left: hx.value - DIM,
@@ -205,59 +215,82 @@ function Walkthrough() {
     height: hh.value,
     opacity: shade.value,
   }));
-  /** Shines on `label` once whatever is moving (the menu, a new screen) has settled. */
-  const shineOn = async (label: string, after: number, live: () => boolean) => {
-    await wait(after);
-    if (!live()) return;
-    // A drawer still springing open can measure as nothing: one more look.
-    let r = await measureSpot(label);
-    if (!r && live()) {
-      await wait(SETTLE_MS);
-      r = await measureSpot(label);
+  /** Measures `label` and lights it, looking a few times while a new screen settles. */
+  const shineOn = async (label: string, live: () => boolean) => {
+    for (let tries = 0; tries < 4 && live(); tries++) {
+      // Two frames: the layout a finished slide leaves behind reaches measureInWindow a frame late.
+      await frames(2);
+      const r = await measureSpot(label);
+      if (!live()) return;
+      if (r) return spotlight(r);
+      await wait(SETTLE_MS / 2);
     }
-    if (live()) spotlight(r);
+    if (live()) spotlight(null);
   };
 
-  // One card: show it, say it, and move on when it's been said.
+  // One card's movements: what it shows on screen. Keyed on the card only, so
+  // turning the voice off or on doesn't open the menu and tap the row again.
   useEffect(() => {
     let cancelled = false;
+    const live = () => !cancelled;
     const show = step.show;
 
     const act = async () => {
       if (!show) return;
-      const live = () => !cancelled;
       if ("go" in show) {
         pointAt(null);
         spotlight(null);
-        drawer.close();
+        void drawer.close();
         router.navigate(show.go);
       } else if ("point" in show) {
-        drawer.close();
+        pointAt(null);
+        spotlight(null);
+        await drawer.close();
+        if (cancelled) return;
         router.navigate(show.on);
         // The new screen has to be up before its row can be found and lit.
         await wait(SETTLE_MS);
         if (cancelled) return;
         pointAt(show.point);
-        await shineOn(show.point, SETTLE_MS, live);
+        await shineOn(show.point, live);
       } else if (show.menu === "open") {
-        drawer.open();
-        await shineOn("Menu", SETTLE_MS, live);
+        pointAt(null);
+        // Measured only once the menu has finished sliding in: measured on the
+        // way, it was still off the left edge and the spotlight lit nothing.
+        await drawer.open();
+        if (cancelled) return;
+        await shineOn("Menu", live);
       } else {
         // What they'll do themselves: open the menu, find the row, tap it.
-        drawer.open();
+        await drawer.open();
+        if (cancelled) return;
         pointAt(show.row);
-        await shineOn(show.row, SETTLE_MS, live);
+        await shineOn(show.row, live);
         if (cancelled) return;
         await wait(POINT_MS);
         // Moved on (Next, Back, Skip) while pointing: the next card owns the screen now.
         if (cancelled) return;
         pointAt(null);
         spotlight(null);
-        drawer.close();
+        await drawer.close();
+        if (cancelled) return;
         router.navigate(show.href);
       }
     };
 
+    void act().catch(logFail("tour: showing"));
+    return () => {
+      cancelled = true;
+      // Nothing half-done left behind: a ring on a row, or a spotlight on it.
+      pointAt(null);
+      spotlight(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [at]);
+
+  // One card's words: said, and then on to the next once they've been said.
+  useEffect(() => {
+    let cancelled = false;
     const talk = async () => {
       if (!voiceOn) return;
       setSpeaking(true);
@@ -271,39 +304,47 @@ function Walkthrough() {
       await wait(Math.max(0, readingMs(step.body) - (Date.now() - started)) + BEAT_MS);
       if (!cancelled && !last) setAt((i) => i + 1);
     };
-
-    void act();
     void talk();
     return () => {
       cancelled = true;
       hush();
       setSpeaking(false);
-      // Nothing half-done left behind: a ring on a row, or a spotlight on it.
-      pointAt(null);
-      spotlight(null);
     };
     // Keyed on the card and the voice switch only: a re-render mid-sentence must not restart it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [at, voiceOn]);
 
-  // Nothing left pointed at or open behind it once it's gone.
-  useEffect(() => () => pointAt(null), []);
+  // The tour drives the menu; a swipe mustn't move it underneath. And nothing
+  // is left pointed at, or locked, once the tour has gone.
+  useEffect(() => {
+    setDrawerLocked(true);
+    return () => {
+      setDrawerLocked(false);
+      pointAt(null);
+    };
+  }, []);
 
   const finish = (go?: Href) => {
     hush();
     pointAt(null);
     spotlight(null);
-    drawer.close();
+    void drawer.close();
     tourPref.done();
     if (go) router.navigate(go);
+    // "Start talking" means it: the orb goes on, rather than leaving them at a silent Talk.
+    if (go === "/chat" && enabled === false) toggleEnabled();
   };
 
   return (
-    <View style={styles.scrim}>
-      {/* One view with an enormous border is the dim; its hollow middle is the cut-out. */}
-      <Animated.View pointerEvents="none" style={[styles.dim, holeStyle]} />
-      <Animated.View pointerEvents="none" style={[styles.glow, glowStyle]} />
-      <View style={[styles.card, { marginBottom: insets.bottom + space.s4 }]}>
+    <View style={[styles.scrim, cardUp && { justifyContent: "flex-start" }]}>
+      {/* One view with an enormous border is the dim; its hollow middle is the cut-out.
+          In a layer of its own, clipped to the screen, so what's drawn past the edges
+          never widens the page or gives the card something to scroll. */}
+      <View pointerEvents="none" style={styles.dimLayer}>
+        <Animated.View style={[styles.dim, holeStyle]} />
+        <Animated.View style={[styles.glow, glowStyle]} />
+      </View>
+      <View style={[styles.card, cardUp ? { marginTop: insets.top + space.s4 } : { marginBottom: insets.bottom + space.s4 }]}>
         <View style={styles.top}>
           <Text style={styles.count}>
             {at + 1} of {all.length}
@@ -369,6 +410,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     paddingHorizontal: space.s4,
   },
+  dimLayer: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, overflow: "hidden" },
   dim: { position: "absolute", borderWidth: DIM, borderColor: "rgba(12,14,18,0.55)", borderRadius: DIM + 16 },
   glow: {
     position: "absolute",

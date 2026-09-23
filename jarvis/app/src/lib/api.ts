@@ -297,19 +297,54 @@ export type PhoneCaps = { lookups: boolean; capabilities: string[]; autoSendText
 /** Something the assistant wants looked up on the phone before it can answer. */
 export type PhoneCall = { id: string; name: string; args: Record<string, any> };
 /** A chat turn either finishes, or pauses until the app sends lookup results to `resume`. */
-/** An app someone described, before it's saved: what the model made of it. */
+/** The parts a made app's screen is built from (server: myapps.ts Block; drawn by components/AppBlocks.tsx). */
+export type BlockKind = "buttons" | "list" | "counter" | "log" | "note" | "timer";
+export type AppButton = { label: string; prompt: string };
+export type AppBlock = {
+  id: string;
+  kind: BlockKind;
+  title: string;
+  buttons?: AppButton[];
+  placeholder?: string;
+  unit?: string;
+  goal?: number | null;
+  step?: number;
+  daily?: boolean;
+  text?: string;
+  minutes?: number;
+};
+export type ListItem = { id: string; text: string; done: boolean };
+export type LogEntry = { id: string; text: string; at: number };
+export type BlockState = { items?: ListItem[]; entries?: LogEntry[]; value?: number; day?: string };
+export type AppContents = Record<string, BlockState>;
+/** One change to what's on a made app's screen (server: myapps.ts applyOp). */
+export type AppOp = {
+  block: string;
+  op: "add" | "toggle" | "remove" | "clear_done" | "count" | "set";
+  text?: string;
+  item?: string;
+  done?: boolean;
+  amount?: number;
+  value?: number;
+};
+
+/** An app someone described, before it's saved: what the model made of it, and whatever they changed. */
 export type AppDraft = {
   name: string;
   about: string;
-  /** An Ionicons name from the server's list (myapps.ts APP_ICONS). */
+  /** An Ionicons name from the server's list (myapps.ts APP_ICONS; lib/appKit.ts). */
   icon: string;
   tone: "teal" | "violet" | "green" | "amber" | "coral" | "blue" | "pink";
   /** What the assistant does while it's open. */
   instructions: string;
   /** The first thing it says when opened. */
   opener: string;
+  /** Its screen, top to bottom. */
+  blocks: AppBlock[];
+  /** Whether it reads its answers aloud. */
+  speak: boolean;
 };
-export type MyApp = AppDraft & { id: string; createdAt: number };
+export type MyApp = AppDraft & { id: string; createdAt: number; updatedAt: number; state: AppContents };
 
 export type ChatResponse = (
   | { messages: Message[]; pendingActions: PendingAction[]; paused?: undefined; ignored?: boolean }
@@ -678,11 +713,12 @@ export const api = {
    * `ambient`: overheard by always-listening; the server replies only if it was
    * meant for the assistant, and otherwise answers `ignored` and saves nothing.
    */
-  send: (token: string, message: string, phone: PhoneCaps, voice = false, ambient = false, source?: "agent") =>
+  send: (token: string, message: string, phone: PhoneCaps, voice = false, ambient = false, source?: "agent", app?: string) =>
     request<ChatResponse>("/chat", token, {
       method: "POST",
-      // An agent command is never run as one of the person's apps.
-      body: JSON.stringify({ message, timeZone: timeZone(), phone, voice, ambient, source, app: source ? undefined : openAppId() }),
+      // An agent command is never run as one of the person's apps. `app` is a
+      // made app's own screen asking; otherwise whichever app is open in Talk.
+      body: JSON.stringify({ message, timeZone: timeZone(), phone, voice, ambient, source, app: source ? undefined : (app ?? openAppId()) }),
     }),
   resume: (token: string, turnId: string, results: Record<string, unknown>) =>
     request<ChatResponse>("/chat/resume", token, { method: "POST", body: JSON.stringify({ turnId, results }) }),
@@ -845,6 +881,17 @@ export const api = {
   saveApp: (token: string, draft: AppDraft) =>
     request<{ app: MyApp }>("/apps", token, { method: "POST", body: JSON.stringify(draft) }),
   deleteApp: (token: string, id: string) => request<{ ok: true }>(`/apps/${encodeURIComponent(id)}`, token, { method: "DELETE" }),
+  updateApp: (token: string, id: string, draft: AppDraft) =>
+    request<{ app: MyApp }>(`/apps/${encodeURIComponent(id)}`, token, { method: "PUT", body: JSON.stringify(draft) }),
+  /** Changes an app the way they said ("add a button for dessert ideas"); nothing is saved until they keep it. */
+  reviseApp: (token: string, app: AppDraft, change: string) =>
+    request<{ draft: AppDraft }>("/apps/revise", token, { method: "POST", body: JSON.stringify({ app, change }) }),
+  /** A tap on a made app's screen: no model, so it doesn't count against the day. */
+  appOp: (token: string, id: string, op: AppOp) =>
+    request<{ app: MyApp }>(`/apps/${encodeURIComponent(id)}/state`, token, {
+      method: "POST",
+      body: JSON.stringify({ ...op, timeZone: timeZone() }),
+    }),
 
   // ---------- Routines ----------
 

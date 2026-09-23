@@ -106,7 +106,8 @@ export const ROUTE_TIERS: RouteRule[] = [
   { method: "POST", path: /^\/voice\/(transcribe|speak|token)$/, tier: "base", why: "speech: clips, voice, live listening" },
   { method: "*", path: /^\/context\//, tier: "base", why: "the timeline (summaries are a model)" },
   { method: "*", path: /^\/onboarding(\/.*)?$/, tier: "base", why: "the setup conversation (a model)" },
-  { method: "POST", path: /^\/apps(\/design)?$/, tier: "base", why: "making an app (a model designs it; it runs on chat)" },
+  { method: "POST", path: /^\/apps(\/design|\/revise)?$/, tier: "base", why: "making or changing an app (a model designs it; it runs on chat)" },
+  { method: "*", path: /^\/apps\/[^/]+(\/state)?$/, tier: "base", why: "editing an app you made, and what's on its screen" },
   { method: "*", path: /^\/(google|actions)(\/.*)?$/, tier: "base", why: "email and calendar" },
   { method: "*", path: /^\/(routines|todos|money|alarms|nags|transcripts|people|favors|locations|places)(\/.*)?$/, tier: "base", why: "assistant features" },
 ];

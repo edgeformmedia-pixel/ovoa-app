@@ -304,3 +304,15 @@ const styles = StyleSheet.create({
   words: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", overflow: "hidden", columnGap: 5 },
   word: { minHeight: 0, maxWidth: undefined, textAlign: "center" },
 });
+
+/** Words that breathe while something is being worked out ("Making your app…", "Thinking…"). */
+export function Glimmer({ text, style }: { text: string; style?: StyleProp<TextStyle> }) {
+  const reduce = useReducedMotion();
+  const glow = useSharedValue(reduce ? 1 : 0.35);
+  useEffect(() => {
+    if (reduce) return;
+    glow.value = withRepeat(withSequence(withTiming(1, { duration: 650 }), withTiming(0.35, { duration: 650 })), -1);
+  }, [glow, reduce]);
+  const animated = useAnimatedStyle(() => ({ opacity: glow.value }));
+  return <Animated.Text style={[{ fontSize: 17, lineHeight: 23, fontWeight: "500", color: colors.now }, style, animated]}>{text}</Animated.Text>;
+}

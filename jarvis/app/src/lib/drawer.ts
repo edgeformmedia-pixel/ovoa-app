@@ -1,16 +1,26 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { Dimensions } from "react-native";
 
 /**
  * The left drawer's handle, kept in its own file so the panel and the top bars
  * that open it can both reach it without importing each other.
  */
 export type DrawerHandle = {
-  open: () => void;
-  close: () => void;
+  /** Resolves once the panel has finished sliding, so what's in it can be measured. */
+  open: () => Promise<void>;
+  close: () => Promise<void>;
   toggle: () => void;
 };
 
-const noop: DrawerHandle = { open: () => {}, close: () => {}, toggle: () => {} };
+const noop: DrawerHandle = { open: async () => {}, close: async () => {}, toggle: () => {} };
+
+// While the tour is showing it drives the menu itself; a stray edge swipe
+// opening or closing it under the tour left the spotlight pointing at nothing.
+let locked = false;
+export const setDrawerLocked = (on: boolean) => {
+  locked = on;
+};
+export const drawerLocked = () => locked;
 
 export const DrawerContext = createContext<DrawerHandle>(noop);
 
@@ -60,13 +70,21 @@ export const spotRef = (label: string) => (node: Measurable | null) => {
   else spots.delete(label);
 };
 
-/** Where `label` is on screen right now, or null if it isn't there. */
+/**
+ * Where `label` is on screen right now, or null if it isn't there. Something
+ * laid out off the edge (the menu, measured before it has slid in) counts as
+ * not there, so the caller looks again rather than lighting empty space.
+ */
 export function measureSpot(label: string): Promise<SpotRect | null> {
   const node = spots.get(label);
   if (!node) return Promise.resolve(null);
+  const { width: W, height: H } = Dimensions.get("window");
   return new Promise((resolve) => {
     try {
-      node.measureInWindow((x, y, width, height) => resolve(width > 0 ? { x, y, width, height } : null));
+      node.measureInWindow((x, y, width, height) => {
+        const onScreen = width > 0 && height > 0 && x + width > 4 && x < W - 4 && y + height > 0 && y < H;
+        resolve(onScreen ? { x, y, width, height } : null);
+      });
     } catch {
       resolve(null);
     }

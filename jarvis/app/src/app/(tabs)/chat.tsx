@@ -153,6 +153,8 @@ function label(on: boolean, phase: VoicePhase, status: string | null) {
   // Parked: iOS won't open a microphone for an app that isn't on screen, so it
   // is waiting for this one. Saying "Listening" there was simply untrue.
   if (phase === "waiting") return "Waiting for you to open the app";
+  // On, but the microphone isn't open yet, or something else has it for now (the tour).
+  if (phase === "off") return "Paused";
   return "Listening";
 }
 
