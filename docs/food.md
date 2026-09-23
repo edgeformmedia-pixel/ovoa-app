@@ -1,6 +1,8 @@
 # F34 — Food: calorie tracking by talking
 
-Spec only — nothing here is built yet. Server = `jarvis/api` (Worker + D1). App = `jarvis/app` (Expo).
+Spec only — nothing here is built yet. Ships as a **"by OVOA" add-on** (installable from Apps, needs Base
+because it calls the model). The user's decisions at the bottom override this spec where they differ.
+Server = `jarvis/api` (Worker + D1). App = `jarvis/app` (Expo).
 Reuses: `capabilities()` (`api/src/capabilities.ts`), the assistant tool pattern (`api/src/notes.ts` is the
 closest model), `profile` (0017), `daily_marks` (0019), HealthKit (`app/src/lib/health.ts`),
 `sendBuzz`/`push`, the morning brief and wind-down ticks (`api/src/rhythm.ts`).
@@ -27,9 +29,27 @@ user can ask for.
 | Same meal logged twice gives two different numbers, so the totals feel fake | Every food the model estimates is written to a **catalog** keyed by a normalized name. Second time round, the catalog answers — the model doesn't re-guess. |
 | "Making" is not "eating" | Two states. `cooked` creates a **dish** with servings and logs nothing. `eaten` logs. A plate of a known dish is one serving of it. |
 | Models happily say 40 kcal for a tablespoon of oil | Server-side **sanity clamp** against a small hardcoded table of density bounds (kcal/g by category). Anything outside it is recomputed from grams × a category default, and the entry is flagged `estimated: "clamped"`. |
-| Asking 4 clarifying questions kills the feature | At most **one** question, and only when the answer moves the estimate by >25% (portion size, mainly). Otherwise assume, log, and *say the assumption out loud* so they can correct it. |
+| Questions kill the feature for a casual user; guesses kill it for a serious one | It depends on the user's **tracking level** (below). A casual user is never asked; a serious one is asked what kind, where from and what's in it. Whatever it doesn't ask, it assumes and *says out loud* so they can correct it. |
 | The user corrects after the fact | `food_amend` edits the last entry (or a named one) in place: "make that two tablespoons", "that was a small one", "I didn't finish it". |
 | Extra latency for a lookup | **None.** The model fills in grams and kcal as tool arguments in the same turn it's already taking. No food-database round trip, no second model call. |
+
+## How closely: it depends on how serious the user is
+
+"I had a burrito" is worth three questions to someone cutting weight for a meet and none to someone who
+wants a rough idea. So the add-on has a **tracking level**, `profile.food_detail`:
+
+| Level | "I had a burrito" | Rule |
+|---|---|---|
+| `quick` | *"Logged a chicken burrito, about 900. Tell me if it was different."* | Never asks. Best guess, and says what it assumed. |
+| `normal` (default) | *"What kind of burrito?"* → "steak" → *"Logged, about 950."* | One question, only when the answer moves the number by more than 25%. |
+| `strict` | *"What kind, and was it from somewhere like Chipotle or homemade? Rice, cheese, sour cream, guac?"* | Asks what it needs for a tight number: what kind, where from (chains publish their numbers), size, and the extras that swing it. Asks them together in one sentence, not one at a time, and at most two rounds. Logs protein, carbs and fat. |
+
+- **Picked** when the add-on is first opened (*"Do you want a rough idea, or should I ask what's in
+  things?"*), or during the setup conversation when a health goal makes it obvious (cutting for a show →
+  `strict`, "eat a bit better" → `quick`).
+- **Changed by voice** any time: "stop asking, just log it" → `quick`, "be more exact" → `strict`.
+  "Just log it" also ends the current questions at any level, and it logs its best guess.
+- `food_target` takes `detail` to save it; the prompt section reads it.
 
 ## Standalone rule
 
@@ -228,7 +248,7 @@ const TOOLS: ToolSpec[] = [
   {
     name: "food_log",
     description:
-      "Records what they ate or cooked, when they say it in passing: 'I had a bowl of oatmeal', 'making chicken with a tablespoon of oil', 'just had a coffee with milk'. YOU supply the grams and the calories — you know what food weighs, so don't ask them to look anything up. Use state 'cooked' when they're making it and haven't eaten yet; 'eaten' when they've had it. Assume an ordinary portion rather than asking, and say what you assumed.",
+      "Records what they ate or cooked, when they say it in passing: 'I had a bowl of oatmeal', 'making chicken with a tablespoon of oil', 'just had a coffee with milk'. YOU supply the grams and the calories — you know what food weighs, so don't ask them to look anything up. Use state 'cooked' when they're making it and haven't eaten yet; 'eaten' when they've had it. Ask only as much as their tracking level allows (see the food section); anything you don't ask about, assume an ordinary version and say what you assumed.",
     parameters: {
       type: "object",
       properties: {
@@ -290,6 +310,7 @@ const TOOLS: ToolSpec[] = [
         sex: { type: "string", enum: ["male","female"] },
         activity: { type: "string", enum: ["sedentary","light","moderate","active"] },
         goal: { type: "string", enum: ["lose","maintain","gain"] },
+        detail: { type: "string", enum: ["quick","normal","strict"], description: "How closely they want it tracked: 'just log it, stop asking' is quick, 'be more exact' is strict." },
       },
     },
   },
@@ -300,8 +321,10 @@ const TOOLS: ToolSpec[] = [
 
 > When they mention eating or cooking anything at all, log it with food_log without being asked to —
 > "grabbed a bagel" is a log, not small talk. Estimate the weight and calories yourself; never ask them
-> to weigh or look something up, and ask at most one question, only when the portion would change the
-> number a lot. Say the total afterwards in one short sentence with the number in it, and name what you
+> to weigh or look something up. Their tracking level is {detail}: quick means never ask; normal means
+> one question, only when the answer would change the number a lot ("what kind of burrito?"); strict
+> means ask what kind, where it's from, the size and what's in it, all in one sentence, then log. If they
+> say "just log it", stop asking and log your best guess. Say the total afterwards in one short sentence with the number in it, and name what you
 > assumed so they can correct you. "Making" is not "eating": use state cooked, and log it properly when
 > they say they've had some.
 
@@ -395,15 +418,26 @@ stay under?"* — or nothing at all, because phase 1 works with no target.
 > such benchmark claims ±1.1% for its own product, which is not a believable number for photo estimation.
 > Treat anything not from the study or the founders' own statements as advertising.
 
-## Open questions
+## Decisions (user, 2026-09-23)
 
-1. **Retention.** The 14-day rule was set for transcripts. Food wants 90 days of detail and forever for
-   daily totals — the point of the feature is the trend line. Confirm that's acceptable.
-2. **Under-eating.** If a logged day comes in implausibly low (<1,000 kcal) more than twice in a week,
-   does OVOA say something? A tracker that cheerfully congratulates 700 kcal is doing harm. Proposal: it
-   says "that's lower than usual — did I miss anything?" once, and never moralizes about the number.
-3. **Eating disorder guardrails.** No streaks, no "under budget!" praise, no red numbers for going over.
-   The target is a target, not a score. Worth writing into the prompt explicitly.
-4. **Accuracy expectation.** Should the app say "roughly" everywhere, or state numbers flatly? Flat numbers
-   feel better and are equally wrong; "roughly" is honest and gets annoying. Proposal: flat in the feed,
-   "about" in speech, and "roughly" only when `estimated` isn't `ok`.
+These override the spec above where they differ.
+
+1. **An AI add-on.** "By OVOA", installable from Apps, needs Base. The model judges the calories from
+   what they say: Cal AI, but by talking instead of photos.
+2. **Retention: 14 days.** Everything except day titles is deleted after 14 days. That replaces the
+   90-day log, forever totals and forever catalog above. Still to confirm: whether the per-person food
+   catalog counts as "everything".
+3. **How closely depends on the user.** OVOA asks what kind of burrito when the user is serious about
+   tracking, and doesn't when they aren't. See "How closely" near the top.
+4. **Under-eating: yes.** When a logged day comes in under ~1,000 kcal more than twice in a week, it says
+   "that's lower than usual, did I miss anything?" once, and never comments on the number.
+5. **No controversy.** No streaks, no praise for being under, no red numbers for going over, no
+   moralizing, and it never brings up eating disorders.
+6. **Setup builds the goal app.** The setup conversation asks about fitness or health goals and habits
+   and makes an app for them. When the goal is about eating, it installs this add-on and sets the
+   tracking level.
+
+### Still open
+
+- **How the number is said.** Proposal: "about" at `quick` and `normal`, the plain number at `strict`
+  (after it has asked), and "roughly" only when `estimated` isn't `ok`.
