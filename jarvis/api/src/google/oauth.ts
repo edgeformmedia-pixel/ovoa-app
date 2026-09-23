@@ -3,6 +3,9 @@ import { base64url, decrypt, encrypt } from "../crypto";
 import { finishGoogleSignin, takeGoogleSigninState } from "../signin";
 import type { Env, Vars } from "../types";
 
+// Drive is drive.file: only the files OVOA created (the sheets and docs it made),
+// never the rest of someone's Drive. Documents and spreadsheets stay whole so it
+// can open a Doc or Sheet the user points it to by link.
 export const GOOGLE_SCOPES = [
   "openid",
   "https://www.googleapis.com/auth/userinfo.email",
@@ -10,7 +13,7 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/calendar",
   "https://www.googleapis.com/auth/gmail.modify",
-  "https://www.googleapis.com/auth/drive",
+  "https://www.googleapis.com/auth/drive.file",
   "https://www.googleapis.com/auth/documents",
   "https://www.googleapis.com/auth/tasks",
   "https://www.googleapis.com/auth/contacts",
@@ -232,7 +235,8 @@ googleAuthed.post("/google/connect", async (c) => {
     access_type: "offline",
     // select_account so a second account can be added without signing out of the first.
     prompt: "consent select_account",
-    include_granted_scopes: "true",
+    // No include_granted_scopes: it would fold an earlier full-Drive grant into
+    // this one, and a reconnect is how an account moves to drive.file.
     state,
     code_challenge: challenge,
     code_challenge_method: "S256",

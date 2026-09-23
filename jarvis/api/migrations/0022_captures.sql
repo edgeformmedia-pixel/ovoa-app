@@ -13,7 +13,12 @@
 -- Lines fall into five-minute blocks. Each block gets a title and a short
 -- summary; each hour a title written from its blocks' titles; each day one
 -- written from its hours. That is the whole index: browsing goes day, hour,
--- block, words. Everything is deleted after 14 days.
+-- block, words.
+--
+-- Everything is deleted after 14 days (src/retention.ts, docs/retention.md)
+-- except two things. A recording made on purpose ('recording') keeps its words
+-- until the user deletes them. And the day's row becomes the day's summary
+-- (0042_retention.sql, src/daysummary.ts), which is kept.
 
 CREATE TABLE raw_captures (
   id      TEXT PRIMARY KEY,

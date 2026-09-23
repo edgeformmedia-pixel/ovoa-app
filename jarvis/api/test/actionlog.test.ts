@@ -20,6 +20,7 @@ eq("nothing is not a success", toolSucceeded(null), false);
 eq("sending mail is logged", kindForTool("gmail_send"), "email_send");
 eq("a lookup is not", kindForTool("calendar_list_events"), null);
 eq("a phone reminder is a reminder", kindForTool("phone_reminder_create"), "reminder");
+eq("food isn't: the Calorie screen is its record", kindForTool("food_log") === null && kindForTool("food_amend") === null, true);
 
 // Every kind a tool maps to has an estimate, or it would silently count as zero.
 for (const name of ["gmail_send", "calendar_create_event", "phone_message_compose", "docs_create", "note_add", "routine_confirm"]) {

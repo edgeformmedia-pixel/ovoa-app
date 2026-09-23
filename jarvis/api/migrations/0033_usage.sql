@@ -10,7 +10,8 @@
 -- One row per (person, day, kind, engine, model), upserted, the way obs.ts
 -- keeps engine_stats: a heavy day is a few dozen rows per person, not one per
 -- event. Writing a row never fails the request it describes. Rows older than
--- 90 days go in the nightly tidy-up (index.ts nightly).
+-- 90 days go in the nightly tidy-up (35 days since the v1 release: the
+-- nightly purge, src/retention.ts).
 --
 -- `kind` is one of:
 --   turn        one message answered (n counts turns; the cost is on the rows below)

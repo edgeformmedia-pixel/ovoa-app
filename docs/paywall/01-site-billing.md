@@ -35,6 +35,5 @@ Make billing match SPEC §1–2. That means two AI tiers (Base, Pro), each month
 
 ## Finish
 - Commit with plain-sentence messages (look at `git log` for the style) and push `main`.
-- Lovable syncs from `main`; publishing is the user's click, so say so.
-- Deploy the test Worker with the edgeformmedia profile: `XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-edgeformmedia npm run cf:migrate`, then the same with `npm run cf:deploy`.
-- Leave a short list of the Stripe and Lovable steps the user must do; agent 06 folds it into `setup.md`.
+- Deploy the site (`ovoa-site`, the live ovoa.ai, on the ovoa.ai account since 2026-09-23) with that account's profile: `XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npm run db:migrate`, then the same with `npm run deploy`.
+- Leave a short list of the Stripe steps the user must do; agent 06 folds it into `setup.md`.

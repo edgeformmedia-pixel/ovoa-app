@@ -13,27 +13,35 @@ Prompts for the agents that build this are in this folder (`01-…` to `06-…`)
 | Release state | Nothing is fully released. The app, the AI and the Band are all **beta**. The app ships through **TestFlight** only. The site must say "beta" wherever it sells something. |
 | Band | **$89.99** one-time. Beta hardware. |
 | Band perk | Each Band comes with **7 days of Base AI free**. Confirmed by the user on 2026-09-22 (a week, not a month). |
-| Free app | **Health tracking** and **notetaking**, no AI. Free notes are transcribed **on the iPhone** (Apple's speech recognition), so free users cost ~$0 on the server. |
-| Base AI | **$9.95/month** or **$95.99/year**. All the AI assistant features. |
-| Pro AI | **$25.95/month** or **$195.99/year**. |
+| Free app | **Health tracking**, **notetaking** and every app that doesn't use AI. Free notes are transcribed **on the iPhone** (Apple's speech recognition), so free users cost ~$0 on the server. |
+| Base AI | **$9.95/month** or **$95.99/year**. **Every** AI feature, the wake word, Always listen and the background agent included. 20 replies a day. |
+| Pro AI | **$25.95/month** or **$195.99/year**. **3× Base's usage and nothing else**: 60 replies a day. |
 | Trial without a Band | **None.** You pay from day one. |
 | Dropped | The $249 lifetime plan, the $9.99/$99.99 prices, the $19.99 "Pro" on `/checkout`, and the $99 Band price on the home page. |
 
-### Proposed, needs the user's OK (agents: build it this way, but make it one-line to change)
+### What each plan gets (decided 2026-09-23, the v1 release brief; this replaces the 2026-09-22 proposal)
 
-**What Pro gets over Base.** The cost pass found open-mic wake mode is ~70% of what OVOA costs to run. So:
+**Pro = 3× usage, nothing else.** Every feature is Base's. The wake word listens on the phone now (no open mic
+to a server), so it no longer has to be priced apart.
 
 | | Free | Base | Pro |
 |---|---|---|---|
 | Health (HealthKit, Band heart rate, activity cards) | ✓ | ✓ | ✓ |
 | Notes: typed, and Band recordings transcribed on the phone | ✓ | ✓ | ✓ |
+| Every screen and app that never calls a model: routines, to-dos, alarms, money, people, places, saving and editing a made app by hand | ✓ | ✓ | ✓ |
 | Chat and voice with OVOA: tools, reminders, email, calendar, money, memory, morning brief | – | ✓ | ✓ |
 | Band button → AI reply | – | ✓ | ✓ |
-| Hands-free wake word (open mic) | – | – | ✓ |
-| Background agent (standing jobs that run on their own) | – | – | ✓ |
-| Daily AI allowance | – | Base cap | ~3× Base |
+| Hands-free wake word and Always listen | – | ✓ | ✓ |
+| Background agent (standing jobs that run on their own) | – | ✓ | ✓ |
+| Create (making an app by describing it) and the AI add-ons | – | ✓ | ✓ |
+| Replies a day | – | 20 | 60 |
+| Spend ceiling a day | – | $0.25 | $0.75 |
+| Replies a calendar month (the daily cap × 31) | – | 620 | 1,860 |
 
-Set the caps from Fable's measured cost per reply. Base must stay under **$0.25/day** per person at its cap. $9.95 is about $0.31/day after Stripe, and the cap leaves margin. Pro's cap must stay under **$0.65/day**. When a cap is hit, OVOA says so plainly and says when it resets. It never just fails silently.
+The rule is **charge only for things that use AI**: before anything is sent to a model, the server checks the plan
+(`jarvis/api/src/plans.ts` `modelGate`, asked by every model call in `llm.ts`). Every route that never calls a model
+is free. Base stays under **$0.25/day** per person at its cap ($9.95 is about $0.31/day after Stripe), Pro under
+**$0.75/day**. When a cap is hit, OVOA says so plainly and says when it resets. It never just fails silently.
 
 ---
 
@@ -96,6 +104,7 @@ Wave 1 agents touch separate folders, so they can run at the same time. 01 and 0
 ## 4. Risks the agents must not paper over
 
 - **Apple guideline 2.2** (no payment for TestFlight access) still applies. The site sells a *membership to the service* and a *physical Band*, never "TestFlight access". `setup.md` already explains this, so keep that wording.
-- **Apple guideline 3.1.1.** When the app reaches the App Store, AI unlock has to be an in-app purchase too; web purchases are honoured under 3.1.3(b). During TestFlight, the app must **not** show a buy button or prices, and must not link out to checkout. Show "Your plan: Free" and "Already a member? Pull to refresh" only, with a plain line pointing to ovoa.ai. Build it so an IAP button can be added later without a rewrite.
+- **Apple guideline 3.1.1.** When the app reaches the App Store, AI unlock has to be an in-app purchase too; web purchases are honoured under 3.1.3(b). The app never shows a buy button or prices, and never links to checkout.
+  - **TestFlight (the user's call, 2026-09-23, temporary):** the locked state says "That's for Base users" with a **See options** button that opens the plans on the site, `https://ovoa.ai/early-access#plans`. It opens the plans page, never checkout. It lives in `jarvis/app/src/components/Plan.tsx` `StoreActions`, the one seam where in-app purchase replaces it for the App Store. Beta App Review may object to the link; if it does, `StoreActions` goes back to the plain line.
 - **Apple speech recognition** is free and can run on the phone, but Band recordings are 16 kHz mono **opus**. iOS speech recognition may not read opus files directly, so they may need converting to a format it accepts first. It has to be proven on a TestFlight build, and on-device recognition needs iOS 17+ for good accuracy on longer clips.
 - **No always-listening** and **zero-setup** constraints from `docs/cost-cut-prompt.md` §1 still hold.

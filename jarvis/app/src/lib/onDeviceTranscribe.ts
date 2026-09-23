@@ -5,23 +5,30 @@ import { Alert, AppState, Platform } from "react-native";
 import { devlog } from "./devlog";
 import { isRunning as nameEarRunning } from "../../modules/name-ear";
 
-// Free notes, turned into words on the iPhone itself.
+// Recordings turned into words on the iPhone itself.
 //
-// A free plan has no AI, so it has no server bill to hide transcription in:
-// every free note sent to Whisper or Deepgram would be money spent on someone
-// paying nothing (docs/paywall/SPEC.md §1). Apple's speech recognition is free
-// and, with requiresOnDeviceRecognition, runs on the phone, so the audio never
-// leaves it and the server only ever receives the text. (A phone that can't
-// recognise on its own uses Apple's servers instead: see ALLOW_APPLE_SERVERS.
-// The audio never goes to OVOA's server on this path.) Paid plans keep the
-// server path (voice.ts transcribe), which is better on long clips.
+// Started for free notes: a free plan has no AI, so it has no server bill to
+// hide transcription in (docs/paywall/SPEC.md §1). Since 2026-09-23 it is how
+// every recording becomes words, on every plan: the band's notes, a band
+// question to Talk (assistant.tsx bandAnswer), and the timeline's recordings
+// (capture.ts). The server no longer transcribes anything (api voice.ts).
+// Apple's speech recognition is free and, with requiresOnDeviceRecognition,
+// runs on the phone, so the audio never leaves it and the server only ever
+// receives the text. (A phone that can't recognise on its own uses Apple's
+// servers instead, for recordings the person made on purpose: see
+// ALLOW_APPLE_SERVERS. The audio never goes to OVOA's server on this path.)
+//
+// It also has the one live recogniser outside the phone's ear: listenLive,
+// below, for a turn someone starts on a phone whose ear can't run.
 //
 // The library is expo-speech-recognition (jamsch), the maintained Expo module
 // for SFSpeechRecognizer, with an SDK 57 release (57.x) and a config plugin for
 // the two permission strings. Its file mode reads the file with AVAudioFile and
 // feeds it to an SFSpeechAudioBufferRecognitionRequest; for files it never
 // touches the audio session or the microphone, so it can't fight name-ear's
-// engine (modules/name-ear), which owns both while the orb listens.
+// engine (modules/name-ear), which owns both while the orb listens. (Its
+// microphone mode, listenLive below, does touch them: it only runs where the
+// ear can't.)
 //
 // Why there is no opus converter here: SFSpeechRecognizer can't read the
 // Band's raw file at all. The ES100 stores bare opus packets back to back with
@@ -58,22 +65,54 @@ const CUT_SEARCH_SECONDS = 8;
  * When the phone can't recognise on its own (an old iPhone, or a language it
  * has no local model for), use Apple's servers rather than no note at all.
  * The result says onDevice: false, and the log says so. Flip to false to make
- * "never leaves the phone" absolute.
+ * "never leaves the phone" absolute. Only ever for something the person
+ * started: a recording made on purpose, or a turn they began (listenLive).
+ * Never for listening for the name or Always listen (decision 1, 2026-09-23),
+ * which run on the phone's ear alone and simply don't run without one.
  */
 const ALLOW_APPLE_SERVERS = true;
+
+/** What the permission prompt, the consent screen and the privacy policy all say (decision 1). */
+export const SPEECH_PROMISE =
+  "Your voice is recognised on your iPhone, or by Apple's speech service on iPhones that can't do it themselves. It's never sent to OVOA or the AI companies.";
 
 // ---------- Permission ----------
 
 /** "Not now" was pressed this launch: don't ask again until the app restarts. */
 let declinedThisLaunch = false;
 
+/** Whether speech recognition is allowed right now. Never asks. */
+export async function speechAllowed(): Promise<boolean> {
+  if (!native) return false;
+  try {
+    return (await native.getPermissionsAsync()).granted;
+  } catch {
+    return false;
+  }
+}
+
+/** The ask on screen right now, if any. */
+let asking: Promise<boolean> | null = null;
+
 /**
  * Speech recognition (and the microphone, which the library checks even for
  * files) allowed. Asks only when it has never been answered, and only after a
- * one-line reason: the first time a free user records, never at launch. Returns
- * whether it's allowed now. A "no" from iOS stays a no until Settings.
+ * one-line reason. Returns whether it's allowed now. A "no" from iOS stays a
+ * no until Settings. Off screen it can't ask (iOS shows no prompt there) and
+ * says no, which is why the app asks in the foreground ahead of time: on the
+ * permissions screen after sign-up (app/permissions.tsx), when talking starts,
+ * and as soon as a band is paired (assistant.tsx), so a band click from the
+ * wrist later doesn't find it unanswered. Two asks at once (at launch, the
+ * band's and Talk's) share one reason and one prompt.
  */
-export async function ensureSpeechPermission(): Promise<boolean> {
+export function ensureSpeechPermission({ explained = false }: { explained?: boolean } = {}): Promise<boolean> {
+  asking ??= askSpeechPermission(explained).finally(() => {
+    asking = null;
+  });
+  return asking;
+}
+
+async function askSpeechPermission(explained: boolean): Promise<boolean> {
   if (!native) return false;
   try {
     const now = await native.getPermissionsAsync();
@@ -81,10 +120,11 @@ export async function ensureSpeechPermission(): Promise<boolean> {
     if (!now.canAskAgain || now.status === "denied" || declinedThisLaunch) return false;
     // A system prompt can't show from the background; the next recording in the foreground asks.
     if (AppState.currentState !== "active") return false;
-    const go = await new Promise<boolean>((resolve) =>
+    // `explained`: the screen asking already says why (app/permissions.tsx), so no second reason first.
+    const go = explained || await new Promise<boolean>((resolve) =>
       Alert.alert(
-        "Turn recordings into notes",
-        "Your iPhone writes out what you record, on the phone itself, so your recordings never go to OVOA.",
+        "Let your iPhone hear you",
+        SPEECH_PROMISE,
         [
           { text: "Not now", style: "cancel", onPress: () => resolve(false) },
           { text: "Continue", onPress: () => resolve(true) },
@@ -390,5 +430,132 @@ async function transcribeNow(uri: string): Promise<OnDeviceTranscript | null> {
     }
   }
 }
+
+// ---------- Live, with the library's own microphone ----------
+
+/** English, in the phone's own variety when it's set to one: what the assistant speaks, like the ear (NameEar.locale()). */
+function englishLocale() {
+  const phone = Intl.DateTimeFormat().resolvedOptions().locale || "en-US";
+  return norm(phone).startsWith("en") ? phone.replace(/_/g, "-") : "en-US";
+}
+
+/** The library's volume (-2 to 10) as the rough dBFS the orb's halo reads (about -60 to -12). */
+const levelOf = (value: number) => (value <= -2 ? -160 : -60 + (value + 2) * 4);
+
+/** How long to wait for the library to say it started (or why it couldn't). */
+const LIVE_START_MS = 4000;
+
+/**
+ * Hears a turn someone started, with the library's own microphone, on a phone
+ * whose ear (modules/name-ear) can't run there: one that can't recognise
+ * speech on its own. Its words go where the ear's would (liveListen.ts).
+ *
+ * It may use Apple's servers, so it is only ever for a turn the person began
+ * (the orb, a click, dictation, setup) and never for listening for the name or
+ * Always listen (decision 1, 2026-09-23). Only in the foreground: iOS won't
+ * open a microphone for an app that's off screen. Mixable, like the ear's
+ * session, so a reply plays while it listens.
+ *
+ * Holds the recogniser while it runs: a file transcription waits until it
+ * stops. Resolves once listening; rejects with a sentence when it can't.
+ */
+export async function listenLive(handlers: {
+  onWord: (text: string, isFinal: boolean) => void;
+  onLevel: (dbfs: number) => void;
+  /** It stopped by itself (Apple's minute ran out, the session was taken, an error). Not called after stop(). */
+  onEnd: (error: string | null) => void;
+}): Promise<{ stop: () => void; onDevice: boolean }> {
+  const speech = native;
+  if (!speech) throw permanent("This build can't recognise speech on the phone.");
+  if (!(await ensureSpeechPermission())) {
+    throw permanent("Speech recognition isn't allowed for OVOA. Turn it on in Settings > OVOA to talk to it.");
+  }
+  // Behind any file being transcribed, then holding the recogniser until this stops.
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  const before = queue;
+  queue = before.then(() => held, () => held);
+  await before.catch(() => undefined);
+
+  const lang = englishLocale();
+  const onDevice = speech.supportsOnDeviceRecognition();
+  if (!onDevice && !ALLOW_APPLE_SERVERS) {
+    release();
+    throw permanent("This iPhone can't recognise speech on its own.");
+  }
+  let stopped = false;
+  let ended = false;
+  /** Past the start: from here an end on its own is news for the caller. */
+  let listening = false;
+  let lastError: string | null = null;
+  let started: ((ok: boolean) => void) | null = null;
+  const subs = [
+    speech.addListener("start", () => started?.(true)),
+    speech.addListener("result", (e) => {
+      if (stopped) return;
+      handlers.onWord((e.results[0]?.transcript ?? "").trim(), e.isFinal);
+    }),
+    speech.addListener("volumechange", (e) => {
+      if (!stopped) handlers.onLevel(levelOf(e.value));
+    }),
+    speech.addListener("error", (e) => {
+      lastError = `${e.error}: ${e.message}`;
+    }),
+    speech.addListener("end", () => finish()),
+  ];
+  function finish() {
+    if (ended) return;
+    ended = true;
+    subs.forEach((s) => s.remove());
+    release();
+    started?.(false);
+    if (!stopped && listening) handlers.onEnd(lastError);
+  }
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    try {
+      speech.abort();
+    } catch {}
+    // abort() answers with its own "end"; this is for when it never comes.
+    setTimeout(finish, 1500);
+  };
+
+  const ok = await new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => started?.(false), LIVE_START_MS);
+    started = (yes) => {
+      clearTimeout(timer);
+      started = null;
+      resolve(yes);
+    };
+    try {
+      speech.start({
+        lang,
+        interimResults: true,
+        continuous: true,
+        requiresOnDeviceRecognition: onDevice,
+        addsPunctuation: true,
+        contextualStrings: ["OVOA"],
+        iosTaskHint: "dictation",
+        iosCategory: { category: "playAndRecord", categoryOptions: ["defaultToSpeaker", "allowBluetooth", "mixWithOthers"], mode: "default" },
+        volumeChangeEventOptions: { enabled: true, intervalMillis: 200 },
+      });
+    } catch (err) {
+      lastError = message(err);
+      started?.(false);
+    }
+  });
+  if (!ok || ended) {
+    const why = lastError ?? "no answer from the recogniser";
+    stop();
+    throw new Error(`Couldn't start listening: ${why}`);
+  }
+  listening = true;
+  devlog("voice", `listening with Apple's recogniser (${onDevice ? "on the phone" : "Apple's servers"})`, lang);
+  return { stop, onDevice };
+}
+
+/** A refusal that asking again won't change: the caller stops listening and shows it (voice.ts). */
+const permanent = (text: string) => Object.assign(new Error(text), { permanent: true });
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));

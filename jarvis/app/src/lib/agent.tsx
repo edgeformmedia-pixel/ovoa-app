@@ -61,18 +61,22 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     }
   }, [token]);
 
-  // Register for push on sign-in. It used to wait for the agent to be turned on,
-  // but reminders and buzzes need the phone to be reachable whether or not the
-  // agent is, and onboarding has by then explained why notifications matter.
-  // Once per sign-in, tracked in a ref rather than by watching the result —
-  // the result changes identity on every attempt, which would have made this
-  // ask twice.
+  // Register for push on sign-in: reminders and buzzes need the phone to be
+  // reachable whether or not the agent is on. Without a prompt, though: "Not
+  // now" on the permissions screen (app/permissions.tsx) has to mean not now,
+  // so a phone never asked registers only once it has been, which is when
+  // something first needs a notification (a dose, an alarm: push.ts
+  // notificationsNeeded) or here, once the agent is on, since the agent
+  // reaches them that way. Once per sign-in and agent state, tracked in a ref
+  // rather than by watching the result — the result changes identity on every
+  // attempt, which would have made this ask twice.
   const askedForPush = useRef<string | null>(null);
   useEffect(() => {
-    if (!token || askedForPush.current === token) return;
-    askedForPush.current = token;
-    registerForPush(token).then(setPush);
-  }, [token]);
+    const key = `${token}|${enabled}`;
+    if (!token || askedForPush.current === key) return;
+    askedForPush.current = key;
+    registerForPush(token, { ask: enabled }).then(setPush);
+  }, [token, enabled]);
 
   useEffect(() => {
     if (!enabled) {

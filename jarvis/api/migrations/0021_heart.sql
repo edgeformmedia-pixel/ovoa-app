@@ -3,7 +3,8 @@
 -- Samples come from whatever writes heart rate to Apple Health (a watch; the
 -- ES100 has no confirmed heart-rate sensor), or from the band if its heart-rate
 -- test ever returns readings. Kept 30 days: enough for a resting baseline and a
--- month of workouts, not a medical record.
+-- month of workouts, not a medical record. (14 days since the v1 release, and
+-- detected workouts with them; one logged by voice stays. src/retention.ts.)
 
 CREATE TABLE hr_samples (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

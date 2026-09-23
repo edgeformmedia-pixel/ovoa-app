@@ -289,6 +289,8 @@ export async function fireDueRoutines(env: Env) {
     )
       .bind(eventId, r.id, r.user_id, due, stale ? "missed" : "pending", now)
       .run();
+    // Once a day per routine: the days now old enough go into its running streak.
+    await settleQuietly(env.DB, r.id, timeZone);
     // Already confirmed from the phone before the server got here.
     if (!inserted.meta.changes || stale) continue;
 
@@ -331,6 +333,7 @@ export async function escalate(env: Env) {
 
     if (age >= e.window_minutes * 60_000) {
       await db.prepare("UPDATE routine_events SET status = 'missed' WHERE id = ? AND status IN ('pending', 'snoozed')").bind(e.event_id).run();
+      await settleQuietly(db, e.id, timeZone);
       await logAction(db, e.user_id, "routine_missed", `Missed: ${e.title} (${clock(e.due_at, timeZone)})`, "system", e.id);
       changed++;
       continue;
@@ -422,7 +425,11 @@ export async function confirmRoutine(db: D1Database, userId: string, c: Confirm,
     .prepare("UPDATE routine_events SET status = 'done', confirmed_at = COALESCE(confirmed_at, ?), via = COALESCE(via, ?) WHERE id = ?")
     .bind(now, c.via, event.id)
     .run();
-  const routine = await db.prepare("SELECT title FROM routines WHERE id = ?").bind(event.routine_id).first<{ title: string }>();
+  const routine = await db
+    .prepare("SELECT r.title, s.time_zone FROM routines r LEFT JOIN settings s ON s.user_id = r.user_id WHERE r.id = ?")
+    .bind(event.routine_id)
+    .first<{ title: string; time_zone: string | null }>();
+  await settleQuietly(db, event.routine_id, validTimeZone(routine?.time_zone));
   await logAction(db, userId, "routine_done", `Done: ${routine?.title ?? "routine"}`, source, event.routine_id);
   if (env) {
     // An urgent one is buzzing on the phone: tell it to stop (alarms.ts nags).
@@ -449,37 +456,119 @@ export async function snoozeRoutine(db: D1Database, userId: string, c: Omit<Conf
   return { eventId: event.id, minutes };
 }
 
+// ---------- The streak ----------
+//
+// Days in a row with every occurrence done. Occurrences (routine_events) are
+// deleted after 14 days (retention.ts), so the streak can't be counted from
+// them alone: the days that are gone live on the routine row as a running
+// total, `streak` days in a row ending on `streak_day`. Days after streak_day
+// are counted from the events that are still there. A day is folded into the
+// total once it is as old as the purge's window, when nothing can change it any
+// more: as occurrences are written (settleStreak below), and by the purge itself
+// just before it deletes them.
+
+/** Days this old are settled into the routine's running streak. The purge's own window (retention.ts RETAIN_DAYS). */
+export const STREAK_SETTLED_DAYS = 14;
+
+export type StreakCarry = { streak: number; day: string | null };
+
+/** Each local day's outcome: true when everything due that day was done. */
+export function dayOutcomes(events: { due_at: number; status: string }[], timeZone: string) {
+  const byDay = new Map<string, boolean>();
+  for (const e of events) {
+    const day = buckets(e.due_at, timeZone).day;
+    byDay.set(day, (byDay.get(day) ?? true) && e.status === "done");
+  }
+  return byDay;
+}
+
+/**
+ * The running total brought forward through `through`: each day after the
+ * carry's that had something due adds one when all of it was done and starts
+ * again from nothing when it wasn't. A day with nothing due doesn't break it.
+ */
+export function foldStreak(carry: StreakCarry, byDay: Map<string, boolean>, through: string): StreakCarry {
+  if (carry.day !== null && carry.day >= through) return carry;
+  const days = [...byDay.keys()].filter((d) => (carry.day === null || d > carry.day) && d <= through).sort();
+  let streak = carry.streak;
+  for (const d of days) streak = byDay.get(d) ? streak + 1 : 0;
+  return { streak, day: through };
+}
+
 /**
  * Days in a row with every occurrence done, counting back from yesterday — and
  * today too, once today's are all in. A day with nothing due doesn't break it.
+ * Days up to the carry's are the carry's; only later days are read from `byDay`.
  */
-export async function streak(db: D1Database, routineId: string, timeZone: string) {
-  const { results } = await db
-    .prepare("SELECT due_at, status FROM routine_events WHERE routine_id = ? ORDER BY due_at DESC LIMIT 400")
-    .bind(routineId)
-    .all<{ due_at: number; status: string }>();
-  const byDay = new Map<string, boolean>();
-  for (const e of results) {
-    const day = buckets(e.due_at, timeZone).day;
-    const done = e.status === "done";
-    byDay.set(day, (byDay.get(day) ?? true) && done);
-  }
-  const today = buckets(Date.now(), timeZone).day;
+export function streakFrom(byDay: Map<string, boolean>, today: string, carry: StreakCarry = { streak: 0, day: null }) {
+  const after = (d: string) => carry.day === null || d > carry.day;
+  let oldest: string | null = null;
+  for (const d of byDay.keys()) if (after(d) && (oldest === null || d < oldest)) oldest = d;
   let count = 0;
   let day = byDay.get(today) ? today : addDays(today, -1);
   for (let i = 0; i < 400; i++) {
+    if (!after(day)) return count + carry.streak;
     const ok = byDay.get(day);
     if (ok === undefined) {
-      // Nothing was due that day: skip over it, unless we've run off the end of the history.
-      if (!results.length || day < buckets(results[results.length - 1].due_at, timeZone).day) break;
+      // Nothing was due that day: skip over it, unless we've run off the end of
+      // the history, where the carry (if any) takes over.
+      if (oldest === null || day < oldest) return carry.day === null ? count : count + carry.streak;
     } else if (!ok) {
-      break;
+      return count;
     } else {
       count++;
     }
     day = addDays(day, -1);
   }
   return count;
+}
+
+export async function streak(db: D1Database, routineId: string, timeZone: string) {
+  const [row, { results }] = await Promise.all([
+    db.prepare("SELECT streak, streak_day FROM routines WHERE id = ?").bind(routineId).first<{ streak: number; streak_day: string | null }>(),
+    db
+      .prepare("SELECT due_at, status FROM routine_events WHERE routine_id = ? ORDER BY due_at DESC LIMIT 400")
+      .bind(routineId)
+      .all<{ due_at: number; status: string }>(),
+  ]);
+  return streakFrom(dayOutcomes(results, timeZone), buckets(Date.now(), timeZone).day, {
+    streak: row?.streak ?? 0,
+    day: row?.streak_day ?? null,
+  });
+}
+
+/**
+ * Folds every day up to the one `cutoff` falls in into the routine's running
+ * streak, from the events still there. Called where occurrences are written
+ * (which keeps it current for anything in use) and by the purge for every
+ * routine whose events it is about to delete, with its own cutoff. Returns
+ * whether the row moved. Cheap when there's nothing to do: one read.
+ */
+export async function settleStreak(db: D1Database, routineId: string, timeZone: string, cutoff = Date.now() - STREAK_SETTLED_DAYS * 86_400_000) {
+  const through = buckets(cutoff, timeZone).day;
+  const row = await db
+    .prepare("SELECT streak, streak_day FROM routines WHERE id = ?")
+    .bind(routineId)
+    .first<{ streak: number; streak_day: string | null }>();
+  if (!row || (row.streak_day !== null && row.streak_day >= through)) return false;
+  const from = row.streak_day === null ? 0 : atLocalTime(addDays(row.streak_day, 1), 0, timeZone);
+  const to = atLocalTime(addDays(through, 1), 0, timeZone);
+  const { results } = await db
+    .prepare("SELECT due_at, status FROM routine_events WHERE routine_id = ? AND due_at >= ? AND due_at < ?")
+    .bind(routineId, from, to)
+    .all<{ due_at: number; status: string }>();
+  const next = foldStreak({ streak: row.streak, day: row.streak_day }, dayOutcomes(results, timeZone), through);
+  // Only over the value read: two settles at once can't both add the same days.
+  const { meta } = await db
+    .prepare("UPDATE routines SET streak = ?, streak_day = ? WHERE id = ? AND streak_day IS ?")
+    .bind(next.streak, next.day, routineId, row.streak_day)
+    .run();
+  return !!meta.changes;
+}
+
+/** settleStreak for a write site: never fails the write it follows. */
+function settleQuietly(db: D1Database, routineId: string, timeZone: string) {
+  return settleStreak(db, routineId, timeZone).catch((err) => (console.error(`routines: couldn't settle the streak of ${routineId}`, err), false));
 }
 
 // ---------- The phone's side ----------

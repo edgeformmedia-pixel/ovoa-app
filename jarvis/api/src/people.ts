@@ -13,6 +13,12 @@ import type { Env, Vars } from "./types";
 // the same model call also says who came up and what was learned about them,
 // what anyone asked the user to do, and what the user was called. digestBlock
 // takes that and files it. The rest is said outright, through the tools.
+//
+// What's kept (retention.ts, docs/retention.md): what the user told OVOA
+// (person_remember's 'said' facts, a relation, a birthday, object_save) stays
+// until they remove it. What was only heard in a conversation goes after 14
+// days: 'heard' facts, a person nothing else was ever said about, a parked car,
+// a name nobody has used lately.
 
 /** Favors this sure are kept; between the two floors, the user is asked first; below, dropped. */
 export const FAVOR_KEEP = 0.8;
@@ -135,12 +141,14 @@ export async function digestBlock(env: Env, userId: string, blockId: string | nu
       .first<{ name: string; nicknames: string | null }>();
     const names = [known?.name ?? "", ...list<string>(known?.nicknames ?? null)].map(norm);
     if (names.some((n) => n === norm(name) || n.split(" ")[0] === norm(name))) continue;
+    // last_heard_at is what the purge ages a name out by (retention.ts): one
+    // nobody has used for 14 days goes, count and all.
     const row = await db
       .prepare(
-        `INSERT INTO name_candidates (user_id, name, count) VALUES (?, ?, 1)
-         ON CONFLICT(user_id, name) DO UPDATE SET count = count + 1 RETURNING count, asked_at`,
+        `INSERT INTO name_candidates (user_id, name, count, last_heard_at) VALUES (?, ?, 1, ?)
+         ON CONFLICT(user_id, name) DO UPDATE SET count = count + 1, last_heard_at = excluded.last_heard_at RETURNING count, asked_at`,
       )
-      .bind(userId, name)
+      .bind(userId, name, Date.now())
       .first<{ count: number; asked_at: number | null }>();
     if (row && row.count >= NAME_ASK_AFTER && !row.asked_at) {
       await db.prepare("UPDATE name_candidates SET asked_at = ? WHERE user_id = ? AND name = ?").bind(Date.now(), userId, name).run();
@@ -212,12 +220,12 @@ const TOOLS: ToolSpec[] = [
   {
     name: "person_lookup",
     description:
-      "Everything OVOA knows about someone: facts learned from conversations or told directly, what they asked the user for, and recent mentions. For 'what do I know about Jake', 'when's Sarah's birthday', 'what did Mum want'.",
+      "Everything OVOA knows about someone: facts the user told OVOA (kept), facts picked up from conversations in the last 14 days, what they asked the user for, and recent mentions. For 'what do I know about Jake', 'when's Sarah's birthday', 'what did Mum want'.",
     parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
   },
   {
     name: "person_remember",
-    description: "Keeps a fact about someone the user mentions: 'Jake's birthday is March 3rd', 'Sarah's allergic to nuts', 'Tom is my manager'.",
+    description: "Keeps a fact about someone the user tells you, until they remove it: 'Jake's birthday is March 3rd', 'Sarah's allergic to nuts', 'Tom is my manager'.",
     parameters: {
       type: "object",
       properties: {
@@ -294,7 +302,10 @@ export function peopleAssistant(env: Env, userId: string, timeZone: string) {
     }
     if (name === "favor_done") {
       const status = args.status === "dropped" ? "dropped" : "done";
-      const { meta } = await db.prepare("UPDATE context_commitments SET status = ? WHERE id = ? AND user_id = ?").bind(status, String(args.id ?? ""), userId).run();
+      const { meta } = await db
+        .prepare("UPDATE context_commitments SET status = ?, settled_at = ? WHERE id = ? AND user_id = ?")
+        .bind(status, Date.now(), String(args.id ?? ""), userId)
+        .run();
       if (!meta.changes) return { error: "No such request" };
       await db.prepare("DELETE FROM agent_jobs WHERE user_id = ? AND about = ? AND status != 'done'").bind(userId, String(args.id)).run();
       return { status };
@@ -321,6 +332,6 @@ export function peopleAssistant(env: Env, userId: string, timeZone: string) {
     tools: TOOLS,
     callTool,
     prompt:
-      "OVOA remembers people (facts from conversations and what they're told), what people asked the user to do, and where the user put things. Use person_lookup before answering about someone; keep new facts with person_remember; object_save and object_find for things.",
+      "OVOA remembers people (what the user tells it about them, kept; and what came up in conversation, for 14 days), what people asked the user to do, and where the user put things. Use person_lookup before answering about someone; keep new facts with person_remember; object_save and object_find for things.",
   };
 }

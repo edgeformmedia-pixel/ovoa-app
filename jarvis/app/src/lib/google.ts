@@ -20,3 +20,16 @@ export async function connectGoogle(token: string, accountId?: string): Promise<
 }
 
 export const GOOGLE_APPS = ["Gmail", "Calendar", "Drive", "Sheets", "Docs", "Tasks", "Contacts"];
+
+/**
+ * Google connections from before the v1 move didn't come across: they were
+ * made with the old Google client, and their tokens were locked with the old
+ * server's key (api/scripts/move-db-lib.mjs). An account from before then with
+ * nothing connected is told to reconnect, rather than just seeing "Connect".
+ * Generous on purpose: an account made a little after the move only sees one
+ * extra line.
+ */
+const GOOGLE_MOVED_BY = Date.parse("2026-10-15T00:00:00Z");
+
+export const mayHaveHadGoogle = (createdAt: number | undefined) =>
+  typeof createdAt === "number" && createdAt < GOOGLE_MOVED_BY;

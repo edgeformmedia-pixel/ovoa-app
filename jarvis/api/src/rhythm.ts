@@ -3,7 +3,7 @@ import { sendBuzz } from "./buzz";
 import { validTimeZone } from "./google/assistant";
 import { googleAccessToken, listGoogleAccounts } from "./google/oauth";
 import { toolsByName } from "./google/tools";
-import { generateText } from "./llm";
+import { generateText, isModelRefused } from "./llm";
 import { readiness, triageInbox } from "./extras";
 import { distanceM } from "./location";
 import { getProfile } from "./onboarding";
@@ -38,7 +38,7 @@ const EXPECT_SHARE = 0.8;
 /** Public, keyless: OpenStreetMap's geocoder and OSRM's demo router. Enough for one person's calendar. */
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 const OSRM = "https://router.project-osrm.org/route/v1/driving";
-const UA = "OVOA personal assistant (jarvis-api.edgeformmedia.workers.dev)";
+const UA = "OVOA personal assistant (api.ovoa.ai)";
 
 async function mark(db: D1Database, userId: string, kind: string, day: string) {
   const res = await db.prepare("INSERT OR IGNORE INTO daily_marks (user_id, kind, day, at) VALUES (?, ?, ?, ?)").bind(userId, kind, day, Date.now()).run();
@@ -567,7 +567,8 @@ export async function rhythmTick(env: Env, slice?: Slice) {
       counts.commutes += await commuteTick(env, u);
       counts.oddities += await oddityTick(env, u);
     } catch (err) {
-      console.error(`rhythm: tick failed for ${r.user_id}`, err);
+      // Refused by the gate (plans.ts modelGate) is a skip, not a failure.
+      if (!isModelRefused(err)) console.error(`rhythm: tick failed for ${r.user_id}`, err);
     }
   }
   return counts;

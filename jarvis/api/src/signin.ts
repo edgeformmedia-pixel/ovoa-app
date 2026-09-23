@@ -1,4 +1,4 @@
-// Signing in to the app with Google or Apple (migrations/0040_app_signin.sql).
+// Signing in to the app with Google or Apple (migrations/0044_app_signin.sql).
 // Google ends where emailauth.ts's proofs end: the address has an account and
 // is signed in, or a signup ticket goes back for the name + password step.
 // Apple never gets that step: it signs in, or makes the account there and

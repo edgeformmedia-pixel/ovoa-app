@@ -3,7 +3,27 @@
 // failure or a deploy. A wrong order here is a slow turn or a bill; a wrong
 // thinking field is a 400 from a provider in production.
 
-import { engineOrder, glmEndpoint, glmFlavor, isEngine, thinkingFields, thinkingLevelFor, type Engine, type OrderInput } from "../src/llm";
+import { quickThinking } from "../src/gemini";
+import {
+  AI_UNREACHABLE,
+  AiUnreachable,
+  chatCompletionsUrl,
+  chatWithTools,
+  cleanOrder,
+  engineOrder,
+  generateText,
+  hostFlavor,
+  isAiUnreachable,
+  isEngine,
+  OPENAI_PROVIDERS,
+  thinkingFields,
+  thinkingLevelFor,
+  usableOrder,
+  usableVoice,
+  type Engine,
+  type EngineAttempt,
+  type OrderInput,
+} from "../src/llm";
 
 let fails = 0;
 function eq(label: string, got: unknown, want: unknown) {
@@ -13,106 +33,175 @@ function eq(label: string, got: unknown, want: unknown) {
 }
 
 const now = 1_758_412_800_000;
-const all: Record<Engine, boolean> = { gemini: true, deepseek: true, glm: true, workers: true };
-const order = (over: Partial<OrderInput>) =>
-  engineOrder({ available: all, cooling: {}, now, voice: false, fast: false, ...over }).join(",");
+const all: Record<Engine, boolean> = { glm: true, gemini: true };
+const order = (over: Partial<OrderInput>) => engineOrder({ available: all, cooling: {}, now, voice: false, ...over }).join(",");
 
-// ---------- Typed turns ----------
+// ---------- Every call ----------
 
-eq("nothing set: the keyed ones, then Workers AI last", order({}), "gemini,deepseek,glm,workers");
-eq("PRIMARY_ENGINE moves one to the front", order({ primary: "deepseek" }), "deepseek,gemini,glm,workers");
-eq("PRIMARY_ENGINE can be glm", order({ primary: "glm" }), "glm,gemini,deepseek,workers");
-eq("PRIMARY_ENGINE workers is ignored (it is the net, not the first)", order({ primary: "workers" }), "gemini,deepseek,glm,workers");
-eq("an unknown primary is ignored, not fatal", order({ primary: "claude" }), "gemini,deepseek,glm,workers");
-eq("an explicit order wins", order({ order: "glm,deepseek,gemini,workers", primary: "deepseek" }), "glm,deepseek,gemini,workers");
-eq("Workers AI is appended when the order leaves it out", order({ order: "glm,deepseek" }), "glm,deepseek,workers");
-eq("Workers AI stays where it was put", order({ order: "workers,glm" }), "workers,glm");
-eq("unknown names in the order are skipped", order({ order: "glm, claude ,deepseek" }), "glm,deepseek,workers");
-eq("spaces and case don't matter", order({ order: " GLM , DeepSeek " }), "glm,deepseek,workers");
-eq("a name twice counts once", order({ order: "glm,glm,workers" }), "glm,workers");
-eq("an order of only rubbish falls back to the default", order({ order: "claude,gpt" }), "gemini,deepseek,glm,workers");
+eq("nothing set: GLM, then Gemini", order({}), "glm,gemini");
+eq("an order puts its engine first", order({ order: "gemini" }), "gemini,glm");
+eq("the ones it leaves out follow, so there is always a fallback", order({ order: "gemini,glm" }), "gemini,glm");
+eq("unknown names in the order are skipped", order({ order: "claude, gemini" }), "gemini,glm");
+eq("spaces and case don't matter", order({ order: " Gemini , GLM " }), "gemini,glm");
+eq("a name twice counts once", order({ order: "gemini,gemini" }), "gemini,glm");
+eq("an order of only rubbish is the usual order", order({ order: "claude,gpt" }), "glm,gemini");
 
 // ---------- Keys ----------
 
-const noGlm = { ...all, glm: false };
-eq("no GLM key: GLM does not exist", order({ available: noGlm, order: "glm,deepseek,gemini" }), "deepseek,gemini,workers");
-eq("no GLM key and it was primary: silently the next one", order({ available: noGlm, primary: "glm" }), "gemini,deepseek,workers");
-eq("no keys at all: Workers AI alone", order({ available: { gemini: false, deepseek: false, glm: false, workers: true } }), "workers");
+eq("no GLM key: GLM does not exist", order({ available: { ...all, glm: false } }), "gemini");
+eq("no GLM key and it was first: silently the next one", order({ available: { ...all, glm: false }, order: "glm" }), "gemini");
+eq("no Gemini key: GLM alone", order({ available: { ...all, gemini: false } }), "glm");
+eq("no keys at all: nothing to try", order({ available: { glm: false, gemini: false } }), "");
 
 // ---------- Cooldowns ----------
 
-eq("a cooling engine waits its turn out", order({ primary: "deepseek", cooling: { deepseek: now + 60_000 } }), "gemini,glm,workers");
-eq("a cooldown that has passed is over", order({ primary: "deepseek", cooling: { deepseek: now - 1 } }), "deepseek,gemini,glm,workers");
-eq("everything cooling: Workers AI is tried anyway", order({ cooling: { gemini: now + 1, deepseek: now + 1, glm: now + 1, workers: now + 1 } }), "workers");
-eq("Workers AI cooling (4006): the keyed ones without it", order({ cooling: { workers: now + 3_600_000 } }), "gemini,deepseek,glm");
+eq("a cooling engine waits its turn out", order({ cooling: { glm: now + 60_000 } }), "gemini");
+eq("a cooldown that has passed is over", order({ cooling: { glm: now - 1 } }), "glm,gemini");
+eq("everything cooling: nothing to try (the call says it can't reach the AI)", order({ cooling: { glm: now + 1, gemini: now + 1 } }), "");
 
 // ---------- Spoken turns ----------
 
-eq("spoken: Workers AI first by default", order({ voice: true, primary: "deepseek" }), "workers,deepseek,gemini,glm");
-eq("spoken with VOICE_PRIMARY keyed: the typed order", order({ voice: true, primary: "deepseek", voicePrimary: "keyed" }), "deepseek,gemini,glm,workers");
-eq("spoken with VOICE_PRIMARY naming an engine", order({ voice: true, voicePrimary: "glm" }), "glm,gemini,deepseek,workers");
-eq("spoken naming an engine with no key: Workers AI first", order({ voice: true, voicePrimary: "glm", available: noGlm }), "workers,gemini,deepseek");
-eq("spoken naming a cooling engine: Workers AI first", order({ voice: true, voicePrimary: "glm", cooling: { glm: now + 1 } }), "workers,gemini,deepseek");
-eq("spoken with an unknown VOICE_PRIMARY: the default", order({ voice: true, voicePrimary: "claude" }), "workers,gemini,deepseek,glm");
-eq("spoken and Workers AI is out: the keyed order", order({ voice: true, primary: "deepseek", cooling: { workers: now + 1 } }), "deepseek,gemini,glm");
-
-// ---------- Quick calls ----------
-
-eq("a quick call goes to Workers AI first whatever is set", order({ fast: true, order: "glm,deepseek" }), "workers,glm,deepseek");
-eq("a quick call with Workers AI out: the rest", order({ fast: true, cooling: { workers: now + 1 } }), "gemini,deepseek,glm");
+eq("spoken: the same order as typed", order({ voice: true }), "glm,gemini");
+eq("spoken with voice_engine keyed: the same order", order({ voice: true, voicePrimary: "keyed" }), "glm,gemini");
+eq("spoken with voice_engine naming an engine", order({ voice: true, voicePrimary: "gemini" }), "gemini,glm");
+eq("spoken naming an engine with no key: the rest", order({ voice: true, voicePrimary: "gemini", available: { ...all, gemini: false } }), "glm");
+eq("spoken naming a cooling engine: the rest", order({ voice: true, voicePrimary: "gemini", cooling: { gemini: now + 1 } }), "glm");
+eq("voice_engine is for spoken turns only", order({ voicePrimary: "gemini" }), "glm,gemini");
+eq("spoken with an unknown voice_engine: the usual order", order({ voice: true, voicePrimary: "workers" }), "glm,gemini");
 
 // ---------- Names ----------
 
 eq("glm is an engine", isEngine("glm"), true);
-eq("Claude is not", isEngine("claude"), false);
+eq("gemini is an engine", isEngine("gemini"), true);
+eq("Workers AI is not, any more", isEngine("workers"), false);
+eq("nor DeepSeek", isEngine("deepseek"), false);
+eq("nor Claude", isEngine("claude"), false);
+eq("GLM is an OpenAI-compatible provider", OPENAI_PROVIDERS.glm.keyVar, "GLM_API_KEY");
 
-// ---------- Where GLM lives ----------
+// ---------- Stored settings from before v1 ----------
 
-eq("no base: Z.ai", glmFlavor(undefined), "zai");
-eq("Z.ai's url", glmFlavor("https://api.z.ai/api/paas/v4"), "zai");
-eq("OpenRouter", glmFlavor("https://openrouter.ai/api/v1"), "openrouter");
-eq("anything else is plain OpenAI-style", glmFlavor("https://api.deepinfra.com/v1/openai"), "openai");
-eq("the default endpoint", glmEndpoint(undefined), "https://api.z.ai/api/paas/v4/chat/completions");
-eq("a base with a trailing slash", glmEndpoint("https://openrouter.ai/api/v1/"), "https://openrouter.ai/api/v1/chat/completions");
-eq("a base that already has the path", glmEndpoint("https://x.example/v1/chat/completions"), "https://x.example/v1/chat/completions");
+// Writes: an order keeps its known engines. Old Dev tools builds add ",workers".
+eq("an old build's order loses Workers AI", cleanOrder("glm,gemini,workers"), "glm,gemini");
+eq("and DeepSeek", cleanOrder("deepseek,gemini,workers"), "gemini");
+eq("an order of nothing known is empty (refused)", cleanOrder("claude,workers"), "");
+eq("case and spaces are tidied", cleanOrder(" Gemini ,GLM"), "gemini,glm");
+// Reads: a copied row that names a retired engine was written for the old set.
+eq("a copied order naming DeepSeek is ignored whole", usableOrder("deepseek,gemini,glm,workers"), undefined);
+eq("one naming Workers AI too", usableOrder("glm,workers"), undefined);
+eq("a current order is kept", usableOrder("gemini,glm"), "gemini,glm");
+eq("nothing is nothing", usableOrder(""), undefined);
+eq("a copied voice_engine of workers is ignored", usableVoice("workers"), undefined);
+eq("keyed is kept", usableVoice("keyed"), "keyed");
+eq("an engine is kept", usableVoice(" GLM "), "glm");
+
+// ---------- Where a provider lives ----------
+
+eq("Z.ai's url", hostFlavor("https://api.z.ai/api/paas/v4"), "zai");
+eq("the default GLM host is Z.ai", hostFlavor(OPENAI_PROVIDERS.glm.defaultBaseUrl), "zai");
+eq("OpenRouter", hostFlavor("https://openrouter.ai/api/v1"), "openrouter");
+eq("anything else is plain OpenAI-style", hostFlavor("https://api.deepinfra.com/v1/openai"), "openai");
+eq("the default endpoint", chatCompletionsUrl(OPENAI_PROVIDERS.glm.defaultBaseUrl), "https://api.z.ai/api/paas/v4/chat/completions");
+eq("a base with a trailing slash", chatCompletionsUrl("https://openrouter.ai/api/v1/"), "https://openrouter.ai/api/v1/chat/completions");
+eq("a base that already has the path", chatCompletionsUrl("https://x.example/v1/chat/completions"), "https://x.example/v1/chat/completions");
 
 // ---------- How much to think ----------
 
-const env = { DEEPSEEK_THINKING: undefined, GLM_THINKING: undefined };
-eq("spoken never thinks", thinkingLevelFor(env, "deepseek", "deepseek-flash", true), "off");
-eq("typed DeepSeek thinks a little by default", thinkingLevelFor(env, "deepseek", "deepseek-flash", false), "low");
-eq("typed GLM thinks a little by default", thinkingLevelFor(env, "glm", "glm-5.3-flash", false), "low");
-eq("the var can turn it up", thinkingLevelFor({ ...env, GLM_THINKING: "on" }, "glm", "glm-5.3-flash", false), "on");
-eq("the var can turn it off", thinkingLevelFor({ ...env, DEEPSEEK_THINKING: "off" }, "deepseek", "deepseek-flash", false), "off");
-eq("a garbage var keeps the default", thinkingLevelFor({ ...env, DEEPSEEK_THINKING: "lots" }, "deepseek", "deepseek-flash", false), "low");
-eq("gpt-oss typed keeps its own default", thinkingLevelFor(env, "workers", "@cf/openai/gpt-oss-120b", false), "on");
-eq("GLM on Workers AI follows the GLM var", thinkingLevelFor(env, "workers", "@cf/zai-org/glm-5.3-flash", false), "low");
+const env = { GLM_THINKING: undefined };
+eq("spoken never thinks", thinkingLevelFor(env, "glm", true), "off");
+eq("typed GLM thinks a little by default", thinkingLevelFor(env, "glm", false), "low");
+eq("the var can turn it up", thinkingLevelFor({ GLM_THINKING: "on" }, "glm", false), "on");
+eq("the var can turn it off", thinkingLevelFor({ GLM_THINKING: "off" }, "glm", false), "off");
+eq("a garbage var keeps the default", thinkingLevelFor({ GLM_THINKING: "lots" }, "glm", false), "low");
 
-const fields = (engine: "deepseek" | "glm" | "workers", model: string, level: "off" | "low" | "on", flavor?: "zai" | "openrouter" | "openai") =>
-  JSON.stringify(thinkingFields(engine, model, level, flavor));
+const fields = (model: string, level: "off" | "low" | "on", flavor: "zai" | "openrouter" | "openai" | "none") =>
+  JSON.stringify(thinkingFields(model, level, flavor));
 
-// gpt-oss: today's behaviour exactly.
-eq("gpt-oss spoken: reasoning_effort low", fields("workers", "@cf/openai/gpt-oss-120b", "off"), '{"reasoning_effort":"low"}');
-eq("gpt-oss typed: nothing added", fields("workers", "@cf/openai/gpt-oss-120b", "on"), "{}");
-// GLM on Workers AI: the template flag switches it off.
-eq("Workers GLM off", fields("workers", "@cf/zai-org/glm-5.3-flash", "off"), '{"chat_template_kwargs":{"enable_thinking":false}}');
-eq("Workers GLM low", fields("workers", "@cf/zai-org/glm-5.3-flash", "low"), '{"reasoning_effort":"low"}');
-eq("an unknown Workers model gets nothing", fields("workers", "@cf/meta/llama", "off"), "{}");
-// DeepSeek: "none" is off.
-eq("DeepSeek off", fields("deepseek", "deepseek-flash", "off"), '{"reasoning_effort":"none"}');
-eq("DeepSeek low", fields("deepseek", "deepseek-flash", "low"), '{"reasoning_effort":"low"}');
-eq("DeepSeek on: its own default", fields("deepseek", "deepseek-flash", "on"), "{}");
 // Z.ai: 5.3 cannot be switched off, so off means low.
-eq("Z.ai GLM 5.3 off is really low", fields("glm", "glm-5.3-flash", "off", "zai"), '{"thinking":{"type":"enabled"},"reasoning_effort":"low"}');
-eq("Z.ai GLM 5.3 on is high, not its max default", fields("glm", "glm-5.3-flash", "on", "zai"), '{"thinking":{"type":"enabled"},"reasoning_effort":"high"}');
-eq("Z.ai GLM 5.2 can be switched off", fields("glm", "glm-5.2", "off", "zai"), '{"thinking":{"type":"disabled"}}');
-eq("Z.ai GLM 4.7 has only the switch", fields("glm", "glm-4.7-flash", "low", "zai"), '{"thinking":{"type":"enabled"}}');
+eq("Z.ai GLM 5.3 off is really low", fields("glm-5.3-flash", "off", "zai"), '{"thinking":{"type":"enabled"},"reasoning_effort":"low"}');
+eq("Z.ai GLM 5.3 on is high, not its max default", fields("glm-5.3-flash", "on", "zai"), '{"thinking":{"type":"enabled"},"reasoning_effort":"high"}');
+eq("Z.ai GLM 5.2 can be switched off", fields("glm-5.2", "off", "zai"), '{"thinking":{"type":"disabled"}}');
+eq("Z.ai GLM 4.7 has only the switch", fields("glm-4.7-flash", "low", "zai"), '{"thinking":{"type":"enabled"}}');
 // OpenRouter: a reasoning object, kept out of the reply.
-eq("OpenRouter GLM 5.3 off is low and hidden", fields("glm", "z-ai/glm-5.3-flash", "off", "openrouter"), '{"reasoning":{"effort":"low","exclude":true}}');
-eq("OpenRouter GLM 4.7 can be disabled", fields("glm", "z-ai/glm-4.7-flash", "off", "openrouter"), '{"reasoning":{"enabled":false}}');
-eq("OpenRouter on", fields("glm", "z-ai/glm-5.3-flash", "on", "openrouter"), '{"reasoning":{"effort":"high","exclude":true}}');
+eq("OpenRouter GLM 5.3 off is low and hidden", fields("z-ai/glm-5.3-flash", "off", "openrouter"), '{"reasoning":{"effort":"low","exclude":true}}');
+eq("OpenRouter GLM 4.7 can be disabled", fields("z-ai/glm-4.7-flash", "off", "openrouter"), '{"reasoning":{"enabled":false}}');
+eq("OpenRouter on", fields("z-ai/glm-5.3-flash", "on", "openrouter"), '{"reasoning":{"effort":"high","exclude":true}}');
 // Anyone else: the plain field.
-eq("a plain host gets reasoning_effort", fields("glm", "glm-5.3-flash", "off", "openai"), '{"reasoning_effort":"low"}');
+eq("a plain host gets reasoning_effort", fields("glm-5.3-flash", "off", "openai"), '{"reasoning_effort":"low"}');
+eq("so does another provider's model there", fields("some-model", "on", "openai"), '{"reasoning_effort":"high"}');
+// A provider whose model doesn't think (OpenAiProvider.thinking "none"): nothing, whatever the level.
+eq("a non-thinking provider gets no field when off", fields("some-model", "off", "none"), "{}");
+eq("nor when thinking is on", fields("some-model", "on", "none"), "{}");
+
+// Gemini: the least thinking each model takes.
+eq("Flash-Lite goes down to minimal", quickThinking("gemini-3.5-flash-lite"), "minimal");
+eq("3.8 Flash refuses minimal, so low", quickThinking("gemini-3.8-flash"), "low");
+
+// ---------- When nothing can answer ----------
+
+eq("the sentence a person gets names no engine", /GLM|Gemini|DeepSeek|Workers/.test(AI_UNREACHABLE), false);
+eq("the error is recognised by name too", isAiUnreachable(Object.assign(new Error("x"), { name: "AiUnreachable" })), true);
+eq("an ordinary error is not it", isAiUnreachable(new Error("GLM glm-5.3-flash 500: boom")), false);
+
+// With no key anywhere there is nothing to try: the call throws AiUnreachable
+// at once (no fetch is made) and says, in the engine table, why.
+const attempts: EngineAttempt[] = [];
+let thrown: unknown = null;
+try {
+  await generateText({}, {
+    model: "gemini-3.5-flash-lite",
+    system: "s",
+    turns: [{ role: "user", text: "hi" }],
+    usage: { userId: "u1", purpose: "test" },
+    onAttempt: (a) => attempts.push(a),
+  });
+} catch (err) {
+  thrown = err;
+}
+eq("no keys: AiUnreachable", thrown instanceof AiUnreachable, true);
+eq("which says which keys are missing", String((thrown as Error)?.message).includes("GLM_API_KEY"), true);
+eq("and each engine is written down as having no key", attempts.map((a) => `${a.engine}:${a.outcome}`).join(","), "glm:no_key,gemini:no_key");
+
+// A paused turn resumed with nothing to carry it on is the AI out of reach too
+// (/chat/resume answers it plainly), whichever engine it paused on.
+const resumed = async (state: any) => {
+  try {
+    await chatWithTools({}, {
+      model: "gemini-3.5-flash-lite",
+      system: "s",
+      turns: [{ role: "user", text: "what's on my calendar" }],
+      tools: [],
+      callTool: async () => ({}),
+      usage: { userId: "u1", purpose: "test" },
+      resume: { state, results: { c1: { events: [] } } },
+    });
+    return null;
+  } catch (err) {
+    return err;
+  }
+};
+const glmPaused = {
+  engine: "glm",
+  round: 1,
+  messages: [
+    { role: "user", content: "what's on my calendar" },
+    { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "calendar", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "c1", content: "" },
+  ],
+  slots: [{ id: "c1", index: 2 }],
+};
+const geminiPaused = {
+  engine: "gemini",
+  round: 1,
+  contents: [
+    { role: "user", parts: [{ text: "what's on my calendar" }] },
+    { role: "model", parts: [{ functionCall: { name: "calendar", args: {} } }] },
+    { role: "user", parts: [{ functionResponse: { name: "calendar", response: {} } }] },
+  ],
+  slots: [{ id: "c1", part: 0 }],
+};
+eq("resuming a GLM-paused turn with no engine: AiUnreachable", isAiUnreachable(await resumed(glmPaused)), true);
+eq("resuming a Gemini-paused turn with no engine: AiUnreachable", isAiUnreachable(await resumed(geminiPaused)), true);
+eq("resuming on a retired engine with none ready: AiUnreachable", isAiUnreachable(await resumed({ ...glmPaused, engine: "deepseek" })), true);
 
 console.log(fails ? `\n${fails} failed` : "\nall passed");
 process.exit(fails ? 1 : 0);

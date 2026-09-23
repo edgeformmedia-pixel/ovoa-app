@@ -1,4 +1,4 @@
-import { generateText } from "../llm";
+import { generateText, isAiUnreachable, isModelRefused } from "../llm";
 import { localMinutes } from "../time";
 import { mayRunFor } from "../plans";
 import type { Env } from "../types";
@@ -43,7 +43,7 @@ const list = (json: string) => {
   }
 };
 
-/** Learns one account's profile from its last sent mail and its calendar. */
+/** Learns one account's profile from its last sent mail and its calendar. Throws, saving nothing, when the model is refused or out of reach. */
 export async function learnAccountProfile(env: Env, userId: string, account: GoogleAccount, timeZone: string) {
   const ctx = { token: await googleAccessToken(env, userId, account.id), timeZone };
   const [sent, events] = await Promise.all([
@@ -82,7 +82,10 @@ export async function learnAccountProfile(env: Env, userId: string, account: Goo
         turns: [{ role: "user", text: JSON.stringify(titles) }],
       });
       topics = ((JSON.parse(raw) as { topics?: string[] }).topics ?? []).map((t) => t.toLowerCase().trim()).filter(Boolean).slice(0, 10);
-    } catch {
+    } catch (err) {
+      // Not asked (refused by the gate) or no AI to ask: the profile stays as
+      // it was, rather than saved with no topics and left for a week.
+      if (isModelRefused(err) || isAiUnreachable(err)) throw err;
       topics = [];
     }
   }
@@ -114,7 +117,9 @@ export async function relearnAccounts(env: Env) {
     // Learning an account is a model call: Base's (plans.ts).
     if (!(await mayRunFor(env, u.user_id, "base"))) continue;
     for (const a of accounts) {
-      await learnAccountProfile(env, u.user_id, a, u.time_zone ?? "UTC").catch((err) => console.error("routing: couldn't learn an account", err));
+      await learnAccountProfile(env, u.user_id, a, u.time_zone ?? "UTC").catch((err) => {
+        if (!isModelRefused(err)) console.error("routing: couldn't learn an account", err);
+      });
       learned++;
     }
   }

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { generateText } from "./llm";
+import { generateText, isModelRefused } from "./llm";
 import type { Env } from "./types";
 
 // Always-listening sends everything the phone overhears. Before treating it as
@@ -137,7 +137,8 @@ export async function isMeantForAssistant(env: Env, userId: string | null, text:
     console.log(`ambient: ${addressed ? "addressed" : "ignored"}`, text);
     return addressed;
   } catch (err) {
-    console.error("ambient check failed", err);
+    // Refused by the gate is no fault; the turn that follows is refused too and says why.
+    if (!isModelRefused(err)) console.error("ambient check failed", err);
     // Can't tell: only a very recent follow-up gets through.
     return secondsSinceReply !== null && secondsSinceReply * 1000 < FOLLOW_UP_MS;
   }

@@ -34,7 +34,7 @@ The server knows each person's plan (`free`, `base` or `pro`). It serves health 
 
 ## Verify and finish
 - Run `npm run typecheck`, `npm test`, and `npm run smoke` against `wrangler dev --local`. The smoke total must go up, not down.
-- Then run `npm run db:migrate` and `npm run deploy` with the edgeformmedia profile.
+- Then run `npm run db:migrate` and `npm run deploy` with the ovoa.ai account's profile (`XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa`).
 - Check production with a throwaway account (`DELETE /me` afterwards).
 - Commit and push.
 - Report the route table and the caps you chose.

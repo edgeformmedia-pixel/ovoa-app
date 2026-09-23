@@ -32,10 +32,10 @@ const openai = readOpenAiUsage({ prompt_tokens: 5_000, completion_tokens: 200, p
 eq("OpenAI-style cached tokens", openai?.cached, 4_000);
 eq("OpenAI-style output", openai?.output, 200);
 
-// Workers AI: the plain three.
-const workers = readOpenAiUsage({ prompt_tokens: 3_000, completion_tokens: 100, total_tokens: 3_100 });
-eq("Workers AI has no cached count", workers?.cached, 0);
-eq("Workers AI input", workers?.input, 3_000);
+// A host that sends only the plain three.
+const plain = readOpenAiUsage({ prompt_tokens: 3_000, completion_tokens: 100, total_tokens: 3_100 });
+eq("the plain three have no cached count", plain?.cached, 0);
+eq("the plain three's input", plain?.input, 3_000);
 
 // DeepSeek with only hits and misses, no prompt_tokens: added up.
 eq("hits plus misses when there is no total", readOpenAiUsage({ prompt_cache_hit_tokens: 30, prompt_cache_miss_tokens: 70, completion_tokens: 1 })?.input, 100);
@@ -54,8 +54,8 @@ eq("Gemini with no thoughts field", readGeminiUsage({ promptTokenCount: 10, cand
 // ---------- Rows ----------
 
 const call: LlmUsage = {
-  engine: "workers",
-  model: "@cf/openai/gpt-oss-120b",
+  engine: "gemini",
+  model: "gemini-3.5-flash-lite",
   inputTokens: 11_400,
   cachedTokens: 0,
   outputTokens: 350,
@@ -66,15 +66,18 @@ const call: LlmUsage = {
 };
 const row = llmRow("u1", call);
 eq("a call row is an llm_call", row.kind, "llm_call");
-eq("filed under its model", row.model, "@cf/openai/gpt-oss-120b");
-eq("and priced", row.microUsd, 4_253);
-eq("a GLM row uses the provider's price", llmRow("u1", { ...call, engine: "glm" as never, model: "glm-5.3-flash" }, { in: 0.06, out: 0.2, cachedIn: 0.06 }).microUsd, 754);
-eq("a turn row carries no cost", turnRow("u1", "workers", true).microUsd, undefined);
-eq("a spoken turn is filed as voice", turnRow("u1", "workers", true).model, "voice");
+eq("filed under its model", row.model, "gemini-3.5-flash-lite");
+eq("and priced", row.microUsd, 4_295);
+eq("a GLM row uses the provider's price", llmRow("u1", { ...call, engine: "glm", model: "glm-5.3-flash" }, { in: 0.06, out: 0.2, cachedIn: 0.06 }).microUsd, 754);
+eq("a turn row carries no cost", turnRow("u1", "glm", true).microUsd, undefined);
+eq("a spoken turn is filed as voice", turnRow("u1", "glm", true).model, "voice");
 eq("ten minutes of mic", sttStreamRow("u1", "deepgram-nova-3-live", 600, 2).microUsd, 48_000);
 eq("a voiced sentence", ttsRow("u1", "deepgram-aura-2", "aura-2-thalia-en", 100).microUsd, 3_000);
 
 // ---------- Folding a day ----------
+
+// The Sept 21 baseline, as the table holds it: rows written by Workers AI
+// before v1 fold like any other engine's.
 
 const day: DayTotals = { day: "2026-09-21", turns: 0, llmCalls: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0, ttsChars: 0, streamSeconds: 0, clipSeconds: 0, searches: 0, microUsd: 0, by: {} };
 const base = { user_id: "u1", day: "2026-09-21", engine: "", model: "", n: 0, input_tokens: 0, cached_tokens: 0, output_tokens: 0, chars: 0, seconds: 0, est_micro_usd: 0 };

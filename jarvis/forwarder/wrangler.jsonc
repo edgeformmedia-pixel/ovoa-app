@@ -1,0 +1,32 @@
+{
+  "$schema": "../api/node_modules/wrangler/config-schema.json",
+  // The old address, handed on to api.ovoa.ai (src/index.ts says why and how).
+  // It replaces the old `jarvis-api` Worker on the old account, so the name is
+  // the same and workers.dev stays on: jarvis-api.edgeformmedia.workers.dev
+  // keeps answering for builds made before the move, until 2026-10-14.
+  "name": "jarvis-api",
+  "main": "src/index.ts",
+  // The same date as the server (../api/wrangler.jsonc), which sets no flags.
+  "compatibility_date": "2026-09-01",
+  // The OLD account (edgeformmedia), pinned. A pinned id beats
+  // CLOUDFLARE_ACCOUNT_ID and wrangler's account cache, so this can only ever
+  // replace the old Worker. It can never land on the new account and overwrite
+  // the real server there, which has the same name. Deploy it with the old
+  // account's profile (XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-edgeformmedia).
+  "account_id": "33594882ed1877edb5cee6f495ca7fae",
+  "workers_dev": true,
+  // No crons, written out. Checked in wrangler 4.133.0
+  // (../api/node_modules/wrangler/wrangler-dist/cli.js): the deploy's crons are
+  // `args.triggers ?? config.triggers?.crons` (line 207750), and the schedules
+  // are PUT, replacing whatever the script had, only `if (crons)` (line 152375).
+  // [] is truthy, so an explicit empty list PUTs [] and clears the old Worker's
+  // two schedules. Leaving "triggers" out would give undefined, skip the PUT and
+  // keep them: the old Worker's crons would go on firing at a script with no
+  // scheduled handler.
+  "triggers": { "crons": [] }
+  // No bindings: no D1 (the old jarvis-db stays as the backup, unreachable from
+  // here), no AI, no rate limits, no vars. The old Worker's secrets stay on it
+  // (a deploy doesn't delete secrets), and nothing here reads them. They go
+  // when this Worker is deleted, or sooner with
+  // `npx wrangler secret delete NAME -c ../forwarder/wrangler.jsonc` and the same profile.
+}

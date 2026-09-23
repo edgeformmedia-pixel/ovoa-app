@@ -1,4 +1,4 @@
-import type { CallTool, ToolSpec } from "./llm";
+import { isModelRefused, searchGrounded, type CallTool, type ToolSpec } from "./llm";
 import type { Env } from "./types";
 
 // Looking things up on the internet.
@@ -12,12 +12,14 @@ import type { Env } from "./types";
 // Two ways to answer, tried in order:
 //
 //   1. Gemini's own google_search grounding. No extra key, no scraping, and the
-//      sources come back attached. This is the real path.
+//      sources come back attached. This is the real path. It is a model call,
+//      so it goes through llm.ts searchGrounded and its gate like every other
+//      one: that is why the person is passed in.
 //   2. DuckDuckGo's HTML endpoint, parsed. Only reached when the Gemini key is
-//      missing or out of quota, and it returns snippets rather than an answer.
+//      missing or out of quota, or the gate refused the grounding (the day's
+//      spend ran out mid-turn), and it returns snippets rather than an answer.
 //      It is a floor, not a plan: DuckDuckGo throttles and its markup changes.
 
-const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MAX_SOURCES = 5;
 const TIMEOUT_MS = 12_000;
 
@@ -64,57 +66,6 @@ function cacheStore(): Cache | null {
   }
 }
 
-/** Gemini answers with search turned on, and says where it got it. */
-async function grounded(apiKey: string, model: string, query: string, today: string): Promise<SearchResult> {
-  const res = await fetch(`${BASE}/${model}:generateContent`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [
-          {
-            text: [
-              `Today is ${today}. Search the web and answer the question directly.`,
-              "Three sentences at most. Lead with the answer, not with how you found it.",
-              "Give numbers, times and dates exactly as the source gives them.",
-              "If the sources disagree or none of them actually answer it, say so instead of picking one.",
-            ].join(" "),
-          },
-        ],
-      },
-      contents: [{ role: "user", parts: [{ text: query }] }],
-      tools: [{ google_search: {} }],
-    }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`Gemini search ${res.status}: ${(await res.text()).slice(0, 300)}`);
-
-  const data = (await res.json()) as {
-    candidates?: {
-      content?: { parts?: { text?: string; thought?: boolean }[] };
-      groundingMetadata?: { groundingChunks?: { web?: { uri?: string; title?: string } }[] };
-    }[];
-  };
-  const candidate = data.candidates?.[0];
-  const answer = (candidate?.content?.parts ?? [])
-    .filter((p) => p.text && !p.thought)
-    .map((p) => p.text)
-    .join("")
-    .trim();
-  if (!answer) throw new Error("Gemini search returned no text");
-
-  const seen = new Set<string>();
-  const sources: { title: string; url: string }[] = [];
-  for (const chunk of candidate?.groundingMetadata?.groundingChunks ?? []) {
-    const url = chunk.web?.uri;
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-    sources.push({ title: chunk.web?.title ?? url, url });
-    if (sources.length >= MAX_SOURCES) break;
-  }
-  return { answer, ...(sources.length && { sources }), via: "gemini" };
-}
-
 const unescapeHtml = (s: string) =>
   s
     .replace(/<[^>]+>/g, "")
@@ -155,24 +106,35 @@ async function duckDuckGo(query: string): Promise<SearchResult> {
   };
 }
 
-/** Looks `query` up on the web, by whichever route SEARCH_ENGINE says. Throws only if every route fails. */
-async function searchFresh(env: Env, engine: SearchEngine, query: string, today: string): Promise<SearchResult> {
+/**
+ * Looks `query` up on the web for `userId`, by whichever route SEARCH_ENGINE
+ * says. Throws only if every route fails.
+ */
+async function searchFresh(env: Env, userId: string, engine: SearchEngine, query: string, today: string): Promise<SearchResult> {
   if (engine !== "duckduckgo" && env.GEMINI_API_KEY) {
     try {
-      return await grounded(env.GEMINI_API_KEY, env.CHAT_MODEL, query, today);
+      const found = await searchGrounded(env, { query, today, usage: { userId, purpose: "search" } });
+      return { answer: found.answer, ...(found.sources.length && { sources: found.sources }), via: "gemini" };
     } catch (err) {
-      console.error("web: grounded search failed, trying DuckDuckGo", err);
+      // Refused by the gate is not a failure: DuckDuckGo is no model, and costs nothing.
+      if (!isModelRefused(err)) console.error("web: grounded search failed, trying DuckDuckGo", err);
     }
   }
   return duckDuckGo(query);
 }
 
 /**
- * Looks `query` up on the web: from the cache when the same thing was asked in
- * the last half hour, otherwise fresh, and the fresh answer is kept. `ctx` lets
- * the write happen after the reply has gone out.
+ * Looks `query` up on the web for `userId`: from the cache when the same thing
+ * was asked in the last half hour, otherwise fresh, and the fresh answer is
+ * kept. `ctx` lets the write happen after the reply has gone out.
  */
-export async function searchWeb(env: Env, query: string, today: string, ctx?: { waitUntil(p: Promise<unknown>): void }): Promise<SearchResult> {
+export async function searchWeb(
+  env: Env,
+  userId: string,
+  query: string,
+  today: string,
+  ctx?: { waitUntil(p: Promise<unknown>): void },
+): Promise<SearchResult> {
   const engine = searchEngineFrom(env.SEARCH_ENGINE);
   const cache = cacheStore();
   const key = cache ? await cacheKey(engine, query) : null;
@@ -184,8 +146,11 @@ export async function searchWeb(env: Env, query: string, today: string, ctx?: { 
       console.error("web: cache read failed", err);
     }
   }
-  const fresh = await searchFresh(env, engine, query, today);
-  if (cache && key) {
+  const fresh = await searchFresh(env, userId, engine, query, today);
+  // A DuckDuckGo stand-in for a Gemini answer (this person's lookup was
+  // refused, or Gemini failed) isn't kept: the key isn't per person, and it
+  // would answer everyone's next half hour of the same question.
+  if (cache && key && !(engine !== "duckduckgo" && fresh.via === "duckduckgo")) {
     const put = cache
       .put(key, new Response(JSON.stringify(fresh), { headers: { "content-type": "application/json", "cache-control": `max-age=${SEARCH_CACHE_S}` } }))
       .catch((err) => console.error("web: cache write failed", err));
@@ -224,7 +189,8 @@ export const isWebTool = (name: string) => NAMES.has(name);
  */
 export const MAX_SEARCHES_PER_TURN = 2;
 
-export function webAssistant(env: Env, timeZone: string, ctx?: { waitUntil(p: Promise<unknown>): void }) {
+/** The web_search tool for one person's turn (or their agent's run): searches are theirs, gate and all. */
+export function webAssistant(env: Env, userId: string, timeZone: string, ctx?: { waitUntil(p: Promise<unknown>): void }) {
   const today = new Date().toLocaleDateString("en-US", { timeZone, dateStyle: "full" });
   let fresh = 0;
 
@@ -236,7 +202,7 @@ export function webAssistant(env: Env, timeZone: string, ctx?: { waitUntil(p: Pr
       return { error: `That's the ${MAX_SEARCHES_PER_TURN} searches a reply allows. Answer with what you have, and say what you couldn't check.` };
     }
     try {
-      const found = await searchWeb(env, query, today, ctx);
+      const found = await searchWeb(env, userId, query, today, ctx);
       if (found.via !== "cache") fresh++;
       return found;
     } catch (err) {

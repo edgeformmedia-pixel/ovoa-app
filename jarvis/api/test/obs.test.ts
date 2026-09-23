@@ -17,11 +17,11 @@ function eq(label: string, got: unknown, want: unknown) {
 
 // ---------- Grouping ----------
 
-const deepseek402 = (id: string) =>
-  fingerprint("error", "/chat", `DeepSeek deepseek-flash 402: {"error":{"message":"Insufficient Balance"}} (request ${id})`);
+const glm402 = (id: string) =>
+  fingerprint("error", "/chat", `GLM glm-5.3-flash 402: {"error":{"message":"Insufficient balance"}} (request ${id})`);
 eq(
   "two of the same failure are one row",
-  deepseek402("3f2a9c11-0b7d-4e21-9a44-2c1d5e6f7a80") === deepseek402("a1b2c3d4-5e6f-4071-8899-aabbccddeeff"),
+  glm402("3f2a9c11-0b7d-4e21-9a44-2c1d5e6f7a80") === glm402("a1b2c3d4-5e6f-4071-8899-aabbccddeeff"),
   true,
 );
 eq(
@@ -32,7 +32,7 @@ eq(
 );
 // A status is the whole content of an engine failure; a fingerprint that
 // scrubbed short numbers would merge every one of them.
-eq("the status survives", fingerprint("error", "/chat", "Workers AI 4006: used up").includes("4006"), true);
+eq("the status survives", fingerprint("error", "/chat", "GLM glm-5.3-flash 429: rate limited").includes("429"), true);
 eq(
   "a timestamp does not",
   fingerprint("error", "/chat", "failed at 1758412800123") === fingerprint("error", "/chat", "failed at 1758499200456"),
@@ -46,12 +46,8 @@ eq(
 
 // ---------- The one word ----------
 
-eq("out of free neurons", classifyEngineError(new Error("4006: used up your daily free allocation of 10,000 neurons")), "out_of_free");
-eq(
-  "no credit",
-  classifyEngineError(new Error('DeepSeek deepseek-flash 402: {"error":{"message":"Insufficient Balance"}}')),
-  "no_credit",
-);
+eq("no credit", classifyEngineError(new Error('GLM glm-5.3-flash 402: {"error":{"message":"Insufficient balance"}}')), "no_credit");
+eq("no engine at all", classifyEngineError(new Error("No AI engine has its key set (GLM_API_KEY, GEMINI_API_KEY).")), "no_engine");
 eq("quota", classifyEngineError(new Error("Gemini gemini-3.8-flash 429: quota exceeded for this project")), "quota");
 eq("rate limited", classifyEngineError(new Error("Gemini gemini-3.8-flash 429: too many requests")), "rate_limited");
 eq("bad key", classifyEngineError(new Error("Gemini gemini-3.8-flash 401: bad key")), "bad_key");
@@ -64,25 +60,25 @@ const now = 1_758_412_800_000;
 eq("nothing down, nothing to say", troubleFrom([], now), null);
 eq(
   "names the engine and the reason",
-  troubleFrom([{ engine: "deepseek", until: now + 600_000, error: "DeepSeek deepseek-flash 402: Insufficient Balance" }], now)?.startsWith(
-    "DeepSeek is out of credit.",
+  troubleFrom([{ engine: "glm", until: now + 600_000, error: "GLM glm-5.3-flash 402: Insufficient balance" }], now)?.startsWith(
+    "GLM is out of credit.",
   ),
   true,
 );
 eq(
   "a long wait is said in hours",
-  troubleFrom([{ engine: "workers", until: now + 5 * 3_600_000, error: "4006 daily free allocation" }], now)?.includes("5 hours"),
+  troubleFrom([{ engine: "gemini", until: now + 5 * 3_600_000, error: "Gemini gemini-3.5-flash-lite 429: quota" }], now)?.includes("5 hours"),
   true,
 );
 eq(
-  "all three read as one sentence",
+  "both read as one sentence",
   troubleFrom(
     [
-      { engine: "gemini", until: now + 60_000, error: "Gemini gemini-3.8-flash 429: rate" },
-      { engine: "deepseek", until: now + 600_000, error: "DeepSeek deepseek-flash 402: Insufficient Balance" },
+      { engine: "glm", until: now + 600_000, error: "GLM glm-5.3-flash 402: Insufficient balance" },
+      { engine: "gemini", until: now + 60_000, error: "Gemini gemini-3.5-flash-lite 429: rate" },
     ],
     now,
-  )?.includes("Gemini is rate limited, and DeepSeek is out of credit"),
+  )?.includes("GLM is out of credit, and Gemini is rate limited"),
   true,
 );
 

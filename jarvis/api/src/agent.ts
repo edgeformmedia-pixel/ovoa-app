@@ -4,7 +4,7 @@ import { agentBuzz, agentBuzzTool } from "./buzz";
 import { agentCommandsLastHour, enqueueCommand } from "./commands";
 import { contextAssistant, isContextTool } from "./context";
 import { googleAssistant, validTimeZone } from "./google/assistant";
-import { chatWithTools, type CallTool, type ToolSpec } from "./llm";
+import { chatWithTools, isModelRefused, type CallTool, type ToolSpec } from "./llm";
 import { push } from "./push";
 import {
   addDays,
@@ -340,7 +340,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
   ]);
 
   const timeline = contextAssistant(env, userId, timeZone, !!settings.context_enabled);
-  const web = webAssistant(env, timeZone);
+  const web = webAssistant(env, userId, timeZone);
 
   // What the agent is allowed to say, and how it says it.
   let spoke: NewNote | null = null;
@@ -597,9 +597,17 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
       detail = "Ended without saying anything.";
     }
   } catch (err) {
-    outcome = "error";
-    detail = err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300);
-    console.error("agent: run failed", err);
+    if (isModelRefused(err)) {
+      // The gate said no before anything was sent (plans.ts modelGate): the
+      // plan, the day's spend or consent changed since runJob asked. A skipped
+      // run, like the ones runJob writes itself, not a failure to count.
+      outcome = "skipped";
+      detail = `Not run: ${err.reason === "allowance" ? "today's allowance on the plan was used up" : err.reason === "needs_consent" ? "waiting for you to agree to AI" : "background work is for Base users"}.`;
+    } else {
+      outcome = "error";
+      detail = err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300);
+      console.error("agent: run failed", err);
+    }
   } finally {
     if (expire !== null) clearTimeout(expire);
   }
@@ -626,7 +634,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     )
     .run();
 
-  const said = { spoke: "told you something", error: "failed", acted: "proposed a change", quiet: "nothing to say" }[outcome];
+  const said = { spoke: "told you something", error: "failed", acted: "proposed a change", quiet: "nothing to say", skipped: "skipped" }[outcome];
   await logAction(db, userId, "agent_run", `${job?.title ?? "Background check"}: ${said}`, "agent", runId);
 
   // A note exists only for a run that decided to speak and got to the end. A
@@ -864,9 +872,9 @@ async function runJob(env: Env, job: JobRow) {
     .bind(next ?? now + 86_400_000, now, next ? job.status : "done", job.id)
     .run();
 
-  // Background work is Pro's, and comes out of the day's allowance like
+  // Background work is Base's, and comes out of the day's allowance like
   // everything else (plans.ts). Written down like any other skipped run.
-  const blocked = await blockedFor(env, job.user_id, "pro");
+  const blocked = await blockedFor(env, job.user_id, "base");
   if (blocked) {
     await db
       .prepare(
@@ -878,12 +886,17 @@ async function runJob(env: Env, job: JobRow) {
         job.user_id,
         job.id,
         now,
-        blocked === "plan" ? "Background work is part of the Pro plan." : "Today's allowance on the plan was already used.",
+        blocked === "plan"
+          ? "Background work is for Base users."
+          : blocked === "consent"
+            ? "Waiting for you to agree to AI."
+            : "Today's allowance on the plan was already used.",
       )
       .run();
-    // Not on Pro: looked at again in a day, not every tick, like a job whose
-    // agent was turned off. Over the allowance: its next ordinary run stands.
-    if (blocked === "plan") {
+    // No plan with AI, or no consent yet: looked at again in a day, not every
+    // tick, like a job whose agent was turned off. Over the allowance: its next
+    // ordinary run stands.
+    if (blocked !== "allowance") {
       await db.prepare("UPDATE agent_jobs SET next_run_at = ? WHERE id = ?").bind(now + 86_400_000, job.id).run();
     }
     return;
@@ -967,59 +980,16 @@ export async function runJobNow(env: Env, userId: string, jobId: string) {
   return { outcome: result.outcome, detail: result.detail, note: result.spoke };
 }
 
-// ---------- Maintenance ----------
-
 /**
- * Nightly tidying. The retention promise in Settings is only real if something
- * actually enforces it, and the logs are only useful if they stay readable.
+ * The cron entry point. Returns what it did, so the tick can be written down.
+ * The agent's old runs, notes and finished jobs are deleted by the nightly
+ * purge (retention.ts), with everything else past its 14 days.
  */
-export async function maintenance(env: Env) {
-  const db = env.DB;
-  const now = Date.now();
-
-  // Blocks past the user's own retention window. 0 means keep them.
-  const { results: users } = await db
-    .prepare("SELECT user_id, context_retain_days FROM settings WHERE context_retain_days > 0")
-    .all<{ user_id: string; context_retain_days: number }>();
-
-  let purged = 0;
-  for (const u of users) {
-    const cutoff = now - u.context_retain_days * 86_400_000;
-    const { meta } = await db
-      .prepare("DELETE FROM context_blocks WHERE user_id = ? AND started_at < ? AND pinned = 0")
-      .bind(u.user_id, cutoff)
-      .run();
-    purged += meta.changes ?? 0;
-  }
-
-  await db.batch([
-    // Audit history: three months is long enough to answer "what have you been
-    // doing", short enough that the table stays small.
-    db.prepare("DELETE FROM agent_runs WHERE started_at < ?").bind(now - 90 * 86_400_000),
-    // Notes the user read or dismissed a month ago.
-    db
-      .prepare("DELETE FROM agent_notes WHERE created_at < ? AND (read_at IS NOT NULL OR dismissed_at IS NOT NULL)")
-      .bind(now - 30 * 86_400_000),
-    // Unread notes are kept longer, but not forever.
-    db.prepare("DELETE FROM agent_notes WHERE created_at < ?").bind(now - 120 * 86_400_000),
-    db.prepare("DELETE FROM agent_budget WHERE day < ?").bind(new Date(now - 14 * 86_400_000).toISOString().slice(0, 10)),
-    db.prepare("DELETE FROM agent_jobs WHERE status = 'done' AND next_run_at < ?").bind(now - 7 * 86_400_000),
-  ]);
-
-  console.log(`agent maintenance: purged ${purged} expired blocks`);
-  return purged;
-}
-
-/** The cron entry point. Returns what it did, so the tick can be written down. */
 export async function tick(env: Env, cron: string) {
-  if (cron.startsWith("13 4")) {
-    const purged = await maintenance(env);
-    return { jobs: 0, pushed: 0, purged };
-  }
   const jobs = await runDueJobs(env);
   const pushed = await drainNotes(env);
-  if (jobs || pushed) say("cron", { part: "agent", jobs, notes: pushed });
-  return { jobs, pushed, purged: 0 };
+  if (jobs || pushed) say("cron", { cron, part: "agent", jobs, notes: pushed });
+  return { jobs, pushed };
 }
 
 // ---------- Tools the user gets, in an ordinary conversation ----------

@@ -21,6 +21,7 @@ import { DrawerContext, drawerLocked, spotRef, usePointedAt, type DrawerHandle }
 import { PLAN_NAMES, usePlan } from "../lib/plan";
 import { colors, lift, numeric, space, type } from "../lib/theme";
 import { PressScale } from "./motion";
+import { lockTag } from "./Plan";
 import { IconTile, type IconName, type Tone } from "./ui";
 
 // The whole of navigation. Hand-rolled on core Animated + PanResponder rather
@@ -48,21 +49,23 @@ export type NavItem = { label: string; href: Href; icon: IconName; tone: Tone };
 /**
  * The menu (2026-09-23): Talk and Apps at the top, the apps you've added
  * listed under Apps, and Settings, which holds the account too, pinned at the
- * bottom. Nothing else ever joins them.
+ * bottom. Nothing else ever joins them. It is the same menu on every plan: on
+ * the free plan Talk stays, with a lock, and opens on "That's for Base users"
+ * (app/(tabs)/chat.tsx, components/Plan.tsx); the AI add-ons under Apps carry
+ * the lock too. Before consent, the same rows say "Agree to use AI".
  */
 export const TOP: NavItem[] = [
   { label: "Talk", href: "/chat", icon: "mic", tone: "teal" },
   { label: "Apps", href: "/apps" as Href, icon: "apps-outline", tone: "violet" },
 ];
 
-// The free plan has no assistant to talk to, so its first row is its day
-// (components/FreeToday.tsx) rather than Talk.
-export const FREE_TOP: NavItem[] = [{ label: "Today", href: "/", icon: "time-outline", tone: "teal" }, TOP[1]];
+/** The rows that are for Base users: shown to everyone, with a lock when the plan (or consent) doesn't reach them. */
+const FOR_BASE = new Set<string>(["Talk"]);
 
 export const SETTINGS: NavItem = { label: "Settings", href: "/settings", icon: "settings-outline", tone: "amber" };
 
-/** One of their apps, as the menu lists it under Apps. */
-export type MenuApp = { key: string; label: string; icon: IconName; tone: Tone; href?: Href; open: () => void };
+/** One of their apps, as the menu lists it under Apps. `locked`: what its lock says, when it has one (an AI add-on without Base). */
+export type MenuApp = { key: string; label: string; icon: IconName; tone: Tone; href?: Href; open: () => void; locked?: string };
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
@@ -74,10 +77,10 @@ export function DrawerPanel({
   apps,
   onGo,
   onClose,
-  free = false,
+  locked,
 }: {
-  /** The free plan: no assistant, so its day where Talk would be. */
-  free?: boolean;
+  /** Set when talking isn't reached (the free plan, or no consent yet): what Talk's lock says (FOR_BASE). */
+  locked?: string;
   /** The route showing behind the panel, so its row can be marked. */
   current: string;
   /** Only the values actually to hand; the rest of the rows go without. */
@@ -94,11 +97,13 @@ export function DrawerPanel({
   const row = (item: NavItem) => {
     const on = current === item.href;
     const tail = tails[item.label];
+    const lock = FOR_BASE.has(item.label) ? locked : undefined;
     return (
       <View key={item.label} ref={spotRef(item.label)} collapsable={false}>
         <PressScale
           onPress={() => onGo(item.href)}
           accessibilityRole="button"
+          accessibilityLabel={lock ? `${item.label}, ${lock.toLowerCase()}` : undefined}
           accessibilityState={{ selected: on }}
           style={[styles.navRow, on && styles.navRowOn, pointed === item.label && styles.navRowPointed]}
         >
@@ -106,7 +111,11 @@ export function DrawerPanel({
           <Text style={styles.navLabel} numberOfLines={1}>
             {item.label}
           </Text>
-          {!!tail && <Text style={styles.navTail}>{tail}</Text>}
+          {lock ? (
+            <Ionicons name="lock-closed" size={15} color={colors.inkMute} />
+          ) : (
+            !!tail && <Text style={styles.navTail}>{tail}</Text>
+          )}
         </PressScale>
       </View>
     );
@@ -125,7 +134,7 @@ export function DrawerPanel({
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: space.s4 }}>
-        {(free ? FREE_TOP : TOP).map(row)}
+        {TOP.map(row)}
 
         {apps.length > 0 && (
           <View ref={spotRef("Your apps")} collapsable={false}>
@@ -137,6 +146,7 @@ export function DrawerPanel({
                   key={a.key}
                   onPress={a.open}
                   accessibilityRole="button"
+                  accessibilityLabel={a.locked ? `${a.label}, ${a.locked.toLowerCase()}` : undefined}
                   accessibilityState={{ selected: on }}
                   style={[styles.appRow, on && styles.navRowOn]}
                 >
@@ -144,6 +154,7 @@ export function DrawerPanel({
                   <Text style={styles.appLabel} numberOfLines={1}>
                     {a.label}
                   </Text>
+                  {!!a.locked && <Ionicons name="lock-closed" size={14} color={colors.inkMute} />}
                 </PressScale>
               );
             })}
@@ -162,7 +173,7 @@ export function DrawerPanel({
 export function AppDrawer({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { free, plan } = usePlan();
+  const { can, needsConsent, plan } = usePlan();
   const { token, user } = useSession();
   const devMode = useDevMode();
   const installed = useInstalledAddons();
@@ -186,7 +197,15 @@ export function AppDrawer({ children }: { children: ReactNode }) {
           ...installed
             .map((id) => ADDONS.find((a) => a.id === id))
             .filter((a): a is (typeof ADDONS)[number] => !!a && (devMode || !a.dev))
-            .map((a) => ({ key: a.id, label: a.name, icon: a.icon, tone: a.tone, href: a.href, open: () => go(a.href) })),
+            .map((a) => ({
+              key: a.id,
+              label: a.name,
+              icon: a.icon,
+              tone: a.tone,
+              href: a.href,
+              open: () => go(a.href),
+              locked: (a.needs === "assistant" && !can.chat) || (a.needs === "agent" && !can.agent) ? lockTag(needsConsent) : undefined,
+            })),
           // The ones they made open on their own screen (app/made/[id].tsx).
           ...made.map((a) => ({
             key: a.id,
@@ -197,7 +216,16 @@ export function AppDrawer({ children }: { children: ReactNode }) {
             open: () => go(`/made/${a.id}` as Href),
           })),
         ];
-        return <DrawerPanel current={pathname} tails={tails} apps={user ? apps : []} free={free} onClose={close} onGo={go} />;
+        return (
+          <DrawerPanel
+            current={pathname}
+            tails={tails}
+            apps={user ? apps : []}
+            locked={can.chat ? undefined : lockTag(needsConsent)}
+            onClose={close}
+            onGo={go}
+          />
+        );
       }}
     >
       {children}

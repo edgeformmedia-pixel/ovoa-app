@@ -24,9 +24,9 @@ Work through the phases in order. Commit after each phase. Deploy after each pha
   - Model calls do not work locally ("Binding AI needs to be run remotely"). Check model paths against production with a throwaway account, then delete it with `DELETE /me`.
 - **Remote Cloudflare access** uses a separate wrangler profile that is logged in to the right account:
   ```
-  XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-edgeformmedia npx wrangler <command>
+  XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npx wrangler <command>
   ```
-  - The account is `33594882ed1877edb5cee6f495ca7fae` (edgeformmedia).
+  - The account is `e58b0ec5305410f9d3cd70f461f39cb6` (admin@ovoa.ai's, since the v1 move; `jarvis/api/wrangler.jsonc` pins it). This pass ran on the old edgeformmedia account (`33594882ed1877edb5cee6f495ca7fae`), which now only holds the forwarder and the old D1 as a backup until 2026-10-14.
   - The global wrangler login is the WRONG account; don't use it.
   - A `7403` error from D1 is usually transient. Retry twice, then compare the error's `accountTag` with the account above.
 - **Deploying:** always migrate **before** deploying, `npm run db:migrate` then `npm run deploy`, both with the profile above. You may deploy the Worker, push `main` and start Codemagic builds without asking. Pushing `main` starts the `ios-testflight` build (mac_mini_m2), so deploy the server first.
@@ -83,8 +83,8 @@ One tester (the developer). Sept 21 UTC, the heaviest real day, pulled from Clou
 Sources: https://developers.cloudflare.com/workers-ai/platform/pricing/, https://deepgram.com/pricing, https://api-docs.deepseek.com/quick_start/pricing, https://ai.google.dev/gemini-api/docs/pricing, https://docs.z.ai/guides/overview/pricing
 
 **Re-measuring.** Cloudflare's GraphQL API at `https://api.cloudflare.com/client/v4/graphql` gives daily Workers AI tokens/neurons per model, Worker requests/CPU and D1 rows read/written.
-- **Auth:** Bearer = `oauth_token` in `C:/Users/thoma/.wrangler-edgeformmedia/.wrangler/config/default.toml`. Never print it.
-- **Datasets:** `aiInferenceAdaptiveGroups` (sum `totalNeurons totalInputTokens totalOutputTokens`, dims `date modelId`), `workersInvocationsAdaptive` (filter `scriptName:"jarvis-api"`), `d1AnalyticsAdaptiveGroups` (databaseId `96162569-6625-4cad-af9c-62a3f6820033`).
+- **Auth:** Bearer = `oauth_token` in `C:/Users/thoma/.wrangler-ovoa/.wrangler/config/default.toml`. Never print it. (`jarvis/api/scripts/usage-report.mjs` does all of this.)
+- **Datasets:** `aiInferenceAdaptiveGroups` (sum `totalNeurons totalInputTokens totalOutputTokens`, dims `date modelId`), `workersInvocationsAdaptive` (filter `scriptName:"jarvis-api"`), `d1AnalyticsAdaptiveGroups` (databaseId `26ebdc31-740f-4191-905d-77a5edb97799`; before the move it was `96162569-6625-4cad-af9c-62a3f6820033` on the old account).
 - **Use:** re-run the same queries after each phase for before/after numbers.
 
 ---
@@ -169,7 +169,7 @@ Everything later is judged by this, so it comes first.
 6. **Tell the user in the final report exactly how to add the key:**
    ```
    cd jarvis/api
-   XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-edgeformmedia npx wrangler secret put GLM_API_KEY
+   XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npx wrangler secret put GLM_API_KEY
    ```
    Also say which vars to set for their provider (`GLM_BASE_URL`, `GLM_MODEL`) and how to flip to GLM with the Dev tools picker or `PUT /debug/engines`.
 

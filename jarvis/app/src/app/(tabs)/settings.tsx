@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { AccountSection } from "../../components/AccountSection";
 import { GoogleConnection } from "../../components/GoogleConnection";
-import { PartOfProLine } from "../../components/Plan";
+import { LockedLine } from "../../components/Plan";
 import { SiriSetup } from "../../components/SiriSetup";
 import { VoicePicker } from "../../components/VoicePicker";
 import { Btn, GroupLabel, Screen, Toggle, TopBar } from "../../components/ui";
@@ -21,6 +21,7 @@ import { api, type Autonomy, type Memory } from "../../lib/api";
 import { disableTimeline, enableTimeline, timelinePref } from "../../lib/location";
 import { useAgent } from "../../lib/agent";
 import { useAssistant } from "../../lib/assistant";
+import { usePhoneEar } from "../../lib/liveListen";
 import { useSession } from "../../lib/auth";
 import { devModePref, useDevMode } from "../../lib/devMode";
 import { usePlan } from "../../lib/plan";
@@ -40,9 +41,13 @@ export default function Settings() {
   const [autoSendTexts, setAutoSendTexts] = useState(false);
   const { listenMode, setListenMode, micSource, setMicSource, alwaysListen, setAlwaysListen } = useAssistant();
   const { pushProblem } = useAgent();
-  // The free plan has no assistant, so its settings aren't shown at all; Base
-  // sees the Pro-only ones (the wake word, background work) as "Part of Pro".
-  const { free, can } = usePlan();
+  // The free plan has no assistant, so its settings aren't shown at all. Every
+  // one of them comes with Base (Pro is only more usage), so the locked lines
+  // below ("For Base users") show only where the plan's features say otherwise,
+  // as a server from before v1 still does for the wake word and background work.
+  const { free, can, needsConsent } = usePlan();
+  // Always listen runs on the phone's own recogniser or not at all (decision 1).
+  const phoneEar = usePhoneEar();
   const devMode = useDevMode();
   const soundsOn = useSoundsOn();
   const [quiet, setQuiet] = useState({
@@ -197,15 +202,13 @@ export default function Settings() {
     if (!on) return patch({ contextEnabled: false });
     Alert.alert(
       "Keep a record of your days?",
-      "Only what you record. Each recording is summarised, the summary is kept, and the words are dropped — they are never stored on the server. Nothing is captured in the background, ever.",
+      "Only what you record. Each recording is summarised, and its words and summary are kept on OVOA's server until you delete them. Everything else about your day is deleted after 14 days, apart from a short summary of each day. Nothing is captured in the background, ever.",
       [
         { text: "Not now", style: "cancel" },
         { text: "Turn on", onPress: () => patch({ contextEnabled: true }) },
       ],
     );
   };
-
-  const setRetention = (contextRetainDays: number) => patch({ contextRetainDays });
 
   return (
     <View style={styles.page}>
@@ -215,6 +218,16 @@ export default function Settings() {
       <AccountSection />
       {!free && (
       <>
+      {/* Whether they've agreed to AI, what that covers, and the way to take it back (app/consent.tsx). */}
+      <Section title="AI and your data">
+        <About>
+          {needsConsent
+            ? "You haven't agreed yet, so OVOA doesn't send anything to an AI company, and talking to it is off until you do."
+            : "You've agreed: what you say, and what's needed to answer it, goes to the AI companies that write OVOA's replies and voice them."}
+        </About>
+        <Button label={needsConsent ? "Review and agree" : "What goes where"} onPress={() => router.push("/consent" as Href)} />
+      </Section>
+
       <Section title="Assistant">
         <Field label="Assistant name" value={assistantName} onChangeText={setAssistantName} />
         <Field
@@ -245,7 +258,9 @@ export default function Settings() {
         </View>
         <About>
           {listenMode === "wake" && !can.wake
-            ? "Saying its name to start is part of Pro. On your plan, tap the orb on Talk and speak."
+            ? needsConsent
+              ? "Saying its name to start works once you've agreed to AI, under AI and your data above."
+              : "Saying its name to start is for Base users. For now, tap the orb on Talk and speak."
             : LISTEN_MODES.find((m) => m.mode === listenMode)?.hint}
         </About>
         <Text style={[styles.label, { marginTop: 18 }]}>Microphone</Text>
@@ -272,7 +287,10 @@ export default function Settings() {
       </Section>
 
       <Section title="Memory">
-        <Setting label="Remember things about me" about={`${assistantName || "Your assistant"} learns facts from your chats.`}>
+        <Setting
+          label="Remember things about me"
+          about={`${assistantName || "Your assistant"} learns facts from your chats and forgets them after 14 days, unless you asked it to remember them ("remember that I'm vegan").`}
+        >
           <Toggle value={user.settings.memoryEnabled} onValueChange={toggleMemory} />
         </Setting>
 
@@ -366,7 +384,7 @@ export default function Settings() {
         >
           <Toggle value={devMode} onValueChange={(on) => void devModePref.set(on)} />
         </Setting>
-        {devMode && <Button label="Sensors, inputs & ES100" onPress={() => router.push("/dev-tools")} />}
+        {devMode && <Button label="Sensors, inputs & OVOA Band" onPress={() => router.push("/dev-tools")} />}
       </Section>
 
       <Section title="Sounds">
@@ -402,7 +420,7 @@ export default function Settings() {
 
       <Section title="Background work">
         {!can.agent ? (
-          <PartOfProLine
+          <LockedLine
             label={`Let ${assistantName || "OVOA"} work on its own`}
             what="It checks things between conversations and tells you only when it's worth interrupting you."
           />
@@ -477,28 +495,12 @@ export default function Settings() {
       <Section title="Timeline">
         <Setting
           label="Keep a record of my days"
-          about={`What you record gets summarised into a day ${assistantName || "OVOA"} can look things up in — "what did I do Tuesday", "did I ever call Sarah back". Only ever what you chose to record: nothing is captured in the background. The words themselves are never stored on the server. They're read once to write the summary and then dropped; the recordings stay on this phone.`}
+          about={`What you record gets summarised into a day ${assistantName || "OVOA"} can look things up in — "what did I do Tuesday", "did I ever call Sarah back". Only ever what you chose to record: nothing is captured in the background. A recording's words and summary are kept on OVOA's server until you delete them, and the audio stays on this phone. Everything else about your day is deleted after 14 days, apart from a short summary of each day.`}
         >
           <Toggle value={user.settings.contextEnabled} onValueChange={toggleContext} />
         </Setting>
         {user.settings.contextEnabled && (
           <>
-            <Text style={styles.label}>Forget summaries after</Text>
-            <View style={styles.segment}>
-              {RETENTION.map((r) => (
-                <Pressable
-                  key={r.days}
-                  onPress={() => setRetention(r.days)}
-                  style={[styles.segmentItem, user.settings.contextRetainDays === r.days && styles.segmentOn]}
-                >
-                  <Text
-                    style={[styles.segmentText, user.settings.contextRetainDays === r.days && styles.segmentTextOn]}
-                  >
-                    {r.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
             <Button
               label="Forget the last hour"
               danger
@@ -531,10 +533,19 @@ export default function Settings() {
           <Toggle value={user.settings.autoApprove} onValueChange={toggleAutoApprove} />
         </Setting>
         {!can.wake ? (
-            <PartOfProLine
+            <LockedLine
               label="Always listen"
               what="The microphone stays on day and night, and answers when you say its name."
             />
+          ) : !phoneEar.available ? (
+            phoneEar.checked && (
+              <View style={{ gap: 2 }}>
+                <Text style={styles.label}>Always listen</Text>
+                <Text style={styles.meta}>
+                  Not on this iPhone: it can't recognise speech on its own, and OVOA never sends a room's sound anywhere to listen for its name.
+                </Text>
+              </View>
+            )
           ) : (
             <Setting
               label="Always listen"
@@ -637,13 +648,6 @@ const AUTONOMY = [
   },
 ];
 
-const RETENTION = [
-  { days: 14, label: "2 weeks" },
-  { days: 90, label: "3 months" },
-  { days: 365, label: "A year" },
-  { days: 0, label: "Keep" },
-];
-
 /** 450 to "07:30". */
 const minutesToClock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 
@@ -660,7 +664,7 @@ const MIC_SOURCES = [
   { source: "phone", label: "Phone", hint: "The iPhone's microphone hears you. It answers as soon as you stop talking." },
   {
     source: "band",
-    label: "ES100 band",
+    label: "OVOA Band",
     hint: "The clip records what you say on its own microphone. Click to start, click again when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.",
   },
 ] as const;
@@ -670,13 +674,13 @@ const LISTEN_MODES = [
   {
     mode: "twist",
     label: "Clip click",
-    hint: "Double-click the ES100's button: it buzzes and listens. Press once to send what you said; press once while it answers to cut it off. Works from other apps too.",
+    hint: "Double-click the OVOA Band's button: it buzzes and listens. Press once to send what you said; press once while it answers to cut it off. Works from other apps too, on an iPhone that recognises speech on its own.",
   },
 ] as const;
 
 /**
  * The location timeline: off until turned on here, because it needs "Always"
- * location and keeps where they've been for 14 days (places for good).
+ * location and keeps where they've been for 14 days (named places for good).
  */
 function LocationTimeline() {
   const [on, setOn] = useState(false);

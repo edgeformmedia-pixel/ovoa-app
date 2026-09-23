@@ -192,7 +192,7 @@ export default function DevTools() {
         <Pressable style={styles.link} onPress={() => router.push("/es100")}>
           <View style={styles.linkLeft}>
             <Ionicons name="bluetooth" size={18} color={colors.blue} />
-            <Text style={styles.itemText}>ES100 recorder</Text>
+            <Text style={styles.itemText}>OVOA Band recorder</Text>
           </View>
           <Ionicons name="chevron-forward" size={16} color={colors.inkMute} />
         </Pressable>
@@ -487,8 +487,6 @@ function UsageToday() {
             <Row label="model calls" value={String(today.llmCalls)} />
             <Row label="tokens in · cached · out" value={`${k(today.inputTokens)} · ${k(today.cachedTokens)} · ${k(today.outputTokens)}`} mono />
             <Row label="voice" value={`${k(today.ttsChars)} characters`} />
-            <Row label="mic streamed" value={`${Math.round(today.streamSeconds / 60)} min`} good={today.streamSeconds < 600} />
-            <Row label="clips transcribed" value={`${today.clipSeconds} s`} />
             <Row label="web searches" value={String(today.searches)} />
             <Row label="estimated cost" value={today.estUsd} mono good={today.microUsd < 170_000} />
             {Object.entries(today.by).map(([what, cost]) => (
@@ -513,6 +511,8 @@ function UsageToday() {
  * else, and the block is hidden for them. "Just me" tries an engine on this
  * account alone; "Everyone" flips it for every phone, within a minute, with no
  * deploy. An engine with no key on the server is shown but can't be picked.
+ * The engines are GLM and Gemini (api/src/llm.ts); the voices are Deepgram's
+ * Aura-2 and the iPhone's own.
  */
 function EnginePicker() {
   const { token, user } = useSession();
@@ -546,8 +546,8 @@ function EnginePicker() {
   };
   const current = everyone ? status?.everyone : status?.mine;
   const usable = (status?.engines ?? []).filter((e) => e.key !== "missing");
-  // The chosen engine first, the rest in their usual order, Workers AI last as the net.
-  const orderStarting = (engine: string) => [engine, ...usable.map((e) => e.engine).filter((e) => e !== engine && e !== "workers"), "workers"].join(",");
+  // The chosen engine first, the rest in their usual order (the server adds any left out).
+  const orderStarting = (engine: string) => [engine, ...usable.map((e) => e.engine).filter((e) => e !== engine)].join(",");
   const firstOf = (order: string | undefined) => order?.split(",")[0]?.trim() ?? "";
 
   return (
@@ -580,27 +580,25 @@ function EnginePicker() {
           </View>
           <Switch value={everyone} onValueChange={setEveryone} trackColor={{ true: colors.late, false: colors.line }} />
         </View>
-        <Text style={styles.hint}>Typed replies: which engine to try first.</Text>
+        <Text style={styles.hint}>Every reply: which engine to try first.</Text>
         <View style={styles.row}>
-          {usable
-            .filter((e) => e.engine !== "workers")
-            .map((e) => (
-              <Pressable
-                key={e.engine}
-                style={[styles.button, firstOf(current?.engine_order) === e.engine && { borderColor: colors.blue, borderWidth: 1 }]}
-                disabled={busy}
-                onPress={() => set({ engine_order: orderStarting(e.engine) })}
-              >
-                <Text style={styles.buttonText}>{e.name}</Text>
-              </Pressable>
-            ))}
+          {usable.map((e) => (
+            <Pressable
+              key={e.engine}
+              style={[styles.button, firstOf(current?.engine_order) === e.engine && { borderColor: colors.blue, borderWidth: 1 }]}
+              disabled={busy}
+              onPress={() => set({ engine_order: orderStarting(e.engine) })}
+            >
+              <Text style={styles.buttonText}>{e.name}</Text>
+            </Pressable>
+          ))}
           <Pressable style={[styles.button, !current?.engine_order && { borderColor: colors.blue, borderWidth: 1 }]} disabled={busy} onPress={() => set({ engine_order: "" })}>
             <Text style={styles.buttonText}>Usual order</Text>
           </Pressable>
         </View>
         <Text style={styles.hint}>Spoken replies: who answers first.</Text>
         <View style={styles.row}>
-          {[{ engine: "workers", name: "Workers AI" }, { engine: "keyed", name: "Same as typed" }, ...usable.filter((e) => e.engine !== "workers")].map((e) => (
+          {[{ engine: "keyed", name: "Same as typed" }, ...usable].map((e) => (
             <Pressable
               key={e.engine}
               style={[styles.button, (current?.voice_engine ?? "") === e.engine && { borderColor: colors.blue, borderWidth: 1 }]}
@@ -614,32 +612,13 @@ function EnginePicker() {
             <Text style={styles.buttonText}>Usual</Text>
           </Pressable>
         </View>
-        <Text style={styles.hint}>Workers AI model: the last resort, and the first for spoken replies unless changed above.</Text>
-        <View style={styles.row}>
-          {["@cf/openai/gpt-oss-120b", "@cf/zai-org/glm-5.3-flash"].map((model) => (
-            <Pressable
-              key={model}
-              style={[styles.button, (current?.workers_model ?? "") === model && { borderColor: colors.blue, borderWidth: 1 }]}
-              disabled={busy}
-              onPress={() => set({ workers_model: model })}
-            >
-              <Text style={styles.buttonText}>{model.replace(/^@cf\/[^/]+\//, "")}</Text>
-            </Pressable>
-          ))}
-          <Pressable style={[styles.button, !current?.workers_model && { borderColor: colors.blue, borderWidth: 1 }]} disabled={busy} onPress={() => set({ workers_model: "" })}>
-            <Text style={styles.buttonText}>Usual</Text>
-          </Pressable>
-        </View>
         <Text style={styles.hint}>
-          Voice: which engine speaks the replies. Deepgram Aura-2 is the voice people know; Aura-1 costs half; the plain one
-          costs almost nothing; the iPhone's own voice is free and fastest. Tap a voice in Settings afterwards to hear it.
+          Voice: which engine speaks the replies. Deepgram Aura-2 is the voice people know; the iPhone's own voice is free and
+          fastest. Tap a voice in Settings afterwards to hear it.
         </Text>
         <View style={styles.row}>
           {[
             ["deepgram-aura-2", "Aura-2 (Deepgram)"],
-            ["workers-aura-2", "Aura-2 (Workers AI)"],
-            ["workers-aura-1", "Aura-1"],
-            ["workers-melotts", "Plain (MeloTTS)"],
             ["device", "iPhone voice"],
           ].map(([engine, label]) => (
             <Pressable
@@ -652,25 +631,6 @@ function EnginePicker() {
             </Pressable>
           ))}
           <Pressable style={[styles.button, !current?.tts_engine && { borderColor: colors.blue, borderWidth: 1 }]} disabled={busy} onPress={() => set({ tts_engine: "" })}>
-            <Text style={styles.buttonText}>Usual</Text>
-          </Pressable>
-        </View>
-        <Text style={styles.hint}>Clips: what transcribes a recorded clip (the band's button). Whisper costs a tenth; Deepgram stays the fallback.</Text>
-        <View style={styles.row}>
-          {[
-            ["deepgram", "Deepgram"],
-            ["workers-whisper", "Whisper (Workers AI)"],
-          ].map(([engine, label]) => (
-            <Pressable
-              key={engine}
-              style={[styles.button, (current?.stt_clip_engine ?? "") === engine && { borderColor: colors.blue, borderWidth: 1 }]}
-              disabled={busy}
-              onPress={() => set({ stt_clip_engine: engine })}
-            >
-              <Text style={styles.buttonText}>{label}</Text>
-            </Pressable>
-          ))}
-          <Pressable style={[styles.button, !current?.stt_clip_engine && { borderColor: colors.blue, borderWidth: 1 }]} disabled={busy} onPress={() => set({ stt_clip_engine: "" })}>
             <Text style={styles.buttonText}>Usual</Text>
           </Pressable>
         </View>
@@ -749,7 +709,7 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
   const motion = supported.filter((name) => /sensor|gyro|motion|accel|posture|wear/i.test(name));
   return (
     <>
-      <Text style={styles.section}>ES100 clip</Text>
+      <Text style={styles.section}>OVOA Band</Text>
       <Card title="Clip — live" available={state.phase === "unavailable" ? false : true}>
         <Row label="connection" value={state.phase} good={connected} />
         <Row
@@ -816,7 +776,7 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
         </View>
         <Text style={styles.hint}>
           Twist uses the clip's gyroscope test (gyro3), about one reading a second. Read gyro is the older command,
-          which the ES100 doesn't answer (a timeout).
+          which the band doesn't answer (a timeout).
         </Text>
       </Card>
 
@@ -897,9 +857,9 @@ function BuzzOptions({ connected }: { connected: boolean }) {
 }
 
 /**
- * Always listen, kept for development only. Ambient listening was ruled out for
- * the product on 2026-09-20 (all-party consent laws), so it left Settings; the
- * switch stays here so the wake-word path can still be worked on.
+ * Always listen, the same switch as Settings → Danger zone (it went back there
+ * on 2026-09-23, running on the phone's ear so nothing leaves the phone until
+ * the name). Kept here too so the wake-word path can be worked on quickly.
  */
 function AlwaysListen() {
   const [on, setOn] = useState(false);
@@ -911,7 +871,7 @@ function AlwaysListen() {
     if (!next) return void alwaysListenPref.set(false);
     Alert.alert(
       "Always listen (development only)",
-      "The microphone stays on in the background and transcribes everything it hears, including other people. This was ruled out for the product on legal grounds; use it only on your own, for testing.",
+      "The microphone stays on in the background and the phone recognises everything it hears, including other people, on the phone itself. Nothing leaves the phone until it hears its name. Use it only on your own, for testing.",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Turn on", style: "destructive", onPress: () => void alwaysListenPref.set(true) },
@@ -922,7 +882,7 @@ function AlwaysListen() {
     <View style={styles.toggleRow}>
       <View style={{ flex: 1 }}>
         <Text style={styles.itemText}>Always listen</Text>
-        <Text style={styles.dim}>Development only. Not in Settings any more.</Text>
+        <Text style={styles.dim}>The same switch as Settings → Danger zone.</Text>
       </View>
       <Switch value={on} onValueChange={toggle} trackColor={{ true: colors.stop, false: colors.line }} />
     </View>

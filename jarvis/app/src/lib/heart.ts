@@ -3,7 +3,7 @@ import * as ute from "../../modules/ute-ble";
 import { api } from "./api";
 import * as clip from "./clip";
 import { devlog, logFail } from "./devlog";
-import { healthAvailable, healthPermission, heartRateSince, watchHeartRate } from "./health";
+import { healthAsked, healthAvailable, healthPermission, heartRateSince, watchHeartRate } from "./health";
 import { onSignOut } from "./signOut";
 import { storage } from "./storage";
 
@@ -73,9 +73,9 @@ async function askBand() {
   }
 }
 
-/** Sends what Health has that the server hasn't seen. */
+/** Sends what Health has that the server hasn't seen. Only once Health has been asked about: this never asks itself. */
 export async function sendHealthHeartRate(token: string) {
-  if (!healthAvailable || (await healthPermission()) !== "ok") return;
+  if (!healthAvailable || !(await healthAsked()) || (await healthPermission()) !== "ok") return;
   const last = Number(await storage.get(HEALTH_LAST_KEY).catch(() => null)) || Date.now() - 24 * 3_600_000;
   const samples = await heartRateSince(new Date(last + 1)).catch(() => []);
   if (!samples.length) return;

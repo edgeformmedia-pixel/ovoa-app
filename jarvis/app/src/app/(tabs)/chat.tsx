@@ -26,7 +26,7 @@ export default function Assistant() {
     return (
       <PartOfPlan
         title="Talk"
-        needs="base"
+        spot="See options"
         what="Talk to OVOA and it answers out loud: your calendar, reminders, email, money, and what it remembers about you."
       />
     );
@@ -42,7 +42,8 @@ function Talk() {
   const [showLogs, setShowLogs] = useState(false);
   const devMode = useDevMode();
   const assistantName = user?.settings.assistantName ?? "OVOA";
-  const on = a.alwaysListen || !!a.enabled;
+  // Where a tap asks one thing (no ear on this phone), the orb is on while that question is.
+  const on = a.alwaysListen || !!a.enabled || (a.tapAsks && a.phase !== "off");
   // Map roughly -60..-10 dBFS onto the halo while listening.
   const loudness = a.phase === "listening" ? Math.max(0, Math.min(1, (a.level + 60) / 50)) : 0;
 

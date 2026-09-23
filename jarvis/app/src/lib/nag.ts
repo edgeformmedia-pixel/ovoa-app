@@ -8,6 +8,7 @@ import { onSignOut } from "./signOut";
 import { api } from "./api";
 import { savedToken } from "./auth";
 import { onPush } from "./background";
+import { notificationsNeeded } from "./push";
 import * as clip from "./clip";
 import { devlog, logFail } from "./devlog";
 import { holdAwake, isDeviceUtterance, renderSpeech, speakOnDevice, type Spoken } from "./voice";
@@ -369,6 +370,8 @@ export async function syncAlarms(token: string) {
     for (const a of alarms.filter((a) => a.ringing)) {
       startNag({ key: `alarm:${a.id}`, kind: "alarm", label: a.label ?? "Alarm", hard: a.hard, alarmId: a.id, name: userName });
     }
+    // The fallbacks are notifications: never asked about yet, this is when it's needed.
+    if (armed.length) await notificationsNeeded(token);
     for (const a of armed) {
       await scheduleFallbacks(a);
       fireTimers.push(

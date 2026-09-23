@@ -7,6 +7,7 @@ import { onPush } from "./background";
 import { buzzPattern } from "./buzz";
 import * as clip from "./clip";
 import { devlog, logFail } from "./devlog";
+import { notificationsNeeded } from "./push";
 import { onSignOut } from "./signOut";
 import { yearAgo, yearAhead } from "./phoneCalendar";
 import { copyTodosToReminders } from "./todos";
@@ -191,6 +192,8 @@ async function scheduleLocal(token: string, routines: Routine[]) {
     .filter(({ r, dueAt }) => !doneToday.has(`${r.id}:${dueAt}`))
     .sort((a, b) => a.dueAt - b.dueAt)
     .slice(0, MAX_SCHEDULED);
+  // A dose only a notification can deliver: never asked about yet, this is when it's needed.
+  if (all.length) await notificationsNeeded(token);
 
   for (const { r, dueAt } of all) {
     await Notifications.scheduleNotificationAsync({

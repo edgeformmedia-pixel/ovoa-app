@@ -1,17 +1,20 @@
 // Plans (plans.ts): which route needs which plan, how a tier is worked out and
-// remembered, what happens when the site is down, the override, and the
-// allowance arithmetic. Checked without a Worker; the database and the site
-// are small fakes that count what was asked of them.
+// remembered, what happens when the site is down, the override, the allowance
+// arithmetic, and the gate every model call asks. Checked without a Worker;
+// the database and the site are small fakes that count what was asked of them.
 
+import { AI_CONSENT_VERSION, CONSENT_NEEDED, forgetConsent } from "../src/consent";
 import {
   ALLOWANCES,
   allowanceFor,
   allowanceMessage,
   BASE_DAILY_CEILING_MICRO,
   BASE_REPLIES_PER_DAY,
+  blockedFor,
   fetchMembership,
   forgetPlan,
   loadPlan,
+  modelGate,
   needsPlanBody,
   nextUtcMidnight,
   parseMembership,
@@ -21,7 +24,9 @@ import {
   planView,
   PRO_DAILY_CEILING_MICRO,
   PRO_REPLIES_PER_DAY,
+  refusalMessage,
   resetPhrase,
+  ROUTE_TIERS,
   SPOKEN_REPLY_MICRO,
   spendStopMicro,
   tierForRoute,
@@ -40,28 +45,68 @@ function eq(label: string, got: unknown, want: unknown) {
 
 // ---------- The route table ----------
 
+// What calls a model is base.
 eq("chat is base", tierForRoute("POST", "/chat"), "base");
 eq("resuming a turn is base", tierForRoute("POST", "/chat/resume"), "base");
 eq("Siri is base", tierForRoute("POST", "/siri"), "base");
 eq("the brief is base", tierForRoute("GET", "/brief"), "base");
-eq("voicing is base", tierForRoute("POST", "/voice/speak"), "base");
-eq("a clip is base", tierForRoute("POST", "/voice/transcribe"), "base");
-eq("a live-listening token is base", tierForRoute("POST", "/voice/token"), "base");
-eq("the wake word's token is pro", tierForRoute("POST", "/voice/token", (k) => (k === "mode" ? "wake" : undefined)), "pro");
-eq("email and calendar are base", tierForRoute("POST", "/google/connect"), "base");
-eq("approving an email is base", tierForRoute("POST", "/actions/abc/approve"), "base");
+eq("voicing is base (Deepgram)", tierForRoute("POST", "/voice/speak"), "base");
+eq("the old token route is free with or without the wake word's mode", tierForRoute("POST", "/voice/token", (k) => (k === "mode" ? "wake" : undefined)), "free");
 eq("the timeline is base", tierForRoute("POST", "/context/blocks"), "base");
 eq("a timeline day is base", tierForRoute("GET", "/context/days/2026-09-22"), "base");
-eq("setting up background work is pro", tierForRoute("POST", "/agent/jobs"), "pro");
-eq("running it now is pro", tierForRoute("POST", "/agent/jobs/j1/run"), "pro");
-eq("a standing goal is pro", tierForRoute("POST", "/agent/goals"), "pro");
+eq("a timeline week is base", tierForRoute("GET", "/context/weeks/2026-09-21"), "base");
+eq("the setup conversation is base", tierForRoute("POST", "/onboarding/answer"), "base");
+eq("designing an app is base", tierForRoute("POST", "/apps/design"), "base");
+eq("changing one by asking is base", tierForRoute("POST", "/apps/revise"), "base");
+eq("setting up background work is base", tierForRoute("POST", "/agent/jobs"), "base");
+eq("running it now is base", tierForRoute("POST", "/agent/jobs/j1/run"), "base");
+eq("a standing goal is base", tierForRoute("POST", "/agent/goals"), "base");
+eq("a route nothing lists is base (Ask Claude's old one, say)", tierForRoute("POST", "/claude"), "base");
+eq("overheard lines are base", tierForRoute("POST", "/transcripts/heard"), "base");
+eq("no route needs pro: Pro is usage, not features", ROUTE_TIERS.filter((r) => r.tier === "pro").length, 0);
+
+// What never calls a model is free (decision 5, 2026-09-23).
+eq("old builds' clips are free (they're told to update)", tierForRoute("POST", "/voice/transcribe"), "free");
+eq("old builds' live-listening token too", tierForRoute("POST", "/voice/token"), "free");
+eq("money is free", tierForRoute("POST", "/money/afford"), "free");
+eq("routines are free", tierForRoute("POST", "/routines/sync"), "free");
+eq("confirming a routine is free", tierForRoute("POST", "/routines/r1/confirm"), "free");
+eq("to-dos are free", tierForRoute("GET", "/todos"), "free");
+eq("alarms are free", tierForRoute("POST", "/alarms"), "free");
+eq("stopping one is free", tierForRoute("POST", "/alarms/a1/stop"), "free");
+eq("nags are free", tierForRoute("POST", "/nags/done"), "free");
+eq("people are free", tierForRoute("GET", "/people"), "free");
+eq("favors are free", tierForRoute("POST", "/favors/f1/confirm"), "free");
+eq("locations are free", tierForRoute("POST", "/locations"), "free");
+eq("places are free", tierForRoute("PATCH", "/places/p1"), "free");
+eq("saving a designed app is free", tierForRoute("POST", "/apps"), "free");
+eq("editing a made app by hand is free", tierForRoute("PUT", "/apps/a1"), "free");
+eq("and what's on its screen", tierForRoute("POST", "/apps/a1/state"), "free");
+eq("reading a transcript day is free", tierForRoute("GET", "/transcripts/day/2026-09-22"), "free");
+eq("its lines", tierForRoute("GET", "/transcripts/lines"), "free");
+eq("and searching them", tierForRoute("GET", "/transcripts/search"), "free");
+eq("promises are free", tierForRoute("GET", "/context/commitments"), "free");
+eq("marking one done is free", tierForRoute("PATCH", "/context/commitments/c1"), "free");
+eq("Google's status is free", tierForRoute("GET", "/google/status"), "free");
+eq("connecting Google is free", tierForRoute("POST", "/google/connect"), "free");
+eq("tagging an account is free", tierForRoute("PATCH", "/google/accounts/g1"), "free");
+eq("the waiting actions are free", tierForRoute("GET", "/actions"), "free");
+eq("approving one is free (it runs as written)", tierForRoute("POST", "/actions/abc/approve"), "free");
+eq("making the Siri key is free", tierForRoute("POST", "/siri/key"), "free");
 eq("seeing what the agent did is free", tierForRoute("GET", "/agent/runs"), "free");
 eq("pausing it is free", tierForRoute("PATCH", "/agent/jobs/j1"), "free");
 eq("/me is free", tierForRoute("GET", "/me"), "free");
 eq("settings are free", tierForRoute("PATCH", "/me"), "free");
 eq("refreshing the plan is free", tierForRoute("POST", "/me/plan/refresh"), "free");
+eq("the code step is free", tierForRoute("POST", "/me/email/code"), "free");
+eq("so is typing the code", tierForRoute("POST", "/me/email/verify"), "free");
+eq("agreeing to AI is free", tierForRoute("POST", "/me/consent"), "free");
+eq("and taking it back", tierForRoute("DELETE", "/me/consent"), "free");
 eq("notes are free", tierForRoute("POST", "/notes"), "free");
 eq("a note is free", tierForRoute("PATCH", "/notes/n1"), "free");
+eq("the Calorie screen is free (no model)", tierForRoute("GET", "/food"), "free");
+eq("fixing a food entry is free", tierForRoute("PATCH", "/food/log/f1"), "free");
+eq("and so is Calorie's level", tierForRoute("PUT", "/food/settings"), "free");
 eq("heart rate is free", tierForRoute("POST", "/hr"), "free");
 eq("workouts are free", tierForRoute("GET", "/workouts"), "free");
 eq("steps are free", tierForRoute("PUT", "/steps"), "free");
@@ -72,7 +117,6 @@ eq("the home feed is free", tierForRoute("GET", "/feed"), "free");
 eq("reporting mic seconds is free (it has to be, to be counted)", tierForRoute("POST", "/usage/stream"), "free");
 eq("deleting anything is free", tierForRoute("DELETE", "/google"), "free");
 eq("including the account", tierForRoute("DELETE", "/me"), "free");
-eq("money is base (assistant, no model: the safer side)", tierForRoute("POST", "/money/afford"), "base");
 eq("an unknown route is base, never free by accident", tierForRoute("POST", "/something/new"), "base");
 
 // ---------- What the row says ----------
@@ -231,13 +275,15 @@ const U = "user-1";
 
 // ---------- The allowance arithmetic ----------
 
-eq("one spoken reply: $0.0022 + $0.0066 + $0.0028", SPOKEN_REPLY_MICRO, 11_600);
+eq("one spoken reply: $0.0022 + $0.0066 (no live listening to pay for)", SPOKEN_REPLY_MICRO, 8_800);
 eq("Base at its cap stays under $0.25", BASE_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO <= 250_000, true);
-eq("Pro at its cap stays under $0.65", PRO_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO <= 650_000, true);
-eq("the ceilings are the spec's", `${BASE_DAILY_CEILING_MICRO} ${PRO_DAILY_CEILING_MICRO}`, "250000 650000");
-eq("Pro is at least two and a half times Base", PRO_REPLIES_PER_DAY >= 2.5 * BASE_REPLIES_PER_DAY, true);
-eq("and 3x would break the ceiling (why it isn't)", 3 * BASE_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO > 650_000, true);
-eq("new work stops one reply short of the ceiling", spendStopMicro("base"), 250_000 - 11_600);
+eq("Pro at its cap stays under $0.75", PRO_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO <= 750_000, true);
+eq("the ceilings are the brief's", `${BASE_DAILY_CEILING_MICRO} ${PRO_DAILY_CEILING_MICRO}`, "250000 750000");
+eq("the replies are 20 and 60", `${BASE_REPLIES_PER_DAY} ${PRO_REPLIES_PER_DAY}`, "20 60");
+eq("Pro is exactly 3x Base: replies", PRO_REPLIES_PER_DAY, 3 * BASE_REPLIES_PER_DAY);
+eq("and ceiling", PRO_DAILY_CEILING_MICRO, 3 * BASE_DAILY_CEILING_MICRO);
+eq("and month", ALLOWANCES.pro.monthly, 3 * ALLOWANCES.base.monthly);
+eq("new work stops one reply short of the ceiling", spendStopMicro("base"), 250_000 - 8_800);
 eq("so the last reply can't cross it", spendStopMicro("pro") + SPOKEN_REPLY_MICRO <= PRO_DAILY_CEILING_MICRO, true);
 eq("free has nothing", ALLOWANCES.free.replies, 0);
 
@@ -267,6 +313,8 @@ eq(
 
 eq("the 402 body", Object.keys(needsPlanBody("base")).join(","), "error,needs,message");
 eq("keyed on error", needsPlanBody("pro").error, "needs_plan");
+eq("said plainly", needsPlanBody("base").message.startsWith("That's for Base users."), true);
+eq("and says where plans are", needsPlanBody("base").message.includes("ovoa.ai"), true);
 const view = planView({ tier: "base", status: "active", trialEndsAt: null, renewsAt: "2026-10-22", from: "site" }, allowanceFor("base", 5, 0), evening);
 eq("/me.plan, base", view, {
   tier: "base",
@@ -274,9 +322,148 @@ eq("/me.plan, base", view, {
   trialEndsAt: null,
   renewsAt: "2026-10-22",
   limits: { repliesLeftToday: 15, resetsAt: "2026-09-23T00:00:00.000Z" },
-  features: { chat: true, voice: true, wake: false, agent: false },
+  features: { chat: true, voice: true, wake: true, agent: true },
+});
+eq("free: none of it", planView({ tier: "free", status: "none", trialEndsAt: null, renewsAt: null, from: "site" }, allowanceFor("free", 0, 0), evening).features, {
+  chat: false,
+  voice: false,
+  wake: false,
+  agent: false,
 });
 eq("a development account has no daily number", planView({ tier: "pro", status: "comp", trialEndsAt: null, renewsAt: null, from: "no_key" }, null, evening).limits.repliesLeftToday, null);
+
+// ---------- The gate every model call asks (modelGate) ----------
+
+/**
+ * A users row with an override (the tier), and today's spend, or an error in
+ * its place. They have agreed to AI unless `consent` is false.
+ */
+function gateEnv(opts: {
+  tier?: PlanRow["plan_override"];
+  spend?: number | Error;
+  users?: Error;
+  missing?: boolean;
+  email?: string;
+  dev?: string;
+  consent?: boolean;
+}) {
+  forgetConsent();
+  const agreed = opts.consent !== false;
+  const r = {
+    ...row({ plan_override: opts.tier ?? null, email: opts.email ?? "a@example.com" }),
+    ai_consent_at: agreed ? NOW : null,
+    ai_consent_version: agreed ? AI_CONSENT_VERSION : null,
+  };
+  const reads = { users: 0, spend: 0 };
+  const db = {
+    prepare(sql: string) {
+      return {
+        bind() {
+          return {
+            async first() {
+              if (/FROM users/.test(sql)) {
+                reads.users++;
+                if (opts.users) throw opts.users;
+                return opts.missing ? null : { ...r };
+              }
+              if (/FROM usage_daily/.test(sql)) {
+                reads.spend++;
+                if (opts.spend instanceof Error) throw opts.spend;
+                return { micro: opts.spend ?? 0 };
+              }
+              return null;
+            },
+          };
+        },
+      };
+    },
+  };
+  return { env: { DB: db, MEMBERSHIP_API_KEY: "", DEV_EMAILS: opts.dev ?? "" } as unknown as Env, reads };
+}
+const call = (userId: string | null, continuing = false) => ({ userId, purpose: "chat", continuing });
+
+{
+  forgetPlan();
+  eq("free: needs_plan", await modelGate(gateEnv({ tier: "free" }).env, call("g1")), "needs_plan");
+  forgetPlan();
+  const g = gateEnv({ tier: "free" });
+  await modelGate(g.env, call("g1"));
+  eq("and today's spend isn't even read", g.reads.spend, 0);
+  forgetPlan();
+  eq("no such person: needs_plan", await modelGate(gateEnv({ missing: true }).env, call("g2")), "needs_plan");
+  forgetPlan();
+  eq("base, nothing spent: goes ahead", await modelGate(gateEnv({ tier: "base" }).env, call("g3")), null);
+  forgetPlan();
+  eq("no site key: everyone is pro, and goes ahead", await modelGate(gateEnv({}).env, call("g4")), null);
+  forgetPlan();
+  eq("base, a reply short of the ceiling: allowance", await modelGate(gateEnv({ tier: "base", spend: spendStopMicro("base") }).env, call("g5")), "allowance");
+  forgetPlan();
+  eq("base, just under the line: goes ahead", await modelGate(gateEnv({ tier: "base", spend: spendStopMicro("base") - 1 }).env, call("g6")), null);
+  forgetPlan();
+  eq("pro, past Base's line: goes ahead", await modelGate(gateEnv({ tier: "pro", spend: spendStopMicro("base") + 1 }).env, call("g7")), null);
+  forgetPlan();
+  eq("pro past its own line: allowance", await modelGate(gateEnv({ tier: "pro", spend: spendStopMicro("pro") }).env, call("g8")), "allowance");
+  forgetPlan();
+  const resumed = gateEnv({ tier: "base", spend: 999_999 });
+  eq("a resumed turn isn't asked about the spend", await modelGate(resumed.env, call("g9", true)), null);
+  eq("so it isn't read", resumed.reads.spend, 0);
+  forgetPlan();
+  eq("but a resumed turn on free is still refused", await modelGate(gateEnv({ tier: "free" }).env, call("g10", true)), "needs_plan");
+  forgetPlan();
+  eq(
+    "a development account has no line",
+    await modelGate(gateEnv({ tier: "base", spend: 999_999, email: "dev@example.com", dev: "dev@example.com" }).env, call("g11")),
+    null,
+  );
+  forgetPlan();
+  eq("today's spend unreadable: fails open", await modelGate(gateEnv({ tier: "base", spend: new Error("D1 blip") }).env, call("g12")), null);
+  forgetPlan();
+  let threw = false;
+  await modelGate(gateEnv({ users: new Error("D1 down") }).env, call("g13")).catch(() => (threw = true));
+  eq("the plan unreadable: fails closed (the call fails)", threw, true);
+  const nobody = gateEnv({ tier: "free" });
+  eq("no person (a DEBUG_KEY route): goes ahead", await modelGate(nobody.env, call(null)), null);
+  eq("without reading anything", nobody.reads.users + nobody.reads.spend, 0);
+}
+
+// The crons' own pre-check asks the same questions.
+{
+  forgetPlan();
+  eq("cron, free: plan", await blockedFor(gateEnv({ tier: "free" }).env, "b1", "base"), "plan");
+  forgetPlan();
+  eq("cron, base: runs", await blockedFor(gateEnv({ tier: "base" }).env, "b2", "base"), null);
+  forgetPlan();
+  eq("cron, base, day spent: allowance", await blockedFor(gateEnv({ tier: "base", spend: 300_000 }).env, "b3", "base"), "allowance");
+  forgetPlan();
+}
+
+// Consent (consent.ts): nothing goes to a model before they've agreed, on any plan that has AI.
+{
+  forgetPlan();
+  eq("base, not agreed to AI: needs_consent", await modelGate(gateEnv({ tier: "base", consent: false }).env, call("c1")), "needs_consent");
+  forgetPlan();
+  eq("free and not agreed: the plan is what's said", await modelGate(gateEnv({ tier: "free", consent: false }).env, call("c2")), "needs_plan");
+  forgetPlan();
+  eq("a resumed turn still needs it", await modelGate(gateEnv({ tier: "pro", consent: false }).env, call("c3", true)), "needs_consent");
+  forgetPlan();
+  eq(
+    "a development account still needs it",
+    await modelGate(gateEnv({ tier: "base", consent: false, email: "dev@example.com", dev: "dev@example.com" }).env, call("c4")),
+    "needs_consent",
+  );
+  forgetPlan();
+  eq("cron, base, not agreed: skipped for consent", await blockedFor(gateEnv({ tier: "base", consent: false }).env, "c5", "base"), "consent");
+  forgetPlan();
+}
+
+// What a person is told.
+eq(
+  "the day's spend: plainly, with when it comes back",
+  refusalMessage("allowance", "base", evening, "America/Chicago"),
+  "I've used up today's allowance on your plan, so I'll pick up again at 7:00 PM.",
+);
+eq("no plan: the 402's own sentence", refusalMessage("needs_plan", "free", evening, "UTC"), needsPlanBody("base").message);
+eq("no consent: its sentence", refusalMessage("needs_consent", "base", evening, "UTC"), CONSENT_NEEDED);
 
 console.log(fails ? `\n${fails} failed` : "\nall passed");
 process.exit(fails ? 1 : 0);

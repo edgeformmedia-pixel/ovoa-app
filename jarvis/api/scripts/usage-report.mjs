@@ -1,6 +1,11 @@
 // What OVOA cost to run, day by day, from Cloudflare's own analytics.
 //
-//     XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-edgeformmedia node scripts/usage-report.mjs [days]
+//     XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa node scripts/usage-report.mjs [days]
+//
+// Days before the v1 move (2026-09) are on the old edgeformmedia account, while
+// it lasts (until 2026-10-14): run it with that account's profile
+// (C:/Users/thoma/.wrangler-edgeformmedia) and
+// CF_ACCOUNT=33594882ed1877edb5cee6f495ca7fae CF_D1=96162569-6625-4cad-af9c-62a3f6820033.
 //
 // Reads the same OAuth token wrangler uses (from the profile named by
 // XDG_CONFIG_HOME, or CF_API_TOKEN if that is set) and asks the GraphQL API for
@@ -15,9 +20,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const ACCOUNT = "33594882ed1877edb5cee6f495ca7fae";
+const ACCOUNT = process.env.CF_ACCOUNT ?? "e58b0ec5305410f9d3cd70f461f39cb6";
 const SCRIPT = "jarvis-api";
-const DATABASE = "96162569-6625-4cad-af9c-62a3f6820033";
+const DATABASE = process.env.CF_D1 ?? "26ebdc31-740f-4191-905d-77a5edb97799";
 const days = Math.max(1, Math.min(31, Number(process.argv[2] ?? 7)));
 
 function token() {

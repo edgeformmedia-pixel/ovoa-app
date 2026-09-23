@@ -12,9 +12,9 @@
       "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSBluetoothAlwaysUsageDescription": "OVOA connects to your ES100 recorder over Bluetooth to pull in what it captured.",
+        "NSBluetoothAlwaysUsageDescription": "OVOA connects to your OVOA Band over Bluetooth to pull in what it recorded.",
         "NSPhotoLibraryUsageDescription": "OVOA doesn't look at your photos. iOS asks for this line because the file tools OVOA uses can save to your photo library.",
-        "NSSpeechRecognitionUsageDescription": "OVOA uses your iPhone's speech recognition to turn your recordings into notes and to hear its name. It runs on the phone itself whenever your iPhone can; recordings are never sent to OVOA for this.",
+        "NSSpeechRecognitionUsageDescription": "OVOA uses your iPhone's speech recognition to hear what you say to it, its name, and your recordings. Your voice is recognised on your iPhone, or by Apple's speech service on iPhones that can't do it themselves. It's never sent to OVOA or the AI companies.",
         "UIBackgroundModes": [
           "audio",
           "bluetooth-central",
@@ -101,7 +101,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "OVOA uses the microphone when you talk to it or record a note, and listens for its name on the phone while the orb is on. What you say to it is sent only after you say its name.",
+          "microphonePermission": "OVOA uses the microphone when you talk to it or record a note, and listens for its name on the phone while the orb is on. Your iPhone turns what you say into words; only the words you say to OVOA are sent, never the sound.",
           "enableBackgroundRecording": true
         }
       ],
@@ -117,8 +117,8 @@
       [
         "expo-speech-recognition",
         {
-          "speechRecognitionPermission": "OVOA uses your iPhone's speech recognition to turn your recordings into notes and to hear its name. It runs on the phone itself whenever your iPhone can; recordings are never sent to OVOA for this.",
-          "microphonePermission": "OVOA uses the microphone when you talk to it or record a note, and listens for its name on the phone while the orb is on. What you say to it is sent only after you say its name."
+          "speechRecognitionPermission": "OVOA uses your iPhone's speech recognition to hear what you say to it, its name, and your recordings. Your voice is recognised on your iPhone, or by Apple's speech service on iPhones that can't do it themselves. It's never sent to OVOA or the AI companies.",
+          "microphonePermission": "OVOA uses the microphone when you talk to it or record a note, and listens for its name on the phone while the orb is on. Your iPhone turns what you say into words; only the words you say to OVOA are sent, never the sound."
         }
       ]
     ],

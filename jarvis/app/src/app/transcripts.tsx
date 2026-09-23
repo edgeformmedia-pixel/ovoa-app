@@ -12,7 +12,8 @@ import { SkeletonList } from "../components/motion";
 
 // Everything said, by day: the day's title, then each hour with its title, then
 // each five minutes with its title, then the words themselves. Search reaches
-// across all fourteen days kept (server: api/src/transcripts.ts).
+// across the fourteen days kept, and every recording made on purpose, whose
+// words stay until deleted (server: api/src/transcripts.ts, retention.ts).
 
 const BLOCK_MS = 5 * 60_000;
 
@@ -32,7 +33,6 @@ export default function Transcripts() {
     return (
       <PartOfPlan
         title="Transcripts"
-        needs="base"
         bar={false}
         what="Everything you said to OVOA, and what it said back, by the hour, with a title for each stretch."
       />

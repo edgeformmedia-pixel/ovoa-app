@@ -4,7 +4,7 @@ import { validTimeZone } from "./google/assistant";
 import { googleAccessToken, listGoogleAccounts, type GoogleAccount } from "./google/oauth";
 import { toolsByName } from "./google/tools";
 import { baselineFor } from "./heart";
-import { generateText, type CallTool, type ToolSpec } from "./llm";
+import { generateText, isModelRefused, type CallTool, type ToolSpec } from "./llm";
 import { recordBillFromMail, toCents } from "./money";
 import { addNote } from "./notes";
 import { findPerson } from "./people";
@@ -164,6 +164,8 @@ async function scanBills(env: Env, userId: string, timeZone: string) {
       text: `Pay ${b.payee}${b.amount ? ` (${b.amount})` : ""} — due ${b.due}`,
       tags: ["todo", "bill"],
       remindAt,
+      // Found, not asked for: deleted after 14 days (retention.ts), unlike their own notes.
+      source: "mail",
     });
     await logAction(env.DB, userId, "reminder", `Bill found: ${b.payee}, due ${b.due}`, "system");
     made++;
@@ -243,7 +245,7 @@ async function weeklyReport(env: Env, userId: string, timeZone: string) {
 
 // ---------- F29 On this day ----------
 
-/** Day titles from a week, a month and a year ago, for the feed. Day titles are kept after the words expire. */
+/** Day titles from a week, a month and a year ago, for the feed: each day's kept summary (daysummary.ts), which outlives the 14 days. */
 export async function onThisDay(db: D1Database, userId: string, timeZone: string) {
   const today = buckets(Date.now(), timeZone).day;
   const ago = [
@@ -338,7 +340,8 @@ export async function extrasTick(env: Env, slice?: Slice) {
         if (await weeklyReport(env, r.user_id, timeZone)) done.weekly++;
       }
     } catch (err) {
-      console.error(`extras: tick failed for ${r.user_id}`, err);
+      // Refused by the gate (plans.ts modelGate) is a skip, not a failure.
+      if (!isModelRefused(err)) console.error(`extras: tick failed for ${r.user_id}`, err);
     }
   }
   return done;

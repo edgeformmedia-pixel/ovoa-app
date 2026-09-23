@@ -2,6 +2,8 @@
 rem Double-click this file to store your Google OAuth client secret on Cloudflare.
 rem It reads the client_secret_*.json file you downloaded from Google Cloud.
 cd /d "%~dp0api"
+rem Use the wrangler login for the ovoa.ai account, which api/wrangler.jsonc pins.
+set "XDG_CONFIG_HOME=%USERPROFILE%\.wrangler-ovoa"
 echo.
 echo Looking for your Google client_secret JSON file in Downloads...
 echo.

@@ -12,6 +12,10 @@ import type { Env, Vars } from "./types";
 // Points become visits as they arrive; visits become places once a night. The
 // phone does the geocoding (its own, free, no key) and the geofencing (iOS
 // watches up to 20 regions for us), so the server only ever does arithmetic.
+//
+// Points, visits and place events are deleted after 14 days by the nightly purge
+// (retention.ts). Places with a name (theirs, or Home and Work) stay until the
+// user removes them; an unnamed one goes once nobody has been there for 14 days.
 
 /** A point this close to the visit in progress extends it. */
 export const VISIT_RADIUS_M = 150;
@@ -23,7 +27,7 @@ export const MIN_VISIT_MS = 5 * 60_000;
 const CLUSTER_M = 100;
 /** Seen on this many different days before it's worth calling a place. */
 const PLACE_DAYS = 3;
-/** Points and visits are kept this long; places are kept for good. */
+/** Points and visits are kept this long (retention.ts purges them); named places are kept for good. */
 export const LOCATION_RETAIN_DAYS = 14;
 /** iOS watches at most 20 regions per app. */
 export const MAX_GEOFENCES = 20;
@@ -265,7 +269,7 @@ export async function askAboutPlaces(env: Env, userId: string) {
   return true;
 }
 
-/** Nightly, for everyone with location on: learn places, drop what's past its 14 days. */
+/** Nightly, for everyone with location on: learn places, and ask about new ones. */
 export async function locationNightly(env: Env) {
   const db = env.DB;
   const cutoff = Date.now() - LOCATION_RETAIN_DAYS * 86_400_000;
@@ -284,11 +288,7 @@ export async function locationNightly(env: Env) {
       console.error(`location: nightly failed for ${u.user_id}`, err);
     }
   }
-  await db.batch([
-    db.prepare("DELETE FROM location_points WHERE ts < ?").bind(cutoff),
-    db.prepare("DELETE FROM visits WHERE left_at < ?").bind(cutoff),
-    db.prepare("DELETE FROM place_events WHERE ts < ?").bind(cutoff),
-  ]);
+  // Old points, visits and place events go in the nightly purge (retention.ts), after this.
   return made;
 }
 
@@ -413,12 +413,12 @@ location.delete("/locations", async (c) => {
 const TOOLS: ToolSpec[] = [
   {
     name: "location_timeline",
-    description: "Where they were on a day: each stop of five minutes or more, with the place's name or address and the times. For 'where was I Tuesday', 'when did I get to work'.",
+    description: "Where they were on a day in the last 14 days: each stop of five minutes or more, with the place's name or address and the times. For 'where was I Tuesday', 'when did I get to work'.",
     parameters: { type: "object", properties: { date: { type: "string", description: "YYYY-MM-DD; leave out for today." } } },
   },
   {
     name: "place_list",
-    description: "The places OVOA has learned (home, work, the gym, unnamed ones), with ids for renaming.",
+    description: "The places OVOA has learned (home, work, the gym, unnamed ones), with ids for renaming. Named places are kept; an unnamed one goes after 14 days without a visit.",
     parameters: { type: "object", properties: {} },
   },
   {

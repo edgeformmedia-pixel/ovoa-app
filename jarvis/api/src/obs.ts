@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { routePath } from "hono/route";
+import { isModelRefused } from "./llm";
 import type { Env, Vars } from "./types";
 
 // What the server knows about itself. See migrations/0029_observability.sql for
@@ -12,7 +13,8 @@ import type { Env, Vars } from "./types";
 //      because 166 copies of one failure is one sentence, not 166 rows.
 //   2. Writing a log never fails the thing it records -- the same rule
 //      actionlog.ts works to.
-//   3. Everything is bounded. Rollups by the hour, pruned nightly.
+//   3. Everything is bounded. Rollups by the hour, pruned nightly: the purge
+//      (retention.ts) deletes a row 14 days after it was last touched.
 
 /** A request slower than this earns a row even though it succeeded. */
 const SLOW_MS = 10_000;
@@ -179,7 +181,10 @@ export function observe(): MiddlewareHandler<{ Bindings: Env; Variables: Vars }>
     const status = c.res.status;
     const route = labelFor(c);
     const userId = c.get("userId") as string | undefined;
-    const failed = !!c.error || status >= 500;
+    // A refusal (no plan, the day's spend used up, no consent) reaches
+    // app.onError on routes that don't catch it, which sets c.error, but it's
+    // an answer, not a fault: no failure line, no error row. Slow, it's a stall.
+    const failed = (!!c.error && !isModelRefused(c.error)) || status >= 500;
     if (failed || ms >= SLOW_MS || !QUIET_ROUTES.has(route)) {
       say("req", { rid: requestId, m: c.req.method, route, status, ms, user: userId?.slice(0, 8) });
     }
@@ -193,8 +198,8 @@ export function observe(): MiddlewareHandler<{ Bindings: Env; Variables: Vars }>
         ms,
         requestId,
         userId: userId ?? null,
-        message: c.error ? c.error.message : failed ? `${status} with no error attached` : `slow: ${ms} ms`,
-        stack: c.error?.stack,
+        message: failed ? (c.error?.message ?? `${status} with no error attached`) : `slow: ${ms} ms`,
+        stack: failed ? c.error?.stack : undefined,
       }),
     );
   };
@@ -324,15 +329,4 @@ export function sinceFrom(raw: string | undefined) {
   }
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : hour;
-}
-
-/** Nightly. These tables are only cheap because something empties them. */
-export function pruneStatements(db: D1Database, now: number) {
-  return [
-    // A month of distinct failures. A fingerprint that stopped happening a month
-    // ago is history, and so is the count it was carrying.
-    db.prepare("DELETE FROM error_events WHERE last_seen < ?").bind(now - 30 * 86_400_000),
-    db.prepare("DELETE FROM engine_stats WHERE last_at < ?").bind(now - 14 * 86_400_000),
-    db.prepare("DELETE FROM cron_ticks WHERE last_at < ?").bind(now - 14 * 86_400_000),
-  ];
 }

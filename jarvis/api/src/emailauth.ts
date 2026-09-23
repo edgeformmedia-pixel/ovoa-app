@@ -1,14 +1,22 @@
 // Proving an email address, for signing in and signing up on ovoa.ai
-// (migrations/0039_email_codes.sql). Two ways:
+// (migrations/0039_email_codes.sql), and in the app after its own sign-up
+// (verify.ts). Two ways:
 //
 //   1. A six-digit code, emailed from no-reply@ovoa.ai through Resend. Ten
-//      minutes to type it, five tries at it, five codes an hour per address.
+//      minutes to type it, five tries at it, a minute between two codes and
+//      five codes an hour per address. Without RESEND_API_KEY, a local worker
+//      (EMAIL_CODES_TO_LOG, passed to wrangler dev and never deployed) writes
+//      the code to its own log instead of sending it (deliverCode), so sign-up
+//      can be tried without mail. Reserved test addresses (example.com and the
+//      like) are never mailed: they bounce, against no-reply@ovoa.ai's name.
 //   2. Google. The site does the OAuth round trip with its own client and
 //      hands over the ID token, which is checked with Google here: the site
 //      can't just say "this is so-and-so".
 //
-// A proven address either has an account and is signed straight in, or gets
-// a signup ticket that "Create your account" spends with a name and password.
+// A proven address either has an account whose address was proven before and
+// is signed straight in, or gets a signup ticket that "Create your account"
+// spends with a name and password. An account nobody had proven the address
+// of is taken back first (index.ts disown), and the ticket sets its password.
 // There is one `users` table, so an account made in the app signs in on the
 // site and one made on the site signs in to the app: the password is what the
 // app asks for.
@@ -22,8 +30,11 @@ import type { Env } from "./types";
 
 export const CODE_TTL_MS = 10 * 60 * 1000;
 export const CODE_ATTEMPTS = 5;
-/** Between two codes to the same address, so a double tap sends one email. */
-export const CODE_RESEND_MS = 30 * 1000;
+/**
+ * Between two codes to the same address: a double tap sends one email, and the
+ * app's "Send a new code" counts down this long (the v1 release: 60 s).
+ */
+export const CODE_RESEND_MS = 60 * 1000;
 export const CODE_SENDS_PER_HOUR = 5;
 export const TICKET_TTL_MS = 30 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -190,11 +201,17 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
  * The code email. Laid out like the site's own emails (ovoa-team,
  * src/lib/membership/email.server.ts): one column, readable in any mail app,
  * with the code big enough to read off a phone and type on a laptop.
+ * `confirm`: the app asking a signed-in account to prove its address (verify.ts),
+ * not a sign-in or a sign-up on the site.
  */
-export function codeEmail(input: { to: string; code: string; name: string | null; existing: boolean }): Email {
+export function codeEmail(input: { to: string; code: string; name: string | null; existing: boolean; confirm?: boolean }): Email {
   const first = input.name?.trim().split(/\s+/)[0] ?? null;
   const hello = `Hi${first ? ` ${first}` : ""},`;
-  const why = input.existing ? "Here's your code to sign in to OVOA:" : "Here's your code to create your OVOA account:";
+  const why = input.confirm
+    ? "Here's your code to confirm your email for OVOA:"
+    : input.existing
+      ? "Here's your code to sign in to OVOA:"
+      : "Here's your code to create your OVOA account:";
   const minutes = CODE_TTL_MS / 60_000;
   const after = `It works for ${minutes} minutes. If you didn't ask for it, ignore this email: nobody can use your address without the code.`;
   const signOff = "Questions? Reply to this email, or write to support@ovoa.ai.";
@@ -249,6 +266,54 @@ export async function sendEmail(
     return false;
   }
 }
+
+/**
+ * Addresses no one can receive mail at (RFC 2606 and 6761): example.com/.net/.org
+ * and anything under .test, .invalid, .example or .localhost. Test sign-ups use
+ * them (scripts/engine-bench.mjs); mailing them is a bounce on the record of
+ * the address real people's codes come from.
+ */
+export function reservedAddress(email: string) {
+  const domain = email.slice(email.lastIndexOf("@") + 1).toLowerCase();
+  return /(^|\.)example\.(com|net|org)$/.test(domain) || /\.(test|invalid|example|localhost)$/.test(domain);
+}
+
+/** A code for this address would actually be mailed, and can't be: it's reserved. Logged codes still go. */
+export const unmailable = (env: Pick<Env, "RESEND_API_KEY">, email: string) => emailConfigured(env) && reservedAddress(email);
+
+/**
+ * A code on its way: "sent" through Resend, "logged" to this Worker's own log
+ * (no RESEND_API_KEY, and EMAIL_CODES_TO_LOG set: a local worker, where
+ * sign-up must still be possible), or "failed" (Resend said no, the address is
+ * reserved, or neither is set). Never throws. The logged line has the code and
+ * a tag for the address, never the address, and goes to console.log only:
+ * never device_logs or error_events.
+ */
+export async function deliverCode(
+  env: Pick<Env, "RESEND_API_KEY" | "EMAIL_FROM" | "RESEND_API_BASE" | "EMAIL_CODES_TO_LOG">,
+  email: Email,
+  code: string,
+  fetcher?: Fetcher,
+): Promise<"sent" | "logged" | "failed"> {
+  if (emailConfigured(env)) return !reservedAddress(email.to) && (await sendEmail(env, email, fetcher)) ? "sent" : "failed";
+  if (!env.EMAIL_CODES_TO_LOG) return "failed";
+  const at = email.to.lastIndexOf("@");
+  console.log(`ovoa.dev email code ${code} for ${addressTag(email.to)}@${email.to.slice(at + 1)} (no RESEND_API_KEY, so it wasn't sent)`);
+  return "logged";
+}
+
+/** A stable, meaningless tag for one address, for a log line that mustn't hold it. */
+export function addressTag(email: string) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < email.length; i++) {
+    h ^= email.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/** Codes can go out at all: through Resend, or into a local worker's log. */
+export const codesAvailable = (env: Pick<Env, "RESEND_API_KEY" | "EMAIL_CODES_TO_LOG">) => emailConfigured(env) || !!env.EMAIL_CODES_TO_LOG;
 
 // ---------- Google ----------
 

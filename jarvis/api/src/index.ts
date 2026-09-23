@@ -20,7 +20,6 @@ import {
   describeSchedule,
   isAgentTool,
   cancelNudges,
-  maintenance,
   MIN_INTERVAL_MINUTES,
   drainNotes,
   runDueJobs,
@@ -35,25 +34,26 @@ import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
 import { googleAuthed, googlePublic } from "./google/oauth";
 import {
+  AI_UNREACHABLE,
   chatWithTools,
   classifyEngineError,
   coolingEngines,
   DEFER,
   engineTrouble,
   generateText,
+  isAiUnreachable,
   type EngineAttempt,
   type LoopState,
   type OnText,
   type Turn,
 } from "./llm";
-import { labelFor, noteEngines, noteTick, observe, pruneStatements, recordError, say } from "./obs";
-import { KEEP_MS as DEVICE_LOG_KEEP_MS } from "./logs";
+import { labelFor, noteEngines, noteTick, observe, recordError, say } from "./obs";
 import { describeToolCall, kindForTool, logAction, toolSucceeded } from "./actionlog";
 import { dropRepeats, sentenceStream } from "./sentences";
 import { isPhoneTool, type PhoneCaps } from "./phone";
 import { isShortcutTool, shortcutAssistant, shortcutFiles } from "./shortcuts/assistant";
 import type { Env, Vars } from "./types";
-import { speechStream, STT_CLIP_ENGINES, sttClipEngineFrom, TTS_ENGINES, ttsEngineFrom, voice, VOICES, type TtsEngine, type VoiceId } from "./voice";
+import { speechStream, TTS_ENGINES, ttsEngineFrom, voice, VOICES, type TtsEngine, type VoiceId } from "./voice";
 import { logs } from "./logs";
 import { forgetPushToken, registerPushToken } from "./push";
 import { BUZZ_PATTERNS, sendBuzz, type BuzzPattern } from "./buzz";
@@ -65,31 +65,34 @@ import { fireDueNotes, isNoteTool, notes, notesAssistant } from "./notes";
 import { eveningTick, isTodoTool, todos, todosAssistant } from "./todos";
 import { feed } from "./feed";
 import { isLocationTool, location, locationAssistant, locationNightly } from "./location";
-import { heart, heartAssistant, HR_RETAIN_DAYS, isHeartTool } from "./heart";
+import { heart, heartAssistant, isHeartTool } from "./heart";
 import { isPeopleTool, people, peopleAssistant } from "./people";
 import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "./rhythm";
 import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
-import { askClaude, askClaudeTool, claude } from "./claude";
 import { appAssistant, appFor, describeScreen, isAppTool, myApps, type MadeApp } from "./myapps";
-import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
+import { isTranscriptTool, linesOf, storeLine, storeLines, titleTranscripts, transcriptAssistant, transcripts } from "./transcripts";
+import { forgetWritten, writeDaySummaries } from "./daysummary";
+import { COUNTS_RETAIN_DAYS, purgeExpired, RETAIN_DAYS } from "./retention";
 import { isWebTool, webAssistant } from "./web";
-import { capVerdict, monthKey, overCapMessage, turnCapFrom, warnMessage } from "./cap";
+import { capVerdict, monthKey, overCapMessage, warnMessage } from "./cap";
 import { isMoneyTool, moneyAssistant, moneyRoutes, moneyTick } from "./money";
+import { foodAssistant, foodRoutes, foodTurn, isFoodTool, logFood, LOWER_THAN_USUAL_NOTE } from "./food";
 import { MORE_TOOLS, SPOKEN_CORE, toolbelt, TYPED_CORE, type ToolGuide } from "./toolbelt";
-import { mightBeAboutThem } from "./remember";
+import { askedToRemember, mightBeAboutThem } from "./remember";
 import { allowed, clientIp, limitByUser, tooMany } from "./limits";
+import { withMaintenance } from "./maintenance";
 import {
   checkCode,
   CODE_TTL_MS,
   codeEmail,
-  emailConfigured,
+  codesAvailable,
+  deliverCode,
   issueCode,
   issueTicket,
-  pruneEmailAuth,
-  sendEmail,
   spendTicket,
+  unmailable,
   unsendCode,
   verifyGoogleIdToken,
 } from "./emailauth";
@@ -105,21 +108,49 @@ import {
   userForAppleSub,
   verifyAppleIdentityToken,
 } from "./signin";
+import { emailVerifyRoutes, markVerified, mustVerifyNow, requireVerified, sendAccountCode, type VerifyRow } from "./verify";
+import { consentRoutes, consentView, requireConsent, type ConsentRow } from "./consent";
 import { sliceFor } from "./sweep";
-import { engineStatus, ENGINES, isEngine, setRuntimeEngines, setUsageSink, type Engine, type EnginePrefs, type LlmUsage } from "./llm";
+import {
+  cleanOrder,
+  engineStatus,
+  ENGINES,
+  isEngine,
+  isModelRefused,
+  setModelGate,
+  setRuntimeEngines,
+  setUsageSink,
+  type Engine,
+  type EnginePrefs,
+  type LlmUsage,
+  type ModelRefused,
+} from "./llm";
 import { glmPriceFrom, usd } from "./pricing";
 import { globalSettings, setServerSetting, settingsFor, type ServerSettings, type SettingKey } from "./settings";
-import { dayOf, llmRow, pruneUsage, recordUsage, replyCounts, searchRow, sttStreamRow, turnRow, usageByPerson, usageForPerson } from "./usage";
 import {
+  dayOf,
+  llmRow,
+  recordUsage,
+  replyCounts,
+  searchRow,
+  sttStreamRow,
+  turnRow,
+  usageByPerson,
+  usageForPerson,
+  type UsageRow,
+} from "./usage";
+import {
+  ALLOWANCES,
   allowanceFor,
   allowanceMessage,
-  atLeast,
   isDevEmail,
   isTier,
   loadPlan,
-  needsPlan,
+  modelGateFor,
   planFor,
   planView,
+  refusalMessage,
+  refusedResponse,
   requirePlan,
   setPlanOverride,
   type Tier,
@@ -131,9 +162,18 @@ import {
 // tick made the call, and a count must never hold up an answer.
 setUsageSink((env, u: LlmUsage) => void recordUsage(env as Env, [llmRow(u.userId, u, glmPriceFrom(env as Env))]));
 
-/** The runtime settings (server_settings) as the engine choices llm.ts understands. */
+// And every model call asks first whether it may happen at all: the person's
+// plan, the day's spend and their consent (plans.ts modelGate). Nothing is sent
+// when it says no. Once per isolate, like the sink.
+setModelGate(modelGateFor);
+
+/**
+ * The runtime settings (server_settings) as the engine choices llm.ts
+ * understands. A copied row naming an engine retired before v1 is passed over
+ * there (llm.ts usableOrder, usableVoice).
+ */
 function prefsFrom(s: ServerSettings): EnginePrefs {
-  return { order: s.engine_order, voice: s.voice_engine, workersModel: s.workers_model };
+  return { order: s.engine_order, voice: s.voice_engine };
 }
 
 /**
@@ -219,7 +259,6 @@ type Settings = {
   auto_approve: number;
   time_zone: string | null;
   context_enabled: number;
-  context_retain_days: number;
   agent_enabled: number;
   agent_autonomy: string;
   quiet_start: number;
@@ -235,26 +274,25 @@ const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 app.use("*", observe());
 app.use("*", cors());
 
-app.onError((err, c) => {
+app.onError(async (err, c) => {
+  // A model call the gate refused is an answer, not a fault. The routes that
+  // call a model answer it themselves (refusedResponse); this is the net under
+  // any that don't, so the person still hears why rather than a 500.
+  if (isModelRefused(err) && c.get("userId")) return refusedResponse(c as Context<{ Bindings: Env; Variables: Vars }>, err);
   // The row is written by observe(), which sees c.error after this returns
   // (hono/dist/compose.js sets context.error before calling the handler).
   // Recording here as well would count every failure twice.
   say("err", { rid: c.get("requestId"), route: labelFor(c), why: classifyEngineError(err) });
   console.error(err);
-  // When no engine can answer at all, say which one and why. "Something went
-  // wrong" 166 times in a day is what the alternative looked like (2026-09-21).
-  // Only when every engine is down — otherwise a failure on a route that never
+  // When no engine can answer at all, say so plainly, with which one and why as
+  // the detail. "Something went wrong" 166 times in a day is what the
+  // alternative looked like (2026-09-21). Only when every engine is down, or
+  // the model call itself said so — otherwise a failure on a route that never
   // goes near a model answered 503 "can't reach an AI model" for the duration
   // of some other engine's cooldown.
   const trouble = engineTrouble(c.env);
-  if (trouble) return c.json({ error: `OVOA can't reach an AI model right now. ${trouble}` }, 503);
-  // Still here for a 4006 raised somewhere outside the engine loop, where
-  // nothing was cooled down and engineTrouble has nothing to report.
-  if (/\b4006\b|daily free allocation/.test(String(err))) {
-    return c.json(
-      { error: "OVOA's AI is out of usage for today. Add credit to the Gemini or DeepSeek account, or try again after midnight UTC." },
-      503,
-    );
+  if (trouble || isAiUnreachable(err)) {
+    return c.json({ error: AI_UNREACHABLE, detail: trouble ?? (err instanceof Error ? err.message : String(err)) }, 503);
   }
   return c.json({ error: "Something went wrong" }, 500);
 });
@@ -350,17 +388,25 @@ function logAuth(route: "signup" | "login" | "code" | "google" | "apple", outcom
 
 async function publicUser(env: Env, userId: string) {
   const db = env.DB;
-  const user = await db
-    .prepare("SELECT id, email, name, created_at FROM users WHERE id = ?")
+  const row = await db
+    .prepare(
+      `SELECT id, email, name, created_at, email_verified_at, must_verify, ai_consent_at, ai_consent_version
+         FROM users WHERE id = ?`,
+    )
     .bind(userId)
-    .first<{ id: string; email: string; name: string; created_at: number }>();
-  if (!user) return null;
+    .first<{ id: string; email: string; name: string; created_at: number } & VerifyRow & ConsentRow>();
+  if (!row) return null;
+  const { email_verified_at, must_verify, ai_consent_at, ai_consent_version, ...user } = row;
   const [settings, profile] = await Promise.all([getSettings(db, userId), getProfile(db, userId)]);
   // onboarded: the app shows the setup conversation until this is true.
   // devTools: a development account (DEV_EMAILS), so Dev tools shows the
   // switches only those accounts may use. The server checks again on every use.
   // ttsEngine: which engine voices replies for this person, so the app knows
   // when to speak on the phone itself and which voices to offer.
+  // emailVerified: the address has been proven with a code (or on ovoa.ai); the
+  // app asks for one while it's false. mustVerify: and nothing but that code
+  // works until then (verify.ts). aiConsent: whether they've agreed to AI, and
+  // to which wording of the screen (consent.ts).
   const mine = await settingsFor(env, userId);
   return {
     ...user,
@@ -368,11 +414,14 @@ async function publicUser(env: Env, userId: string) {
     onboarded: !!profile.onboardedAt,
     devTools: isDevEmail(env, user.email),
     ttsEngine: ttsEngineFrom(mine.tts_engine, env.TTS_ENGINE),
+    emailVerified: email_verified_at != null,
+    mustVerify: mustVerifyNow({ must_verify, email_verified_at }),
+    aiConsent: consentView({ ai_consent_at, ai_consent_version }),
   };
 }
 
 const SETTINGS_QUERY = `SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone,
-              context_enabled, context_retain_days, agent_enabled, agent_autonomy, quiet_start, quiet_end, agent_daily_runs,
+              context_enabled, agent_enabled, agent_autonomy, quiet_start, quiet_end, agent_daily_runs,
               capture_everything
          FROM settings WHERE user_id = ?`;
 
@@ -400,7 +449,9 @@ function formatSettings(s: Settings) {
     fallDetection: !!s.fall_detection,
     autoApprove: !!s.auto_approve,
     contextEnabled: !!s.context_enabled,
-    contextRetainDays: s.context_retain_days,
+    // The "Forget summaries after" picker is gone (docs/retention.md): everything
+    // follows the same 14 days now. Still sent, for builds that show it.
+    contextRetainDays: RETAIN_DAYS,
     agentEnabled: !!s.agent_enabled,
     agentAutonomy: s.agent_autonomy,
     quietStart: s.quiet_start,
@@ -432,8 +483,17 @@ app.post("/auth/signup", async (c) => {
   }
   const { email, password, name } = parsed.data;
 
-  const exists = await c.env.DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(email).first();
-  if (exists) {
+  const exists = await c.env.DB.prepare("SELECT id, must_verify, email_verified_at, created_at FROM users WHERE email = ?")
+    .bind(email)
+    .first<VerifyRow & { id: string; created_at: number }>();
+  if (exists && mustVerifyNow(exists) && exists.created_at < Date.now() - CODE_TTL_MS) {
+    // An app sign-up nobody proved while its code lived: it can reach nothing
+    // but /me (verify.ts), and whoever made it may not own the address. It
+    // gives way to this one, rather than keep the owner out with a 409.
+    await deleteSessions(c.env.DB, exists.id);
+    await c.env.DB.prepare("DELETE FROM users WHERE id = ? AND must_verify = 1 AND email_verified_at IS NULL").bind(exists.id).run();
+    logAuth("signup", "replaced an unproven account", email, { user: exists.id });
+  } else if (exists) {
     logAuth("signup", "already exists", email);
     return c.json(
       { error: "An account with that email already exists", fields: { email: "An account with that email already exists" } },
@@ -441,21 +501,38 @@ app.post("/auth/signup", async (c) => {
     );
   }
 
-  const id = await insertUser(c.env.DB, { email, password, name, verified: false });
+  // The address isn't proven yet: until the emailed code is typed, the account
+  // reaches only /me, sign-out, deleting it, and the code routes (verify.ts).
+  // The first code goes now; the app's code step asks for another if it didn't.
+  // Where no code can go out at all (a Worker without RESEND_API_KEY), it isn't
+  // held: the app's code step can be put off, as for accounts from before.
+  const id = await insertUser(c.env.DB, { email, password, name, verified: false, mustVerify: codesAvailable(c.env) });
   const token = await createSession(c.env.DB, id);
-  logAuth("signup", "created", email, { user: id });
-  return c.json({ token, user: await publicUser(c.env, id) }, 201);
+  const code = await sendAccountCode(c.env, { email, name }).catch((err: unknown) => {
+    console.error("ovoa.err signup: couldn't send the first code", err);
+    return { sent: false as const };
+  });
+  logAuth("signup", "created", email, { user: id, code: code.sent ? code.via : "not sent" });
+  return c.json({ token, user: await publicUser(c.env, id), codeSent: code.sent }, 201);
 });
 
 /**
  * A new account and its settings row, in one batch. `verified`: the address
  * was proven first (emailauth.ts). The app's own signup leaves that column out
- * altogether, so it keeps working on a database without migration 0039.
- * `password` null: none (Sign in with Apple), a hash nothing matches (disown()).
+ * and proves the address afterwards, with a code (verify.ts); `mustVerify`
+ * holds it until then, written in the same INSERT, so an account can't exist
+ * without the hold it was meant to have. `password` null: none (Sign in with
+ * Apple), a hash nothing matches (disown()).
  */
 async function insertUser(
   db: D1Database,
-  { email, password, name, verified }: { email: string; password: string | null; name: string; verified: boolean },
+  {
+    email,
+    password,
+    name,
+    verified,
+    mustVerify = false,
+  }: { email: string; password: string | null; name: string; verified: boolean; mustVerify?: boolean },
 ) {
   const id = crypto.randomUUID();
   const now = Date.now();
@@ -468,8 +545,8 @@ async function insertUser(
           )
           .bind(id, email, hash, salt, name, now, now)
       : db
-          .prepare("INSERT INTO users (id, email, password_hash, password_salt, name, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-          .bind(id, email, hash, salt, name, now),
+          .prepare("INSERT INTO users (id, email, password_hash, password_salt, name, created_at, must_verify) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(id, email, hash, salt, name, now, mustVerify ? 1 : 0),
     db.prepare("INSERT INTO settings (user_id, assistant_name, updated_at) VALUES (?, ?, ?)").bind(id, "OVOA", now),
   ]);
   return id;
@@ -568,12 +645,19 @@ async function signOutEverywhere(db: D1Database, userId: string) {
  * else, ahead of the address's owner, to be waiting for them with a password
  * and sessions of its own. When the address is proven that is taken back
  * before anything else: the password stops matching (verifyPassword compares
- * lengths first, as with NO_SUCH_USER) and everyone is signed out. The prover
- * then picks a new password (/auth/email/signup), or Apple signs them in.
- * Existing accounts from before verification pay this once, at their first proof.
+ * lengths first, as with NO_SUCH_USER), everyone is signed out, and any Google
+ * account connected to it goes (whoever made it may have connected their own).
+ * The prover then picks a new password (/auth/email/signup), or Apple signs
+ * them in. That covers an app sign-up still waiting for its code (verify.ts)
+ * as well. Existing accounts from before verification pay this once, at their
+ * first proof. Proving the address of the account you're signed in to, with
+ * the code in the app (POST /me/email/verify), isn't this: it only stamps it.
  */
 async function disown(db: D1Database, userId: string) {
-  await db.prepare("UPDATE users SET password_hash = '' WHERE id = ?").bind(userId).run();
+  await db.batch([
+    db.prepare("UPDATE users SET password_hash = '' WHERE id = ?").bind(userId),
+    db.prepare("DELETE FROM google_accounts WHERE user_id = ?").bind(userId),
+  ]);
   await signOutEverywhere(db, userId);
 }
 
@@ -652,11 +736,18 @@ app.post("/auth/email/code", async (c) => {
     logAuth("code", "rejected", null, emailShape(body));
     return c.json({ error: BAD_EMAIL, fields: { email: BAD_EMAIL } }, 400);
   }
-  if (!emailConfigured(c.env)) {
+  // No Resend key: only a local worker (EMAIL_CODES_TO_LOG) goes on, and
+  // writes the code to its own log instead of sending it (deliverCode).
+  if (!codesAvailable(c.env)) {
     logAuth("code", "no RESEND_API_KEY", null);
     return c.json({ error: "Email codes aren't switched on yet. Write to support@ovoa.ai and we'll set you up." }, 503);
   }
   const { email } = parsed.data;
+  // example.com and the like can't receive it: said, not bounced.
+  if (unmailable(c.env, email)) {
+    logAuth("code", "reserved address", email);
+    return c.json({ error: BAD_EMAIL, fields: { email: BAD_EMAIL } }, 400);
+  }
   const issued = await issueCode(c.env.DB, email);
   if ("waitSeconds" in issued) {
     logAuth("code", "too soon", email);
@@ -676,13 +767,13 @@ app.post("/auth/email/code", async (c) => {
   // The email says "sign in" or "create your account"; the reply here is the
   // same either way, so the page can't be used to ask who has an account.
   const user = await c.env.DB.prepare("SELECT name FROM users WHERE email = ?").bind(email).first<{ name: string }>();
-  const sent = await sendEmail(c.env, codeEmail({ to: email, code: issued.code, name: user?.name ?? null, existing: !!user }));
-  if (!sent) {
+  const via = await deliverCode(c.env, codeEmail({ to: email, code: issued.code, name: user?.name ?? null, existing: !!user }), issued.code);
+  if (via === "failed") {
     await unsendCode(c.env.DB, email);
     logAuth("code", "send failed", email);
     return c.json({ error: "We couldn't send the email just now. Try again in a minute." }, 502);
   }
-  logAuth("code", "sent", email, { existing: Number(!!user) });
+  logAuth("code", via, email, { existing: Number(!!user) });
   return c.json({ ok: true, expiresInMinutes: CODE_TTL_MS / 60_000 });
 });
 
@@ -756,15 +847,18 @@ app.post("/auth/email/signup", async (c) => {
   // An account nobody had proven the address of: the one the proof disowned
   // (afterProven's `existing`), or one made with the address since the ticket.
   // The ticket proves the address is theirs, so the password picked here
-  // becomes its password and whoever made it is signed out. One whose address
-  // was proven before is signed in to as it is, its password left alone.
+  // becomes its password, whoever made it is signed out, and a Google account
+  // they connected goes (as in disown). One whose address was proven before is
+  // signed in to as it is, its password left alone.
   const claimed = !created && user.email_verified_at == null;
   if (claimed) {
     const { hash, salt } = await hashPassword(password);
-    await c.env.DB
-      .prepare("UPDATE users SET password_hash = ?, password_salt = ?, name = ?, email_verified_at = ? WHERE id = ?")
-      .bind(hash, salt, name, Date.now(), id)
-      .run();
+    await c.env.DB.batch([
+      c.env.DB
+        .prepare("UPDATE users SET password_hash = ?, password_salt = ?, name = ?, email_verified_at = ? WHERE id = ?")
+        .bind(hash, salt, name, Date.now(), id),
+      c.env.DB.prepare("DELETE FROM google_accounts WHERE user_id = ?").bind(id),
+    ]);
     await signOutEverywhere(c.env.DB, id);
   }
   const kind = parsed.data.session === "app" ? "app" : "web";
@@ -916,18 +1010,30 @@ authed.use("*", async (c, next) => {
   await applyRuntime(c.env);
   const mine = await settingsFor(c.env, session.userId);
   c.set("ttsEngine", ttsEngineFrom(mine.tts_engine, c.env.TTS_ENGINE));
-  c.set("sttClipEngine", sttClipEngineFrom(mine.stt_clip_engine, c.env.STT_CLIP_ENGINE));
   await next();
 });
 
 // After sign-in, so the expensive routes count against the person (limits.ts).
 authed.use("*", limitByUser());
 
+// An account made by the app's sign-up since v1 reaches nothing but /me,
+// sign-out, deleting it and the code routes until its address is proven
+// (verify.ts): 403 needs_verification. Before the plan, so an unproven account
+// never costs a plan lookup; one proven (or from before) costs one read per
+// isolate, ever.
+authed.use("*", requireVerified());
+
 // After the rate limit, so a runaway is stopped before it costs a plan lookup.
 // Every signed-in route needs the plan ROUTE_TIERS gives it (plans.ts), and a
 // person without it gets the 402 the app knows how to show. Free routes pass
 // without reading anything.
 authed.use("*", requirePlan());
+
+// After the plan, so someone on the free plan hears "That's for Base users",
+// not "agree first": a turn and OVOA's voice need consent to AI before anything
+// is sent anywhere (consent.ts). Every other model call is refused by the gate
+// on the call itself (plans.ts modelGate).
+authed.use("*", requireConsent());
 
 authed.post("/auth/logout", async (c) => {
   await deleteSession(c.env.DB, c.var.token);
@@ -981,6 +1087,7 @@ const updateMeSchema = z.object({
   fallDetection: z.boolean().optional(),
   autoApprove: z.boolean().optional(),
   contextEnabled: z.boolean().optional(),
+  /** Ignored: sent by builds from before 14-day retention (retention.ts), which had a picker for it. */
   contextRetainDays: z.number().int().min(0).max(3650).optional(),
   agentEnabled: z.boolean().optional(),
   agentAutonomy: z.enum(["off", "suggest", "act"]).optional(),
@@ -1001,8 +1108,7 @@ const updateMeSchema = z.object({
 authed.patch("/me", async (c) => {
   const parsed = updateMeSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Invalid settings" }, 400);
-  const { name, assistantName, personality, memoryEnabled, stepGoal, fallDetection, autoApprove, contextEnabled, contextRetainDays } =
-    parsed.data;
+  const { name, assistantName, personality, memoryEnabled, stepGoal, fallDetection, autoApprove, contextEnabled } = parsed.data;
   const { agentEnabled, agentAutonomy, quietStart, quietEnd, agentDailyRuns } = parsed.data;
   // Written before anything reads it below, so a job seeded in this same
   // request is scheduled against the right zone.
@@ -1028,7 +1134,6 @@ authed.patch("/me", async (c) => {
            fall_detection = COALESCE(?, fall_detection),
            auto_approve   = COALESCE(?, auto_approve),
            context_enabled = COALESCE(?, context_enabled),
-           context_retain_days = COALESCE(?, context_retain_days),
            agent_enabled  = COALESCE(?, agent_enabled),
            agent_autonomy = COALESCE(?, agent_autonomy),
            quiet_start    = COALESCE(?, quiet_start),
@@ -1047,7 +1152,6 @@ authed.patch("/me", async (c) => {
         fallDetection === undefined ? null : Number(fallDetection),
         autoApprove === undefined ? null : Number(autoApprove),
         contextEnabled === undefined ? null : Number(contextEnabled),
-        contextRetainDays ?? null,
         agentEnabled === undefined ? null : Number(agentEnabled),
         agentAutonomy ?? null,
         quietStart ?? null,
@@ -1217,8 +1321,6 @@ type TurnInput = {
   /** "agent": a queued command from the background agent rather than the user. */
   source?: "agent";
   resume?: { state: LoopState; results: Record<string, unknown> };
-  /** The person's plan. Below pro, the tools that set up background work are left out. */
-  tier?: Tier;
   /** Streaming: receives each sentence of the reply as soon as it's written. */
   onSentence?: (sentence: string) => void;
   /** The cf-ray from observe(), so this turn's line can be joined to its request's. */
@@ -1234,7 +1336,7 @@ type TurnInput = {
 async function runTurn(
   env: Env,
   ctx: Pick<ExecutionContext, "waitUntil">,
-  { userId, text, timeZone, caps, voice, source, tier, resume, onSentence, requestId, app }: TurnInput,
+  { userId, text, timeZone, caps, voice, source, resume, onSentence, requestId, app }: TurnInput,
 ) {
   const fromAgent = source === "agent";
   const started = Date.now();
@@ -1243,7 +1345,7 @@ async function runTurn(
   // googleAssistant needs auto-approve from the settings, but only once a tool
   // runs, so its own read goes out at the same time.
   const settingsRead = getSettings(db, userId);
-  const [settings, user, history, memories, activity, google, profile, mine] = await Promise.all([
+  const [settings, user, history, memories, activity, google, profile, mine, food] = await Promise.all([
     settingsRead,
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
     db
@@ -1257,13 +1359,15 @@ async function runTurn(
     getProfile(db, userId),
     // This person's own engine choices, if a developer set any (settings.ts). Cached, so free.
     settingsFor(env, userId),
+    // How closely they track food, and whether this is the week's "lower than usual" turn (food.ts).
+    foodTurn(db, userId, timeZone),
   ]);
   const autoApprove = !!settings.auto_approve && !fromAgent;
   const contextMs = Date.now() - started;
   const phone = phoneAssistant(env, userId, caps, autoApprove);
   const shortcuts = shortcutAssistant(env, userId, autoApprove);
   const timeline = contextAssistant(env, userId, timeZone, !!settings.context_enabled);
-  const web = webAssistant(env, timeZone, ctx);
+  const web = webAssistant(env, userId, timeZone, ctx);
   const agent = agentAssistant(env, userId, timeZone, settings as AgentSettings, voice);
   const routine = routinesAssistant(env, userId, timeZone, { voice, fromAgent });
   const profileTools = profileAssistant(env, userId);
@@ -1276,6 +1380,9 @@ async function runTurn(
   const extraTools = extrasAssistant(env, userId, timeZone);
   const alarmTools = alarmAssistant(env, userId, timeZone);
   const moneyTools = moneyAssistant(env, userId, timeZone, { voice: !!voice });
+  const foodTools = foodAssistant(env, userId, timeZone, { voice: !!voice, level: food.level });
+  // Once a week at most, and only to someone who's there to hear it.
+  const askLowerThanUsual = !fromAgent && !resume && (await food.claimLower());
   // The open app's own screen: its checklist, counter and log (myapps.ts).
   const appTools = app ? appAssistant(env, userId, app.id, timeZone) : null;
 
@@ -1286,11 +1393,11 @@ async function runTurn(
   }));
   // What changes from one message to the next rides on the message itself, not at
   // the top of the system prompt. Every engine here reuses the work of reading a
-  // prompt it has seen before (DeepSeek's context cache, Gemini's implicit cache,
-  // Workers AI's prefix cache), but only up to the first character that differs,
-  // and the clock used to be that character: it sat 200 characters in and changed
-  // every minute, so the instructions and all the tool JSON after it were read from
-  // scratch on every turn. Only what the user said is saved; this never is.
+  // prompt it has seen before (GLM's context cache, Gemini's implicit cache), but
+  // only up to the first character that differs, and the clock used to be that
+  // character: it sat 200 characters in and changed every minute, so the
+  // instructions and all the tool JSON after it were read from scratch on every
+  // turn. Only what the user said is saved; this never is.
   const moment = [
     `It is now ${new Date().toLocaleString("en-US", { timeZone, dateStyle: "full", timeStyle: "short" })}.`,
     `Recent activity (steps per day, daily goal ${settings.step_goal}):\n${activity || "No step data yet."}`,
@@ -1302,6 +1409,7 @@ async function runTurn(
           describeScreen(app, timeZone),
         ].filter(Boolean)
       : []),
+    ...(askLowerThanUsual ? [LOWER_THAN_USUAL_NOTE] : []),
   ].join("\n");
   turns.push({ role: "user", text: `[${moment}]\n\n${text}` });
 
@@ -1323,15 +1431,11 @@ async function runTurn(
     ...extraTools.tools,
     ...alarmTools.tools,
     ...moneyTools.tools,
-    askClaudeTool,
+    ...foodTools.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
-    (t) =>
-      (!fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name)) &&
-      (!voice || !NOT_SPOKEN.has(t.name)) &&
-      // Background work is Pro's (plans.ts): on Base, the model can't offer to set it up.
-      (!tier || atLeast(tier, "pro") || !isAgentTool(t.name)),
+    (t) => (!fromAgent || !FORBIDDEN_FOR_COMMANDS.has(t.name)) && (!voice || !NOT_SPOKEN.has(t.name)),
   );
   // Instructions that travel with their tools (toolbelt.ts): in the prompt while
   // the tools are carried, handed over with the tools when more_tools brings
@@ -1349,6 +1453,7 @@ async function runTurn(
     people: { tools: peopleTools.tools, prompt: peopleTools.prompt },
     alarms: { tools: alarmTools.tools, prompt: alarmTools.prompt },
     money: { tools: moneyTools.tools, prompt: moneyTools.prompt },
+    food: { tools: foodTools.tools, prompt: foodTools.prompt },
     transcripts: {
       tools: transcriptTools.tools,
       prompt: settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : "",
@@ -1414,6 +1519,7 @@ async function runTurn(
     ["people", guided(guides.people)],
     ["alarms", guided(guides.alarms)],
     ["money", guided(guides.money)],
+    ["food", guided(guides.food)],
     ["transcripts", guided(guides.transcripts)],
     ["command", fromAgent
       ? [
@@ -1476,9 +1582,6 @@ async function runTurn(
     system,
     turns,
     tools,
-    // One person's turns go to the same model server, which is the one still holding
-    // the prompt it read for them last time (see `moment` above).
-    affinity: userId,
     onAttempt: (a) => attempts.push(a),
     usage: { userId, purpose: voice ? "voice" : "chat" },
     onUsage: (u) => usages.push(u),
@@ -1531,8 +1634,8 @@ async function runTurn(
                                     ? alarmTools.callTool
                                   : isMoneyTool(name)
                                     ? moneyTools.callTool
-                                  : name === askClaudeTool.name
-                                    ? async () => askClaude(env, String(args.prompt ?? ""), { voice })
+                                  : isFoodTool(name)
+                                    ? foodTools.callTool
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name
@@ -1653,7 +1756,8 @@ async function runTurn(
 
   if (settings.memory_enabled && mightBeAboutThem(text)) {
     ctx.waitUntil(
-      updateMemories(env, userId, memories, text, reply).catch((err) => console.error("memory update failed", err)),
+      // Refused by the gate (consent withdrawn, say): nothing to remember with, and nothing wrong.
+      updateMemories(env, userId, memories, text, reply, settings.assistant_name).catch((err) => isModelRefused(err) || console.error("memory update failed", err)),
     );
   }
 
@@ -1763,10 +1867,11 @@ function streamTurn(
         // as a 200 before any of this ran, so app.onError never sees it. The
         // record has to be written here or it is written nowhere.
         const trouble = engineTrouble(c.env);
+        const down = !!trouble || isAiUnreachable(err);
         say("err", { rid, route, ms: Date.now() - started, sentences, why: classifyEngineError(err) });
         console.error("ovoa.err streamed turn failed", err);
         await recordError(c.env, {
-          kind: trouble ? "engines_down" : "error",
+          kind: down ? "engines_down" : "error",
           route: `${route} (streamed)`,
           requestId: rid,
           userId: userId ?? null,
@@ -1777,13 +1882,12 @@ function streamTurn(
           message: err instanceof Error ? err.message : String(err),
           stack: err instanceof Error ? err.stack : undefined,
         });
+        // A person's own turn never gets here when no engine could answer (it
+        // gets unreachableReply); the agent's commands do, and fail as before.
         await send({
           type: "error",
-          error: trouble
-            ? `OVOA can't reach an AI model right now. ${trouble}`
-            : err instanceof Error
-              ? err.message
-              : "The assistant failed",
+          error: down ? AI_UNREACHABLE : err instanceof Error ? err.message : "The assistant failed",
+          ...(down && { detail: trouble ?? (err instanceof Error ? err.message : String(err)) }),
         });
       } finally {
         if (stall) clearTimeout(stall);
@@ -1813,9 +1917,6 @@ authed.post("/chat", async (c) => {
   const { data } = parsed;
   const rid = c.var.requestId;
   const tier = (c.var.plan ?? (await planFor(c.env, c.var.userId))).tier;
-  // Overheard by the always-open microphone: that is the open-mic mode, which
-  // is Pro's. The route itself is Base (plans.ts), so this one flag is checked here.
-  if (data.ambient && !atLeast(tier, "pro")) return needsPlan(c, "pro");
   if (data.stream) {
     return streamTurn(
       c,
@@ -1874,6 +1975,7 @@ async function chatTurn(
 
   // Someone else's app, or one deleted since it was opened, is simply not there.
   const app = data.app && !data.source ? await appFor(db, userId, data.app) : null;
+  const started = Date.now();
   const result = await runTurn(env, ctx, {
     userId,
     app,
@@ -1882,14 +1984,20 @@ async function chatTurn(
     caps: data.phone ?? ACTIONS_ONLY,
     voice: data.voice,
     source: data.source,
-    tier,
     onSentence,
     requestId,
+  }).catch((err: unknown) => {
+    if (data.source) throw err;
+    if (isModelRefused(err)) return refusedReply(err, tier, limitZone, onSentence);
+    if (!isAiUnreachable(err)) throw err;
+    return unreachableReply(env, ctx, err, "/chat", { requestId, userId, started }, onSentence);
   });
   // Most of the month's replies are gone: said once, on the end of a reply
-  // they were getting anyway. A paused turn keeps it for the next one.
+  // they were getting anyway. A paused turn keeps it for the next one, and so
+  // does a reply no model wrote (refused, or the AI out of reach: engine
+  // "none"), which didn't count.
   const monthly = standing?.month;
-  if (monthly?.verdict === "warn" && result.kind === "reply") {
+  if (monthly?.verdict === "warn" && result.kind === "reply" && (result.meta.engine as string) !== "none") {
     const warning = warnMessage(monthly.used, monthly.cap);
     onSentence?.(warning);
     ctx.waitUntil(markWarned(db, userId, monthly.month));
@@ -1904,13 +2012,14 @@ const CAP_WARNED = "turn-cap-warned";
 
 /**
  * Where a person stands, from one read of the usage table (a turn row per
- * answered reply, and every cost): `month` against the monthly fair-use cap
- * (cap.ts), null with the cap off; `day` against their plan's daily allowance
- * (plans.ts). Both null for a development account, which is never capped.
+ * answered reply, and every cost): `month` against their plan's monthly cap
+ * (plans.ts ALLOWANCES.monthly, worded by cap.ts), null on a plan with none;
+ * `day` against their plan's daily allowance (plans.ts). Both null for a
+ * development account, which is never capped.
  */
 async function standingFor(env: Env, userId: string, timeZone: string, tier: Tier) {
   if (await isDevAccount(env, userId)) return { month: null, day: null };
-  const cap = turnCapFrom(env);
+  const cap = ALLOWANCES[tier].monthly;
   const now = Date.now();
   const month = monthKey(now, timeZone);
   const [counts, warnedRow] = await Promise.all([
@@ -1927,6 +2036,51 @@ async function standingFor(env: Env, userId: string, timeZone: string, tier: Tie
 
 const markWarned = (db: D1Database, userId: string, month: string) =>
   db.prepare("INSERT OR IGNORE INTO daily_marks (user_id, kind, day, at) VALUES (?, ?, ?, ?)").bind(userId, CAP_WARNED, month, Date.now()).run();
+
+/**
+ * A person's turn that no engine could answer (llm.ts AiUnreachable): answered
+ * with one plain sentence, like the allowance messages, so a spoken turn hears
+ * it and a typed one reads it, instead of an error the phone shows as "Couldn't
+ * reach the assistant". Nothing is saved and nothing counts against the day's
+ * replies. It is still written down as engines_down, with the real reason: that
+ * is the row the morning after wants. The agent's own commands don't come
+ * here; they fail, and are marked failed, as before.
+ */
+function unreachableReply(
+  env: Env,
+  ctx: Pick<ExecutionContext, "waitUntil">,
+  err: unknown,
+  route: string,
+  at: { requestId?: string; userId: string; started: number },
+  onSentence?: (sentence: string) => void,
+): TurnResult {
+  say("err", { rid: at.requestId, route, ms: Date.now() - at.started, why: classifyEngineError(err) });
+  ctx.waitUntil(
+    recordError(env, {
+      kind: "engines_down",
+      route,
+      requestId: at.requestId,
+      userId: at.userId,
+      ms: Date.now() - at.started,
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    }),
+  );
+  return plainReply(AI_UNREACHABLE, onSentence);
+}
+
+/**
+ * A person's turn whose model call the gate refused (llm.ts ModelRefused,
+ * plans.ts modelGate): no plan with AI, today's spend used up, or no consent
+ * yet. One plain sentence, like the allowance messages, and the allowance one
+ * says when the day starts again. Nothing is saved, nothing counts, and it is
+ * no error: it is the rule working. The agent's own commands don't come here;
+ * they fail, and are marked failed, as before.
+ */
+function refusedReply(err: ModelRefused, tier: Tier, timeZone: string, onSentence?: (sentence: string) => void): TurnResult {
+  say("plan", { outcome: "turn refused", why: err.reason });
+  return plainReply(refusalMessage(err.reason, tier, Date.now(), timeZone), onSentence);
+}
 
 /**
  * A reply that no model wrote: one sentence, streamed like any other so the
@@ -1979,6 +2133,7 @@ authed.post("/chat/resume", async (c) => {
 
   const caps = JSON.parse(row.caps);
   const resumedApp = typeof caps.app === "string" ? await appFor(c.env.DB, userId, caps.app) : null;
+  const started = Date.now();
   const run = (onSentence?: (s: string) => void) =>
     runTurn(c.env, c.executionCtx, {
       userId,
@@ -1987,11 +2142,15 @@ authed.post("/chat/resume", async (c) => {
       caps: phoneCapsSchema.parse(caps),
       voice: !!caps.voice,
       source: caps.source === "agent" ? "agent" : undefined,
-      tier: c.var.plan?.tier,
       app: resumedApp,
       resume: { state: JSON.parse(row.state), results },
       onSentence,
       requestId: c.var.requestId,
+    }).catch((err: unknown) => {
+      if (caps.source === "agent") throw err;
+      if (isModelRefused(err)) return refusedReply(err, c.var.plan?.tier ?? "base", validTimeZone(row.time_zone), onSentence);
+      if (!isAiUnreachable(err)) throw err;
+      return unreachableReply(c.env, c.executionCtx, err, "/chat/resume", { requestId: c.var.requestId, userId, started }, onSentence);
     });
   if (parsed.data.stream) return streamTurn(c, run, caps.voice ? parsed.data.speak?.voice : undefined);
   return c.json(turnResponse(await run()));
@@ -2015,12 +2174,16 @@ authed.post("/siri", async (c) => {
   if (standing.day?.over) return c.text(allowanceMessage(standing.day, Date.now(), timeZone));
   if (standing.month?.verdict === "over") return c.text(overCapMessage(standing.month.cap, Date.now(), timeZone));
 
+  const started = Date.now();
   const result = await runTurn(c.env, c.executionCtx, {
     userId: c.var.userId,
     text,
     timeZone,
     caps: ACTIONS_ONLY,
-    tier,
+  }).catch((err: unknown) => {
+    if (isModelRefused(err)) return refusedReply(err, tier, timeZone);
+    if (!isAiUnreachable(err)) throw err;
+    return unreachableReply(c.env, c.executionCtx, err, "/siri", { requestId: c.var.requestId, userId: c.var.userId, started });
   });
   if (result.kind === "paused") return c.text("Open the OVOA app to do that.");
   const next = settings.auto_approve ? "Open OVOA to finish." : "Open OVOA to approve.";
@@ -2052,23 +2215,30 @@ authed.delete("/siri/key", async (c) => {
 async function listMemories(db: D1Database, userId: string) {
   const { results } = await db
     .prepare(
-      `SELECT id, content, created_at FROM (
-         SELECT id, content, created_at FROM memories WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
+      `SELECT id, content, source, created_at FROM (
+         SELECT id, content, source, created_at FROM memories WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
        ) ORDER BY created_at ASC`,
     )
     .bind(userId, MAX_MEMORIES)
-    .all<{ id: string; content: string; created_at: number }>();
+    .all<{ id: string; content: string; source: MemorySource; created_at: number }>();
   return results;
 }
 
 /** Every memory, oldest first, for the compaction pass. */
 async function listAllMemories(db: D1Database, userId: string) {
   const { results } = await db
-    .prepare("SELECT id, content FROM memories WHERE user_id = ? ORDER BY created_at ASC LIMIT 500")
+    .prepare("SELECT id, content, source FROM memories WHERE user_id = ? ORDER BY created_at ASC LIMIT 500")
     .bind(userId)
-    .all<{ id: string; content: string }>();
+    .all<{ id: string; content: string; source: MemorySource }>();
   return results;
 }
+
+/**
+ * 'asked': they told OVOA to remember it, and it's kept. 'learned': picked up
+ * from a conversation by the pass below, and deleted after 14 days
+ * (retention.ts, docs/retention.md).
+ */
+type MemorySource = "asked" | "learned";
 
 /** How many memories a person has in all, for deciding whether to compact. */
 async function countMemories(db: D1Database, userId: string) {
@@ -2079,18 +2249,36 @@ async function countMemories(db: D1Database, userId: string) {
 const memoryUpdateSchema = {
   type: "object",
   properties: {
-    add: { type: "array", items: { type: "string" } },
+    add: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          text: { type: "string" },
+          asked: { type: "boolean", description: "True only when they explicitly asked you to remember it, or it replaces or merges a memory marked asked." },
+        },
+        required: ["text", "asked"],
+      },
+    },
     removeIds: { type: "array", items: { type: "string" } },
   },
   required: ["add", "removeIds"],
 };
 
+/** One memory to add. A bare string (the shape before sources) is a learned one. */
+const newMemory = z.union([
+  z.string().trim().min(1).max(300).transform((text) => ({ text, asked: false })),
+  z.object({ text: z.string().trim().min(1).max(300), asked: z.boolean().optional().default(false) }),
+]);
+
 async function updateMemories(
   env: Env,
   userId: string,
-  existing: { id: string; content: string }[],
+  existing: { id: string; content: string; source: MemorySource }[],
   userText: string,
   reply: string,
+  /** What they call OVOA: "Max remember…" is an instruction too. */
+  assistantName?: string,
 ) {
   // Over the limit, the same call also compacts: the whole list goes in (not
   // just the newest MAX_MEMORIES the turn saw), and the model is asked to bring
@@ -2098,10 +2286,11 @@ async function updateMemories(
   const total = await countMemories(env.DB, userId);
   const over = total > MAX_MEMORIES;
   const all = over ? await listAllMemories(env.DB, userId) : existing;
+  const asked = askedToRemember(userText, assistantName);
   const raw = await generateText(env, {
     model: env.MEMORY_MODEL,
     json: { schema: memoryUpdateSchema },
-    // Runs after every reply: Workers AI first, so it doesn't use up the free Gemini quota chat needs.
+    // Runs after many replies, so it thinks as little as the model allows.
     fast: true,
     usage: { userId, purpose: "memory" },
     system: [
@@ -2112,8 +2301,9 @@ async function updateMemories(
       `Each new memory is one short third-person sentence, under ${MEMORY_CHARS} characters. Do not duplicate existing memories.`,
       "If a new fact contradicts or updates an existing memory, put the old memory's id in removeIds and add the corrected fact.",
       over
-        ? `There are ${total} memories and the limit is ${MAX_MEMORIES}. Bring the list under the limit: merge memories that overlap into one (put every merged id in removeIds and add the combined sentence), and remove the ones that have lapsed or matter least. Keep names, relationships, and standing preferences.`
+        ? `There are ${total} memories and the limit is ${MAX_MEMORIES}. Bring the list under the limit: merge memories that overlap into one (put every merged id in removeIds and add the combined sentence), and remove the ones that have lapsed or matter least. Keep names, relationships, and standing preferences, and keep every memory marked asked unless it's replaced by a corrected or merged one.`
         : "",
+      "Mark a new memory asked: true only when their latest message explicitly asks you to remember it ('remember that…', 'don't forget…'), or when it replaces or merges a memory marked asked. Otherwise asked: false.",
       "If nothing is worth remembering, return empty arrays.",
     ]
       .filter(Boolean)
@@ -2122,7 +2312,7 @@ async function updateMemories(
       {
         role: "user",
         text: JSON.stringify({
-          existingMemories: all.map(({ id, content }) => ({ id, content })),
+          existingMemories: all.map(({ id, content, source }) => ({ id, content, ...(source === "asked" && { asked: true }) })),
           latestExchange: { user: userText, assistant: reply },
         }),
       },
@@ -2131,19 +2321,23 @@ async function updateMemories(
 
   const parsed = z
     .object({
-      add: z.array(z.string().trim().min(1).max(300)).max(over ? 30 : 10),
+      add: z.array(newMemory).max(over ? 30 : 10),
       removeIds: z.array(z.string()).max(over ? 80 : 20),
     })
     .parse(JSON.parse(raw));
 
+  // The model's mark is believed only when the message was an instruction to
+  // remember (remember.ts askedToRemember) or an asked memory is being replaced
+  // or merged, so marking everything can't keep everything.
+  const replacesAsked = parsed.removeIds.some((id) => all.some((m) => m.id === id && m.source === "asked"));
   const db = env.DB;
   const now = Date.now();
   const stmts = [
     ...parsed.removeIds.map((id) => db.prepare("DELETE FROM memories WHERE id = ? AND user_id = ?").bind(id, userId)),
-    ...parsed.add.map((content, i) =>
+    ...parsed.add.map((m, i) =>
       db
-        .prepare("INSERT INTO memories (id, user_id, content, created_at) VALUES (?, ?, ?, ?)")
-        .bind(crypto.randomUUID(), userId, content, now + i),
+        .prepare("INSERT INTO memories (id, user_id, content, source, created_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(crypto.randomUUID(), userId, m.text, m.asked && (asked || replacesAsked) ? "asked" : "learned", now + i),
     ),
   ];
   if (stmts.length) await db.batch(stmts);
@@ -2173,7 +2367,11 @@ const blockSchema = z.object({
   startedAt: z.number().int().positive(),
   endedAt: z.number().int().positive(),
   source: z.enum(["voice", "chat", "calendar", "location", "health"]),
-  /** Read to write the summary, then dropped. Never stored. */
+  /**
+   * The recording's words: read to write the summary, and kept as the
+   * recording's transcript (raw_captures, source 'recording'), which, being
+   * recorded on purpose, outlives the 14 days until they delete it (retention.ts).
+   */
   transcript: z.string().trim().max(20_000).optional(),
   note: z.string().trim().max(2000).optional(),
   timeZone: z.string().optional(),
@@ -2187,7 +2385,13 @@ authed.post("/context/blocks", async (c) => {
   if (!settings.context_enabled) return c.json({ error: "Context is off" }, 403);
 
   const timeZone = validTimeZone(parsed.data.timeZone ?? settings.time_zone ?? undefined);
-  if (parsed.data.transcript) await storeLine(c.env.DB, userId, parsed.data.transcript, "recording", parsed.data.startedAt);
+  // Kept whole: a line is at most 4,000 characters, so a long recording goes
+  // in as several, a millisecond apart from its start, inside the span
+  // DELETE /context/blocks/:id deletes.
+  if (parsed.data.transcript) {
+    const start = parsed.data.startedAt;
+    await storeLines(c.env.DB, userId, linesOf(parsed.data.transcript).map((text, i) => ({ text, ts: start + i })), "recording");
+  }
   const block = await recordBlock(
     c.env,
     userId,
@@ -2244,29 +2448,52 @@ authed.patch("/context/commitments/:id", async (c) => {
   const status = z.enum(["open", "done", "dropped"]).safeParse(body?.status);
   if (!status.success) return c.json({ error: "Bad status" }, 400);
   const id = c.req.param("id");
-  await c.env.DB.prepare("UPDATE context_commitments SET status = ? WHERE id = ? AND user_id = ?")
-    .bind(status.data, id, c.var.userId)
+  // settled_at: kept 14 days from being settled (retention.ts); reopened, it's open again.
+  await c.env.DB.prepare("UPDATE context_commitments SET status = ?, settled_at = ? WHERE id = ? AND user_id = ?")
+    .bind(status.data, status.data === "open" ? null : Date.now(), id, c.var.userId)
     .run();
   // Settled: nothing left to chase, so the reminder goes too.
   if (status.data !== "open") await cancelNudges(c.env, c.var.userId, id);
   return c.json({ ok: true });
 });
 
-/** "Forget that." Takes the block and anything pulled out of it. */
+/**
+ * "Forget that." Takes the block and anything pulled out of it, and a
+ * recording's words with it: those are kept until deleted (retention.ts), so
+ * this is where they go. At least a second from its start, for a recording
+ * whose length the phone didn't know, since its lines sit a millisecond apart
+ * from there. What was written from those words goes too (forgetWritten).
+ */
 authed.delete("/context/blocks/:id", async (c) => {
-  await c.env.DB.prepare("DELETE FROM context_blocks WHERE id = ? AND user_id = ?")
+  const db = c.env.DB;
+  const gone = await db
+    .prepare("DELETE FROM context_blocks WHERE id = ? AND user_id = ? RETURNING started_at, ended_at")
     .bind(c.req.param("id"), c.var.userId)
-    .run();
+    .first<{ started_at: number; ended_at: number }>();
+  if (gone) {
+    const end = Math.max(gone.ended_at, gone.started_at + 1000);
+    await db
+      .prepare("DELETE FROM raw_captures WHERE user_id = ? AND source = 'recording' AND ts >= ? AND ts <= ?")
+      .bind(c.var.userId, gone.started_at, end)
+      .run();
+    const settings = await getSettings(db, c.var.userId);
+    const { rewriting } = await forgetWritten(c.env, c.var.userId, gone.started_at, end + 1, validTimeZone(settings.time_zone ?? undefined));
+    c.executionCtx.waitUntil(rewriting);
+  }
   return c.json({ ok: true });
 });
 
-/** "Forget the last hour." Everything recorded since a moment. */
+/** "Forget the last hour." Everything recorded since a moment, the words said since then, and what was written from them. */
 authed.delete("/context/blocks", async (c) => {
   const since = Number(c.req.query("since"));
   if (!Number.isFinite(since) || since <= 0) return c.json({ error: "since is required" }, 400);
-  const { meta } = await c.env.DB.prepare("DELETE FROM context_blocks WHERE user_id = ? AND started_at >= ?")
-    .bind(c.var.userId, since)
-    .run();
+  const [{ meta }] = await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM context_blocks WHERE user_id = ? AND started_at >= ?").bind(c.var.userId, since),
+    c.env.DB.prepare("DELETE FROM raw_captures WHERE user_id = ? AND ts >= ?").bind(c.var.userId, since),
+  ]);
+  const settings = await getSettings(c.env.DB, c.var.userId);
+  const { rewriting } = await forgetWritten(c.env, c.var.userId, since, Date.now(), validTimeZone(settings.time_zone ?? undefined));
+  c.executionCtx.waitUntil(rewriting);
   return c.json({ ok: true, forgot: meta.changes ?? 0 });
 });
 
@@ -2481,8 +2708,11 @@ app.post("/debug/agent/tick", async (c) => {
   if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
   const started = Date.now();
   const which = c.req.query("what");
-  if (which === "maintenance") return c.json({ purgedBlocks: await maintenance(c.env), ms: Date.now() - started });
+  // The nightly cron's three parts, one at a time: learning, the day summaries,
+  // and the purge ("maintenance" was the old name for the purge's part).
   if (which === "nightly") return c.json({ ...(await nightly(c.env)), ms: Date.now() - started });
+  if (which === "summaries") return c.json({ ...(await writeDaySummaries(c.env)), ms: Date.now() - started });
+  if (which === "retention" || which === "maintenance") return c.json({ ...(await purgeExpired(c.env)), ms: Date.now() - started });
   if (which === "alarms") return c.json({ ...(await nagTick(c.env)), ms: Date.now() - started });
   if (which === "extras") return c.json({ ...(await extrasTick(c.env)), ms: Date.now() - started });
   if (which === "money") return c.json({ ...(await moneyTick(c.env)), ms: Date.now() - started });
@@ -2527,10 +2757,11 @@ authed.get("/agent/runs", async (c) => {
 
 // ---------- What it costs ----------
 //
-// The phone streams its microphone straight to Deepgram, so only the phone
-// knows how many seconds went. It counts the audio it actually sent
-// (app/src/lib/liveListen.ts) and reports it here in batches. Clamped, because
-// a phone with a wrong clock or a bug could otherwise claim a day per minute.
+// Builds from before 2026-09-23 streamed the microphone straight to Deepgram,
+// so only the phone knew how many seconds went, and it reports them here in
+// batches. Speech is recognised on the phone now and nothing streams, but old
+// builds keep posting, so this keeps answering. Clamped, because a phone with
+// a wrong clock or a bug could otherwise claim a day per minute.
 
 const streamUsageSchema = z.object({
   /** Seconds of audio sent since the last report. */
@@ -2565,47 +2796,43 @@ authed.get("/usage/me", async (c) => {
 
 // ---------- Which engine answers ----------
 //
-// The switchboard: which reply engine typed and spoken turns try first, which
-// Workers AI model stands behind them, and (Phase 4) which voice speaks. Two
-// doors to the same room: /debug/engines with the debug key, for scripts, and
-// /engines for a signed-in development account, for the Dev tools picker.
-// Changes go to server_settings (settings.ts) and take effect within a minute
-// on every isolate, with no deploy.
+// The switchboard: which reply engine typed and spoken turns try first, and
+// which voice speaks. Two doors to the same room: /debug/engines with the
+// debug key, for scripts, and /engines for a signed-in development account, for
+// the Dev tools picker. Changes go to server_settings (settings.ts) and take
+// effect within a minute on every isolate, with no deploy.
 
 /**
  * Whether a value may go in the table under this key. Returns a sentence saying
- * what is wrong, or null. Names are checked against what llm.ts knows: an
- * unknown engine in the order would be ignored at run time, but the person
- * setting it deserves to hear that now rather than wonder later why nothing changed.
+ * what is wrong, or null. Names are checked against what llm.ts knows. An order
+ * keeps the engines it names and quietly drops the rest (settingValue), because
+ * Dev tools in builds from before v1 add ",workers" to every order they send;
+ * an order naming no engine at all is refused, so the person setting it hears
+ * now rather than wonders later why nothing changed.
  */
 function settingProblem(key: SettingKey, value: string): string | null {
   const names = `The engines are ${ENGINES.join(", ")}.`;
   switch (key) {
-    case "engine_order": {
-      const bad = value.split(",").map((s) => s.trim().toLowerCase()).filter((s) => s && !isEngine(s));
-      return bad.length ? `"${bad[0]}" isn't an engine. ${names}` : null;
-    }
+    case "engine_order":
+      return cleanOrder(value) ? null : `"${value}" names no engine. ${names}`;
     case "voice_engine": {
       const v = value.trim().toLowerCase();
-      return v === "workers" || v === "keyed" || isEngine(v) ? null : `"${value}" isn't a choice for spoken turns. Use workers, keyed, or an engine name. ${names}`;
+      return v === "keyed" || isEngine(v) ? null : `"${value}" isn't a choice for spoken turns. Use keyed or an engine name. ${names}`;
     }
-    case "workers_model":
-      return /^@cf\/[\w.-]+\/[\w.-]+$/.test(value.trim()) ? null : `"${value}" doesn't look like a Workers AI model id (they start with @cf/).`;
     case "tts_engine":
       return (TTS_ENGINES as readonly string[]).includes(value.trim()) ? null : `"${value}" isn't a voice engine. The choices are ${TTS_ENGINES.join(", ")}.`;
-    case "stt_clip_engine":
-      return (STT_CLIP_ENGINES as readonly string[]).includes(value.trim())
-        ? null
-        : `"${value}" isn't a clip transcriber. The choices are ${STT_CLIP_ENGINES.join(" and ")}.`;
   }
+}
+
+/** What goes in the table for a value settingProblem accepted: an order as its known engines only. */
+function settingValue(key: SettingKey, value: string) {
+  return key === "engine_order" ? cleanOrder(value) : value.trim();
 }
 
 const settingsPatchSchema = z.object({
   engine_order: z.string().max(200).optional(),
   voice_engine: z.string().max(40).optional(),
-  workers_model: z.string().max(80).optional(),
   tts_engine: z.string().max(40).optional(),
-  stt_clip_engine: z.string().max(40).optional(),
 });
 
 /** Everything the switchboard shows: each engine's state, the orders, and what is set for everyone and for `userId`. */
@@ -2621,14 +2848,14 @@ async function readEngines(env: Env, userId: string | null) {
  */
 async function writeEngines(c: Context<{ Bindings: Env; Variables: Vars }>, body: unknown, userId: string | null) {
   const parsed = settingsPatchSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: "Send engine_order, voice_engine, workers_model or tts_engine as strings." }, 400);
+  if (!parsed.success) return c.json({ error: "Send engine_order, voice_engine or tts_engine as strings." }, 400);
   const entries = Object.entries(parsed.data).filter(([, v]) => v !== undefined) as [SettingKey, string][];
   if (!entries.length) return c.json({ error: "Nothing to change." }, 400);
   for (const [key, value] of entries) {
     const problem = value.trim() ? settingProblem(key, value) : null;
     if (problem) return c.json({ error: problem }, 400);
   }
-  for (const [key, value] of entries) await setServerSetting(c.env, key, value.trim().toLowerCase() === "" ? null : value.trim(), userId);
+  for (const [key, value] of entries) await setServerSetting(c.env, key, value.trim() === "" ? null : settingValue(key, value), userId);
   await applyRuntime(c.env);
   say("engines", { by: userId ? "person" : "everyone", changed: entries.map(([k, v]) => `${k}=${v || "(cleared)"}`).join(",") });
   return c.json(await readEngines(c.env, userId));
@@ -2674,11 +2901,35 @@ app.put("/debug/engines", async (c) => {
  */
 app.get("/debug/usage", async (c) => {
   if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
-  const days = Math.min(Math.max(Number(c.req.query("days") ?? 7) || 7, 1), 90);
+  // usage_daily keeps 35 days (retention.ts COUNTS_RETAIN_DAYS).
+  const days = Math.min(Math.max(Number(c.req.query("days") ?? 7) || 7, 1), COUNTS_RETAIN_DAYS);
   const from = dayOf(Date.now() - (days - 1) * 86_400_000);
   const people = await usageByPerson(c.env.DB, from);
   const microUsd = people.reduce((n, p) => n + p.total.microUsd, 0);
   return c.json({ from, days, people, total: { microUsd, estUsd: usd(microUsd), people: people.length } });
+});
+
+/**
+ * Writes usage against one person today, as if they had used it: `turns`
+ * answered replies and/or `microUsd` of spend. For the smoke test's plan
+ * section, which has to use up a day on a local worker that can't call a
+ * model. Filed under engine "debug", so it's plain in any report. Needs DEBUG_KEY.
+ *
+ *   POST /debug/usage  {"userId":"...","turns":20}  or  {"userId":"...","microUsd":300000}
+ */
+app.post("/debug/usage", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const parsed = z
+    .object({ userId: z.string().max(64), turns: z.number().int().min(0).max(10_000).optional(), microUsd: z.number().int().min(0).max(100_000_000).optional() })
+    .safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: 'Send {"userId", "turns" and/or "microUsd"}.' }, 400);
+  const { userId, turns = 0, microUsd = 0 } = parsed.data;
+  const rows: UsageRow[] = [
+    ...(turns ? [{ ...turnRow(userId, "debug", false), n: turns }] : []),
+    ...(microUsd ? [{ userId, kind: "llm_call" as const, engine: "debug", model: "debug", n: 1, microUsd }] : []),
+  ];
+  await recordUsage(c.env, rows);
+  return c.json({ ok: true, rows: rows.length });
 });
 
 /**
@@ -2720,6 +2971,45 @@ app.put("/debug/plan", async (c) => {
   return c.json({ userId: user.id, override: body.override, plan: await planForMe(c.env, user.id) });
 });
 
+/**
+ * Proving a test account's address without an inbox (verify.ts), for
+ * test/smoke.sh, scripts/engine-bench.mjs and throwaway production checks,
+ * whose example.com addresses can't receive a code. Needs DEBUG_KEY.
+ *
+ *   POST /debug/verify      {"email" or "userId"}   marks it proven
+ *   POST /debug/email/code  {"email" or "userId"}   a live code for it, not sent,
+ *                                                   so the code step itself can be tested
+ *
+ * A code is a credential: email_codes is shared with ovoa.ai's sign-in, where
+ * it opens a session. So /debug/email/code only answers on a local worker
+ * (EMAIL_CODES_TO_LOG, never deployed; production has DEBUG_KEY too), and only
+ * for an app sign-up that hasn't been proven yet, never for a real account.
+ */
+app.post("/debug/verify", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const user = await debugPlanUser(c.env, ((await c.req.json().catch(() => null)) ?? {}) as { email?: unknown; userId?: unknown });
+  if (!user) return c.json({ error: "No such account" }, 404);
+  await markVerified(c.env, user.id);
+  say("verify", { outcome: "proven by debug key", user: user.id });
+  return c.json({ userId: user.id, emailVerified: true });
+});
+
+app.post("/debug/email/code", async (c) => {
+  if (!c.env.EMAIL_CODES_TO_LOG || !c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  const user = await debugPlanUser(c.env, ((await c.req.json().catch(() => null)) ?? {}) as { email?: unknown; userId?: unknown });
+  if (!user) return c.json({ error: "No such account" }, 404);
+  const hold = await c.env.DB.prepare("SELECT must_verify, email_verified_at FROM users WHERE id = ?").bind(user.id).first<VerifyRow>();
+  if (!mustVerifyNow(hold)) return c.json({ error: "Only for a sign-up that hasn't been proven yet" }, 409);
+  // Past the minute between codes, and without counting against the hour: the
+  // one already out is voided first, as when an email fails to send.
+  await unsendCode(c.env.DB, user.email);
+  const issued = await issueCode(c.env.DB, user.email);
+  if ("waitSeconds" in issued) return c.json({ error: "Too many codes this hour", retryAfter: issued.waitSeconds }, 429);
+  return c.json({ userId: user.id, code: issued.code });
+});
+
 /** Queues a command as if the agent had, so the channel can be tested without a model. Needs DEBUG_KEY. */
 authed.post("/debug/commands", async (c) => {
   if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
@@ -2728,6 +3018,20 @@ authed.post("/debug/commands", async (c) => {
   return c.json(await enqueueCommand(c.env, c.var.userId, body.text, "agent", "debug"));
 });
 
+/**
+ * Logs food as food_log would, so the Calorie routes can be tested without a
+ * model: the same clamp, catalog and dedupe. Body: food_log's arguments. Needs DEBUG_KEY.
+ */
+authed.post("/debug/food/log", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
+  const row = await c.env.DB.prepare("SELECT time_zone FROM settings WHERE user_id = ?").bind(c.var.userId).first<{ time_zone: string | null }>();
+  const done = await logFood(c.env.DB, c.var.userId, validTimeZone(row?.time_zone), body);
+  return c.json(done, "error" in done ? 400 : 200);
+});
+
+authed.route("/", emailVerifyRoutes);
+authed.route("/", consentRoutes);
 authed.route("/", commands);
 authed.route("/", routines);
 authed.route("/", onboarding);
@@ -2735,13 +3039,13 @@ authed.route("/", myApps);
 authed.route("/", notes);
 authed.route("/", todos);
 authed.route("/", moneyRoutes);
+authed.route("/", foodRoutes);
 authed.route("/", feed);
 authed.route("/", location);
 authed.route("/", heart);
 authed.route("/", transcripts);
 authed.route("/", people);
 authed.route("/", alarms);
-authed.route("/", claude);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);
@@ -2750,31 +3054,14 @@ authed.route("/", voice);
 app.route("/", authed);
 
 /**
- * Once a night, alongside the agent's own maintenance: learn places, and hold
- * each kind of personal data to its retention promise.
+ * Once a night, the learning part: places, what usually happens, and what each
+ * Google account is for. The day summaries and the purge are parts of their
+ * own after it (runTick), so one failing doesn't take the others down.
  */
 async function nightly(env: Env) {
-  const now = Date.now();
   const places = await locationNightly(env);
   const expectations = await learnAllExpectations(env).catch((err) => (console.error("rhythm: learning failed", err), 0));
   const accounts = await relearnAccounts(env).catch((err) => (console.error("routing: relearning failed", err), 0));
-  await env.DB.batch([
-    ...pruneStatements(env.DB, now),
-    pruneUsage(env.DB, now),
-    // Also pruned on a 1-in-50 roll inside a phone upload (logs.ts). That roll
-    // never comes up on the days the phone has stopped uploading, which are the
-    // days the table grows fastest, so the nightly job owns it too.
-    env.DB.prepare("DELETE FROM device_logs WHERE received_at < ?").bind(now - DEVICE_LOG_KEEP_MS),
-    env.DB.prepare("DELETE FROM hr_samples WHERE ts < ?").bind(now - HR_RETAIN_DAYS * 86_400_000),
-    env.DB.prepare("DELETE FROM raw_captures WHERE ts < ?").bind(now - TRANSCRIPT_RETAIN_DAYS * 86_400_000),
-    // Day titles are kept after the words expire: they're what "on this day" reads.
-    env.DB.prepare("DELETE FROM transcript_titles WHERE start < ? AND grain != 'day'").bind(now - TRANSCRIPT_RETAIN_DAYS * 86_400_000),
-    env.DB.prepare("DELETE FROM action_log WHERE ts < ?").bind(now - 365 * 86_400_000),
-    env.DB.prepare("DELETE FROM command_queue WHERE created_at < ?").bind(now - 30 * 86_400_000),
-    env.DB.prepare("DELETE FROM daily_marks WHERE at < ?").bind(now - 30 * 86_400_000),
-    ...pruneEmailAuth(env.DB, now),
-    ...pruneSignin(env.DB, now),
-  ]);
   return { places, expectations, accounts };
 }
 
@@ -2847,6 +3134,13 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
         }
       }
     } catch (err) {
+      // The gate refused a model call (plans.ts modelGate): someone's plan,
+      // spend or consent said no. A skip, like the ones the crons' own
+      // pre-checks make, never a cron error.
+      if (isModelRefused(err)) {
+        decided[`${name}.refused`] = (decided[`${name}.refused`] ?? 0) + 1;
+        return;
+      }
       errors++;
       say("err", { cron, part: name, ms: Date.now() - at, why: classifyEngineError(err) });
       console.error(`ovoa.err cron=${cron} part=${name}`, err);
@@ -2862,8 +3156,12 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
 
   const nightlyRun = cron.startsWith("13 4");
   if (nightlyRun) {
-    await part("agent", tick(env, cron));
+    // Learning first (places need the visits the purge takes), then one summary
+    // per day that has something in it (daysummary.ts), then the 14-day purge
+    // (retention.ts), which only runs once the summaries have had their chance.
     await part("nightly", nightly(env));
+    await part("summaries", writeDaySummaries(env));
+    await part("retention", purgeExpired(env));
   } else {
     // Sequential on purpose: a Worker has one CPU, and two concurrent waitUntils
     // only interleave. The clock-sensitive ones go first, though — the agent's
@@ -2903,12 +3201,16 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
 
 /**
  * Cron. Every few minutes the agent looks for work that has come due and pushes
- * whatever it decided to say; once a night it tidies up and enforces the
- * retention window the user set. The schedule is in wrangler.jsonc.
+ * whatever it decided to say; once a night it learns, keeps a summary of each
+ * day, and deletes what's past its 14 days (docs/retention.md). The schedule is
+ * in wrangler.jsonc.
+ *
+ * Both handlers sit behind the MAINTENANCE switch (maintenance.ts), which
+ * answers every request 503 and skips every tick while data is being moved.
  */
-export default {
+export default withMaintenance({
   fetch: app.fetch,
   scheduled: (event: ScheduledController, env: Env, ctx: ExecutionContext) => {
     ctx.waitUntil(runTick(env, event.cron, event.scheduledTime).catch((err) => console.error("ovoa.err cron failed outright", err)));
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env>);

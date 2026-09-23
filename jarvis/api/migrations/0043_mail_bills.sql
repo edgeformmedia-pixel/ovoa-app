@@ -1,0 +1,13 @@
+-- Bills found in mail stay while their mail is current (the v1 retention
+-- review; docs/retention.md, src/retention.ts).
+--
+-- The purge deleted a bill found in mail (money_bills source 'mail') 14 days
+-- after it was first seen, even one still to be paid, or one that arrives
+-- every month. next_due can't say whether mail still mentions it: the twice-a-
+-- day money tick rolls it forward on its own. found_due is the due date the
+-- mail itself last gave (money.ts recordBillFromMail), and a mail bill is now
+-- kept until 14 days past it.
+--
+-- No backfill, as in 0042: NULL (bills found before this) falls back to
+-- next_due in the purge.
+ALTER TABLE money_bills ADD COLUMN found_due TEXT;

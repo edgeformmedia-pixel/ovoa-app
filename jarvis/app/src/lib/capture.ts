@@ -5,7 +5,6 @@ import { devlog } from "./devlog";
 import { transcribeOnDevice } from "./onDeviceTranscribe";
 import { usePlan } from "./plan";
 import { getRecordings, markLost, updateRecording, useRecordings, wavFile, type Recording } from "./recordings";
-import { transcribe } from "./voice";
 
 // ---------- The free plan: a recording becomes a note ----------
 //
@@ -66,13 +65,18 @@ export async function noteRecording(token: string, recording: Recording): Promis
 // There is no branch here that captures anything the user did not choose to
 // record, and there is not meant to be one.
 //
-// What crosses the network is the audio, once, to be turned into words; the
-// words go up to be summarised and are thrown away there. What comes back and
-// is kept is a title and two sentences. The recording itself never leaves this
-// phone, and stays exactly where the user put it.
+// The iPhone turns the audio into words itself (onDeviceTranscribe.ts), the
+// same way a free note is made; since 2026-09-23 no audio goes to the server
+// for this or anything else. The words go up to be summarised and are thrown
+// away there. What comes back and is kept is a title and two sentences. The
+// recording itself never leaves this phone, and stays exactly where the user
+// put it.
 
-/** The server refuses anything larger, and a 10 MB WAV is already ~15 minutes. */
-const MAX_BYTES = 10 * 1024 * 1024;
+/**
+ * Read whole into memory to be cut into pieces the recogniser takes, so there
+ * is a limit: 40 MB is about 20 minutes of the band's 16 kHz WAV.
+ */
+const MAX_BYTES = 40 * 1024 * 1024;
 
 /** In flight right now, so two passes can't send the same recording twice. */
 const working = new Set<string>();
@@ -103,18 +107,25 @@ export async function captureRecording(token: string, recording: Recording) {
     }
     // v57: File.size is 0 for a file that isn't there, so the check above has to
     // come first — otherwise a missing file looks like a 0-byte one and only
-    // blows up later, inside transcribe (device_logs 2026-09-20 23:18).
+    // blows up later, in the transcription (device_logs 2026-09-20 23:18).
     const bytes = audio.size;
     devlog("file", `timeline: reading ${audio.name}, ${Math.round(bytes / 1024)} KB`, audio.uri);
     if (bytes > MAX_BYTES) {
-      throw new Error(`Too long to transcribe (${Math.round(bytes / 1024 / 1024)} MB). The limit is 10 MB.`);
+      throw new Error(`Too long to transcribe on the phone (${Math.round(bytes / 1024 / 1024)} MB). The limit is 40 MB.`);
     }
     if (bytes === 0) {
       markLost(recording.id, "This recording came out empty, so there's nothing to add to your timeline.");
       return;
     }
 
-    const text = await transcribe(token, audio.uri, "audio/wav", { keep: true });
+    // The decoded WAV, never the band's raw opus: that's the file the recogniser can open.
+    const heard = await transcribeOnDevice(audio.uri);
+    if (!heard) {
+      // Not allowed yet, or this phone couldn't: kept, and tried again from the Record tab.
+      updateRecording(recording.id, { capturing: false, captureError: NO_ON_DEVICE });
+      return;
+    }
+    const text = heard.text;
     if (!text.trim()) {
       // Silence or noise. Marked so it isn't retried on every launch.
       updateRecording(recording.id, { capturing: false, captureError: "Nothing was said in this one." });

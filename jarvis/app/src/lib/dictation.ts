@@ -7,9 +7,11 @@ import { useConversation } from "./voice";
 // editor, and Create.
 //
 // Talk's own listening is held off the whole time (useAssistant().hold), so
-// the two never share the microphone and Always listen doesn't answer what was
-// meant for this box. No wake word (every word counts) and no fillers (nothing
-// is being answered here).
+// Always listen doesn't answer what was meant for this box. The phone's ear is
+// one microphone for the whole app (liveListen.ts holdEar): this borrows it,
+// in open mode, and hands it back. No wake word (every word counts) and no
+// fillers (nothing is being answered here). The words are recognised on the
+// phone; only the text reaches `onText`.
 
 export function useDictation(token: string, onText: (text: string) => void) {
   const a = useAssistant();
@@ -36,7 +38,7 @@ export function useDictation(token: string, onText: (text: string) => void) {
   const start = async () => {
     if (release.current) return;
     void a.hold(() => new Promise<void>((r) => (release.current = r)));
-    // Always listen owns the microphone until the hold has closed it.
+    // Always listen's conversation has the ear until the hold has closed it.
     if (a.alwaysListen) await new Promise((r) => setTimeout(r, 250));
     const ok = await convo.start();
     if (!ok) stop();

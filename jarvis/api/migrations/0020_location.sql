@@ -5,7 +5,8 @@
 -- while become a visit; places visited again and again become a place — home,
 -- work, the gym — which the user can name. Points and visits are kept 14 days;
 -- places are kept until the user removes them, because "home" is worth
--- remembering and last Tuesday's walk isn't.
+-- remembering and last Tuesday's walk isn't. (Since the v1 release, a place
+-- nobody named goes once nobody has been there for 14 days: src/retention.ts.)
 
 CREATE TABLE location_points (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,

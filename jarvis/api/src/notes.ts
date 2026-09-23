@@ -42,8 +42,11 @@ const cleanTags = (v: unknown) =>
  * Where a note's words came from (migrations/0036). "on_device": a recording
  * (the band's, or dictation) turned into text by the iPhone's own speech
  * recognition, so no audio ever reached this server; that is how free notes
- * are made (docs/paywall/05). "server": transcribed here (/voice/transcribe).
- * "typed": everything else.
+ * are made (docs/paywall/05), and since 2026-09-23 how every spoken note is.
+ * "server": transcribed here by /voice/transcribe, which only answers 410 now;
+ * kept for older notes. "typed": everything else. These are what POST /notes
+ * takes from the phone; "mail" (a bill reminder extras.ts found in their mail,
+ * deleted after 14 days by retention.ts) is only ever written here.
  */
 export const NOTE_SOURCES = ["typed", "on_device", "server"] as const;
 export type NoteSource = (typeof NOTE_SOURCES)[number];
@@ -51,7 +54,7 @@ export type NoteSource = (typeof NOTE_SOURCES)[number];
 export async function addNote(
   db: D1Database,
   userId: string,
-  n: { text: string; tags?: string[]; place?: string | null; remindAt?: number | null; placeId?: string | null; source?: NoteSource },
+  n: { text: string; tags?: string[]; place?: string | null; remindAt?: number | null; placeId?: string | null; source?: NoteSource | "mail" },
 ) {
   const id = crypto.randomUUID();
   await db

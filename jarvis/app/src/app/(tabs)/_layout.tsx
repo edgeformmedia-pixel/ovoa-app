@@ -10,35 +10,45 @@ import { startHeartRate } from "../../lib/heart";
 import { startLocationTimeline } from "../../lib/location";
 import { prepareFillers, watchVoiceForFillers } from "../../lib/fillers";
 import { startAlarmSync } from "../../lib/nag";
+import { startCalorieSync } from "../../lib/food";
 import { usePlan } from "../../lib/plan";
 import { colors } from "../../lib/theme";
 
 export default function TabsLayout() {
   const { token, user } = useAuth();
-  // Routines, alarms, places and the spoken fillers belong to the assistant
-  // (Base, api/src/plans.ts). On the free plan they aren't started at all,
-  // rather than asked for every few minutes and told no.
+  // Routines and alarms run on every plan: they call no model (their routes are
+  // free on the server since v1, decision 5), and a medication reminder or an
+  // alarm set before a downgrade has to keep going off, offline too. Places,
+  // the spoken fillers and Calorie's sync are the assistant's side, which is
+  // Base's: the location timeline only feeds Base's timeline, and the fillers
+  // are OVOA's voice (until someone has agreed to AI, the phone's own, not
+  // Deepgram's: lib/voice.ts).
   const { free } = usePlan();
   const assistant = token && !free ? token : null;
 
-  // Reconnect to the ES100 as soon as the app is open, not only once Record is visited.
+  // Reconnect to a paired Band as soon as the app is open, not only once Record
+  // is visited. A phone that has never paired one leaves Bluetooth alone until
+  // it does (lib/clip.ts), so iOS asks about it only when pairing.
   useEffect(() => startClip(), []);
   // What this phone has (band, Health, location), so the server picks how to reach it.
   useEffect(() => (token ? startDeviceReports(token) : undefined), [token]);
   useEffect(() => void registerBackgroundPush(), []);
   // Routines and medications: mirror Reminders, schedule the next two days on the phone.
-  useEffect(() => (assistant ? startRoutineSync(assistant) : undefined), [assistant]);
+  useEffect(() => (token ? startRoutineSync(token) : undefined), [token]);
   // Heart rate from the band every few minutes, and from Health; places, when the timeline is on.
   useEffect(() => (token ? startHeartRate(token) : undefined), [token]);
   useEffect(() => (assistant ? startLocationTimeline(assistant) : undefined), [assistant]);
   // Tonight's alarms: kept awake for, and set to go off here even with no network.
-  useEffect(() => (assistant ? startAlarmSync(assistant, user?.name ?? "") : undefined), [assistant, user?.name]);
+  useEffect(() => (token ? startAlarmSync(token, user?.name ?? "") : undefined), [token, user?.name]);
   // "One second while I get that": voiced once, kept on the phone, played instantly.
   useEffect(() => {
     if (!assistant) return;
     void prepareFillers(assistant);
     return watchVoiceForFillers(assistant);
   }, [assistant]);
+  // Calorie joins the menu when the server has a food tracking level for them
+  // (an eating goal in setup, or "be more exact"), here and on each return.
+  useEffect(() => (assistant ? startCalorieSync(assistant) : undefined), [assistant]);
   // Anything recorded but not yet in the timeline gets filed, while it's on.
   useAutoCapture();
 
@@ -49,7 +59,7 @@ export default function TabsLayout() {
   // Talk, Apps, the apps they've added, and Settings; see components/Drawer.tsx.
   //
   // SafetyProvider, AgentProvider, AssistantProvider and NagOverlay live in
-  // app/_layout.tsx: /agent, /transcripts, /live, /claude, /dev-tools, /es100
+  // app/_layout.tsx: /agent, /transcripts, /live, /dev-tools, /es100
   // and /motion-lab are siblings of (tabs) in the root stack rather than
   // children, so from here they sat outside the providers and /agent threw on
   // every open (device_logs, 2026-09-21).
@@ -72,6 +82,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="record" options={{ title: "Record" }} />
       <Tabs.Screen name="safety" options={{ title: "Safety" }} />
       <Tabs.Screen name="agent" options={{ title: "Background work" }} />
+      <Tabs.Screen name="calorie" options={{ title: "Calorie" }} />
       <Tabs.Screen name="settings" options={{ title: "Settings" }} />
     </Tabs>
   );

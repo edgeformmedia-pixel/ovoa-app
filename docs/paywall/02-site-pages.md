@@ -41,4 +41,4 @@ Every page tells one true story:
 - Click through each checkout button against the fake Stripe.
 
 ## Finish
-Commit and push `main`, then deploy the test Worker (edgeformmedia profile, as in 01). Tell the user Lovable needs a Publish.
+Commit, then deploy the site (`XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npm run db:migrate`, then the same with `npm run deploy`).

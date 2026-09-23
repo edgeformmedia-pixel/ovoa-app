@@ -1,48 +1,69 @@
-import { generate as geminiGenerate, type Turn } from "./gemini";
+import { generate as geminiGenerate, grounded as geminiGrounded, quickThinking, type Turn } from "./gemini";
+
+// The reply engines: which model answers, in what order, and what each call
+// cost. Every model call goes through here, web search grounding included
+// (searchGrounded; web.ts asks it). Each one asks the gate first (setModelGate,
+// below): the person's plan, the day's spend and their consent are checked
+// before an engine is chosen or a byte is sent. test/gate.test.ts fails if a
+// model host or gemini.ts is reached from anywhere else.
+//
+// Two engines, and one order for every use: typed and spoken turns, memory and
+// summaries, the setup conversation, app design, agent jobs and food all try
+// GLM first and Gemini second (the v1 release, 2026-09-23). Both are temporary
+// choices; the provider will change.
+//
+//   glm     GLM 5.3 Flash on Z.ai, through the OpenAI-compatible path below
+//           (OPENAI_PROVIDERS). The id stays "glm" whatever it runs on: the
+//           usage history, server_settings rows and the GLM_PRICE_* vars use it.
+//   gemini  Google's own API, with the model the caller names (CHAT_MODEL or
+//           MEMORY_MODEL in wrangler.jsonc).
+//
+// An engine without its key does not exist: it is never tried, skipped or
+// mentioned. When nothing can answer (every engine that exists failed before
+// it said anything, or is cooling down, or no engine has a key) a call throws
+// AiUnreachable. A person's turn is then told plainly that OVOA can't reach the
+// AI right now (index.ts); a background call fails quietly, as it always did.
+// `fast` no longer changes the order: it only means "think as little as the
+// model allows".
+//
+// Adding an OpenAI-compatible provider is config plus a few lines:
+//   1. An entry in OPENAI_PROVIDERS: its name, the names of the vars that hold
+//      its key, base URL, model and thinking level, and defaults for the base
+//      URL and the model. A provider serving a model that doesn't think sets
+//      `thinking: "none"`, so no thinking field is sent at all.
+//   2. Its id in OpenAiEngine and in ENGINES, at the place in the order where
+//      it should be tried.
+//   3. Its vars in wrangler.jsonc (and in types.ts Env, for the record), its key
+//      as a secret, and its price in pricing.ts LLM_PRICES under its model id.
+// How much it thinks is spelled for its host (hostFlavor, thinkingFields): Z.ai
+// and OpenRouter have their own fields, and any other host gets the plain
+// OpenAI `reasoning_effort`, unless the provider's `thinking` says otherwise.
 
 export type { Turn };
 
 export type LlmEnv = {
-  AI: Ai;
   GEMINI_API_KEY?: string;
-  DEEPSEEK_API_KEY?: string;
-  DEEPSEEK_MODEL: string;
-  /**
-   * How much DeepSeek thinks on a typed turn: "off", "low" or "on" (its own
-   * default, which is a lot). Thinking is billed as output at four times the
-   * input price, and DeepSeek thinks hard unless told otherwise. Spoken turns
-   * never think: the wait before the first word is the whole experience there.
-   */
-  DEEPSEEK_THINKING?: string;
-  /** The Workers AI model, and the last resort when everything keyed has failed. */
-  FALLBACK_MODEL: string;
   CHAT_MODEL?: string;
   /**
-   * GLM 5.3 Flash from the user's own provider. Without the key the engine does
-   * not exist: it is never tried, never skipped, never mentioned. The base URL
-   * is any OpenAI-compatible endpoint (Z.ai's by default; OpenRouter and the
-   * like work too, and the thinking fields are shaped for whichever it is).
+   * GLM 5.3 Flash from the user's own provider (OPENAI_PROVIDERS.glm). Without
+   * the key the engine does not exist. The base URL is any OpenAI-compatible
+   * endpoint (Z.ai's by default; OpenRouter and the like work too, and the
+   * thinking fields are shaped for whichever it is).
    */
   GLM_API_KEY?: string;
   GLM_BASE_URL?: string;
   GLM_MODEL?: string;
-  /** Like DEEPSEEK_THINKING, for GLM: "off", "low" (the default) or "on". */
-  GLM_THINKING?: string;
-  /** Which keyed engine typed turns try first: "gemini", "deepseek" or "glm". */
-  PRIMARY_ENGINE?: string;
   /**
-   * The whole order, e.g. "glm,deepseek,gemini,workers". Overrides
-   * PRIMARY_ENGINE. Workers AI stays last as the safety net unless it is named.
+   * How much GLM thinks on a typed turn: "off", "low" (the default) or "on".
+   * Thinking is billed as output tokens. Spoken turns never think: the wait
+   * before the first word is the whole experience there.
+   */
+  GLM_THINKING?: string;
+  /**
+   * The order every call tries, e.g. "gemini,glm". Unset: ENGINES' order. The
+   * runtime settings (server_settings.engine_order) override it without a deploy.
    */
   ENGINE_ORDER?: string;
-  /**
-   * Which engine answers spoken turns first. "workers" (the default) because on
-   * the wrist the wait before the first word is the whole experience, and the
-   * measured first token is 1.0-2.9 s on Workers AI against 4.3-14.1 s on the
-   * free-tier Gemini key (device_logs, 2026-09-21). "keyed" restores the usual
-   * order for everything, and an engine name puts that engine first.
-   */
-  VOICE_PRIMARY?: string;
   /**
    * How long an engine has to send its first byte, and how long a stream may go
    * quiet once it has started. Read from the environment so a model that is
@@ -59,14 +80,18 @@ type Options = {
   turns: Turn[];
   json?: { schema: Record<string, unknown> };
   /**
-   * Quick yes/no calls: tried on Workers AI first so they don't spend the
-   * Gemini/DeepSeek quota, and every engine skips most of its thinking.
+   * Quick calls (a yes/no, a memory update, a setup answer): every engine
+   * thinks as little as its model allows. Tried in the same order as any call.
    */
   fast?: boolean;
   /** Called once per engine tried or skipped. See EngineAttempt. */
   onAttempt?: OnAttempt;
-  /** Whose call this is and what for, so the tokens land against the right person. See LlmUsage. */
-  usage?: UsageTag;
+  /**
+   * Whose call this is and what for, so the tokens land against the right
+   * person and the gate knows whose plan to ask. Required: a call nobody is
+   * named on can't be checked. See LlmUsage and GateCall.
+   */
+  usage: UsageTag;
   /** Receives every model call's token counts. When set, the default sink is not called. */
   onUsage?: OnUsage;
   /** This caller's own engine choices, over the runtime settings and the vars. See EnginePrefs. */
@@ -74,6 +99,68 @@ type Options = {
 };
 
 export type ToolSpec = { name: string; description: string; parameters: Record<string, unknown> };
+
+// ---------- The gate ----------
+//
+// "Before anything is sent to a model, OVOA checks the plan" (the v1 release,
+// 2026-09-23). No one function carries every model call, so each door into a
+// model asks first: generateText, chatWithTools (before its resume branch) and
+// searchGrounded. The check comes before an engine is chosen, so a refused call
+// costs nothing and tries nothing.
+//
+// This file stays free of the database, so the rules are handed in, the way the
+// usage sink is: index.ts registers plans.ts modelGate once per isolate. With
+// no gate registered (the unit tests) every call goes ahead.
+//
+// A refusal is a ModelRefused, never an ordinary failure: a person's turn turns
+// it into one plain sentence (index.ts), a route into a 402, 403 or 429 with
+// that sentence (plans.ts refusedResponse), and the crons into a skip (their
+// own pre-checks, blockedFor and friends, usually stop them sooner).
+
+/** Why a model call wasn't made: no plan with AI, today's spend used up, or no consent yet. */
+export type Refusal = "needs_plan" | "allowance" | "needs_consent";
+
+/** What the gate is asked about one call. */
+export type GateCall = UsageTag & {
+  /**
+   * The second half of a turn that was already let in: a paused turn resumed
+   * with what the phone looked up (chatWithTools `resume`). Its plan and
+   * consent are asked again; its spend isn't, because the turn was allowed
+   * when it began and refusing its second half would leave the phone's answer
+   * with nobody to hear it.
+   */
+  continuing?: boolean;
+};
+
+export type ModelGate = (env: LlmEnv, call: GateCall) => Promise<Refusal | null>;
+
+let modelGate: ModelGate | null = null;
+
+/** The rules every model call asks first (plans.ts modelGate). Set once by index.ts. */
+export function setModelGate(gate: ModelGate | null) {
+  modelGate = gate;
+}
+
+/** A model call the gate refused. Nothing was sent. `reason` says why. */
+export class ModelRefused extends Error {
+  constructor(
+    readonly reason: Refusal,
+    purpose: string,
+  ) {
+    super(`No model call for ${purpose}: ${reason}`);
+    this.name = "ModelRefused";
+  }
+}
+
+export const isModelRefused = (err: unknown): err is ModelRefused =>
+  err instanceof ModelRefused || (err instanceof Error && err.name === "ModelRefused" && "reason" in err);
+
+/** Throws ModelRefused when the gate says no. First thing in every door into a model. */
+async function askGate(env: LlmEnv, call: GateCall) {
+  if (!modelGate) return;
+  const refusal = await modelGate(env, call);
+  if (refusal) throw new ModelRefused(refusal, call.purpose);
+}
 
 // ---------- Usage ----------
 //
@@ -87,7 +174,11 @@ export type ToolSpec = { name: string; description: string; parameters: Record<s
 // registers one sink for the whole isolate, and a call is tagged with the
 // person and purpose it was for so the sink knows where to file it.
 
-/** Who a call is for, and why. Filed against user_id in usage_daily. */
+/**
+ * Who a call is for, and why. Filed against user_id in usage_daily, and the
+ * person whose plan the gate asks about. userId is null only on a DEBUG_KEY
+ * route (logs.ts /debug/ambient), where there is no person to check or charge.
+ */
 export type UsageTag = { userId: string | null; purpose: string };
 
 /** One model call's token counts, as the engine reported them. */
@@ -125,9 +216,9 @@ const NO_USAGE: TokenUsage = { input: 0, cached: 0, output: 0, reasoning: 0 };
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
 /**
- * OpenAI-style usage. DeepSeek splits the prompt into cache hits and misses;
- * OpenAI, OpenRouter and Z.ai put the hits under prompt_tokens_details;
- * Workers AI sends the plain three. All of them count thinking in
+ * OpenAI-style usage. OpenAI, OpenRouter and Z.ai put the cache hits under
+ * prompt_tokens_details; DeepSeek-style hosts split the prompt into hits and
+ * misses; some send only the plain three. All of them count thinking in
  * completion_tokens, and some say how much of it was thinking.
  */
 export function readOpenAiUsage(usage: any): TokenUsage | null {
@@ -159,7 +250,7 @@ export function readGeminiUsage(meta: any): TokenUsage | null {
 
 function reportUsage(
   env: LlmEnv,
-  opts: { usage?: UsageTag; onUsage?: OnUsage },
+  opts: { usage: UsageTag; onUsage?: OnUsage },
   engine: Engine,
   model: string,
   counts: TokenUsage | null,
@@ -174,8 +265,8 @@ function reportUsage(
     outputTokens: c.output,
     reasoningTokens: c.reasoning,
     ms,
-    userId: opts.usage?.userId ?? null,
-    purpose: opts.usage?.purpose ?? "other",
+    userId: opts.usage.userId,
+    purpose: opts.usage.purpose,
   };
   try {
     if (opts.onUsage) opts.onUsage(usage);
@@ -228,28 +319,33 @@ type ToolLoopOptions = {
   onText?: OnText;
   /** Called once per engine tried or skipped, so the day's engine health is recordable. */
   onAttempt?: OnAttempt;
-  /** Whose turn this is and what for, for the usage table. See LlmUsage. */
-  usage?: UsageTag;
+  /** Whose turn this is and what for, for the usage table and the gate. Required. See LlmUsage. */
+  usage: UsageTag;
   /** Every model round's token counts. When set, the default sink is not called. */
   onUsage?: OnUsage;
   /** This person's own engine choices, over the runtime settings and the vars. See EnginePrefs. */
   prefer?: EnginePrefs;
-  /**
-   * Whose turn this is. Workers AI keeps a prompt it has just read on the model
-   * server that read it, and routes requests carrying the same x-session-affinity
-   * there, so one person's next turn skips re-reading everything it has in common
-   * with their last. Without it, turns land on any server and the cache is luck.
-   */
-  affinity?: string;
 };
 
 export type Engine = "gemini" | OpenAiEngine;
 
 /** Every engine there is, in the order they are tried when nothing says otherwise. */
-export const ENGINES: Engine[] = ["gemini", "deepseek", "glm", "workers"];
+export const ENGINES: Engine[] = ["glm", "gemini"];
 export const isEngine = (name: string): name is Engine => (ENGINES as string[]).includes(name);
+const isOpenAiEngine = (name: string): name is OpenAiEngine => Object.hasOwn(OPENAI_PROVIDERS, name);
 
-const ENGINE_NAMES: Record<Engine, string> = { gemini: "Gemini", deepseek: "DeepSeek", glm: "GLM", workers: "Workers AI" };
+/** What people and the logs call an engine. */
+function nameOf(engine: Engine) {
+  return engine === "gemini" ? "Gemini" : OPENAI_PROVIDERS[engine].name;
+}
+
+/**
+ * The engines there were before v1: DeepSeek, and Workers AI as the last
+ * resort. server_settings rows copied from the old database may still name
+ * them. An order that does was written for the engines of its time, so it is
+ * ignored whole (usableOrder) rather than read as, say, "gemini first".
+ */
+const RETIRED_ENGINES = ["deepseek", "workers"];
 
 const MAX_TOOL_ROUNDS = 8;
 // Halved 2026-09-22: every character here is read again on every later round of
@@ -285,12 +381,6 @@ const lastFailure = new Map<Engine, string>();
 function coolDown(engine: Engine, err: unknown) {
   const text = String(err);
   lastFailure.set(engine, text.slice(0, 200));
-  if (engine === "workers") {
-    // The last resort is always tried, unless its free daily allocation is used up (4006):
-    // then skip it until it resets at midnight UTC, so quick calls go to the others instead.
-    if (/4006|daily free allocation/.test(text)) cooldownUntil.set(engine, new Date().setUTCHours(24, 0, 0, 0));
-    return;
-  }
   const status = Number(/ (\d{3}):/.exec(text)?.[1] ?? 0);
   // 429: rate limited, back soon, unless the (daily) quota is used up. 401/402/403/404: key,
   // credit or model problems that won't fix themselves.
@@ -305,11 +395,25 @@ function coolDown(engine: Engine, err: unknown) {
   cooldownUntil.set(engine, Date.now() + ms);
 }
 
+/**
+ * A failure that belongs to one request, not to the engine: an empty reply, a
+ * turn that went round too many times, a request the host refused (a 400 such
+ * as Z.ai's content filter). Cooling the engine down for those took it away
+ * from every other call on the isolate over one bad request, so they only move
+ * this request on to the next engine.
+ */
+const perRequest = (err: unknown) => ["empty", "too_many_rounds", "http_400", "http_413", "http_422"].includes(classifyEngineError(err));
+
+/** coolDown, except for a failure that belongs to the one request. */
+function coolDownAfter(engine: Engine, err: unknown) {
+  if (!perRequest(err)) coolDown(engine, err);
+}
+
 // ---------- Which engine, in what order ----------
 //
 // Three layers say what to try first, each overriding the one below:
 //
-//   1. The vars in wrangler.jsonc (PRIMARY_ENGINE, ENGINE_ORDER, VOICE_PRIMARY).
+//   1. ENGINES' own order (GLM, then Gemini), or the ENGINE_ORDER var if set.
 //   2. The runtime settings in the server_settings table, read once a minute
 //      and handed here by index.ts (setRuntimeEngines), so an engine can be
 //      switched without a deploy.
@@ -322,12 +426,10 @@ function coolDown(engine: Engine, err: unknown) {
 
 /** Engine choices from the runtime settings or from one person. Any field may be absent. */
 export type EnginePrefs = {
-  /** "glm,deepseek,gemini,workers": the order typed turns try. Unknown names are ignored. */
+  /** "gemini,glm": who every call tries first. Unknown names are ignored; the engines left out follow in the usual order. */
   order?: string;
-  /** "workers" | "keyed" | an engine name: who answers spoken turns first. */
+  /** "keyed" or an engine name: who answers spoken turns first. Unset or "keyed": the same order as everything else. */
   voice?: string;
-  /** The Workers AI model to use instead of FALLBACK_MODEL. */
-  workersModel?: string;
 };
 
 let runtime: EnginePrefs = {};
@@ -338,16 +440,15 @@ export function setRuntimeEngines(prefs: EnginePrefs) {
 }
 
 export type OrderInput = {
-  /** Which engines have what they need to be called at all. Workers AI always does. */
+  /** Which engines have what they need to be called at all: their key. */
   available: Record<Engine, boolean>;
   /** Engines being skipped, and until when. */
   cooling: Partial<Record<Engine, number>>;
   now: number;
   voice: boolean;
-  /** A quick yes/no call: Workers AI first, whatever else is set. */
-  fast: boolean;
-  primary?: string;
+  /** Who goes first, as a comma list of engine names. */
   order?: string;
+  /** Spoken turns only: an engine to put first. "keyed" or unset: the same order. */
   voicePrimary?: string;
 };
 
@@ -362,50 +463,54 @@ function parseOrder(raw: string | undefined): Engine[] {
 }
 
 /**
- * The engines to try, first to last. Pure.
- *
- * An explicit order names the keyed engines in the order wanted; PRIMARY_ENGINE
- * only moves one to the front. Either way, an engine without its key is left
- * out (it does not exist, so it is not "skipped"), Workers AI closes the list
- * unless it was placed on purpose, and an engine cooling down from a failure
- * waits its turn out. With nothing left to try, Workers AI is tried anyway:
- * a 4006 from it is a better answer than silence.
- *
- * Spoken turns go to whichever engine reaches the first word soonest, which is
- * Workers AI unless VOICE_PRIMARY names another or says "keyed".
+ * An order as it is stored: its known engines, each once, in the order given.
+ * Unknown and retired names are dropped without complaint, because Dev tools
+ * in builds from before v1 add ",workers" to every order they send. Empty when
+ * it names no engine at all. Pure.
  */
-export function engineOrder(i: OrderInput): Engine[] {
-  const usable = (e: Engine) => i.available[e] && (i.cooling[e] ?? 0) <= i.now;
-  let list: Engine[];
-  const explicit = parseOrder(i.order);
-  if (explicit.length) {
-    list = explicit;
-    if (!list.includes("workers")) list.push("workers");
-  } else {
-    const keyed: Engine[] = ["gemini", "deepseek", "glm"];
-    const primary = (i.primary ?? "").trim().toLowerCase();
-    if (isEngine(primary) && primary !== "workers") list = [primary, ...keyed.filter((e) => e !== primary)];
-    else list = keyed;
-    list.push("workers");
-  }
-  let ready = list.filter(usable);
-  if (!ready.length) return ["workers"];
-  const first = (e: Engine) => (ready.includes(e) ? [e, ...ready.filter((x) => x !== e)] : ready);
-  if (i.fast) return first("workers");
-  if (i.voice) {
-    const want = (i.voicePrimary ?? "workers").trim().toLowerCase();
-    if (want === "keyed") return ready;
-    // A named engine that is missing or cooling: Workers AI answers, as it
-    // would have with nothing set, rather than whatever happens to be first.
-    if (isEngine(want) && ready.includes(want)) return first(want);
-    return first("workers");
-  }
-  return ready;
+export function cleanOrder(raw: string): string {
+  return parseOrder(raw).join(",");
 }
 
-/** Which engines have what they need. Workers AI is a binding, always there. */
+/** A stored order, or undefined when it is empty or names a retired engine (RETIRED_ENGINES). Pure. */
+export function usableOrder(raw: string | undefined): string | undefined {
+  const names = (raw ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (!names.length || names.some((n) => RETIRED_ENGINES.includes(n))) return undefined;
+  return raw;
+}
+
+/** A stored choice for spoken turns: "keyed" or an engine name. Anything else ("workers", from before v1) is ignored. Pure. */
+export function usableVoice(raw: string | undefined): string | undefined {
+  const v = (raw ?? "").trim().toLowerCase();
+  return v === "keyed" || isEngine(v) ? v : undefined;
+}
+
+/**
+ * The engines to try, first to last. Pure.
+ *
+ * An order names who goes first; the engines it leaves out follow in their
+ * usual order (ENGINES), so there is always a fallback. An engine without its
+ * key is left out (it does not exist, so it is not "skipped"), and one cooling
+ * down from a failure waits its turn out. With nothing left the list is empty,
+ * and the call says it can't reach the AI (AiUnreachable) rather than trying
+ * an engine that has just failed.
+ *
+ * Spoken turns follow the same order, unless voice_engine names an engine to
+ * put first (Dev tools, for trying one out on the wrist).
+ */
+export function engineOrder(i: OrderInput): Engine[] {
+  const named = parseOrder(i.order);
+  let list = [...named, ...ENGINES.filter((e) => !named.includes(e))];
+  const want = i.voice ? (i.voicePrimary ?? "").trim().toLowerCase() : "";
+  if (isEngine(want)) list = [want, ...list.filter((e) => e !== want)];
+  return list.filter((e) => i.available[e] && (i.cooling[e] ?? 0) <= i.now);
+}
+
+/** Which engines have what they need: each one's key. */
 function availableEngines(env: LlmEnv): Record<Engine, boolean> {
-  return { gemini: !!env.GEMINI_API_KEY, deepseek: !!env.DEEPSEEK_API_KEY, glm: !!env.GLM_API_KEY, workers: true };
+  const out = {} as Record<Engine, boolean>;
+  for (const engine of ENGINES) out[engine] = !!varOf(env, keyVarOf(engine));
+  return out;
 }
 
 function coolingNow(): Partial<Record<Engine, number>> {
@@ -415,17 +520,19 @@ function coolingNow(): Partial<Record<Engine, number>> {
   return out;
 }
 
-/** The order for one call: the vars, the runtime settings and the caller's own preferences, in that order of precedence. */
-function engines(env: LlmEnv, voice = false, fast = false, prefer?: EnginePrefs): Engine[] {
+/**
+ * The order for one call: the vars, the runtime settings and the caller's own
+ * preferences, in that order of precedence. A stored choice that names a
+ * retired engine is passed over, so the next layer down decides.
+ */
+function engines(env: LlmEnv, voice = false, prefer?: EnginePrefs): Engine[] {
   return engineOrder({
     available: availableEngines(env),
     cooling: coolingNow(),
     now: Date.now(),
     voice,
-    fast,
-    primary: env.PRIMARY_ENGINE,
-    order: prefer?.order ?? runtime.order ?? env.ENGINE_ORDER,
-    voicePrimary: prefer?.voice ?? runtime.voice ?? env.VOICE_PRIMARY,
+    order: usableOrder(prefer?.order) ?? usableOrder(runtime.order) ?? usableOrder(env.ENGINE_ORDER),
+    voicePrimary: usableVoice(prefer?.voice) ?? usableVoice(runtime.voice),
   });
 }
 
@@ -443,16 +550,16 @@ export function engineStatus(env: LlmEnv, prefer?: EnginePrefs) {
       const until = cooldownUntil.get(engine) ?? 0;
       return {
         engine,
-        name: ENGINE_NAMES[engine],
-        key: engine === "workers" ? "not needed" : available[engine] ? "set" : "missing",
-        model: available[engine] ? modelFor(env, engine, env.CHAT_MODEL ?? "", prefer) : null,
+        name: nameOf(engine),
+        key: available[engine] ? "set" : "missing",
+        model: available[engine] ? modelFor(env, engine, env.CHAT_MODEL ?? "") : null,
         coolingForS: until > now ? Math.round((until - now) / 1000) : 0,
         lastError: lastFailure.get(engine) ?? null,
       };
     }),
-    typedOrder: engines(env, false, false, prefer),
-    voiceOrder: engines(env, true, false, prefer),
-    settings: { vars: { PRIMARY_ENGINE: env.PRIMARY_ENGINE, ENGINE_ORDER: env.ENGINE_ORDER, VOICE_PRIMARY: env.VOICE_PRIMARY, FALLBACK_MODEL: env.FALLBACK_MODEL }, runtime, ...(prefer && { mine: prefer }) },
+    typedOrder: engines(env, false, prefer),
+    voiceOrder: engines(env, true, prefer),
+    settings: { vars: { ENGINE_ORDER: env.ENGINE_ORDER }, runtime, ...(prefer && { mine: prefer }) },
   };
 }
 
@@ -465,21 +572,19 @@ export function coolingEngines() {
   const now = Date.now();
   return [...cooldownUntil]
     .filter(([, until]) => until > now)
-    .map(([engine]) => `${ENGINE_NAMES[engine]}: ${lastFailure.get(engine) ?? "unknown"}`);
+    .map(([engine]) => `${nameOf(engine)}: ${lastFailure.get(engine) ?? "unknown"}`);
 }
 
 /**
  * What went wrong, in one word, so a day's failures group into a handful of
  * rows instead of a thousand distinct strings. The status is read the same way
  * coolDown reads it, because the messages are built as
- * "DeepSeek deepseek-flash 402: …" a few functions below. The two text tests
- * are the failures that carry no status: Workers AI's 4006 and DeepSeek's
- * "Insufficient Balance".
+ * "GLM glm-5.3-flash 429: …" a few functions below.
  */
 export function classifyEngineError(err: unknown): string {
+  if (isModelRefused(err)) return "refused";
   const text = String(err instanceof Error ? err.message : err);
-  if (/4006|daily free allocation/.test(text)) return "out_of_free";
-  if (/Insufficient Balance/i.test(text)) return "no_credit";
+  if (/No AI engine has its key set/.test(text)) return "no_engine";
   if (/cooling down/.test(text)) return "skipped";
   if (/returned no text|returned no JSON/.test(text)) return "empty";
   if (/Too many tool rounds/.test(text)) return "too_many_rounds";
@@ -497,25 +602,25 @@ export function classifyEngineError(err: unknown): string {
 export type EngineDown = { engine: Engine; until: number; error: string };
 
 /**
- * Why nothing could answer, as a sentence a person can read. Pure, so the
+ * Why nothing could answer, as a sentence a developer can read. Pure, so the
  * wording is testable without faking a failed engine.
  *
  * The phone has no way to see the Worker's console, so when every engine is
  * down this is the only place the reason can come from. The alternative is what
  * 2026-09-21 looked like: 166 identical "couldn't get a reply" lines and no
  * indication anywhere that the answer was "the DeepSeek account is empty".
+ * A person is told AI_UNREACHABLE instead; this rides along as the detail.
  */
 export function troubleFrom(down: EngineDown[], now: number): string | null {
   if (!down.length) return null;
   const why = (text: string) => {
-    if (/4006|daily free allocation/.test(text)) return "out of free usage until midnight UTC";
-    if (/Insufficient Balance/i.test(text) || / 402:/.test(text)) return "out of credit";
+    if (/ 402:/.test(text)) return "out of credit";
     if (/ 429:/.test(text)) return /quota/i.test(text) ? "out of quota for today" : "rate limited";
     if (/ 401:| 403:/.test(text)) return "not accepting its key";
     if (/ 404:/.test(text)) return "missing its model";
     return "failing";
   };
-  const parts = down.map((d) => `${ENGINE_NAMES[d.engine]} is ${why(d.error)}`);
+  const parts = down.map((d) => `${nameOf(d.engine)} is ${why(d.error)}`);
   const wait = Math.max(0, Math.min(...down.map((d) => d.until)) - now);
   const mins = Math.max(1, Math.round(wait / 60_000));
   const when = mins >= 120 ? `${Math.round(mins / 60)} hours` : `${mins} minute${mins === 1 ? "" : "s"}`;
@@ -523,43 +628,67 @@ export function troubleFrom(down: EngineDown[], now: number): string | null {
 }
 
 /**
- * troubleFrom, fed the live cooldown state — but only when there is nothing left
- * to try. One engine cooling down while another answers is not trouble, it is
- * the fallback working; saying otherwise turned every unrelated 500 on every
- * route into "OVOA can't reach an AI model right now".
+ * troubleFrom, fed the live cooldown state — but only when every engine that
+ * exists is cooling down. One engine cooling down while another answers is not
+ * trouble, it is the fallback working; saying otherwise turned every unrelated
+ * 500 on every route into "OVOA can't reach an AI model right now". A server
+ * with no keys at all is not this either: AiUnreachable says that one.
  */
 export function engineTrouble(env: LlmEnv) {
   const now = Date.now();
   const available = availableEngines(env);
-  // Trouble is when every engine that exists is cooling down, Workers AI included.
-  // (engines() would still hand back Workers AI as a last resort, so it cannot
-  // be asked; this asks the cooldowns directly.)
-  const anyReady = ENGINES.some((e) => available[e] && (cooldownUntil.get(e) ?? 0) <= now);
-  if (anyReady) return null;
-  const down: EngineDown[] = [];
-  for (const [engine, until] of cooldownUntil) {
-    if (until > now) down.push({ engine, until, error: lastFailure.get(engine) ?? "" });
-  }
+  const exists = ENGINES.filter((e) => available[e]);
+  if (!exists.length || exists.some((e) => (cooldownUntil.get(e) ?? 0) <= now)) return null;
+  const down: EngineDown[] = exists.map((engine) => ({ engine, until: cooldownUntil.get(engine) ?? now, error: lastFailure.get(engine) ?? "" }));
   return troubleFrom(down, now);
 }
 
-/** The Workers AI model: the runtime setting or a person's own choice, else the var. */
-function workersModel(env: LlmEnv, prefer?: EnginePrefs) {
-  return prefer?.workersModel || runtime.workersModel || env.FALLBACK_MODEL;
+// ---------- When nothing can answer ----------
+
+/**
+ * Thrown when nothing could answer: every engine that exists failed before it
+ * wrote a word or ran a tool, or was already cooling down, or no engine has a
+ * key. The message is the reason, for the logs and error_events; a person is
+ * told AI_UNREACHABLE instead (index.ts). A turn that fails after it has
+ * started answering throws the engine's own error: that is the turn failing,
+ * not the AI being out of reach.
+ */
+export class AiUnreachable extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AiUnreachable";
+  }
 }
 
-/** Which model each engine is actually about to call, for the record. */
-function modelFor(env: LlmEnv, engine: Engine, model: string, prefer?: EnginePrefs) {
-  switch (engine) {
-    case "gemini":
-      return model;
-    case "deepseek":
-      return env.DEEPSEEK_MODEL;
-    case "glm":
-      return env.GLM_MODEL || "glm-5.3-flash";
-    default:
-      return workersModel(env, prefer);
+export const isAiUnreachable = (err: unknown): err is AiUnreachable =>
+  err instanceof AiUnreachable || (err instanceof Error && err.name === "AiUnreachable");
+
+/** What a person hears or reads when no engine could answer their turn. Plain, and no engine names. */
+export const AI_UNREACHABLE = "Sorry, I can't reach the AI right now. Please try again in a little while.";
+
+/**
+ * Nothing to try: every engine is missing its key or cooling down. The ones
+ * without a key are reported (the cooling ones already were, by
+ * reportSkipped), so the engine table says why this call got no answer.
+ */
+function nothingToTry(env: LlmEnv, model: string, onAttempt?: OnAttempt) {
+  const available = availableEngines(env);
+  for (const engine of ENGINES) {
+    if (!available[engine]) onAttempt?.({ engine, model: modelFor(env, engine, model), outcome: "no_key", ms: 0 });
   }
+  const exists = ENGINES.filter((e) => available[e]);
+  if (!exists.length) return new AiUnreachable(`No AI engine has its key set (${ENGINES.map(keyVarOf).join(", ")}).`);
+  // Every engine that exists is cooling down. The message is what each last failed with, and no countdown:
+  // it goes to error_events, where a minute-by-minute number made a new fingerprint every minute, and
+  // classifyEngineError reads the " 402:" / " 429:" in it. (engineTrouble's sentence rides along as the detail.)
+  return new AiUnreachable(`All engines unavailable: ${exists.map((e) => `${nameOf(e)}: ${lastFailure.get(e) ?? "unknown"}`).join("; ")}`);
+}
+
+/** Which model each engine is actually about to call, for the record. Gemini's is the caller's (CHAT_MODEL or MEMORY_MODEL). */
+function modelFor(env: LlmEnv, engine: Engine, model: string) {
+  if (engine === "gemini") return model;
+  const provider = OPENAI_PROVIDERS[engine];
+  return varOf(env, provider.modelVar) ?? provider.defaultModel;
 }
 
 /**
@@ -567,40 +696,48 @@ function modelFor(env: LlmEnv, engine: Engine, model: string, prefer?: EnginePre
  * that were, so "which were dead" and "which answered" come out of the same
  * table rather than one being a console line that expires in three days.
  */
-function reportSkipped(env: LlmEnv, model: string, onAttempt?: OnAttempt, prefer?: EnginePrefs) {
+function reportSkipped(env: LlmEnv, model: string, onAttempt?: OnAttempt) {
   if (!onAttempt) return;
   const now = Date.now();
   for (const [engine, until] of cooldownUntil) {
     if (until > now) {
-      onAttempt({ engine, model: modelFor(env, engine, model, prefer), outcome: "skipped", ms: 0, error: lastFailure.get(engine) });
+      onAttempt({ engine, model: modelFor(env, engine, model), outcome: "skipped", ms: 0, error: lastFailure.get(engine) });
     }
   }
 }
 
-/** The last engine's error, naming what the earlier ones failed with. */
-function finalError(err: unknown, failures: string[]) {
+/** The last engine's error, naming what the earlier ones failed with, and the ones this call skipped. */
+function finalError(err: unknown, failures: string[], tried: Engine[]) {
   const now = Date.now();
   for (const [engine, until] of cooldownUntil) {
-    if (until > now && engine !== "workers") failures.push(`${ENGINE_NAMES[engine]} skipped, it failed with ${lastFailure.get(engine)}`);
+    if (until > now && !tried.includes(engine)) failures.push(`${nameOf(engine)} skipped, it failed with ${lastFailure.get(engine)}`);
   }
   if (!failures.length) return err;
   const brief = (e: unknown) => String(e instanceof Error ? e.message : e).slice(0, 200);
   return new Error(`${brief(err)} (earlier: ${failures.join("; ")})`);
 }
 
+/** finalError as AiUnreachable: every engine there was has failed. */
+function unreachable(err: unknown, failures: string[], tried: Engine[]) {
+  const last = finalError(err, failures, tried);
+  return new AiUnreachable(last instanceof Error ? last.message : String(last));
+}
+
 function logFallback(from: Engine, to: Engine, err: unknown) {
-  coolDown(from, err);
-  console.error(`${ENGINE_NAMES[from]} failed, using ${ENGINE_NAMES[to]} fallback`, err);
+  coolDownAfter(from, err);
+  console.error(`${nameOf(from)} failed, using ${nameOf(to)} fallback`, err);
 }
 
 export async function generateText(env: LlmEnv, opts: Options): Promise<string> {
+  await askGate(env, opts.usage);
   applyDeadlines(env);
-  const order = engines(env, false, !!opts.fast, opts.prefer);
+  const order = engines(env, false, opts.prefer);
   const failures: string[] = [];
-  reportSkipped(env, opts.model, opts.onAttempt, opts.prefer);
+  reportSkipped(env, opts.model, opts.onAttempt);
+  if (!order.length) throw nothingToTry(env, opts.model, opts.onAttempt);
   for (const [i, engine] of order.entries()) {
     const at = Date.now();
-    const model = modelFor(env, engine, opts.model, opts.prefer);
+    const model = modelFor(env, engine, opts.model);
     try {
       let text: string;
       if (engine === "gemini") {
@@ -616,10 +753,10 @@ export async function generateText(env: LlmEnv, opts: Options): Promise<string> 
       const brief = String(err instanceof Error ? err.message : err).slice(0, 300);
       opts.onAttempt?.({ engine, model, outcome: classifyEngineError(err), ms: Date.now() - at, error: brief });
       if (i === order.length - 1) {
-        coolDown(engine, err);
-        throw finalError(err, failures);
+        coolDownAfter(engine, err);
+        throw unreachable(err, failures, order);
       }
-      failures.push(`${ENGINE_NAMES[engine]}: ${brief.slice(0, 200)}`);
+      failures.push(`${nameOf(engine)}: ${brief.slice(0, 200)}`);
       logFallback(engine, order[i + 1], err);
     }
   }
@@ -635,38 +772,94 @@ export async function chatWithTools(
   env: LlmEnv,
   opts: ToolLoopOptions & { resume?: { state: LoopState; results: Record<string, unknown> } },
 ): Promise<ChatOutcome> {
+  // Before the resume branch: a resumed turn is asked about too (GateCall.continuing).
+  await askGate(env, { ...opts.usage, continuing: !!opts.resume });
   applyDeadlines(env);
   if (opts.resume) {
     const { state, results } = opts.resume;
     const result = (id: string) => results[id] ?? { error: "The app returned no result" };
+    // Where a paused turn goes when its own engine can't carry on: the first
+    // OpenAI-style engine that is ready now. Its messages are OpenAI-style.
+    const openAiNow = () => engines(env, !!opts.voice, opts.prefer).find((e) => isOpenAiEngine(e)) as OpenAiEngine | undefined;
+    // As for a new turn: a failure after something was said or done is the
+    // turn failing; before that, with nothing left to carry it on, the AI is
+    // out of reach (AiUnreachable, which /chat/resume answers plainly).
+    let committed = false;
+    const callTool: CallTool = (name, args) => {
+      committed = true;
+      return opts.callTool(name, args);
+    };
+    const onText: OnText | undefined = opts.onText
+      ? (delta) => {
+          committed = true;
+          return opts.onText!(delta);
+        }
+      : undefined;
+    const run = { ...opts, callTool, onText };
+    const failures: string[] = [];
+    const tried: Engine[] = [];
+    /** One engine's go at carrying the turn on: its outcome, or the error to move on with. */
+    const attempt = async (engine: Engine, go: () => Promise<ChatOutcome>): Promise<{ outcome: ChatOutcome } | { err: unknown }> => {
+      tried.push(engine);
+      const at = Date.now();
+      const model = modelFor(env, engine, opts.model);
+      try {
+        const outcome = await go();
+        opts.onAttempt?.({ engine, model, outcome: outcome.kind === "paused" ? "paused" : "ok", ms: Date.now() - at });
+        return { outcome };
+      } catch (err) {
+        const brief = String(err instanceof Error ? err.message : err).slice(0, 300);
+        opts.onAttempt?.({ engine, model, outcome: classifyEngineError(err), ms: Date.now() - at, error: brief });
+        coolDownAfter(engine, err);
+        if (committed) throw finalError(err, failures, tried);
+        return { err };
+      }
+    };
     if (state.engine === "gemini") {
       const last = state.contents[state.contents.length - 1];
       for (const slot of state.slots) {
         last.parts[slot.part].functionResponse.response = geminiResponse(result(slot.id));
       }
-      let streamed = false;
-      const onText: OnText | undefined = opts.onText
-        ? (delta) => {
-            streamed = true;
-            return opts.onText!(delta);
-          }
-        : undefined;
-      try {
-        if ((cooldownUntil.get("gemini") ?? 0) > Date.now()) throw new Error("Gemini is cooling down");
-        return await geminiToolLoop(env, { ...opts, onText }, state);
-      } catch (err) {
-        // Out of quota halfway through: finish the turn on Workers AI with what's been looked up.
-        if (streamed || (cooldownUntil.get("workers") ?? 0) > Date.now()) {
-          coolDown("gemini", err);
-          throw err;
-        }
-        logFallback("gemini", "workers", err);
-        const messages = geminiToOpenAi(opts.system, state.contents);
-        return openAiToolLoop(env, "workers", opts, { engine: "workers", round: state.round, messages, slots: [] });
+      // Gemini cooling down (or without its key now) isn't tried, and isn't cooled
+      // down again either: that would cut a long quota or credit cooldown to 15 seconds.
+      const cooling = !availableEngines(env).gemini || (cooldownUntil.get("gemini") ?? 0) > Date.now();
+      let err: unknown = null;
+      if (!cooling) {
+        const got = await attempt("gemini", () => geminiToolLoop(env, run, state));
+        if ("outcome" in got) return got.outcome;
+        err = got.err;
       }
+      // Out of quota halfway through: finish the turn on an OpenAI-style
+      // engine with what's been looked up, if one is ready.
+      const next = openAiNow();
+      if (!next) throw cooling ? nothingToTry(env, opts.model, opts.onAttempt) : unreachable(err, failures, tried);
+      if (!cooling) {
+        failures.push(`Gemini: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`);
+        console.error(`Gemini failed, using ${nameOf(next)} fallback`, err);
+      }
+      const messages = geminiToOpenAi(opts.system, state.contents);
+      const got = await attempt(next, () => openAiToolLoop(env, next, run, { engine: next, round: state.round, messages, slots: [] }));
+      if ("outcome" in got) return got.outcome;
+      throw unreachable(got.err, failures, tried);
     }
-    for (const slot of state.slots) state.messages[slot.index].content = toolResultText(result(slot.id));
-    return openAiToolLoop(env, state.engine, opts, state);
+    const paused = state as Extract<LoopState, { engine: OpenAiEngine }>;
+    for (const slot of paused.slots) paused.messages[slot.index].content = toolResultText(result(slot.id));
+    // Paused on an engine retired since (DeepSeek or Workers AI, before v1; a
+    // paused turn keeps for ten minutes), or one whose key is gone: the one
+    // there is now carries on.
+    if (!isOpenAiEngine(paused.engine as string) || !availableEngines(env)[paused.engine]) {
+      const next = openAiNow();
+      if (!next) throw unreachable(new Error(`That turn was paused on ${paused.engine}, which can't carry it on now, and no other engine is ready.`), failures, tried);
+      const messages = paused.messages.map(({ reasoning_content: _, ...message }) => message);
+      const got = await attempt(next, () => openAiToolLoop(env, next, run, { ...paused, engine: next, messages }));
+      if ("outcome" in got) return got.outcome;
+      throw unreachable(got.err, failures, tried);
+    }
+    // Paused on GLM: its messages carry its own reasoning, and there's no
+    // converter to Gemini's shape, so nothing else can take the turn over.
+    const got = await attempt(paused.engine, () => openAiToolLoop(env, paused.engine, run, paused));
+    if ("outcome" in got) return got.outcome;
+    throw unreachable(got.err, failures, tried);
   }
 
   let committed = false;
@@ -680,12 +873,13 @@ export async function chatWithTools(
         return opts.onText!(delta);
       }
     : undefined;
-  const order = engines(env, !!opts.voice, false, opts.prefer);
+  const order = engines(env, !!opts.voice, opts.prefer);
   const failures: string[] = [];
-  reportSkipped(env, opts.model, opts.onAttempt, opts.prefer);
+  reportSkipped(env, opts.model, opts.onAttempt);
+  if (!order.length) throw nothingToTry(env, opts.model, opts.onAttempt);
   for (const [i, engine] of order.entries()) {
     const at = Date.now();
-    const model = modelFor(env, engine, opts.model, opts.prefer);
+    const model = modelFor(env, engine, opts.model);
     try {
       const run = { ...opts, callTool: tracked, onText };
       const outcome = engine === "gemini" ? await geminiToolLoop(env, run) : await openAiToolLoop(env, engine, run);
@@ -694,15 +888,34 @@ export async function chatWithTools(
     } catch (err) {
       const brief = String(err instanceof Error ? err.message : err).slice(0, 300);
       opts.onAttempt?.({ engine, model, outcome: classifyEngineError(err), ms: Date.now() - at, error: brief });
-      if (committed || i === order.length - 1) {
-        coolDown(engine, err);
-        throw finalError(err, failures);
+      if (committed) {
+        // Something was already said or done: this turn failed, the AI was reachable.
+        coolDownAfter(engine, err);
+        throw finalError(err, failures, order);
       }
-      failures.push(`${ENGINE_NAMES[engine]}: ${brief.slice(0, 200)}`);
+      if (i === order.length - 1) {
+        coolDownAfter(engine, err);
+        throw unreachable(err, failures, order);
+      }
+      failures.push(`${nameOf(engine)}: ${brief.slice(0, 200)}`);
       logFallback(engine, order[i + 1], err);
     }
   }
   throw new Error("No engines");
+}
+
+// ---------- Web search ----------
+
+/**
+ * A question answered by Gemini with Google Search turned on, and the pages it
+ * used (web.ts web_search asks this first, and DuckDuckGo when it fails). A
+ * model call like any other, so it asks the gate first. Its cost is filed by
+ * the caller as a search (usage.ts searchRow), not through the usage sink.
+ */
+export async function searchGrounded(env: LlmEnv, opts: { query: string; today: string; usage: UsageTag }) {
+  await askGate(env, opts.usage);
+  if (!env.GEMINI_API_KEY) throw new Error("Gemini search has no key (GEMINI_API_KEY)");
+  return geminiGrounded({ apiKey: env.GEMINI_API_KEY, model: env.CHAT_MODEL ?? "", query: opts.query, today: opts.today });
 }
 
 // ---------- Deadlines ----------
@@ -862,10 +1075,9 @@ async function geminiToolLoop(
         contents,
         // No tools on the last round, so the model has to answer.
         ...(round < MAX_TOOL_ROUNDS && tools.length && { tools: [{ functionDeclarations: tools }] }),
-        // Spoken replies are short: a little thinking is plenty, and much faster.
-        // ("minimal" would be faster still, but gemini-3.8-flash rejects it: 400,
-        // "Thinking level MINIMAL is not supported for this model", 2026-09-21.)
-        ...(voice && { generationConfig: { thinkingConfig: { thinkingLevel: "low" } } }),
+        // Spoken replies are short: as little thinking as the model takes, which
+        // is much faster (gemini.ts quickThinking says how little that is).
+        ...(voice && { generationConfig: { thinkingConfig: { thinkingLevel: quickThinking(model) } } }),
       },
       onText,
     );
@@ -940,13 +1152,78 @@ function geminiToOpenAi(system: string, contents: any[]): any[] {
   return messages;
 }
 
-// ---------- OpenAI-style engines (DeepSeek, GLM, Workers AI) ----------
+// ---------- OpenAI-compatible engines ----------
 
-type OpenAiEngine = "deepseek" | "glm" | "workers";
+/** The engines reached through an OpenAI-compatible chat-completions API (OPENAI_PROVIDERS). */
+type OpenAiEngine = "glm";
+
+/**
+ * One OpenAI-compatible provider, as the names of the vars that configure it,
+ * so a new one is an entry here plus its vars (see the top of this file).
+ */
+type OpenAiProvider = {
+  /**
+   * What people and the logs call it. Its errors start "<name> <model> <status>:",
+   * which is the shape coolDown and classifyEngineError read.
+   */
+  name: string;
+  /** The secret holding its key. Without it the engine does not exist. */
+  keyVar: string;
+  /** The var holding its base URL (with or without /chat/completions), and the URL when it is unset. */
+  baseUrlVar: string;
+  defaultBaseUrl: string;
+  /** The var holding the model id, as the provider knows it, and the id when it is unset. Priced by this id (pricing.ts). */
+  modelVar: string;
+  defaultModel: string;
+  /** The var saying how much it thinks on a typed turn: "off", "low" (the default) or "on". */
+  thinkingVar: string;
+  /**
+   * How this provider is told how much to think. Unset: the flavor of its base URL (hostFlavor).
+   * "none" sends no thinking field, for a model that doesn't think and rejects `reasoning_effort`.
+   */
+  thinking?: HostFlavor | "none";
+};
+
+export const OPENAI_PROVIDERS: Record<OpenAiEngine, OpenAiProvider> = {
+  // GLM 5.3 Flash on the user's own Z.ai account. OpenRouter calls it
+  // z-ai/glm-5.3-flash; its price is GLM_PRICE_* or pricing.ts's default.
+  glm: {
+    name: "GLM",
+    keyVar: "GLM_API_KEY",
+    baseUrlVar: "GLM_BASE_URL",
+    defaultBaseUrl: "https://api.z.ai/api/paas/v4",
+    modelVar: "GLM_MODEL",
+    defaultModel: "glm-5.3-flash",
+    thinkingVar: "GLM_THINKING",
+  },
+};
+
+/**
+ * A var by its name, trimmed; undefined when unset or blank. The providers'
+ * vars are read this way, so a new provider needs no new field in LlmEnv.
+ */
+function varOf(env: LlmEnv, name: string): string | undefined {
+  const value = (env as Record<string, unknown>)[name];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** The secret an engine needs to exist. */
+function keyVarOf(engine: Engine) {
+  return engine === "gemini" ? "GEMINI_API_KEY" : OPENAI_PROVIDERS[engine].keyVar;
+}
+
+/** Where a provider is: its base URL var, else its default. */
+function baseUrlOf(env: LlmEnv, engine: OpenAiEngine) {
+  return varOf(env, OPENAI_PROVIDERS[engine].baseUrlVar) ?? OPENAI_PROVIDERS[engine].defaultBaseUrl;
+}
+
+/** How a provider is told how much to think: its own `thinking`, else its host's flavor. */
+function thinkingFlavorOf(env: LlmEnv, engine: OpenAiEngine): HostFlavor | "none" {
+  return OPENAI_PROVIDERS[engine].thinking ?? hostFlavor(baseUrlOf(env, engine));
+}
 
 type OpenAiOut = {
-  response?: string | object;
-  choices?: { message?: { content?: string | null; reasoning_content?: string; tool_calls?: any[] } }[];
+  choices?: { message?: { content?: string | null; tool_calls?: any[] } }[];
   usage?: unknown;
 };
 
@@ -954,36 +1231,34 @@ type OpenAiOut = {
 type OpenAiBody = { messages: any[]; tools?: any[]; max_tokens: number } & Record<string, unknown>;
 
 /** One assistant message, however it arrived, with the counts the provider attached. */
-type OpenAiMessage = { content: string; reasoning_content?: string; tool_calls: any[]; usage: TokenUsage | null };
+type OpenAiMessage = { content: string; tool_calls: any[]; usage: TokenUsage | null };
 
 // ---------- Thinking ----------
 //
 // Every reasoning model bills its thinking as output tokens, at the output
-// price, and thinks a lot by default: DeepSeek at "high", GLM 5.3 Flash at
-// "max". On a spoken turn that is seconds of silence before the first word,
-// paid for. So thinking is off for spoken and quick calls and low for typed
-// ones, and each provider is told in the words it understands, because they
-// all differ: gpt-oss takes reasoning_effort, DeepSeek takes it too but with
-// "none" to switch off, Z.ai's GLM 5.3 cannot switch off at all (its floor is
-// "low"), OpenRouter wants a `reasoning` object, and Workers AI's GLM takes a
-// template flag. Keyed off the model id, not the engine, because
-// FALLBACK_MODEL may itself be a GLM.
+// price, and thinks a lot by default: GLM 5.3 Flash at "max". On a spoken turn
+// that is seconds of silence before the first word, paid for. So thinking is
+// off for spoken and quick calls and low for typed ones, and each host is told
+// in the words it understands, because they differ: Z.ai's GLM 5.3 cannot
+// switch off at all (its floor is "low"), OpenRouter wants a `reasoning`
+// object, and any other OpenAI-compatible host gets the plain OpenAI field.
+// Keyed off the host and the model id.
 
 export type ThinkingLevel = "off" | "low" | "on";
 
-/** Which OpenAI-compatible host GLM is on. Decides how thinking is spelled. */
-export type GlmFlavor = "zai" | "openrouter" | "openai";
+/** Which kind of OpenAI-compatible host a provider is on. Decides how thinking is spelled. */
+export type HostFlavor = "zai" | "openrouter" | "openai";
 
-export function glmFlavor(baseUrl: string | undefined): GlmFlavor {
-  const url = (baseUrl ?? "").toLowerCase();
-  if (!url || /(^|\/\/|\.)(api\.)?z\.ai(\/|$)/.test(url) || url.includes("bigmodel.cn")) return "zai";
+export function hostFlavor(baseUrl: string): HostFlavor {
+  const url = baseUrl.toLowerCase();
+  if (/(^|\/\/|\.)(api\.)?z\.ai(\/|$)/.test(url) || url.includes("bigmodel.cn")) return "zai";
   if (url.includes("openrouter.ai")) return "openrouter";
   return "openai";
 }
 
-/** The chat-completions endpoint for GLM: Z.ai's unless the var says otherwise. Accepts a base with or without the path. */
-export function glmEndpoint(baseUrl: string | undefined) {
-  const base = (baseUrl?.trim() || "https://api.z.ai/api/paas/v4").replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
+/** The chat-completions endpoint under a base URL, given with or without the path. */
+export function chatCompletionsUrl(baseUrl: string) {
+  const base = baseUrl.trim().replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
   return `${base}/chat/completions`;
 }
 
@@ -996,38 +1271,21 @@ function parseThinking(raw: string | undefined, fallback: ThinkingLevel): Thinki
   return fallback;
 }
 
-/**
- * How much this call should think. Spoken and quick calls never do; typed turns
- * do a little, or what the engine's var says. gpt-oss keeps today's behaviour:
- * low when spoken, its own default when typed.
- */
-export function thinkingLevelFor(env: Pick<LlmEnv, "DEEPSEEK_THINKING" | "GLM_THINKING">, engine: OpenAiEngine, model: string, voiceOrFast: boolean): ThinkingLevel {
+/** How much this call should think. Spoken and quick calls never do; typed turns do a little, or what the provider's var says. */
+export function thinkingLevelFor(env: LlmEnv, engine: OpenAiEngine, voiceOrFast: boolean): ThinkingLevel {
   if (voiceOrFast) return "off";
-  if (engine === "deepseek") return parseThinking(env.DEEPSEEK_THINKING, "low");
-  if (engine === "glm" || /glm/i.test(model)) return parseThinking(env.GLM_THINKING, "low");
-  return "on";
+  return parseThinking(varOf(env, OPENAI_PROVIDERS[engine].thinkingVar), "low");
 }
 
 /**
- * The request fields that ask for `level` of thinking from `model` on `engine`.
- * Pure, so every provider's spelling is checked by a test rather than by a 400
- * in production.
+ * The request fields that ask for `level` of thinking from `model` on a host
+ * of this flavor. Pure, so every host's spelling is checked by a test rather
+ * than by a 400 in production.
  */
-export function thinkingFields(engine: OpenAiEngine, model: string, level: ThinkingLevel, flavor: GlmFlavor = "zai"): Record<string, unknown> {
+export function thinkingFields(model: string, level: ThinkingLevel, flavor: HostFlavor | "none"): Record<string, unknown> {
+  // A provider whose model doesn't think (OpenAiProvider.thinking): no field at all.
+  if (flavor === "none") return {};
   const m = model.toLowerCase();
-  if (engine === "workers") {
-    if (/gpt-oss/.test(m)) return level === "on" ? {} : { reasoning_effort: "low" };
-    if (/glm/.test(m)) {
-      if (level === "off") return { chat_template_kwargs: { enable_thinking: false } };
-      return level === "low" ? { reasoning_effort: "low" } : {};
-    }
-    return {};
-  }
-  if (engine === "deepseek") {
-    // "none" switches thinking off; low/high/max set the effort; the default is high.
-    return level === "off" ? { reasoning_effort: "none" } : level === "low" ? { reasoning_effort: "low" } : {};
-  }
-  // GLM, on whichever host.
   if (flavor === "zai") {
     // GLM 5.3 (and 5.3 Flash) refuse thinking.type "disabled"; "low" is their floor.
     // reasoning_effort exists from GLM 5.2 up; older models only have the switch.
@@ -1047,106 +1305,54 @@ export function thinkingFields(engine: OpenAiEngine, model: string, level: Think
   return { reasoning_effort: level === "on" ? "high" : "low" };
 }
 
-async function openAiCall(
-  env: LlmEnv,
-  engine: OpenAiEngine,
-  body: OpenAiBody,
-  stream: boolean,
-  affinity?: string,
-  prefer?: EnginePrefs,
-): Promise<any> {
-  if (engine === "workers") {
-    // AiOptions carries a signal, so the binding gets the same deadline the two
-    // raw fetches have. Without it a hung Workers AI call is invisible until the
-    // phone's own 60 s abort.
-    return env.AI.run(
-      workersModel(env, prefer) as keyof AiModels,
-      // include_usage: the token counts ride on a last chunk, and Workers AI's
-      // chat-completions input types the option the same way OpenAI does.
-      { ...body, ...(stream && { stream: true, stream_options: { include_usage: true } }) } as never,
-      {
-        signal: AbortSignal.timeout(connectMs),
-        // Documented for the binding as extraHeaders (Workers AI "prompt caching").
-        ...(affinity && { extraHeaders: { "x-session-affinity": `ovoa-${affinity}` } }),
-      },
-    );
-  }
-  if (engine === "glm") {
-    const model = modelFor(env, "glm", "", prefer);
-    const flavor = glmFlavor(env.GLM_BASE_URL);
-    const res = await fetchWithDeadline(glmEndpoint(env.GLM_BASE_URL), {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${env.GLM_API_KEY}` },
-      body: JSON.stringify({
-        model,
-        ...body,
-        // Z.ai sends the token counts on its last chunk without being asked and
-        // documents no stream_options; it does take tool_stream, which streams a
-        // tool call's arguments as they are written rather than all at the end.
-        ...(stream && { stream: true, ...(flavor === "zai" ? { tool_stream: true } : { stream_options: { include_usage: true } }) }),
-      }),
-    });
-    // "GLM <model> <status>:" is the shape coolDown and classifyEngineError read.
-    if (!res.ok) throw new Error(`GLM ${model} ${res.status}: ${(await res.text()).slice(0, 500)}`);
-    return stream ? res.body : res.json();
-  }
-  const res = await fetchWithDeadline("https://api.deepseek.com/chat/completions", {
+async function openAiCall(env: LlmEnv, engine: OpenAiEngine, body: OpenAiBody, stream: boolean): Promise<any> {
+  const provider = OPENAI_PROVIDERS[engine];
+  const model = modelFor(env, engine, "");
+  const base = baseUrlOf(env, engine);
+  const flavor = hostFlavor(base);
+  const res = await fetchWithDeadline(chatCompletionsUrl(base), {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${env.DEEPSEEK_API_KEY}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${varOf(env, provider.keyVar)}` },
     body: JSON.stringify({
-      model: env.DEEPSEEK_MODEL,
+      model,
       ...body,
-      // A stream ends with the token counts only when asked (OpenAI's stream_options).
-      ...(stream && { stream: true, stream_options: { include_usage: true } }),
+      // A stream ends with the token counts only when asked (OpenAI's
+      // stream_options). Z.ai sends them on its last chunk without being asked
+      // and documents no stream_options; it does take tool_stream, which streams
+      // a tool call's arguments as they are written rather than all at the end.
+      ...(stream && { stream: true, ...(flavor === "zai" ? { tool_stream: true } : { stream_options: { include_usage: true } }) }),
     }),
   });
-  if (!res.ok) throw new Error(`DeepSeek ${env.DEEPSEEK_MODEL} ${res.status}: ${(await res.text()).slice(0, 500)}`);
+  // "<name> <model> <status>:" is the shape coolDown and classifyEngineError read.
+  if (!res.ok) throw new Error(`${provider.name} ${model} ${res.status}: ${(await res.text()).slice(0, 500)}`);
   return stream ? res.body : res.json();
 }
 
 function openAiText(out: OpenAiOut) {
-  const text =
-    typeof out.response === "string"
-      ? out.response
-      : out.response
-        ? JSON.stringify(out.response)
-        : (out.choices?.[0]?.message?.content ?? "");
-  return stripThinking(text);
+  return stripThinking(out.choices?.[0]?.message?.content ?? "");
 }
 
 /** One model turn. Streamed when `onText` is set; either way returns the whole message. */
-async function openAiRound(
-  env: LlmEnv,
-  engine: OpenAiEngine,
-  body: OpenAiBody,
-  onText?: OnText,
-  affinity?: string,
-  prefer?: EnginePrefs,
-): Promise<OpenAiMessage> {
+async function openAiRound(env: LlmEnv, engine: OpenAiEngine, body: OpenAiBody, onText?: OnText): Promise<OpenAiMessage> {
   if (!onText) {
-    const out = (await openAiCall(env, engine, body, false, affinity, prefer)) as OpenAiOut;
-    const message = out.choices?.[0]?.message;
+    const out = (await openAiCall(env, engine, body, false)) as OpenAiOut;
     return {
       content: openAiText(out),
-      reasoning_content: message?.reasoning_content,
-      tool_calls: message?.tool_calls ?? [],
+      tool_calls: out.choices?.[0]?.message?.tool_calls ?? [],
       usage: readOpenAiUsage(out.usage),
     };
   }
-  const stream = (await openAiCall(env, engine, body, true, affinity, prefer)) as ReadableStream<Uint8Array>;
+  const stream = (await openAiCall(env, engine, body, true)) as ReadableStream<Uint8Array>;
   let content = "";
-  let reasoning = "";
   let usage: TokenUsage | null = null;
   const calls: any[] = [];
   for await (const data of sseData(stream)) {
     const chunk = JSON.parse(data);
-    // The counts ride on the last chunk (Workers AI always; DeepSeek when asked
+    // The counts ride on the last chunk (Z.ai always; other hosts when asked
     // with stream_options). Stopping a reply early gives up the counts too.
     usage = readOpenAiUsage(chunk.usage) ?? usage;
     const delta = chunk.choices?.[0]?.delta;
-    // Workers AI ends with {"response": "", usage}; older models stream only `response`.
-    const text: string = delta?.content ?? (typeof chunk.response === "string" ? chunk.response : "");
-    if (delta?.reasoning_content) reasoning += delta.reasoning_content;
+    const text: string = delta?.content ?? "";
     for (const tc of delta?.tool_calls ?? []) {
       const slot = (calls[tc.index ?? 0] ??= { id: "", type: "function", function: { name: "", arguments: "" } });
       if (tc.id) slot.id = tc.id;
@@ -1158,7 +1364,7 @@ async function openAiRound(
       if (onText(text) === false) break;
     }
   }
-  return { content: stripThinking(content), reasoning_content: reasoning || undefined, tool_calls: calls.filter(Boolean), usage };
+  return { content: stripThinking(content), tool_calls: calls.filter(Boolean), usage };
 }
 
 async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, opts: Options): Promise<string> {
@@ -1168,31 +1374,24 @@ async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, opts: Options):
     : system;
 
   const at = Date.now();
-  const model = modelFor(env, engine, opts.model, opts.prefer);
-  const { content, usage } = await openAiRound(
-    env,
-    engine,
-    {
-      messages: [
-        { role: "system", content: systemText },
-        ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
-      ],
-      max_tokens: 2048,
-      ...thinkingFields(engine, model, thinkingLevelFor(env, engine, model, !!fast), glmFlavor(env.GLM_BASE_URL)),
-    },
-    undefined,
-    undefined,
-    opts.prefer,
-  );
+  const model = modelFor(env, engine, opts.model);
+  const { content, usage } = await openAiRound(env, engine, {
+    messages: [
+      { role: "system", content: systemText },
+      ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
+    ],
+    max_tokens: 2048,
+    ...thinkingFields(model, thinkingLevelFor(env, engine, !!fast), thinkingFlavorOf(env, engine)),
+  });
   reportUsage(env, opts, engine, model, usage, Date.now() - at);
 
   let text = content;
   if (json) {
     const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error(`${ENGINE_NAMES[engine]} returned no JSON: ${text.slice(0, 200)}`);
+    if (!match) throw new Error(`${nameOf(engine)} returned no JSON: ${text.slice(0, 200)}`);
     text = match[0];
   }
-  if (!text) throw new Error(`${ENGINE_NAMES[engine]} returned no text`);
+  if (!text) throw new Error(`${nameOf(engine)} returned no text`);
   return text;
 }
 
@@ -1202,15 +1401,15 @@ async function openAiToolLoop(
   opts: ToolLoopOptions,
   paused?: Extract<LoopState, { engine: OpenAiEngine }>,
 ): Promise<ChatOutcome> {
-  const { system, turns, tools, callTool, voice, onText, affinity, prefer } = opts;
+  const { system, turns, tools, callTool, voice, onText } = opts;
   const messages: any[] = paused?.messages ?? [
     { role: "system", content: system },
     ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
   ];
-  const model = modelFor(env, engine, opts.model, prefer);
-  // Measured on gpt-oss-120b: about 4x faster to a spoken answer with thinking
-  // kept low, and tool calls still work. See thinkingFields for the others.
-  const thinking = thinkingFields(engine, model, thinkingLevelFor(env, engine, model, !!voice), glmFlavor(env.GLM_BASE_URL));
+  const model = modelFor(env, engine, opts.model);
+  // Spoken turns think as little as the host allows: much sooner to the first
+  // word, and tool calls still work. See thinkingFields.
+  const thinking = thinkingFields(model, thinkingLevelFor(env, engine, !!voice), thinkingFlavorOf(env, engine));
   for (let round = paused?.round ?? 0; round <= MAX_TOOL_ROUNDS; round++) {
     // Built each round rather than once: a spoken turn starts with a handful of
     // tools and sends for more mid-turn (toolbelt.ts), and those have to be in
@@ -1228,27 +1427,19 @@ async function openAiToolLoop(
         ...thinking,
       },
       onText,
-      affinity,
-      prefer,
     );
     reportUsage(env, opts, engine, model, message.usage, Date.now() - at);
 
     const calls = message.tool_calls;
     if (!calls.length) {
-      if (!message.content) throw new Error(`${ENGINE_NAMES[engine]} returned no text`);
+      if (!message.content) throw new Error(`${nameOf(engine)} returned no text`);
       return { kind: "reply", text: message.content, engine };
     }
 
-    // Workers AI rejects null content on assistant turns. DeepSeek requires its
-    // reasoning sent back on every later round of a turn with tools (400
-    // otherwise); GLM's hosts neither need it nor promise to accept it, so it
-    // stays out there. It is never spoken or shown.
-    messages.push({
-      role: "assistant",
-      content: message.content ?? "",
-      tool_calls: calls,
-      ...(message.reasoning_content && engine !== "glm" && { reasoning_content: message.reasoning_content }),
-    });
+    // Content is never null on an assistant turn (some hosts reject it). The
+    // model's reasoning is not sent back: GLM's hosts neither need it nor
+    // promise to accept it, and it is never spoken or shown.
+    messages.push({ role: "assistant", content: message.content ?? "", tool_calls: calls });
     const slots: { id: string; index: number }[] = [];
     const deferred: DeferredCall[] = [];
     for (const call of calls) {

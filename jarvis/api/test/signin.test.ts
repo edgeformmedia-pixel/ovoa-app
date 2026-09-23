@@ -587,6 +587,51 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
       401,
     );
     eq("a bad token is refused", (await call("POST", "/auth/apple", { identityToken: "x".repeat(40), nonce: n5 })).status, 401);
+
+    // With email codes on (verify.ts): an app sign-up is held until its code is typed.
+    const codesEnv = env as { EMAIL_CODES_TO_LOG?: string; DEBUG_KEY?: string };
+    codesEnv.EMAIL_CODES_TO_LOG = "1";
+    codesEnv.DEBUG_KEY = "dk";
+    const auth = (token: string) => ({ authorization: `Bearer ${token}` });
+    const debugCode = async (email: string) =>
+      (await call("POST", "/debug/email/code", { email }, { "x-debug-key": "dk" })).body?.code as string;
+    const routinesFor = async (token: string) => (await call("GET", "/routines", undefined, auth(token))).status;
+
+    // Proving the address of the account you're signed in to: a stamp, never a take-back.
+    const hal = await call("POST", "/auth/signup", { email: "hal@example.com", password: "password123", name: "Hal" });
+    eq("a new app sign-up must prove its address", [hal.status, hal.body?.user?.mustVerify, hal.body?.user?.emailVerified], [201, true, false]);
+    eq("and is held until then", await routinesFor(hal.body.token), 403);
+    const halProof = await call("POST", "/me/email/verify", { code: await debugCode("hal@example.com") }, auth(hal.body.token));
+    eq("the code in the app proves it", [halProof.status, halProof.body?.emailVerified], [200, true]);
+    eq("without signing anyone out", await me(hal.body.token), 200);
+    eq("or taking the password", await login("hal@example.com", "password123"), 200);
+    eq("and everything opens up", await routinesFor(hal.body.token), 200);
+
+    // Proven by Google while still waiting for its code: taken back, Google connection and all.
+    const ivy = await call("POST", "/auth/signup", { email: "ivy@example.com", password: "password123", name: "Mallory" });
+    const ivyId = String(row(sqlite, "SELECT id FROM users WHERE email = 'ivy@example.com'")?.id);
+    sqlite
+      .prepare("INSERT INTO google_accounts (id, user_id, email, is_default, scopes, refresh_token_enc, connected_at) VALUES (?, ?, ?, 1, '', 'x', ?)")
+      .run("g-ivy", ivyId, "mallory@gmail.com", Date.now());
+    const rIvy = await viaGoogle("ivy@example.com", "Ivy");
+    eq("Google takes back a sign-up still waiting for its code", [!!rIvy.body?.ticket, rIvy.body?.existing], [true, true]);
+    eq("its sessions go", await me(ivy.body.token), 401);
+    eq("and so does the Google account connected to it", row(sqlite, "SELECT count(*) n FROM google_accounts WHERE user_id = ?", ivyId)?.n, 0);
+    const ivyStep = await call("POST", "/auth/email/signup", { ticket: rIvy.body.ticket, name: "Ivy", password: "ivyspassword", session: "app" });
+    eq("the step makes it the owner's", [ivyStep.status, ivyStep.body?.user?.id, ivyStep.body?.passwordChanged], [200, ivyId, true]);
+    eq("proven, so no longer held", [ivyStep.body?.user?.emailVerified, ivyStep.body?.user?.mustVerify], [true, false]);
+    eq("everything opens up for the owner", await routinesFor(ivyStep.body.token), 200);
+
+    // New accounts from Google and Apple are proven already, and start where an email sign-up does.
+    const kim = await viaGoogle("kim@example.com", "Kim");
+    const kimMade = await call("POST", "/auth/email/signup", { ticket: kim.body.ticket, name: "Kim", password: "password123", session: "app" });
+    const fresh = (u: Record<string, any> | undefined) => [u?.emailVerified, u?.mustVerify, u?.aiConsent?.given, u?.onboarded];
+    eq("a Google sign-up: proven, not held, no consent yet, setup to do", fresh(kimMade.body?.user), [true, false, false, false]);
+    eq("and it isn't held", await routinesFor(kimMade.body.token), 200);
+    const lee = await apple({ sub: "002.lee", email: "lee@example.com" });
+    eq("an Apple sign-up: the same", fresh(lee.body?.user), [true, false, false, false]);
+    delete codesEnv.EMAIL_CODES_TO_LOG;
+    delete codesEnv.DEBUG_KEY;
   } finally {
     globalThis.fetch = realFetch;
   }

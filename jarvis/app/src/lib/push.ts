@@ -1,6 +1,6 @@
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import { api } from "./api";
 import { devlog, logFail } from "./devlog";
 import { onSignOut } from "./signOut";
@@ -62,7 +62,7 @@ Notifications.setNotificationHandler({
 
 export type PushSetup =
   | { ok: true; token: string }
-  | { ok: false; reason: "expo-go" | "no-project-id" | "denied" | "failed"; detail?: string };
+  | { ok: false; reason: "expo-go" | "no-project-id" | "denied" | "not-asked" | "failed"; detail?: string };
 
 const projectId = () =>
   (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas?.projectId ??
@@ -74,6 +74,7 @@ export const pushProblem = (reason: Exclude<PushSetup, { ok: true }>["reason"], 
     "expo-go": "Expo Go can't receive notifications — they work in the installed app.",
     "no-project-id": "Needs an Expo project id: run `eas init` in jarvis/app.",
     denied: "Notifications are turned off for OVOA in iOS Settings.",
+    "not-asked": "Notifications aren't on for OVOA yet. They're asked for the first time something needs them.",
     failed: detail ? `Couldn't register: ${detail.slice(0, 140)}` : "Couldn't register for notifications.",
   })[reason];
 
@@ -85,8 +86,13 @@ export const pushProblem = (reason: Exclude<PushSetup, { ok: true }>["reason"], 
  * reports Expo Go and a dev-client build identically, so it can't tell them
  * apart, and `Constants.isDevice` is gone in SDK 57. Asking for the token and
  * reading the error that comes back is both shorter and more accurate.
+ *
+ * `ask` false: registers only if notifications are already allowed, and shows
+ * no prompt. That's the launch (lib/agent.tsx): "Not now" on the permissions
+ * screen means not now, so the prompt waits for the permissions screen itself
+ * or for the first thing that needs a notification (notificationsNeeded).
  */
-export async function registerForPush(token: string): Promise<PushSetup> {
+export async function registerForPush(token: string, { ask = true }: { ask?: boolean } = {}): Promise<PushSetup> {
   const id = projectId();
   if (!id) {
     devlog("err", "push: no Expo project id in app.json (extra.eas.projectId)");
@@ -95,6 +101,7 @@ export async function registerForPush(token: string): Promise<PushSetup> {
 
   try {
     let { status } = await Notifications.getPermissionsAsync();
+    if (status === "undetermined" && !ask) return { ok: false, reason: "not-asked" };
     if (status !== "granted") ({ status } = await Notifications.requestPermissionsAsync());
     if (status !== "granted") {
       devlog("push", "notifications declined");
@@ -130,6 +137,29 @@ export async function registerForPush(token: string): Promise<PushSetup> {
     if (/Expo Go/i.test(detail)) return { ok: false, reason: "expo-go" };
     return { ok: false, reason: "failed", detail };
   }
+}
+
+let needing: Promise<void> | null = null;
+
+/**
+ * Something is being scheduled that only a notification can deliver (a dose,
+ * an alarm's fallback). If notifications were never asked about, they're
+ * asked for now, in the foreground, and the phone is registered for push on a
+ * yes. Nothing when they've been answered either way. Never throws.
+ */
+export function notificationsNeeded(token: string) {
+  needing ??= (async () => {
+    try {
+      if (AppState.currentState !== "active") return;
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status === "undetermined") await registerForPush(token);
+    } catch (err) {
+      devlog("err", "notifications: couldn't ask", String(err));
+    }
+  })().finally(() => {
+    needing = null;
+  });
+  return needing;
 }
 
 /** On sign-out, so the next person on this phone doesn't get their notes. */

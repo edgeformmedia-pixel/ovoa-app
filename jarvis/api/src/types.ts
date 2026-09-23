@@ -1,14 +1,9 @@
 export type Env = {
   DB: D1Database;
-  AI: Ai;
+  /** Gemini, the second engine (llm.ts), and web search grounding (web.ts). */
   GEMINI_API_KEY?: string;
-  /** Second choice when Gemini fails or runs out; before Workers AI. */
-  DEEPSEEK_API_KEY?: string;
-  DEEPSEEK_MODEL: string;
-  /** "deepseek": try DeepSeek first, Gemini after it. */
-  PRIMARY_ENGINE?: string;
-  /** Which engine answers spoken turns first. "workers" by default; "keyed" restores the usual order. */
-  VOICE_PRIMARY?: string;
+  /** The order every model call tries (llm.ts ENGINES, GLM then Gemini, when unset). server_settings.engine_order overrides it. */
+  ENGINE_ORDER?: string;
   /**
    * How long an engine has to answer before the turn moves on: time to the first
    * byte, and the longest a started stream may go quiet (llm.ts, 20 s / 25 s by
@@ -17,14 +12,15 @@ export type Env = {
    */
   MODEL_CONNECT_MS?: string;
   MODEL_IDLE_MS?: string;
+  /** The Gemini model for replies, agent jobs and web search grounding. */
   CHAT_MODEL: string;
   /** Secret for the /debug routes; unset turns them off. */
   DEBUG_KEY?: string;
   /**
-   * GLM 5.3 Flash from the user's own provider (llm.ts, Phase 2 of the cost
-   * pass). Without GLM_API_KEY the engine does not exist. The prices are dollars
-   * per million tokens and override the defaults in pricing.ts, because the
-   * provider, and so the price, is the user's choice.
+   * GLM 5.3 Flash from the user's own provider, the first engine (llm.ts
+   * OPENAI_PROVIDERS). Without GLM_API_KEY the engine does not exist. The prices
+   * are dollars per million tokens and override the defaults in pricing.ts,
+   * because the provider, and so the price, is the user's choice.
    */
   GLM_API_KEY?: string;
   GLM_BASE_URL?: string;
@@ -33,23 +29,21 @@ export type Env = {
   GLM_PRICE_IN_PER_M?: string;
   GLM_PRICE_OUT_PER_M?: string;
   GLM_PRICE_CACHED_PER_M?: string;
+  /** The Gemini model for memory, summaries, setup, app design and briefs (the `fast` calls). */
   MEMORY_MODEL: string;
-  FALLBACK_MODEL: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET?: string;
   TOKEN_ENC_KEY: string;
+  /** "on" answers every request 503 and skips the crons while data moves between accounts (maintenance.ts). */
+  MAINTENANCE?: string;
   PUBLIC_URL: string;
   /** Signs shortcuts the assistant writes (see shortcuts/sign.ts). Without it, shortcut writing is off. */
   SHORTCUT_SIGNING_URL?: string;
   SHORTCUT_SIGNING_TOKEN?: string;
-  /** Deepgram key for speech to text and text to speech. Without it, voice routes return 503. */
+  /** Deepgram key for OVOA's voice (text to speech; speech to text is on the phone). Without it, /voice/speak returns 503. */
   DEEPGRAM_API_KEY?: string;
   /** Which engine voices replies (voice.ts TTS_ENGINES). server_settings.tts_engine overrides it without a deploy. */
   TTS_ENGINE?: string;
-  /** What transcribes recorded clips: "deepgram" (default) or "workers-whisper". server_settings.stt_clip_engine overrides it. */
-  STT_CLIP_ENGINE?: string;
-  /** Replies a person gets in a calendar month (cap.ts). Unset: 1000. "0": no cap. Development accounts are never capped. */
-  TURN_CAP_MONTHLY?: string;
   /** Which web search route goes first (web.ts): "auto" (Gemini grounding when keyed, else DuckDuckGo), "gemini", or "duckduckgo". */
   SEARCH_ENGINE?: string;
   /**
@@ -67,6 +61,13 @@ export type Env = {
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
   RESEND_API_BASE?: string;
+  /**
+   * A worker on this computer, never a deployed one: passed as
+   * `--var EMAIL_CODES_TO_LOG:1` to `wrangler dev` (test/smoke.sh). Without a
+   * Resend key, codes go to the worker's own log instead, and
+   * /debug/email/code works. Not DEBUG_KEY, which production has too.
+   */
+  EMAIL_CODES_TO_LOG?: string;
   /** More Google OAuth clients whose sign-ins count, comma-separated, beside GOOGLE_CLIENT_ID (emailauth.ts). */
   GOOGLE_SIGNIN_CLIENT_IDS?: string;
   /**
@@ -77,8 +78,6 @@ export type Env = {
   EXPO_GO_SIGNIN?: string;
   /** Comma-separated account emails allowed the dev-only capture-everything flag. */
   DEV_EMAILS?: string;
-  /** For "ask Claude" (claude.ts). Without it that tool says it isn't set up. */
-  ANTHROPIC_API_KEY?: string;
   /** Rate limits (wrangler.jsonc "ratelimits", limits.ts). Optional: a missing one allows everything. */
   RL_AUTH?: RateLimit;
   RL_TURN?: RateLimit;
@@ -97,8 +96,6 @@ export type Vars = {
   requestId: string;
   /** The voice engine for this person's request, resolved once after sign-in (voice.ts). */
   ttsEngine?: import("./voice").TtsEngine;
-  /** What transcribes this person's recorded clips (voice.ts). */
-  sttClipEngine?: import("./voice").SttClipEngine;
   /** The person's plan, when the route needed one (plans.ts requirePlan). */
   plan?: import("./plans").Plan;
 };

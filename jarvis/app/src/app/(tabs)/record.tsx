@@ -4,6 +4,7 @@ import { useFocusEffect, useRouter, type Href } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { Btn, GroupLabel, Row, Screen, TopBar, text } from "../../components/ui";
+import { api, ApiError } from "../../lib/api";
 import { useSession } from "../../lib/auth";
 import { noteRecording, retryCapture } from "../../lib/capture";
 import * as clip from "../../lib/clip";
@@ -13,9 +14,9 @@ import { usePlan } from "../../lib/plan";
 import { deleteRecording, markLost, renameRecording, useRecordings, wavFile, type Recording } from "../../lib/recordings";
 import { colors, mono, numeric, space, type } from "../../lib/theme";
 
-// Record on the ES100 clip with buttons, bring the audio over to the phone, and
-// play it back. The clip's own button works too: whatever it records is pulled
-// in when it stops.
+// Record on the ES100 clip (the OVOA Band, as people see it) with buttons, bring
+// the audio over to the phone, and play it back. The clip's own button works too:
+// whatever it records is pulled in when it stops.
 
 const phaseText: Record<clip.ClipPhase, string> = {
   unavailable: "Needs the installed OVOA app",
@@ -80,7 +81,8 @@ export default function RecordScreen() {
         {connected ? (
           <>
             <GroupLabel>The clip</GroupLabel>
-            <Row icon="bluetooth-outline" tone="blue" title={state.device?.name || "ES100 clip"} value="Connected" first />
+            {/* Its own name (ES100-…) is the supplier's; people know it as the OVOA Band. */}
+            <Row icon="bluetooth-outline" tone="blue" title="OVOA Band" value="Connected" first />
             <Row
               icon={state.battery?.charging ? "battery-charging-outline" : "battery-half-outline"}
               tone="green"
@@ -362,15 +364,39 @@ function RecordingList({ recordings }: { recordings: Recording[] }) {
               style: "destructive" as const,
               onPress: () =>
                 act("Delete", async () => {
+                  if (!(await forget(recording))) return;
                   await clip.deleteFromClip(recording.sessionId!);
                   remove(recording);
                 }),
             },
           ]
         : []),
-      { text: "Delete from phone", style: "destructive", onPress: () => remove(recording) },
+      {
+        text: recording.blockId ? "Delete from phone and OVOA" : "Delete from phone",
+        style: "destructive",
+        onPress: () => void forget(recording).then((gone) => gone && remove(recording)),
+      },
       { text: "Cancel", style: "cancel" },
     ]);
+
+  /**
+   * What OVOA kept of a recording (its summary and its words, on the server,
+   * kept until deleted) goes first. Deleted here first, the block's id would
+   * go with it, and the server's copy could never be found again. False, with
+   * an alert, when that couldn't be done; the recording stays for another try.
+   */
+  const forget = async (recording: Recording) => {
+    if (!recording.blockId || !token) return true;
+    try {
+      await api.forgetBlock(token, recording.blockId);
+      return true;
+    } catch (err) {
+      // Already gone there ("Forget the last hour", say): nothing left to delete.
+      if (err instanceof ApiError && err.status === 404) return true;
+      Alert.alert("Couldn't delete it from OVOA", "Nothing was deleted. Try again when you're online.");
+      return false;
+    }
+  };
 
   const remove = (recording: Recording) => {
     if (current === recording.id) {

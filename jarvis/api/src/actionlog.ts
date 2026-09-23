@@ -40,7 +40,9 @@ export const MINUTES_SAVED: Record<string, number> = {
 /**
  * Tools that change something, and what kind of action each one is. Lookups are
  * left out: reading the calendar isn't a thing done *for* someone, and logging
- * every search would drown the feed.
+ * every search would drown the feed. So is food: the Calorie screen is its
+ * record, and a "food log: burrito" line in the feed and the week's count would
+ * say a number's worth of it to people who never asked to count.
  */
 const TOOL_KINDS: Record<string, string> = {
   gmail_send: "email_send",

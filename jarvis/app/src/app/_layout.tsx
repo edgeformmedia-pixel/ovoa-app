@@ -12,6 +12,7 @@ import { Tour } from "../components/Tour";
 import { AgentProvider } from "../lib/agent";
 import { AssistantProvider } from "../lib/assistant";
 import { AuthProvider, useAuth } from "../lib/auth";
+import { useFirstOpen } from "../lib/firstOpen";
 import { PlanProvider, usePlan } from "../lib/plan";
 // For its side effect: the background push task has to be defined before anything mounts.
 import "../lib/background";
@@ -83,27 +84,60 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 
 function RootStack() {
   const { loading, user, onboarding } = useAuth();
-  // Setup (connect Google, then the setup conversation) is the assistant
-  // getting to know you, and the free plan has no assistant: a free person goes
-  // straight to their day. If they join later, setup is waiting for them.
-  const { free, ready } = usePlan();
-  const googleStep = onboarding && !free;
-  const setupStep = user?.onboarded === false && !free;
-  // The one predicate the signed-in screens are guarded by, named once so the
-  // providers below and the guard inside the Stack can't drift apart again.
-  const signedIn = !!user && !googleStep && !setupStep;
+  const { free, ready, needsConsent } = usePlan();
+  const first = useFirstOpen();
 
-  // Which of the four states the app is in. A crash report that doesn't say
-  // whether anyone was signed in costs a round trip to the phone to find out.
+  // First open, in order (the v1 release). Each step is a predicate, named once,
+  // so the providers below and the guards inside the Stack can't drift apart.
+  //
+  //   1. The emailed code: until the address is proven. A new account can't
+  //      skip it (the server holds it, api/src/verify.ts); one from before codes
+  //      is asked once and may put it off. Older servers don't send
+  //      emailVerified; only an explicit false asks.
+  const codeStep = !!user && user.emailVerified === false && (!!user.mustVerify || first.codeLater !== user.id);
+  //   2. The phone's permissions, once, after a sign-up on this phone.
+  const permissionsStep = !!user && !codeStep && (onboarding || first.permissions);
+  //   3. With Base (or while the plan isn't known to be free): agreeing to AI,
+  //      before anything goes to an AI company. Once: "Not now" goes on to the
+  //      app with AI locked, and they come back to it from there.
+  const paid = !free;
+  const consentStep = !!user && !codeStep && !permissionsStep && paid && needsConsent && first.consentLater !== user.id;
+  //   4. With Base and consent: the setup conversation, the first time they
+  //      have Base (paid or a Band's days), never at sign-up for a free account.
+  //      Without consent it waits until they agree. Older servers don't send
+  //      `onboarded`; only an explicit false shows it.
+  const setupStep = !!user && !codeStep && !permissionsStep && !consentStep && paid && !needsConsent && user.onboarded === false;
+  //   5. The app, with the tour on top the first time (components/Tour.tsx).
+  // Connect Google isn't a step any more: it's in Settings.
+  const signedIn = !!user && !codeStep && !permissionsStep && !consentStep && !setupStep;
+
+  // Which state the app is in. A crash report that doesn't say whether anyone
+  // was signed in costs a round trip to the phone to find out.
+  const where = loading
+    ? "loading"
+    : !user
+      ? "signed out"
+      : codeStep
+        ? "code"
+        : permissionsStep
+          ? "permissions"
+          : consentStep
+            ? "consent"
+            : setupStep
+              ? "setup"
+              : "signed in";
   useEffect(() => {
-    devlog("log", `session: ${loading ? "loading" : signedIn ? "signed in" : user ? "onboarding" : "signed out"}`);
-  }, [loading, signedIn, user]);
+    devlog("log", `session: ${where}`);
+  }, [where]);
 
-  // Right after signing up the plan isn't known yet, and it decides whether
-  // setup comes first: wait the moment it takes rather than flash setup at a free account.
-  const waitingForPlan = !!user && (onboarding || user.onboarded === false) && !ready;
+  // The plan decides whether consent and setup come first, and right after
+  // signing up (or before an older account has agreed) it isn't known yet: wait
+  // the moment it takes rather than flash either at a free account. And what
+  // this phone remembers of first open is read before any of it is decided.
+  const waitingForPlan =
+    !!user && !codeStep && !permissionsStep && (onboarding || user.onboarded === false || needsConsent) && !ready;
 
-  if (loading || waitingForPlan) {
+  if (loading || waitingForPlan || (!!user && !first.loaded)) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center" }}>
         <ActivityIndicator color={colors.now} />
@@ -113,8 +147,13 @@ function RootStack() {
 
   const stack = (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.paper } }}>
-      {/* Older servers don't send `onboarded`; only an explicit false shows setup. */}
-      <Stack.Protected guard={!!user && !googleStep && setupStep}>
+      <Stack.Protected guard={codeStep}>
+        <Stack.Screen name="verify-email" />
+      </Stack.Protected>
+      <Stack.Protected guard={permissionsStep}>
+        <Stack.Screen name="permissions" />
+      </Stack.Protected>
+      <Stack.Protected guard={setupStep}>
         <Stack.Screen name="onboarding" />
       </Stack.Protected>
       <Stack.Protected guard={signedIn}>
@@ -123,18 +162,21 @@ function RootStack() {
             back arrow is how you leave them; the drawer screens have a
             hamburger of their own instead. */}
         <Stack.Screen name="dev-tools" options={{ ...pushed, title: "Dev tools" }} />
-        <Stack.Screen name="es100" options={{ ...pushed, title: "ES100" }} />
+        <Stack.Screen name="es100" options={{ ...pushed, title: "OVOA Band" }} />
         <Stack.Screen name="motion-lab" options={{ ...pushed, title: "Motion lab" }} />
         <Stack.Screen name="transcripts" options={{ ...pushed, title: "Transcripts" }} />
         <Stack.Screen name="live" options={{ ...pushed, title: "Live" }} />
-        <Stack.Screen name="claude" options={{ ...pushed, title: "Ask Claude" }} />
         <Stack.Screen name="create" options={{ ...pushed, title: "Create an app" }} />
         {/* A made app on its own screen: its own header, its own colour. */}
         <Stack.Screen name="made/[id]" />
         <Stack.Screen name="made/edit" options={{ ...pushed, title: "Edit app" }} />
       </Stack.Protected>
-      <Stack.Protected guard={!!user && googleStep}>
-        <Stack.Screen name="connect-google" />
+      {/* A step of its own, and also opened from the app: from a locked AI
+          screen ("Agree to use AI") and from Settings → AI and your data.
+          After the signed-in screens, so that when a step ends the router's
+          first open screen is Talk's, never this one. */}
+      <Stack.Protected guard={consentStep || signedIn}>
+        <Stack.Screen name="consent" options={signedIn ? { presentation: "modal" } : undefined} />
       </Stack.Protected>
       <Stack.Protected guard={!user}>
         <Stack.Screen name="sign-in" />
@@ -145,7 +187,7 @@ function RootStack() {
   );
 
   // Every screen behind the sign-in guard needs these, not only the tabs. They
-  // used to be mounted in (tabs)/_layout, but agent, transcripts, live, claude,
+  // used to be mounted in (tabs)/_layout, but agent, transcripts, live,
   // dev-tools, es100 and motion-lab are siblings of (tabs) in this stack rather
   // than children of it, so /agent rendered outside AgentProvider and threw
   // "useAgent must be used inside AgentProvider" every time it was opened

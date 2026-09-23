@@ -22,7 +22,7 @@ cron (*/2)  ──▶  tick()  ──┬─▶ runDueJobs()  ─▶ autonomousTu
                            │                          │
                            │                          └─▶ pending_actions (proposals)
                            └─▶ drainNotes()  ─▶ Expo push  ─▶  the phone
-cron (4:13) ──▶  maintenance()  ─▶ retention, log trimming
+cron (4:13) ──▶  purgeExpired() ─▶ the 14-day purge (retention.ts, docs/retention.md)
 ```
 
 - `agent_jobs` — standing work with a due time.
@@ -149,7 +149,7 @@ Remote push doesn't work in Expo Go on recent SDKs. It needs the built app.
 `wrangler dev --local` runs the whole API offline against real D1.
 
 ```bash
-npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest
+npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest --var EMAIL_CODES_TO_LOG:1
 npm run smoke        # in jarvis/api
 ```
 
@@ -169,7 +169,7 @@ run can't complete.
 
 ```bash
 curl -H "x-debug-key: $DEBUG_KEY" \
-  "https://jarvis-api.edgeformmedia.workers.dev/debug/logs?since=2h&kind=err"
+  "https://api.ovoa.ai/debug/logs?since=2h&kind=err"
 ```
 
 One answer covering both halves: what the phone uploaded (`device_logs`) and

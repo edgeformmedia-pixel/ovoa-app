@@ -23,7 +23,8 @@
 -- "the server threw Y at 14:03" is the whole point.
 --
 -- Every table here is a rollup, so the worst possible day costs a few hundred
--- rows rather than tens of thousands. src/index.ts prunes them nightly.
+-- rows rather than tens of thousands. The nightly purge deletes them at 14
+-- days (src/retention.ts).
 
 -- One row per distinct failure, counted. 166 of the same thing is one row
 -- saying 166, which is the sentence worth reading.

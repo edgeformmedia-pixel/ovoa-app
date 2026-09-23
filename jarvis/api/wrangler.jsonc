@@ -3,6 +3,20 @@
   "name": "jarvis-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
+  // The Cloudflare account, pinned: admin@ovoa.ai's, since the move in the v1
+  // release (2026-09). A pinned id beats CLOUDFLARE_ACCOUNT_ID and wrangler's
+  // account cache, so every deploy, secret and D1 command run from this folder
+  // lands here or fails, never on another account. Run them with the profile
+  // logged in to it (XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa). The old
+  // edgeformmedia account (33594882ed1877edb5cee6f495ca7fae) now holds only the
+  // forwarder (../forwarder) and the old D1 as a backup, both until 2026-10-14.
+  "account_id": "e58b0ec5305410f9d3cd70f461f39cb6",
+  // Served at api.ovoa.ai, a custom domain on the ovoa.ai zone in this account.
+  // workers_dev has to be written out: once there are routes, wrangler turns the
+  // workers.dev address off unless told to keep it, and it is the second way in
+  // (a check while api.ovoa.ai's certificate is still being issued).
+  "routes": [{ "pattern": "api.ovoa.ai", "custom_domain": true }],
+  "workers_dev": true,
   // Workers Logs: every console line and every invocation, kept 3 days on the
   // free plan and 7 on paid, readable in the dashboard and by `wrangler tail`.
   // Sampling is left at 1 (everything) because this Worker serves one person.
@@ -16,64 +30,55 @@
   // an odd minute on purpose, so it isn't queued behind everyone else's 04:00.
   "triggers": { "crons": ["*/2 * * * *", "13 4 * * *"] },
   "vars": {
-    // Flash for both: the Gemini key is on the free tier, which allows no Pro requests.
-    "CHAT_MODEL": "gemini-3.8-flash",
-    "MEMORY_MODEL": "gemini-3.8-flash",
-    // Used when Gemini fails or runs out, if DEEPSEEK_API_KEY is set.
-    "DEEPSEEK_MODEL": "deepseek-flash",
-    // Which keyed engine is tried first: "deepseek" or "gemini". DeepSeek since
-    // 2026-09-21: the Gemini key is on the free tier (20 requests) and kept 429ing.
-    "PRIMARY_ENGINE": "deepseek",
-    // Spoken turns go to Workers AI first: measured first token 1.0-2.9 s there
-    // against 4.3-14.1 s on the free-tier Gemini key. Set to "keyed" to undo this
-    // once a keyed engine is funded and actually faster.
-    "VOICE_PRIMARY": "workers",
-    // Cloudflare Workers AI: the last resort when the keyed models fail or aren't set.
-    // @cf/zai-org/glm-5.3-flash works here too (needs the Workers Paid plan), and
-    // the table can override this without a deploy (server_settings.workers_model).
-    "FALLBACK_MODEL": "@cf/openai/gpt-oss-120b",
-    // GLM 5.3 Flash from the user's own provider (llm.ts). The key is a secret
-    // (GLM_API_KEY); without it the engine does not exist. The base URL is any
-    // OpenAI-compatible endpoint, Z.ai's by default, and the model id is the
-    // provider's own (OpenRouter calls it z-ai/glm-5.3-flash). Its price comes
-    // from pricing.ts unless GLM_PRICE_IN_PER_M / GLM_PRICE_OUT_PER_M /
-    // GLM_PRICE_CACHED_PER_M say otherwise (dollars per million tokens).
+    // Every model call tries GLM first and Gemini second (llm.ts ENGINES); these
+    // two are the Gemini model it calls. Gemini 3.5 Flash-Lite for both, on the
+    // paid key; the id is the one GET v1beta/models listed for that key
+    // (2026-09-23). CHAT_MODEL also does web search grounding (web.ts).
+    "CHAT_MODEL": "gemini-3.5-flash-lite",
+    "MEMORY_MODEL": "gemini-3.5-flash-lite",
+    // GLM 5.3 Flash from the user's own provider (llm.ts OPENAI_PROVIDERS). The
+    // key is a secret (GLM_API_KEY); without it the engine does not exist. The
+    // base URL is any OpenAI-compatible endpoint, Z.ai's by default, and the
+    // model id is the provider's own (OpenRouter calls it z-ai/glm-5.3-flash).
+    // Its price comes from pricing.ts unless GLM_PRICE_IN_PER_M /
+    // GLM_PRICE_OUT_PER_M / GLM_PRICE_CACHED_PER_M say otherwise (dollars per
+    // million tokens).
     "GLM_BASE_URL": "https://api.z.ai/api/paas/v4",
     "GLM_MODEL": "glm-5.3-flash",
-    // How much the thinking models think on a typed turn: "off", "low" or "on".
-    // Spoken turns never think; the wait before the first word is the whole
-    // experience there. Thinking is billed as output tokens, at the output price.
+    // How much GLM thinks on a typed turn: "off", "low" or "on". Spoken turns
+    // never think; the wait before the first word is the whole experience there.
+    // Thinking is billed as output tokens, at the output price.
     "GLM_THINKING": "low",
-    "DEEPSEEK_THINKING": "low",
-    // ENGINE_ORDER, e.g. "glm,deepseek,gemini,workers", would replace PRIMARY_ENGINE
-    // above. Left unset: the order is set at run time instead (Dev tools, or
+    // ENGINE_ORDER, e.g. "gemini,glm", would put Gemini first. Left unset: GLM
+    // first. The order can also be set at run time (Dev tools, or
     // PUT /debug/engines), which needs no deploy.
     // Which engine voices replies (voice.ts TTS_ENGINES): deepgram-aura-2 (the
-    // default; the voice is the product), workers-aura-2, workers-aura-1,
-    // workers-melotts, or device (the phone speaks with its own voices).
-    // server_settings.tts_engine, set from Dev tools, overrides this without a deploy.
+    // default; the voice is the product) or device (the phone speaks with its
+    // own voices). server_settings.tts_engine, set from Dev tools, overrides
+    // this without a deploy.
     "TTS_ENGINE": "deepgram-aura-2",
-    // What transcribes recorded clips (the band's button, the recorded fallback):
-    // "deepgram" (Nova-3, $0.0043/min) or "workers-whisper" ($0.0005/min, with
-    // Deepgram as the fallback when it fails). server_settings.stt_clip_engine overrides it.
-    "STT_CLIP_ENGINE": "deepgram",
-    // Replies a person gets in a calendar month (cap.ts): a ceiling on what one
-    // account can cost, not a plan tier. "0" turns it off. DEV_EMAILS are exempt.
-    // At 80% the person is told once; past it they hear one sentence saying when
-    // it resets. Nothing here checks membership.
-    "TURN_CAP_MONTHLY": "1000",
     // Where the site answers "which plan is this email on?" (plans.ts, SPEC §2).
     // Point it at the site's test Worker to try a flow end to end. The key is the
     // secret MEMBERSHIP_API_KEY; until it is set everyone is treated as pro, so
     // no tester is locked out by the plans shipping before the site does. The
-    // daily allowances per plan are constants in plans.ts, with the arithmetic.
+    // daily and monthly allowances per plan are constants in plans.ts, with the
+    // arithmetic (the monthly one used to be TURN_CAP_MONTHLY here).
     "MEMBERSHIP_URL": "https://ovoa.ai/api/public/membership",
     // Which web search route goes first (web.ts): "auto" is Gemini's grounding
     // when there is a key (paid past 5K a month), else DuckDuckGo's snippets;
     // "duckduckgo" stops paying for grounding; "gemini" insists on it. Answers
     // are kept for half an hour either way, and a reply may search twice.
     "SEARCH_ENGINE": "auto",
-    "PUBLIC_URL": "https://jarvis-api.edgeformmedia.workers.dev",
+    // The address this Worker gives out: Google's redirect back
+    // (/google/callback, registered in Google Cloud), the Siri key and shortcut
+    // file links. The old workers.dev address still works through the forwarder
+    // until 2026-10-14; nothing new should be handed that one.
+    "PUBLIC_URL": "https://api.ovoa.ai",
+    // The moving switch (src/maintenance.ts): "on" answers every request 503
+    // and skips every cron tick while the data is copied between accounts.
+    // Turn it on for one deploy with `npx wrangler deploy --var MAINTENANCE:on`;
+    // the next plain deploy reads "off" from here.
+    "MAINTENANCE": "off",
     // The only accounts allowed the dev-only capture-everything flag (always-listening
     // experiments, ruled out for the product on 2026-09-20). Comma-separated.
     "DEV_EMAILS": "tlanch2006@gmail.com",
@@ -88,7 +93,6 @@
     // Optional: "EXPO_GO_SIGNIN": "off" refuses Expo Go as the way back from the app's Google
     // sign-in, leaving only the installed app's ovoa://google-signin (src/signin.ts appReturnUrl).
   },
-  "ai": { "binding": "AI" },
   // Per-person and per-address limits on the routes that spend shared quota
   // (src/limits.ts). Counted per Cloudflare location, no database writes, and set
   // well above what a person can reach by talking: they exist for runaways and
@@ -96,9 +100,9 @@
   "ratelimits": [
     // Sign-in and sign-up, per address and per account being signed into.
     { "name": "RL_AUTH", "namespace_id": "1101", "simple": { "limit": 10, "period": 60 } },
-    // Chat turns, live-listening tokens, ask-Claude: per person.
+    // Chat turns: per person.
     { "name": "RL_TURN", "namespace_id": "1102", "simple": { "limit": 20, "period": 60 } },
-    // Voicing and transcribing, a sentence or a short clip at a time: per person.
+    // Voicing, a sentence at a time: per person.
     { "name": "RL_SPEAK", "namespace_id": "1103", "simple": { "limit": 120, "period": 60 } },
     // Log uploads, per address. A phone sends at most one every 3 s.
     { "name": "RL_LOGS", "namespace_id": "1104", "simple": { "limit": 60, "period": 60 } }
@@ -107,12 +111,16 @@
     {
       "binding": "DB",
       "database_name": "jarvis-db",
-      "database_id": "96162569-6625-4cad-af9c-62a3f6820033",
+      // The new account's jarvis-db. The old one (96162569-6625-4cad-af9c-62a3f6820033)
+      // stays on the old account, untouched, as the backup until 2026-10-14.
+      "database_id": "26ebdc31-740f-4191-905d-77a5edb97799",
       "migrations_dir": "migrations"
     }
   ]
-  // Secrets (set with `npx wrangler secret put NAME`): GEMINI_API_KEY, DEEPSEEK_API_KEY, GLM_API_KEY, GOOGLE_CLIENT_SECRET,
-  // TOKEN_ENC_KEY, DEEPGRAM_API_KEY, DEBUG_KEY, MEMBERSHIP_API_KEY, and SHORTCUT_SIGNING_URL (+ optional SHORTCUT_SIGNING_TOKEN) to turn on
-  // shortcut writing (see README). RESEND_API_KEY sends ovoa.ai's sign-in codes from no-reply@ovoa.ai, and the optional
-  // GOOGLE_SIGNIN_CLIENT_IDS accepts Google sign-ins from another OAuth client than GOOGLE_CLIENT_ID (src/emailauth.ts).
+  // Secrets the Worker needs (set with `XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-ovoa npx wrangler secret put NAME`, the value
+  // piped in through stdin): GEMINI_API_KEY, GLM_API_KEY, DEEPGRAM_API_KEY (reply voices), GOOGLE_CLIENT_SECRET, TOKEN_ENC_KEY
+  // (standard base64 of 32 random bytes), DEBUG_KEY, and RESEND_API_KEY, which sends the sign-in and sign-up codes from
+  // no-reply@ovoa.ai. Optional: GOOGLE_SIGNIN_CLIENT_IDS accepts Google sign-ins from another OAuth client than GOOGLE_CLIENT_ID
+  // (src/emailauth.ts). Not MEMBERSHIP_API_KEY: setting it turns plans on, and they stay off for v1. Nor SHORTCUT_SIGNING_URL or
+  // _TOKEN (shortcut writing stays off), nor a key for any AI company OVOA no longer uses.
 }

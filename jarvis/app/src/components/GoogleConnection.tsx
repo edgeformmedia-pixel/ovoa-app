@@ -2,7 +2,8 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { api, type GoogleAccount } from "../lib/api";
-import { connectGoogle, GOOGLE_APPS } from "../lib/google";
+import { useAuth } from "../lib/auth";
+import { connectGoogle, GOOGLE_APPS, mayHaveHadGoogle } from "../lib/google";
 import { colors } from "../lib/theme";
 
 // Starting points for a tag; the user can type anything instead.
@@ -12,6 +13,7 @@ const TAG_MAX = 24;
 export function GoogleConnection({ token }: { token: string }) {
   const [accounts, setAccounts] = useState<GoogleAccount[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const { user } = useAuth();
 
   const refresh = useCallback(() => {
     api
@@ -66,10 +68,18 @@ export function GoogleConnection({ token }: { token: string }) {
   return (
     <View style={styles.wrap}>
       {accounts.length === 0 ? (
-        <Text style={styles.meta}>
-          Connect to let the assistant use your {GOOGLE_APPS.join(", ")}. It asks before sending, deleting, or
-          inviting anyone.
-        </Text>
+        <>
+          <Text style={styles.meta}>
+            Connect to let the assistant use your {GOOGLE_APPS.join(", ")}. In Drive it only sees the files it creates.
+            It asks before sending, deleting, or inviting anyone.
+          </Text>
+          {mayHaveHadGoogle(user?.created_at) && (
+            <Text style={styles.meta}>
+              Had Google connected before? Reconnect Google: OVOA's link to Google changed, so earlier connections
+              stopped working.
+            </Text>
+          )}
+        </>
       ) : (
         <>
           {accounts.map((account) => (
