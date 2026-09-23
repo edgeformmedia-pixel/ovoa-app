@@ -437,7 +437,5 @@ These override the spec above where they differ.
    and makes an app for them. When the goal is about eating, it installs this add-on and sets the
    tracking level.
 
-### Still open
-
-- **How the number is said.** Proposal: "about" at `quick` and `normal`, the plain number at `strict`
-  (after it has asked), and "roughly" only when `estimated` isn't `ok`.
+7. **How the number is said.** "About" at `quick` and `normal`; the plain number at `strict`, after it
+   has asked. "Roughly" only when `estimated` isn't `ok`.
