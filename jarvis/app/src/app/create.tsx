@@ -130,6 +130,13 @@ function MakeApp() {
           </View>
         </View>
 
+        {/* The add buttons sit up top, so nobody backs out and loses the app
+            before scrolling down to them. */}
+        <View style={styles.buttons}>
+          <Btn label="Add and open" kind="go" onPress={() => void add(true)} busy={saving} />
+          <Btn label="Add to my apps" onPress={() => void add(false)} disabled={saving} />
+        </View>
+
         <Rise index={18}>
           <Text style={styles.sub}>
             Everything below is yours to change: how it looks, what's on its screen, and how it behaves. Or just say what to change.
@@ -144,8 +151,6 @@ function MakeApp() {
         </View>
 
         <View style={styles.buttons}>
-          <Btn label="Add and open" kind="go" onPress={() => void add(true)} busy={saving} />
-          <Btn label="Add to my apps" onPress={() => void add(false)} disabled={saving} />
           <Btn label="Start over" kind="quiet" onPress={() => setDraft(null)} disabled={saving} />
         </View>
       </Screen>
