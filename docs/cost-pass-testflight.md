@@ -61,7 +61,13 @@ shows in Turn timings.
 
 ## 6. Logs
 
-After all of the above, Dev tools → Log uploads → **waiting** should be small
-and the day's rows in `device_logs` for your device should be under two
-thousand (Phase 7). Nothing in them should be a sentence you or anyone in the
-room said.
+A release build uploads warnings, errors and a few timing lines (one per turn,
+one per listening session) on its own; everything else stays on the phone.
+After all of the above, Dev tools → Log uploads → **uploads** should say
+"warn and up, plus timing lines", **waiting** should be small, and the day's
+rows in `device_logs` for your device should be under two thousand (Phase 7).
+Nothing in them should be a sentence you or anyone in the room said.
+
+Then press **Send logs** on the same card. Everything the phone kept to itself
+goes up behind a row that starts `SEND LOGS:`; the reply under the button says
+how many lines went. That is the row to look for when reading the day back.

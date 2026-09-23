@@ -21,7 +21,7 @@ import { useSession } from "../lib/auth";
 import * as clip from "../lib/clip";
 import * as ute from "../../modules/ute-ble";
 import { devlog, logFail } from "../lib/devlog";
-import { logStatus, setUploadLevel } from "../lib/remoteLog";
+import { logStatus, sendRecentLogs, setUploadLevel, uploadLevel } from "../lib/remoteLog";
 import { createFallDetector } from "../lib/fallDetector";
 import {
   calibrate,
@@ -342,12 +342,16 @@ const yesNo = (value: boolean | null | undefined) => (value === undefined || val
  */
 function LogUploads() {
   const [trace, setTrace] = useState(false);
+  const [sent, setSent] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const [, tick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 2000);
     return () => clearInterval(t);
   }, []);
   const status = logStatus();
+  // What the build uploads on its own; the rest waits on the phone for Send logs.
+  const usual = __DEV__ ? "info" : "warn";
   return (
     <>
       <Text style={styles.section}>Log uploads</Text>
@@ -357,19 +361,38 @@ function LogUploads() {
         <Row label="session" value={status.sessionId} mono />
         <Row label="reachable" value={status.net} good={status.net === "up"} />
         <Row label="last upload" value={status.sinceOkS === null ? "never" : `${status.sinceOkS} s ago`} />
+        <Row label="uploads" value={`${uploadLevel()} and up, plus timing lines`} />
         <Row label="waiting" value={`${status.queued} lines`} />
         <Row label="dropped" value={String(status.droppedTotal)} good={status.droppedTotal === 0} />
         <Row label="free disk" value={status.diskMB === null ? "—" : `${status.diskMB} MB`} />
+        <Pressable
+          style={[styles.button, sending && { opacity: 0.5 }]}
+          disabled={sending}
+          onPress={async () => {
+            setSending(true);
+            try {
+              const { detail } = await sendRecentLogs("Dev tools");
+              setSent(detail);
+            } finally {
+              setSending(false);
+            }
+          }}
+        >
+          <Text style={styles.buttonText}>{sending ? "Sending…" : "Send logs"}</Text>
+        </Pressable>
+        <Text style={styles.dim}>
+          {sent ?? "Uploads everything on this phone now, including the lines a release build keeps to itself."}
+        </Text>
         <View style={styles.toggleRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.itemText}>Upload trace lines too</Text>
-            <Text style={styles.dim}>Sends the Bluetooth and console chatter. Turn it off again afterwards.</Text>
+            <Text style={styles.dim}>Sends the Bluetooth and console chatter as it happens. Turn it off again afterwards.</Text>
           </View>
           <Switch
             value={trace}
             onValueChange={(on) => {
               setTrace(on);
-              setUploadLevel(on ? "trace" : "info");
+              setUploadLevel(on ? "trace" : usual);
             }}
             trackColor={{ true: colors.late, false: colors.line }}
           />

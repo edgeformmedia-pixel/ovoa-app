@@ -378,6 +378,28 @@ export function noteDeadSession(status: number, token: string | null, error: unk
   if (status === 401 && token && error === "Not signed in") deadSession?.(token);
 }
 
+/**
+ * A request body for the log with what the person said taken out. The log
+ * line is kept on the phone and rides up with errors as a breadcrumb, and the
+ * words in a chat or ambient body can be the room's: only their length goes.
+ */
+function redacted(body: string | undefined) {
+  if (!body) return body;
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    let changed = false;
+    for (const key of ["message", "text", "note"]) {
+      if (typeof parsed[key] === "string") {
+        parsed[key] = `[${(parsed[key] as string).length} chars]`;
+        changed = true;
+      }
+    }
+    return changed ? JSON.stringify(parsed) : body;
+  } catch {
+    return body;
+  }
+}
+
 export async function request<T>(path: string, token: string | null, init: RequestInit = {}): Promise<T> {
   const method = init.method ?? "GET";
   // Auth request bodies hold passwords, and a successful reply holds a token:
@@ -385,7 +407,7 @@ export async function request<T>(path: string, token: string | null, init: Reque
   // device_logs that can tell a typo from a person who never had an account —
   // which is why 123 401s across 38 devices told us nothing (2026-09-21).
   const secret = path.startsWith("/auth/") || path.startsWith("/me/password");
-  devlog("req", `${method} ${path}`, secret ? undefined : (init.body as string | undefined));
+  devlog("req", `${method} ${path}`, secret ? undefined : redacted(init.body as string | undefined));
   const started = Date.now();
   // Never wait forever: a request frozen while iOS suspended the app would
   // otherwise hang the voice loop until the connection drops (seen: 15 min).
@@ -457,7 +479,7 @@ async function streamedTurn(
   speech?: ServerSpeech,
 ): Promise<ChatResponse> {
   if (speech) body = { ...body, speak: { voice: speech.voice } };
-  devlog("req", `POST ${path} (streamed)`, JSON.stringify(body));
+  devlog("req", `POST ${path} (streamed)`, redacted(JSON.stringify(body)));
   const started = Date.now();
   // No progress for this long means the connection is dead (the whole reply can take longer).
   const timeout = new AbortController();

@@ -288,7 +288,8 @@ export async function transcribe(
       `${Math.round(audio.byteLength / 1024)} KB of audio`,
     );
     const { text } = (await res.json()) as { text: string };
-    devlog("voice", text ? `heard: "${text}"` : "heard nothing (noise)");
+    // How much, never what: the words may be the room's, and they stay on the phone.
+    devlog("voice", text ? `heard ${text.split(/\s+/).length} words` : "heard nothing (noise)");
     markTurn("transcribe", `${Math.round(audio.byteLength / 1024)} KB uploaded`);
     if (text) noteHeard(text);
     return text;
@@ -1123,13 +1124,13 @@ export function useConversation(
     const answerOneTurn = async (
       text: string,
       addressed: boolean,
-      { keepMic, onSpeaking }: { keepMic: boolean; onSpeaking?: (soFar: string) => void },
+      { keepMic, room = false, onSpeaking }: { keepMic: boolean; room?: boolean; onSpeaking?: (soFar: string) => void },
     ) => {
       setPhase("thinking");
       setError(null);
       setWords(text);
       const asked = Date.now();
-      devlog("voice", addressed ? "heard its name; asking the assistant" : "asking the assistant", text);
+      devlog("voice", `${addressed ? "heard its name; asking the assistant" : "asking the assistant"} (${text.length} chars)`);
       const reply = speaker.current.open({ keepMic });
       // Something heard straight away while the answer is worked out. Only when it
       // was said to the assistant: overheard speech mostly gets no answer at all.
@@ -1380,7 +1381,7 @@ export function useConversation(
       // Talking over the reply without live transcription needs the whole reply first.
       setPhase("thinking");
       setWords(text);
-      devlog("voice", "asking the assistant", text);
+      devlog("voice", `asking the assistant (${text.length} chars)`);
       const reply = await handler.current(text, addressed);
       if (cancelled() || !reply) return;
       setPhase("speaking");

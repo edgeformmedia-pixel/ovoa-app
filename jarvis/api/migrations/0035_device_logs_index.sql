@@ -1,0 +1,13 @@
+-- One index fewer on device_logs (cost pass, Phase 7, 2026-09-22).
+--
+-- device_logs_device (device_id, time) came with the table (0009). The one
+-- query that filtered by device, the per-device hourly throttle, filters on
+-- received_at and got its own index in 0031 (device_logs_device_received);
+-- the log reader (/debug/logs) filters on time alone and uses device_logs_time.
+-- Nothing reads through this one any more, and every row inserted still had
+-- to be written into it. Every phone writes rows; nobody reads by device+time.
+--
+-- device_logs_level (level, time) stays: it is what `WHERE level IN
+-- ('error','fatal')` reads go through, which is the first thing looked at when
+-- something goes wrong.
+DROP INDEX IF EXISTS device_logs_device;

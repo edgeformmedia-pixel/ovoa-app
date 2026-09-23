@@ -94,7 +94,8 @@ export function endTurn(reason?: string) {
   devlog(
     "perf",
     summary(turn),
-    [breakdown(turn), turn.server && `server ${turn.server}`, turn.heard && `heard "${turn.heard}"`]
+    // The size of what was heard, not the words: a perf line is uploaded from every build.
+    [breakdown(turn), turn.server && `server ${turn.server}`, turn.heard && `heard ${turn.heard.length} chars`]
       .filter(Boolean)
       .join("\n    "),
   );

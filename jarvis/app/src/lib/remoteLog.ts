@@ -78,13 +78,77 @@ let badShapeLogged = false;
 let inHandler = false;
 
 /**
- * Below this, a line is kept on the phone but not uploaded. "info" to start
- * with: `debug` now carries React Native's and the libraries' own console
- * chatter, which is worth having on the phone and not worth 90,000 rows a day
- * in D1. Dev tools can lower it to "trace" on a phone that is being worked on.
+ * Below this, a line is kept on the phone but not uploaded. A release build
+ * uploads warnings and errors, plus the few timing lines below (2026-09-22:
+ * every phone was sending its whole info-level narrative, thousands of rows a
+ * day each, read by nobody unless something went wrong). What stays on the
+ * phone still reaches the server three ways: attached to any error as
+ * breadcrumbs, whole with a crash, and whole when Send logs is pressed. A dev
+ * build keeps "info", and Dev tools can lower either to "trace" for an hour.
  */
-let uploadFrom: LogLevel = "info";
+let uploadFrom: LogLevel = __DEV__ ? "info" : "warn";
 export const setUploadLevel = (level: LogLevel) => (uploadFrom = level);
+export const uploadLevel = () => uploadFrom;
+
+/**
+ * Lines a release build uploads whatever their level: one per turn or per
+ * listening session, each carrying a number the cost and latency work is
+ * measured by. Matched on the start of the text, so a new line has to be
+ * added here on purpose to be uploaded; nothing gets in by accident.
+ */
+const MILESTONES: RegExp[] = [
+  /^app started/,
+  /^live transcription (connected|closed|billed|reconnect)/,
+  /^heard its name/,
+  /^listening live/,
+  /^speaking \d+ ms after the question/,
+  /^BUG REPORT/,
+  /^picked up \d+ log lines/,
+];
+/** perf lines are the turn breakdowns (turnTimer.ts): one row per spoken turn. */
+const MILESTONE_KINDS = new Set<LogEntry["kind"]>(["perf"]);
+
+function uploads(entry: LogEntry) {
+  if (LEVEL_ORDER[entry.level] >= LEVEL_ORDER[uploadFrom]) return true;
+  return MILESTONE_KINDS.has(entry.kind) || MILESTONES.some((re) => re.test(entry.text));
+}
+
+/**
+ * What was kept on the phone and not uploaded, newest last. Bounded like the
+ * on-phone log itself. A crash or Send logs moves it into the queue whole, so
+ * the story before the error goes up with the error.
+ */
+const MAX_SKIPPED = 400;
+let skipped: LogEntry[] = [];
+
+/** Moves everything held back into the upload queue, in order. */
+function adoptSkipped() {
+  if (!skipped.length) return 0;
+  const rows = skipped;
+  skipped = [];
+  queue = [...queue, ...rows].sort((a, b) => a.seq - b.seq);
+  if (queue.length > MAX_QUEUE) trim();
+  return rows.length;
+}
+
+/**
+ * Send logs: everything on the phone goes up now, the held-back lines
+ * included, behind a marker row that says so. For a tester who was told
+ * "press Send logs and tell me when", and for the day something is wrong but
+ * nothing has failed loudly enough to upload itself.
+ */
+export async function sendRecentLogs(why = "sent by hand") {
+  const held = adoptSkipped();
+  devlog("log", `SEND LOGS: ${why}`, `${held} held-back lines included; build ${build}; phone ${JSON.stringify(context())}`, {
+    level: "warn",
+    collapse: false,
+  });
+  await flush();
+  if (pending()) await flush();
+  return pending()
+    ? { ok: false, detail: `Saved on this phone (${pending()} lines waiting). It goes as soon as you're back online.` }
+    : { ok: true, detail: `Sent ${held} lines that were only on the phone, and everything since.` };
+}
 
 const sessionId = Math.random().toString(36).slice(2, 12);
 const build = `${Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? "?"} (${
@@ -360,6 +424,8 @@ function recoverSpill() {
  */
 export async function sendBugReport(note: string) {
   const summary = note.trim().split("\n")[0].slice(0, 120) || "no description";
+  // The report is worth more with the lines that led up to it.
+  adoptSkipped();
   devlog(
     "warn",
     `BUG REPORT: ${summary}`,
@@ -457,6 +523,10 @@ function captureCrashes() {
         level: fatal ? "fatal" : "error",
         collapse: false,
       });
+      // A crash takes the whole on-phone story with it, not just the lines
+      // that would have been uploaded anyway: what happened in the minute
+      // before is the part worth having.
+      if (fatal) adoptSkipped();
       // On disk first: the fetch below will not finish if this is really fatal.
       spill(fatal ? "a fatal JS error" : "an uncaught JS error");
       void flush();
@@ -491,7 +561,11 @@ export function startRemoteLog() {
   setLogContext({ state: AppState.currentState });
 
   onDevLog((entry) => {
-    if (LEVEL_ORDER[entry.level] < LEVEL_ORDER[uploadFrom]) return;
+    if (!uploads(entry)) {
+      skipped.push(entry);
+      if (skipped.length > MAX_SKIPPED) skipped.splice(0, skipped.length - MAX_SKIPPED);
+      return;
+    }
     queue.push(entry);
     if (queue.length > MAX_QUEUE) trim();
     schedule(LEVEL_ORDER[entry.level] >= LEVEL_ORDER.error ? URGENT_MS : FLUSH_MS);
