@@ -11,7 +11,7 @@ function toHex(buf: ArrayBuffer | Uint8Array): string {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function randomHex(bytes: number): string {
+export function randomHex(bytes: number): string {
   return toHex(crypto.getRandomValues(new Uint8Array(bytes)));
 }
 
@@ -33,11 +33,13 @@ export async function verifyPassword(password: string, saltHex: string, expected
   return a.byteLength === b.byteLength && crypto.subtle.timingSafeEqual(a, b);
 }
 
-async function sha256(value: string) {
+export async function sha256(value: string) {
   return toHex(await crypto.subtle.digest("SHA-256", enc.encode(value)));
 }
 
-export type SessionKind = "app" | "siri";
+// "web": signed in on ovoa.ai (emailauth.ts). The same account and the same
+// month, but not pushed back out by use: the site's cookie ends with it.
+export type SessionKind = "app" | "siri" | "web";
 
 export async function createSession(
   db: D1Database,

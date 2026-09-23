@@ -59,6 +59,16 @@ export type Env = {
    */
   MEMBERSHIP_API_KEY?: string;
   MEMBERSHIP_URL?: string;
+  /**
+   * Emails from no-reply@ovoa.ai through Resend: the sign-in and sign-up codes
+   * for ovoa.ai (emailauth.ts). The key is a secret; without it no code can be
+   * sent. EMAIL_FROM replaces the sender; RESEND_API_BASE is for local tests.
+   */
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
+  RESEND_API_BASE?: string;
+  /** More Google OAuth clients whose sign-ins count, comma-separated, beside GOOGLE_CLIENT_ID (emailauth.ts). */
+  GOOGLE_SIGNIN_CLIENT_IDS?: string;
   /** Comma-separated account emails allowed the dev-only capture-everything flag. */
   DEV_EMAILS?: string;
   /** For "ask Claude" (claude.ts). Without it that tool says it isn't set up. */

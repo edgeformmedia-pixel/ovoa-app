@@ -78,6 +78,19 @@ import { isMoneyTool, moneyAssistant, moneyRoutes, moneyTick } from "./money";
 import { MORE_TOOLS, SPOKEN_CORE, toolbelt, TYPED_CORE, type ToolGuide } from "./toolbelt";
 import { mightBeAboutThem } from "./remember";
 import { allowed, clientIp, limitByUser, tooMany } from "./limits";
+import {
+  checkCode,
+  CODE_TTL_MS,
+  codeEmail,
+  emailConfigured,
+  issueCode,
+  issueTicket,
+  pruneEmailAuth,
+  sendEmail,
+  spendTicket,
+  unsendCode,
+  verifyGoogleIdToken,
+} from "./emailauth";
 import { sliceFor } from "./sweep";
 import { engineStatus, ENGINES, isEngine, setRuntimeEngines, setUsageSink, type Engine, type EnginePrefs, type LlmUsage } from "./llm";
 import { glmPriceFrom, usd } from "./pricing";
@@ -312,7 +325,7 @@ function emailShape(body: unknown) {
  * 38 devices, 123 failed logins, 2 accounts, and not one line saying why
  * (2026-09-21). observability is on in wrangler.jsonc, so `wrangler tail` sees these.
  */
-function logAuth(route: "signup" | "login", outcome: string, email: string | null, extra?: Record<string, unknown>) {
+function logAuth(route: "signup" | "login" | "code" | "google", outcome: string, email: string | null, extra?: Record<string, unknown>) {
   say("auth", {
     route,
     outcome,
@@ -414,22 +427,38 @@ app.post("/auth/signup", async (c) => {
     );
   }
 
-  const id = crypto.randomUUID();
-  const now = Date.now();
-  const { hash, salt } = await hashPassword(password);
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      "INSERT INTO users (id, email, password_hash, password_salt, name, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ).bind(id, email, hash, salt, name, now),
-    c.env.DB
-      .prepare("INSERT INTO settings (user_id, assistant_name, updated_at) VALUES (?, ?, ?)")
-      .bind(id, "OVOA", now),
-  ]);
-
+  const id = await insertUser(c.env.DB, { email, password, name, verified: false });
   const token = await createSession(c.env.DB, id);
   logAuth("signup", "created", email, { user: id });
   return c.json({ token, user: await publicUser(c.env, id) }, 201);
 });
+
+/**
+ * A new account and its settings row, in one batch. `verified`: the address
+ * was proven first (emailauth.ts). The app's own signup leaves that column out
+ * altogether, so it keeps working on a database without migration 0039.
+ */
+async function insertUser(
+  db: D1Database,
+  { email, password, name, verified }: { email: string; password: string; name: string; verified: boolean },
+) {
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const { hash, salt } = await hashPassword(password);
+  await db.batch([
+    verified
+      ? db
+          .prepare(
+            "INSERT INTO users (id, email, password_hash, password_salt, name, created_at, email_verified_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          )
+          .bind(id, email, hash, salt, name, now, now)
+      : db
+          .prepare("INSERT INTO users (id, email, password_hash, password_salt, name, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+          .bind(id, email, hash, salt, name, now),
+    db.prepare("INSERT INTO settings (user_id, assistant_name, updated_at) VALUES (?, ?, ?)").bind(id, "OVOA", now),
+  ]);
+  return id;
+}
 
 /**
  * Something to hash against when the address matches nobody, so a wrong address
@@ -474,6 +503,158 @@ app.post("/auth/login", async (c) => {
   const token = await createSession(c.env.DB, user.id);
   logAuth("login", "ok", email, { user: user.id });
   return c.json({ token, user: await publicUser(c.env, user.id) });
+});
+
+// ---------- Proving an address: email codes and Google (emailauth.ts) ----------
+//
+// ovoa.ai's sign-in page. The code routes are called from the visitor's own
+// browser, so the per-address limits count visitors, not the site. Each proof
+// ends one of two ways:
+//
+//   { token, user }          the address has an account (made in the app or on
+//                            the site): signed in, with a "web" session
+//   { ticket, email, name }  it hasn't: POST /auth/email/signup spends the ticket
+//                            with a name and the password the app will ask for
+
+const codeSchema = z.object({ email: emailField });
+const verifySchema = z.object({ email: emailField, code: z.string().max(20) });
+const ticketSignupSchema = z.object({
+  ticket: z.string().max(100),
+  name: signupSchema.shape.name,
+  password: signupSchema.shape.password,
+});
+const BAD_EMAIL = "That email doesn't look right. Check it for a typo.";
+
+/** Signed in, or a ticket to make the account. Either way the address is now proven. */
+async function afterProven(env: Env, email: string, name: string | null) {
+  const user = await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first<{ id: string }>();
+  if (!user) return { ticket: await issueTicket(env.DB, email, name), email, name };
+  await env.DB.prepare("UPDATE users SET email_verified_at = ? WHERE id = ?").bind(Date.now(), user.id).run();
+  const token = await createSession(env.DB, user.id, { kind: "web" });
+  return { token, user: await publicUser(env, user.id) };
+}
+
+app.post("/auth/email/code", async (c) => {
+  if (!(await allowed(c.env, "RL_AUTH", `ip:${clientIp(c)}`))) {
+    logAuth("code", "rate limited", null);
+    return tooMany(c, "attempts");
+  }
+  const body = await c.req.json().catch(() => null);
+  const parsed = codeSchema.safeParse(body);
+  if (!parsed.success) {
+    logAuth("code", "rejected", null, emailShape(body));
+    return c.json({ error: BAD_EMAIL, fields: { email: BAD_EMAIL } }, 400);
+  }
+  if (!emailConfigured(c.env)) {
+    logAuth("code", "no RESEND_API_KEY", null);
+    return c.json({ error: "Email codes aren't switched on yet. Write to support@ovoa.ai and we'll set you up." }, 503);
+  }
+  const { email } = parsed.data;
+  const issued = await issueCode(c.env.DB, email);
+  if ("waitSeconds" in issued) {
+    logAuth("code", "too soon", email);
+    const wait = issued.waitSeconds;
+    c.header("retry-after", String(wait));
+    return c.json(
+      {
+        error:
+          wait > 60
+            ? `That's a lot of codes for one address. Try again in ${Math.ceil(wait / 60)} minutes.`
+            : `We just sent you a code. You can ask for another in ${wait} seconds.`,
+        retryAfter: wait,
+      },
+      429,
+    );
+  }
+  // The email says "sign in" or "create your account"; the reply here is the
+  // same either way, so the page can't be used to ask who has an account.
+  const user = await c.env.DB.prepare("SELECT name FROM users WHERE email = ?").bind(email).first<{ name: string }>();
+  const sent = await sendEmail(c.env, codeEmail({ to: email, code: issued.code, name: user?.name ?? null, existing: !!user }));
+  if (!sent) {
+    await unsendCode(c.env.DB, email);
+    logAuth("code", "send failed", email);
+    return c.json({ error: "We couldn't send the email just now. Try again in a minute." }, 502);
+  }
+  logAuth("code", "sent", email, { existing: Number(!!user) });
+  return c.json({ ok: true, expiresInMinutes: CODE_TTL_MS / 60_000 });
+});
+
+app.post("/auth/email/verify", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = verifySchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: "Enter the 6-digit code from the email" }, 400);
+  const { email, code } = parsed.data;
+  // Five tries a code already; these stop one address trying code after code.
+  const [fromHere, forThem] = await Promise.all([
+    allowed(c.env, "RL_AUTH", `ip:${clientIp(c)}`),
+    allowed(c.env, "RL_AUTH", `email:${emailTag(email)}`),
+  ]);
+  if (!fromHere || !forThem) {
+    logAuth("code", "rate limited", email);
+    return tooMany(c, "tries");
+  }
+  const checked = await checkCode(c.env.DB, email, code);
+  if (!checked.ok) {
+    logAuth("code", checked.reason === "wrong" ? "wrong code" : "no live code", email);
+    if (checked.reason === "expired") {
+      return c.json({ error: "That code has expired or been used up. Send yourself a new one.", expired: true }, 400);
+    }
+    const left = checked.attemptsLeft === 1 ? "One more try" : `${checked.attemptsLeft} more tries`;
+    return c.json({ error: `That code isn't right. ${left}, then you'll need a new one.`, attemptsLeft: checked.attemptsLeft }, 400);
+  }
+  const result = await afterProven(c.env, email, null);
+  logAuth("code", "token" in result ? "signed in" : "proven, no account yet", email);
+  return c.json(result);
+});
+
+app.post("/auth/email/signup", async (c) => {
+  const parsed = ticketSignupSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    const fields = fieldErrors(parsed.error.issues);
+    return c.json({ error: Object.values(fields).join(" · ") || "Enter your name and a password of 8+ characters", fields }, 400);
+  }
+  const ticket = await spendTicket(c.env.DB, parsed.data.ticket);
+  if (!ticket) {
+    logAuth("signup", "ticket expired", null);
+    return c.json({ error: "This sign-up has run out of time. Start again with your email.", expired: true }, 400);
+  }
+  const { email } = ticket;
+  // Made in the app since the address was proven: it's theirs, so this signs
+  // in to it and leaves its password alone.
+  const findId = () =>
+    c.env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first<{ id: string }>().then((r) => r?.id);
+  let id = await findId();
+  const created = !id;
+  if (!id) {
+    try {
+      id = await insertUser(c.env.DB, { email, password: parsed.data.password, name: parsed.data.name, verified: true });
+    } catch (err) {
+      // The same race, a moment later: the app's signup won it.
+      id = await findId();
+      if (!id) throw err;
+    }
+  }
+  const token = await createSession(c.env.DB, id, { kind: "web" });
+  logAuth("signup", created ? "created, email proven" : "proven, already exists", email, { user: id });
+  return c.json({ token, user: await publicUser(c.env, id) }, created ? 201 : 200);
+});
+
+/**
+ * "Continue with Google" on ovoa.ai. The site's server trades Google's code for
+ * an ID token and sends it here; Google checks it (emailauth.ts). No
+ * per-address limit: it comes from the site's server, and a token can't be guessed.
+ */
+app.post("/auth/google", async (c) => {
+  const parsed = z.object({ idToken: z.string().min(20).max(4096) }).safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "No Google sign-in to check" }, 400);
+  const who = await verifyGoogleIdToken(c.env, parsed.data.idToken);
+  if (!who) {
+    logAuth("google", "rejected", null);
+    return c.json({ error: "Google didn't confirm that sign-in. Try again." }, 401);
+  }
+  const result = await afterProven(c.env, who.email, who.name);
+  logAuth("google", "token" in result ? "signed in" : "proven, no account yet", who.email);
+  return c.json(result);
 });
 
 // Everything below requires a bearer token.
@@ -2356,6 +2537,7 @@ async function nightly(env: Env) {
     env.DB.prepare("DELETE FROM action_log WHERE ts < ?").bind(now - 365 * 86_400_000),
     env.DB.prepare("DELETE FROM command_queue WHERE created_at < ?").bind(now - 30 * 86_400_000),
     env.DB.prepare("DELETE FROM daily_marks WHERE at < ?").bind(now - 30 * 86_400_000),
+    ...pruneEmailAuth(env.DB, now),
   ]);
   return { places, expectations, accounts };
 }

@@ -427,6 +427,10 @@ agent's due work and its outbox, and 04:13 UTC for retention and log trimming.
 | Method | Path | |
 |---|---|---|
 | POST | /auth/signup, /auth/login | `{ email, password, name? }` → `{ token, user }` |
+| POST | /auth/email/code | `{ email }` → emails a 6-digit code from no-reply@ovoa.ai (ovoa.ai's sign-in; `src/emailauth.ts`) |
+| POST | /auth/email/verify | `{ email, code }` → `{ token, user }` for an existing account, else `{ ticket, email, name }` |
+| POST | /auth/email/signup | `{ ticket, name, password }` → `{ token, user }` |
+| POST | /auth/google | `{ idToken }` (checked with Google) → same as /auth/email/verify |
 | POST | /auth/logout | |
 | GET / PATCH / DELETE | /me | profile + settings (incl. `stepGoal`, `fallDetection`) |
 | POST | /me/password | `{ currentPassword, newPassword }` |

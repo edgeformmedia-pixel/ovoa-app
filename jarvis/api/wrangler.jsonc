@@ -105,5 +105,6 @@
   ]
   // Secrets (set with `npx wrangler secret put NAME`): GEMINI_API_KEY, DEEPSEEK_API_KEY, GLM_API_KEY, GOOGLE_CLIENT_SECRET,
   // TOKEN_ENC_KEY, DEEPGRAM_API_KEY, DEBUG_KEY, MEMBERSHIP_API_KEY, and SHORTCUT_SIGNING_URL (+ optional SHORTCUT_SIGNING_TOKEN) to turn on
-  // shortcut writing (see README).
+  // shortcut writing (see README). RESEND_API_KEY sends ovoa.ai's sign-in codes from no-reply@ovoa.ai, and the optional
+  // GOOGLE_SIGNIN_CLIENT_IDS accepts Google sign-ins from another OAuth client than GOOGLE_CLIENT_ID (src/emailauth.ts).
 }
