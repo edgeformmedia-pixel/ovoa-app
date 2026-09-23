@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAgent } from "../lib/agent";
 import { useSession } from "../lib/auth";
+import { useDevMode } from "../lib/devMode";
 import { DrawerContext, type DrawerHandle } from "../lib/drawer";
 import { usePlan } from "../lib/plan";
 import { colors, lift, numeric, space, type } from "../lib/theme";
@@ -102,6 +103,7 @@ export function DrawerPanel({
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const devMode = useDevMode();
 
   const row = (item: NavItem) => {
     const on = current === item.href;
@@ -154,8 +156,12 @@ export function DrawerPanel({
         <Text style={styles.label}>More</Text>
         {MORE.filter((i) => !free || !ASSISTANT_ONLY.has(i.label)).map(row)}
 
-        <Text style={styles.label}>Developer</Text>
-        {DEV.filter((i) => !free || !ASSISTANT_ONLY.has(i.label)).map(row)}
+        {devMode && (
+          <>
+            <Text style={styles.label}>Developer</Text>
+            {DEV.filter((i) => !free || !ASSISTANT_ONLY.has(i.label)).map(row)}
+          </>
+        )}
       </ScrollView>
 
       {!free && (

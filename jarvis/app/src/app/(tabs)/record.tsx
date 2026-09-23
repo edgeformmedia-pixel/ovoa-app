@@ -8,6 +8,7 @@ import { useSession } from "../../lib/auth";
 import { noteRecording, retryCapture } from "../../lib/capture";
 import * as clip from "../../lib/clip";
 import { logFail } from "../../lib/devlog";
+import { useDevMode } from "../../lib/devMode";
 import { usePlan } from "../../lib/plan";
 import { deleteRecording, markLost, renameRecording, useRecordings, wavFile, type Recording } from "../../lib/recordings";
 import { colors, mono, numeric, space, type } from "../../lib/theme";
@@ -40,6 +41,7 @@ function act(label: string, fn: () => Promise<unknown>) {
 }
 
 export default function RecordScreen() {
+  const devMode = useDevMode();
   const state = clip.useClip();
   const recordings = useRecordings();
   const router = useRouter();
@@ -97,13 +99,15 @@ export default function RecordScreen() {
               title="Free space"
               value={state.storageInfo ? `${Math.round(state.storageInfo.freeKB / 1024)} MB` : "—"}
             />
-            <Row
-              icon="options-outline"
-              tone="pink"
-              title="Inputs, sensors & twist"
-              onPress={() => router.navigate("/dev-tools" as Href)}
-              right={<Ionicons name="chevron-forward" size={16} color={colors.inkMute} />}
-            />
+            {devMode && (
+              <Row
+                icon="options-outline"
+                tone="pink"
+                title="Inputs, sensors & twist"
+                onPress={() => router.navigate("/dev-tools" as Href)}
+                right={<Ionicons name="chevron-forward" size={16} color={colors.inkMute} />}
+              />
+            )}
             <View style={styles.buttons}>
               <Btn
                 label="Import from clip"

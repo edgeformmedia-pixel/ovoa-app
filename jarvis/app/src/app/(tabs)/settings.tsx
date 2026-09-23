@@ -21,6 +21,7 @@ import { disableTimeline, enableTimeline, timelinePref } from "../../lib/locatio
 import { useAgent } from "../../lib/agent";
 import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
+import { devModePref, useDevMode } from "../../lib/devMode";
 import { usePlan } from "../../lib/plan";
 import { autoSendTextsPref, SEND_TEXT_SHORTCUT } from "../../lib/storage";
 import { colors, space, type } from "../../lib/theme";
@@ -42,6 +43,7 @@ export default function Settings() {
   // The free plan has no assistant, so its settings aren't shown at all; Base
   // sees the Pro-only ones (the wake word, background work) as "Part of Pro".
   const { free, can } = usePlan();
+  const devMode = useDevMode();
   const [quiet, setQuiet] = useState({
     start: minutesToClock(user?.settings.quietStart ?? 1320),
     end: minutesToClock(user?.settings.quietEnd ?? 420),
@@ -384,7 +386,13 @@ export default function Settings() {
       </Section>
 
       <Section title="Developer">
-        <Button label="Sensors, inputs & ES100" onPress={() => router.push("/dev-tools")} />
+        <Setting
+          label="Dev mode"
+          about="Shows the developer's screens: Dev tools, the Logs panel on Talk, and the Developer group in the menu. Turn it off to see OVOA the way someone who just downloaded it would. It only changes this phone."
+        >
+          <Toggle value={devMode} onValueChange={(on) => void devModePref.set(on)} />
+        </Setting>
+        {devMode && <Button label="Sensors, inputs & ES100" onPress={() => router.push("/dev-tools")} />}
       </Section>
 
       <Section title="Session">

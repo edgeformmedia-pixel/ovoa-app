@@ -7,6 +7,7 @@ import { PartOfPlan } from "../../components/Plan";
 import { TopBar } from "../../components/ui";
 import { useAssistant } from "../../lib/assistant";
 import { useSession } from "../../lib/auth";
+import { useDevMode } from "../../lib/devMode";
 import { usePlan } from "../../lib/plan";
 import { colors, lift, space, type } from "../../lib/theme";
 import type { VoicePhase } from "../../lib/voice";
@@ -34,6 +35,7 @@ function Talk() {
   const { user } = useSession();
   const a = useAssistant();
   const [showLogs, setShowLogs] = useState(false);
+  const devMode = useDevMode();
   const assistantName = user?.settings.assistantName ?? "OVOA";
   const on = a.alwaysListen || !!a.enabled;
   // Map roughly -60..-10 dBFS onto the halo while listening.
@@ -50,10 +52,12 @@ function Talk() {
     <View style={styles.page}>
       <TopBar
         right={
-          <Pressable style={styles.logs} hitSlop={10} onPress={() => setShowLogs((s) => !s)}>
-            <Ionicons name="terminal-outline" size={15} color={showLogs ? colors.ink : colors.inkMute} />
-            <Text style={[styles.logsText, showLogs && { color: colors.ink }]}>Logs</Text>
-          </Pressable>
+          devMode ? (
+            <Pressable style={styles.logs} hitSlop={10} onPress={() => setShowLogs((s) => !s)}>
+              <Ionicons name="terminal-outline" size={15} color={showLogs ? colors.ink : colors.inkMute} />
+              <Text style={[styles.logsText, showLogs && { color: colors.ink }]}>Logs</Text>
+            </Pressable>
+          ) : undefined
         }
       />
 
@@ -117,7 +121,7 @@ function Talk() {
         </ScrollView>
       )}
 
-      {showLogs && (
+      {showLogs && devMode && (
         <DevLogPanel
           live={`${on ? a.phase : "off"} · mic ${a.phase === "listening" ? `${Math.round(a.level)} dB` : "—"}${a.alwaysListen ? " · always listen" : ""}`}
           onClose={() => setShowLogs(false)}
