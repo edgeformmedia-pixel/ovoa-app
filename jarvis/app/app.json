@@ -12,7 +12,7 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSBluetoothAlwaysUsageDescription": "OVOA connects to your ES100 recorder over Bluetooth to pull in what it captured.",
-        "NSSpeechRecognitionUsageDescription": "OVOA uses your iPhone's own speech recognition, on the phone, to hear its name. Nothing is sent anywhere until you say it.",
+        "NSSpeechRecognitionUsageDescription": "OVOA uses your iPhone's speech recognition to turn your recordings into notes and to hear its name. It runs on the phone itself whenever your iPhone can; recordings are never sent to OVOA for this.",
         "UIBackgroundModes": [
           "audio",
           "bluetooth-central",
@@ -98,7 +98,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "OVOA listens for its name on your phone while the orb is on, and sends what you say to it after that, so you can talk to the assistant.",
+          "microphonePermission": "OVOA uses the microphone when you talk to it or record a note, and listens for its name on the phone while the orb is on. What you say to it is sent only after you say its name.",
           "enableBackgroundRecording": true
         }
       ],
@@ -109,6 +109,13 @@
           "imageWidth": 260,
           "resizeMode": "contain",
           "backgroundColor": "#07090D"
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "speechRecognitionPermission": "OVOA uses your iPhone's speech recognition to turn your recordings into notes and to hear its name. It runs on the phone itself whenever your iPhone can; recordings are never sent to OVOA for this.",
+          "microphonePermission": "OVOA uses the microphone when you talk to it or record a note, and listens for its name on the phone while the orb is on. What you say to it is sent only after you say its name."
         }
       ]
     ],

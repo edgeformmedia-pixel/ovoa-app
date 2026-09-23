@@ -857,6 +857,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ...block, timeZone: timeZone() }),
     }),
+  /**
+   * A note as text only. `on_device`: the words came from the phone's own
+   * speech recognition (onDeviceTranscribe.ts), so no audio goes with it and
+   * none is needed; the free plan's notes arrive this way.
+   */
+  addNote: (token: string, note: { text: string; source?: "on_device" | "typed"; tags?: string[]; remindAt?: string }) =>
+    request<{ id: string }>("/notes", token, { method: "POST", body: JSON.stringify(note) }),
   contextDay: (token: string, date: string) =>
     request<ContextDay>(`/context/days/${date}?timeZone=${encodeURIComponent(timeZone())}`, token),
   /** The week that `date` falls in. One call instead of seven. */

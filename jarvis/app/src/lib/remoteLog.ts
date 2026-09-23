@@ -104,6 +104,8 @@ const MILESTONES: RegExp[] = [
   /^speaking \d+ ms after the question/,
   /^BUG REPORT/,
   /^picked up \d+ log lines/,
+  // One row per free note turned into words on the phone (onDeviceTranscribe.ts).
+  /^on-device transcript after/,
 ];
 /** perf lines are the turn breakdowns (turnTimer.ts): one row per spoken turn. */
 const MILESTONE_KINDS = new Set<LogEntry["kind"]>(["perf"]);

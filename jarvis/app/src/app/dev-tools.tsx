@@ -23,6 +23,8 @@ import * as ute from "../../modules/ute-ble";
 import { devlog, logFail } from "../lib/devlog";
 import { logStatus, sendRecentLogs, setUploadLevel, uploadLevel } from "../lib/remoteLog";
 import { createFallDetector } from "../lib/fallDetector";
+import { onDeviceSpeechBuilt, transcribeOnDevice } from "../lib/onDeviceTranscribe";
+import { getRecordings, wavFile } from "../lib/recordings";
 import {
   calibrate,
   createTwistDetector,
@@ -223,6 +225,8 @@ export default function DevTools() {
 
         <TurnTimings />
 
+        <OnDeviceNotes />
+
         <Text style={styles.section}>Phone</Text>
 
         <View style={styles.toggleRow}>
@@ -334,6 +338,52 @@ const yesNo = (value: boolean | null | undefined) => (value === undefined || val
  * then each leg of it. "answer" is from the moment they stopped talking to the
  * first word out of the speaker — the only number that decides whether it feels fast.
  */
+/**
+ * The free plan's transcriber, tried by hand: the newest recording's WAV,
+ * turned into words by the phone's own speech recognition (onDeviceTranscribe.ts).
+ * For checking a TestFlight build before the free-mode screens use it; the same
+ * "on-device transcript after N ms" line goes to device_logs either way.
+ */
+function OnDeviceNotes() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const run = async () => {
+    const newest = getRecordings().find((r) => r.wavName && !r.lost);
+    const audio = wavFile(newest);
+    if (!audio) {
+      setResult("No recording with audio on this phone yet. Record one with the Band first.");
+      return;
+    }
+    setBusy(true);
+    setResult(null);
+    const started = Date.now();
+    try {
+      const out = await transcribeOnDevice(audio.uri);
+      const ms = Date.now() - started;
+      setResult(
+        out === null
+          ? `Couldn't transcribe on this phone (${ms} ms). The reason is in the log.`
+          : `${out.onDevice ? "On the phone" : "Apple's servers"}, ${ms} ms, ${newest?.seconds?.toFixed(1) ?? "?"} s of audio:
+${out.text || "(nothing was said)"}`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Text style={styles.section}>Notes on the phone</Text>
+      <Card title="On-device transcription" available={true}>
+        <Row label="in this build" value={yesNo(onDeviceSpeechBuilt)} good={onDeviceSpeechBuilt} />
+        <Pressable style={[styles.button, busy && { opacity: 0.5 }]} disabled={busy} onPress={run}>
+          <Text style={styles.buttonText}>{busy ? "Transcribing…" : "Transcribe the newest recording"}</Text>
+        </Pressable>
+        {result && <Text style={styles.hint}>{result}</Text>}
+      </Card>
+    </>
+  );
+}
+
 /**
  * What the uploader is doing, and the one knob worth having on the phone:
  * everything the app writes is kept in memory, but only `info` and above is
