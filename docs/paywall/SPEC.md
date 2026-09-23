@@ -12,7 +12,7 @@ Prompts for the agents that build this are in this folder (`01-…` to `06-…`)
 |---|---|
 | Release state | Nothing is fully released. The app, the AI and the Band are all **beta**. The app ships through **TestFlight** only. The site must say "beta" wherever it sells something. |
 | Band | **$89.99** one-time. Beta hardware. |
-| Band perk | Each Band comes with **7 days of Base AI free**. (The user first said "1 month free", then "a week free of BASE ai". This spec uses the later answer: 7 days. Change `BAND_TRIAL_DAYS` if that's wrong.) |
+| Band perk | Each Band comes with **7 days of Base AI free**. Confirmed by the user on 2026-09-22 (a week, not a month). |
 | Free app | **Health tracking** and **notetaking**, no AI. Free notes are transcribed **on the iPhone** (Apple's speech recognition), so free users cost ~$0 on the server. |
 | Base AI | **$9.95/month** or **$95.99/year**. All the AI assistant features. |
 | Pro AI | **$25.95/month** or **$195.99/year**. |
