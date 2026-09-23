@@ -1,10 +1,11 @@
 // The phone's words, in the turn gate's shape (app/src/lib/earWords.ts),
 // checked without a microphone. Since 2026-09-23 the iPhone recognises speech
 // itself, and everything the gate decides (when a request is over, whether
-// "stop" was said over a reply) now rests on this turning the recogniser's
-// growing, self-correcting text into Deepgram-style finals at the right moments.
+// "stop" was said over a reply, whether it was the app's own echo) now rests on
+// this turning the recogniser's growing, self-correcting text into
+// Deepgram-style finals at the right moments, each with when its words were said.
 
-import { BEFORE_NAME_WORDS, EarWords, PAUSE_MS, QUIET_MS, SETTLE_MS } from "../../app/src/lib/earWords";
+import { BEFORE_NAME_WORDS, EarWords, PAUSE_MS, SETTLE_MS } from "../../app/src/lib/earWords";
 
 let fails = 0;
 function eq(label: string, got: unknown, want: unknown) {
@@ -16,14 +17,14 @@ function eq(label: string, got: unknown, want: unknown) {
 /** An EarWords with a sink that writes down everything handed on. */
 function ear() {
   const w = new EarWords();
-  const out = { finals: [] as string[], ends: [] as boolean[], interim: "", quiet: 0 };
+  const out = { finals: [] as string[], ends: [] as boolean[], lastWordAt: [] as number[], interim: "" };
   w.attach({
     onInterim: (t) => (out.interim = t),
-    onFinal: (t, end) => {
+    onFinal: (t, end, at) => {
       out.finals.push(t);
       out.ends.push(end);
+      out.lastWordAt.push(at);
     },
-    onQuiet: () => out.quiet++,
   });
   return { w, out };
 }
@@ -40,13 +41,10 @@ const t0 = 1_758_412_800_000;
   w.word("What's the time?", true, t0 + 600);
   eq("a final hands the stretch on", out.finals, ["What's the time?"]);
   eq("as a sentence end", out.ends, [true]);
+  eq("said when its words last changed", out.lastWordAt, [t0 + 600]);
   eq("and clears the interim", out.interim, "");
   w.tick(t0 + 600 + PAUSE_MS + 50);
   eq("nothing is handed on twice", out.finals.length, 1);
-  w.tick(t0 + 600 + QUIET_MS + 50);
-  eq("then it is quiet, once", out.quiet, 1);
-  w.tick(t0 + 600 + QUIET_MS + 500);
-  eq("only once", out.quiet, 1);
   w.word("and tomorrow", false, t0 + 5_000);
   eq("the next stretch starts fresh", out.interim, "and tomorrow");
 }
@@ -61,6 +59,7 @@ const t0 = 1_758_412_800_000;
   w.tick(t0 + PAUSE_MS);
   eq("at the pause", out.finals, ["set an alarm"]);
   eq("flagged as a sentence end", out.ends, [true]);
+  eq("heard a pause before it was handed on", out.lastWordAt, [t0]);
   // SFSpeechRecognizer keeps the whole task's text: it grows from where it was.
   w.word("set an alarm for seven", false, t0 + 2_000);
   eq("only the new words are still forming", out.interim, "for seven");
@@ -178,11 +177,35 @@ const t0 = 1_758_412_800_000;
   eq("what was forming is handed on", out.finals, ["call mum"]);
 }
 
+// ---------- When the words were said, not when they were handed on ----------
+{
+  const { w, out } = ear();
+  w.open(t0);
+  w.word("call", false, t0);
+  w.word("call mum", false, t0 + 300);
+  w.word("Call mum.", true, t0 + 900);
+  eq("a final that only tidies the words keeps when they were said", out.lastWordAt, [t0 + 300]);
+}
+{
+  const { w, out } = ear();
+  w.open(t0);
+  const said = "no not that one the other one please".split(" ");
+  for (let i = 1; i <= said.length; i++) {
+    w.word(said.slice(0, i).join(" "), false, t0 + i * 300);
+    w.tick(t0 + i * 300);
+  }
+  eq("settled words go while talk goes on", out.finals.length > 0 && !out.ends[0], true);
+  const settled = out.finals[0].split(" ").length;
+  eq("each with when its own last word appeared", out.lastWordAt[0], t0 + settled * 300);
+  w.tick(t0 + said.length * 300 + PAUSE_MS);
+  eq("and the rest with the stretch's last change", out.lastWordAt.at(-1), t0 + said.length * 300);
+}
+
 // ---------- Detached: nothing goes anywhere ----------
 {
   const w = new EarWords();
   const got: string[] = [];
-  const detach = w.attach({ onInterim: () => {}, onFinal: (t) => got.push(t), onQuiet: () => {} });
+  const detach = w.attach({ onInterim: () => {}, onFinal: (t) => got.push(t) });
   w.open(t0);
   detach();
   w.word("hello there", false, t0);

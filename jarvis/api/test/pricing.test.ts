@@ -62,6 +62,22 @@ eq("a garbage var keeps the default", glmPriceFrom({ GLM_PRICE_IN_PER_M: "cheap"
 eq("an override replaces the table", llmCostMicro("glm-5.3-flash", { input: 1_000_000, output: 0 }, today, glm), 100_000);
 eq("the GLM default is Z.ai's price", glmPriceFrom({}).out, 0.2);
 
+// ---------- GLM on Workers AI ----------
+
+const WORKERS_GLM = "@cf/zai-org/glm-5.3-flash";
+eq("Workers AI's GLM: $0.15 a million in", llmCostMicro(WORKERS_GLM, { input: 1_000_000, output: 0 }, today), 150_000);
+eq("$0.03 a million cached", llmCostMicro(WORKERS_GLM, { input: 1_000_000, cached: 1_000_000, output: 0 }, today), 30_000);
+eq("$0.50 a million out", llmCostMicro(WORKERS_GLM, { input: 0, output: 1_000_000 }, today), 500_000);
+eq("and it doesn't double in 2027", priceFor(WORKERS_GLM, new Date("2027-06-01T00:00:00Z"))?.in, 0.15);
+// A spoken turn: 6.7K tokens in, 12 out. On Z.ai that is 6,700 × $0.06 + 12 × $0.20
+// = 404 micro. On Workers AI with the stable front (5K) cached, it is
+// 1,700 × $0.15 + 5,000 × $0.03 + 12 × $0.50 = 411: the same, give or take.
+const zaiTurn = llmCostMicro("glm-5.3-flash", { input: 6_700, output: 12 }, today, glmPriceFrom({}));
+const workersTurn = llmCostMicro(WORKERS_GLM, { input: 6_700, cached: 5_000, output: 12 }, today);
+eq("a spoken turn on Z.ai", zaiTurn, 404);
+eq("the same turn on Workers AI, cached", workersTurn, 411);
+eq("uncached it would be two and a half times Z.ai's", llmCostMicro(WORKERS_GLM, { input: 6_700, output: 12 }, today), 1_011);
+
 // ---------- Speech ----------
 
 eq("Aura-2 direct: $0.030 per 1K chars", ttsCostMicro("deepgram-aura-2", 1000), 30_000);

@@ -18,10 +18,12 @@
 //   https://deepgram.com/pricing
 //   https://ai.google.dev/gemini-api/docs/pricing
 //   https://docs.z.ai/guides/overview/pricing
+//   https://developers.cloudflare.com/workers-ai/platform/pricing/
 //
-// The DeepSeek and Workers AI rows went with those engines in the v1 release
-// (2026-09-23). usage_daily rows from before then keep the cost they were
-// written with; nothing here re-prices them.
+// The DeepSeek row went with that engine in the v1 release (2026-09-23), and
+// Workers AI's with it; GLM 5.3 Flash on Workers AI came back the same day as
+// the spoken engine. usage_daily rows keep the cost they were written with;
+// nothing here re-prices them.
 
 export const PRICES_CHECKED_ON = "2026-09-23";
 
@@ -40,11 +42,22 @@ export const LLM_PRICES: Record<string, TokenPrice> = {
   // Gemini 3.8 Flash, paid tier: the model before Flash-Lite. Kept so a switch
   // back through CHAT_MODEL is still priced.
   "gemini-3.8-flash": { in: 0.75, cachedIn: 0.075, out: 3.75 },
+  // GLM 5.3 Flash on Workers AI (llm.ts "workers", WORKERS_MODEL): the engine
+  // spoken turns try first. Cloudflare bills in neurons and lists each model's
+  // token equivalent, which is what this is, from Cloudflare's pricing page on
+  // 2026-09-23. Dearer per token than Z.ai's $0.06 / $0.20, but a person's calls
+  // share a prompt cache (x-session-affinity), so most of a spoken turn's input
+  // is read at the cached price and the turn costs about the same (pricing.test.ts).
+  // The account's 10,000 free neurons a day are shared by everyone and left out
+  // of the per-call estimate, so the estimate runs slightly high.
+  "@cf/zai-org/glm-5.3-flash": { in: 0.15, cachedIn: 0.03, out: 0.5 },
 };
 
 /**
- * GLM 5.3 Flash from the user's own cheap provider (Z.ai for v1). The provider
- * may change, so the price is a default that the GLM_PRICE_* vars override.
+ * GLM 5.3 Flash from the user's own cheap provider (Z.ai for v1), the "glm"
+ * engine. The provider may change, so the price is a default that the
+ * GLM_PRICE_* vars override. The same model on Workers AI is the "workers"
+ * engine, priced by its model id in LLM_PRICES (usage.ts llmRow).
  */
 export const GLM_DEFAULT_PRICE: TokenPrice = { in: 0.06, cachedIn: 0.06, out: 0.2 };
 

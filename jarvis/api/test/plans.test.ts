@@ -257,6 +257,31 @@ const U = "user-1";
 }
 
 {
+  // A tier from within the day stands while the site is asked after the reply:
+  // the ask took up to 4 s at the start of a turn, every ten minutes.
+  forgetPlan();
+  const f = fakeDb(row({ plan_tier: "base", plan_status: "active", plan_checked_at: NOW }));
+  const s = site(() => json({ tier: "pro", status: "active", trialEndsAt: null, renewsAt: null }));
+  const later: Promise<unknown>[] = [];
+  const waitUntil = (work: Promise<unknown>) => void later.push(work);
+  const now = NOW + PLAN_FRESH_MS + 1;
+  const got = await loadPlan(envWith(f.db), U, { now, fetcher: s.fetcher, waitUntil });
+  eq("stale with somewhere to finish: the tier it had, at once", `${got?.plan.tier} ${got?.plan.from}`, "base stale");
+  eq("and the site is asked after the reply", later.length, 1);
+  forgetPlan(U);
+  await loadPlan(envWith(f.db), U, { now: now + 1, fetcher: s.fetcher, waitUntil });
+  eq("once, however many requests come meanwhile", later.length, 1);
+  await Promise.all(later);
+  eq("its answer is kept", f.row.plan_tier, "pro");
+  const next = await loadPlan(envWith(f.db), U, { now: now + 2, fetcher: s.fetcher, waitUntil });
+  eq("and the next request has it", `${next?.plan.tier} ${next?.plan.from}`, "pro site");
+  forgetPlan();
+  const unknown = fakeDb(row());
+  const first = await loadPlan(envWith(unknown.db), U, { now: NOW, fetcher: s.fetcher, waitUntil });
+  eq("no tier known yet: asked there and then, never guessed free", first?.plan.tier, "pro");
+}
+
+{
   forgetPlan();
   const f = fakeDb(row({ plan_override: "pro", plan_tier: "free", plan_checked_at: NOW }));
   const s = site(() => json({ tier: "free", status: "none" }));

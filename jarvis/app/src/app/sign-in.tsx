@@ -54,10 +54,13 @@ function domainOf(address: string) {
 }
 
 export default function SignIn() {
-  const { signIn, signUp, signInWithSession, signUpWithTicket, hasAccountHere } = useAuth();
+  const { signIn, signUp, signInWithSession, signUpWithTicket, hasAccountHere, lastEmail } = useAuth();
+  // A phone that has been signed in opens on Sign in with the last address
+  // filled in (lib/auth.tsx LAST_EMAIL_KEY): what's left to type is the
+  // password, and Create an account is still the link underneath.
   const [mode, setMode] = useState<"signin" | "signup">(hasAccountHere ? "signin" : "signup");
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(lastEmail ?? "");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [fields, setFields] = useState<Fields>({});
@@ -73,9 +76,13 @@ export default function SignIn() {
   useEffect(() => {
     let live = true;
     void appleSignInAvailable().then((ok) => live && setAppleShown(ok));
+    // Which form it opened on, never the address: the 409 at 16:25 on 2026-09-23
+    // couldn't say whether the screen or the person had picked Create an account.
+    devlog("log", `sign-in: opened on ${mode}${email ? " with the last address filled in" : ""}`);
     return () => {
       live = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const isSignup = mode === "signup";

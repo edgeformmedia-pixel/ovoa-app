@@ -2,23 +2,34 @@ export type Env = {
   DB: D1Database;
   /** Gemini, the second engine (llm.ts), and web search grounding (web.ts). */
   GEMINI_API_KEY?: string;
-  /** The order every model call tries (llm.ts ENGINES, GLM then Gemini, when unset). server_settings.engine_order overrides it. */
+  /**
+   * Workers AI ("ai" in wrangler.jsonc): GLM 5.3 Flash on Cloudflare, the
+   * engine spoken turns try first and the last resort for everything else
+   * (llm.ts OPENAI_PROVIDERS.workers). WORKERS_MODEL is the model it runs.
+   */
+  AI: Ai;
+  WORKERS_MODEL?: string;
+  /** The order typed and background calls try (llm.ts ENGINES: GLM, Gemini, Workers AI, when unset). server_settings.engine_order overrides it. */
   ENGINE_ORDER?: string;
+  /** Who answers spoken turns first: an engine, or "keyed" for the typed order (llm.ts, Workers AI when unset). server_settings.voice_engine overrides it. */
+  VOICE_ENGINE?: string;
   /**
    * How long an engine has to answer before the turn moves on: time to the first
    * byte, and the longest a started stream may go quiet (llm.ts, 20 s / 25 s by
-   * default). Set as vars so a model that turns out to need longer can be given
-   * it without a deploy.
+   * default), and on a spoken turn how long Workers AI, when first, has to say
+   * its first word (6 s). Secrets rather than vars, so a model that turns out to
+   * need longer can be given it without a deploy.
    */
   MODEL_CONNECT_MS?: string;
   MODEL_IDLE_MS?: string;
+  VOICE_FIRST_CONTENT_MS?: string;
   /** The Gemini model for replies, agent jobs and web search grounding. */
   CHAT_MODEL: string;
   /** Secret for the /debug routes; unset turns them off. */
   DEBUG_KEY?: string;
   /**
-   * GLM 5.3 Flash from the user's own provider, the first engine (llm.ts
-   * OPENAI_PROVIDERS). Without GLM_API_KEY the engine does not exist. The prices
+   * GLM 5.3 Flash from the user's own provider, the first engine for typed and
+   * background calls (llm.ts OPENAI_PROVIDERS). Without GLM_API_KEY the engine does not exist. The prices
    * are dollars per million tokens and override the defaults in pricing.ts,
    * because the provider, and so the price, is the user's choice.
    */
@@ -26,6 +37,8 @@ export type Env = {
   GLM_BASE_URL?: string;
   GLM_MODEL?: string;
   GLM_THINKING?: string;
+  /** "off" stops asking Z.ai to stream tool-call arguments (llm.ts). Unset: on. A secret, to try either way without a deploy. */
+  GLM_TOOL_STREAM?: string;
   GLM_PRICE_IN_PER_M?: string;
   GLM_PRICE_OUT_PER_M?: string;
   GLM_PRICE_CACHED_PER_M?: string;

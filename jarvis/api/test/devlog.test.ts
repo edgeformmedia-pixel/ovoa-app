@@ -72,6 +72,21 @@ const uncollapsed = collect(() => {
 eq("collapse: false means every one goes", uncollapsed.length, 4);
 eq("and a fatal is a fatal", uncollapsed[0].level, "fatal");
 
+// ---------- Every turn's timing is its own row ----------
+//
+// "× 5 more in 2 min — phone turn 10.2 s after you stopped speaking" kept one
+// breakdown out of six (device_logs, 2026-09-23). A turn line is never folded.
+
+const turns = collect(() => {
+  for (let i = 0; i < 6; i++) devlog("perf", `phone turn ${10 + i}.2 s after you stopped speaking`, "stopped talking 0 ms · model answers 9.2 s");
+  for (let i = 0; i < 6; i++) devlog("res", `first sentence after ${4000 + i} ms`, "40 chars", { collapse: false });
+  sweepLog(Date.now() + 60_000);
+});
+eq("six perf lines are six rows", turns.filter((r) => r.kind === "perf").length, 6);
+eq("each with its own number", turns.filter((r) => r.kind === "perf")[5].text, "phone turn 15.2 s after you stopped speaking");
+eq("and no '× more' row after them", turns.some((r) => r.text.startsWith("× ")), false);
+eq("a res line marked collapse: false is its own row too", turns.filter((r) => r.kind === "res").length, 6);
+
 // ---------- devlogRepeat / devlogSettled ----------
 
 const keyed = collect(() => {

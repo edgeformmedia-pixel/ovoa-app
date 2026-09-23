@@ -43,10 +43,14 @@ const listeners = new Set<() => void>();
 
 const changed = () => listeners.forEach((l) => l());
 
-/** Starts a turn, ending any turn still open (a click during a reply). */
-export function startTurn(source: TurnRecord["source"]): TurnRecord {
+/**
+ * Starts a turn, ending any turn still open (a click during a reply). `at`: when
+ * it really began, if earlier than now — a phone turn starts at the user's last
+ * word, not when the gate decided they were done.
+ */
+export function startTurn(source: TurnRecord["source"], at = Date.now()): TurnRecord {
   if (current) endTurn("replaced by a new turn");
-  current = { id: nextId++, source, startedAt: Date.now(), marks: [] };
+  current = { id: nextId++, source, startedAt: at, marks: [] };
   turns = [...turns.slice(-(MAX_TURNS - 1)), current];
   changed();
   return current;
@@ -54,17 +58,16 @@ export function startTurn(source: TurnRecord["source"]): TurnRecord {
 
 export const currentTurn = () => current;
 
-/** Notes that the turn reached a stage. Ignored when no turn is open. */
-export function mark(name: string, detail?: string) {
+/** Notes that the turn reached a stage (at `at`, if that was before now). Ignored when no turn is open. */
+export function mark(name: string, detail?: string, at = Date.now()) {
   if (!current) return;
-  const at = Date.now();
   const previous = current.marks.at(-1);
   current.marks.push({ name, at, since: at - (previous?.at ?? current.startedAt), detail });
   changed();
 }
 
-/** The user has stopped talking: the clock the user actually feels starts here. */
-export const markStopTalking = () => mark(ZERO_MARK);
+/** The user has stopped talking (now, or at `at`): the clock the user actually feels starts here. */
+export const markStopTalking = (at?: number) => mark(ZERO_MARK, undefined, at);
 
 export function noteHeard(text: string) {
   if (!current) return;
@@ -98,6 +101,9 @@ export function endTurn(reason?: string) {
     [breakdown(turn), turn.server && `server ${turn.server}`, turn.heard && `heard ${turn.heard.length} chars`]
       .filter(Boolean)
       .join("\n    "),
+    // Never folded into a repeat: devlog blurs the digits, so every turn with the same
+    // stages looked like one line and all but the first lost their numbers in device_logs.
+    { collapse: false },
   );
   changed();
 }

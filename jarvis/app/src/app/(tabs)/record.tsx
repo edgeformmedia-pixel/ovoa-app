@@ -319,7 +319,10 @@ function NoteState({ recording, onNote }: { recording: Recording; onNote: () => 
 function RecordingList({ recordings }: { recordings: Recording[] }) {
   const { token, user } = useSession();
   const { free } = usePlan();
-  const player = useAudioPlayer(null);
+  // keepAudioSessionActive, as in voice.ts and cues.ts: without it expo-audio
+  // switches the audio session off when a recording stops playing, under the
+  // phone's ear, which then hears nothing until the mic is restarted.
+  const player = useAudioPlayer(null, { keepAudioSessionActive: true });
   const status = useAudioPlayerStatus(player);
   const [current, setCurrent] = useState<string | null>(null);
 

@@ -16,7 +16,9 @@ const CACHE_MS = 60_000;
  * The keys the server understands. Anything else is refused at the door, and
  * rows under keys retired since (workers_model and stt_clip_engine went with
  * Workers AI in v1; the old database's rows may have been copied across) are
- * never read.
+ * never read. Workers AI came back on 2026-09-23 as the spoken engine, with its
+ * model in the WORKERS_MODEL var rather than a setting: voice_engine and
+ * engine_order name it as "workers".
  */
 export const SETTING_KEYS = ["engine_order", "voice_engine", "tts_engine"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];

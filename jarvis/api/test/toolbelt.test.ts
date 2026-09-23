@@ -130,5 +130,59 @@ eq("counted as loaded", pre.loaded.includes("alarm_stop"), true);
 eq("the carried one was there all along", has(pre.tools, "alarm_cancel"), true);
 eq("a request that names nothing preloads nothing", toolbelt(typedAll, TYPED_CORE, guides).preload("what time is it").length, 0);
 
+// ---------- Spoken detours (2026-09-23) ----------
+
+// Apple Health isn't in the spoken core: "how did I sleep" used to pay a
+// more_tools round before the phone was even asked.
+const withHealth = [...named, t("phone_health_summary", "Apple Health for the last few days: steps, heart rate, sleep, workouts.")];
+eq("'how did I sleep' names Apple Health", has(namedTools(withHealth, "how did I sleep last night"), "phone_health_summary"), true);
+eq("'what's my heart rate' too", has(namedTools(withHealth, "what's my heart rate been"), "phone_health_summary"), true);
+eq("and 'how many steps today'", has(namedTools(withHealth, "how many steps today"), "phone_health_summary"), true);
+
+// Ties go to the tools whose instructions the prompt already has: a tool that
+// needs an id from a list the model hasn't read is the worst of three equals.
+const reminding = [
+  t("phone_reminder_complete", "Marks a phone reminder done; get the id from phone_reminders_list."),
+  t("reminder_set", "A reminder that buzzes the band."),
+  t("reminder_done", "Stops a nagging reminder."),
+];
+eq("with nothing to prefer, the catalogue's order decides", namedTools(reminding, "remind me to call Mom at four")[0]?.name, "phone_reminder_complete");
+eq(
+  "a tool whose guide is in the prompt wins the tie",
+  namedTools(reminding, "remind me to call Mom at four", 2, new Set(["reminder_set", "reminder_done"])).map((x) => x.name).join(" "),
+  "reminder_set reminder_done",
+);
+
+// What stops a buzzing alarm or urgent reminder names no tool, and the app says
+// saying it works as well as tapping (NagOverlay).
+const stopping = [...named, ...reminding, t("routine_list", "Lists routines.")];
+eq("'OVOA I'm awake' brings alarm_stop", namedTools(stopping, "OVOA I'm awake")[0]?.name, "alarm_stop");
+eq("'I took my pill' brings reminder_done", namedTools(stopping, "I took my pill")[0]?.name, "reminder_done");
+
+// A preloaded tool brings its instructions into the prompt, as a carried one's are.
+const spokenAll = [...reminding, t("alarm_set", "Sets an alarm."), t("workout_log", "Logs a workout.")];
+const spokenGuides = [
+  { tools: spokenAll.filter((x) => x.name === "alarm_set" || x.name.startsWith("reminder_")), prompt: "ALARM GUIDE" },
+  { tools: spokenAll.filter((x) => x.name === "workout_log"), prompt: "WORKOUT GUIDE" },
+];
+const spoken = toolbelt(spokenAll, SPOKEN_CORE, spokenGuides);
+eq("a spoken belt carries alarm_set and its guide", spoken.carriedGuides.some((g) => g.prompt === "ALARM GUIDE"), true);
+eq("but not the workout guide", spoken.carriedGuides.some((g) => g.prompt === "WORKOUT GUIDE"), false);
+// "Remind me" is the band's own reminder, so a spoken belt already has it (2026-09-23).
+eq("a spoken belt carries reminder_set", spoken.tools.some((x) => x.name === "reminder_set"), true);
+eq("and 'remind me' doesn't bring it twice", spoken.preload("remind me to call Mom at four").includes("reminder_set"), false);
+spoken.preload("log my workout");
+eq("'log my workout' brings the workout guide into the prompt", spoken.carriedGuides.some((g) => g.prompt === "WORKOUT GUIDE"), true);
+eq("so more_tools won't hand it over again", spoken.load("log a workout").note.includes("WORKOUT GUIDE"), false);
+
+// A resumed turn has again what more_tools brought in before it paused.
+const resumed = toolbelt(spokenAll, SPOKEN_CORE, spokenGuides);
+resumed.restore(["phone_reminder_complete", "no_such_tool"]);
+eq("restored by name", has(resumed.tools, "phone_reminder_complete"), true);
+eq("and only what exists", resumed.tools.some((x) => x.name === "no_such_tool"), false);
+
+// more_tools is carried by every turn: it stays short.
+eq("more_tools is short", JSON.stringify(toolbelt(spokenAll, SPOKEN_CORE).tools.find((x) => x.name === "more_tools")).length <= 400, true);
+
 console.log(fails ? `\n${fails} FAILED` : "\nall passed");
 process.exit(fails ? 1 : 0);

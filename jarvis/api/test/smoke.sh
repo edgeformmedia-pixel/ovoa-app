@@ -538,7 +538,8 @@ check "a second tick is counted, not duplicated" \
   "$(curl -s "${D[@]}" "$API/debug/logs?since=5m" | j "d['health']['ticksThisHour'] >= 2")" "True"
 
 # An engine failure is recorded even though the phone got a 200. A local worker
-# has no model key, so any turn that needs one fails -- which is the case worth
+# has no model key, and its Workers AI binding can't run a model locally, so any
+# turn that needs one fails -- which is the case worth
 # proving, because it is the case that used to leave no trace at all. The
 # person is told plainly, as a reply, that OVOA can't reach the AI right now:
 # read on a typed turn, heard on a spoken one (the sentence is streamed).
@@ -587,25 +588,30 @@ check "the usage reader needs the key" "$(curl -s -o /dev/null -w '%{http_code}'
 
 echo
 echo "── switching engines ──────────────────────────────"
-# The switchboard: GLM then Gemini, no key means an engine doesn't exist, an
-# order naming no engine is refused with a reason, an old build's ",workers" is
-# dropped quietly, one person can differ from everyone, and a plain account
-# can't touch any of it.
+# The switchboard: GLM, Gemini and Workers AI; no key (or, for Workers AI, no
+# binding) means an engine doesn't exist; an order naming no engine is refused
+# with a reason, and one naming the retired DeepSeek loses it quietly; one
+# person can differ from everyone, and a plain account can't touch any of it.
+# A local worker has the AI binding, so Workers AI is listed and ordered even
+# though every call to it fails here ("needs to be run remotely").
 ME_ID=$(curl -s "${A[@]}" "$API/me" | j "d['user']['id']")
 ENG=$(curl -s "${D[@]}" "$API/debug/engines")
-check "the engines are GLM, then Gemini" "$(echo "$ENG" | j "','.join(e['engine'] for e in d['engines'])")" "glm,gemini"
+check "the engines are GLM, Gemini, then Workers AI" "$(echo "$ENG" | j "','.join(e['engine'] for e in d['engines'])")" "glm,gemini,workers"
 check "GLM has no key here"        "$(echo "$ENG" | j "[e['key'] for e in d['engines'] if e['engine']=='glm'][0]")" "missing"
 check "nor Gemini"                 "$(echo "$ENG" | j "[e['key'] for e in d['engines'] if e['engine']=='gemini'][0]")" "missing"
-check "so a turn has nothing to try" "$(echo "$ENG" | j "len(d['typedOrder']) + len(d['voiceOrder'])")" "0"
+check "Workers AI has its binding" "$(echo "$ENG" | j "[e['key'] for e in d['engines'] if e['engine']=='workers'][0]")" "set"
+check "so a turn can only try Workers AI" "$(echo "$ENG" | j "d['typedOrder']==['workers'] and d['voiceOrder']==['workers']")" "True"
 check "an order naming no engine is refused with a reason" \
-  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":"claude,workers"}' | j "'names no engine' in d['error']")" "True"
+  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":"claude,deepseek"}' | j "'names no engine' in d['error']")" "True"
 check "Workers AI's model is no longer a setting" \
   "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"workers_model":"@cf/openai/gpt-oss-120b"}')" "400"
-check "an old build's order loses its Workers AI, quietly" \
-  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":"gemini,glm,workers"}' | j "d['everyone']['engine_order']")" "gemini,glm"
-check "without keys the order is still empty" "$(curl -s "${D[@]}" "$API/debug/engines" | j "len(d['typedOrder'])")" "0"
-check "Workers AI can't answer spoken turns any more" \
-  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"workers\",\"userId\":\"$ME_ID\"}")" "400"
+check "an old build's order loses its DeepSeek, quietly" \
+  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":"gemini,deepseek,glm"}' | j "d['everyone']['engine_order']")" "gemini,glm"
+check "without keys the order is still just Workers AI" "$(curl -s "${D[@]}" "$API/debug/engines" | j "len(d['typedOrder'])")" "1"
+check "Workers AI can answer spoken turns again" \
+  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"workers\",\"userId\":\"$ME_ID\"}" | j "d['mine']['voice_engine']")" "workers"
+check "DeepSeek can't" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"deepseek\",\"userId\":\"$ME_ID\"}")" "400"
 check "one person can be given their own" \
   "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"keyed\",\"userId\":\"$ME_ID\"}" | j "d['mine']['voice_engine']")" "keyed"
 check "and everyone else is untouched" "$(curl -s "${D[@]}" "$API/debug/engines" | j "'voice_engine' not in d['everyone']")" "True"
@@ -632,7 +638,8 @@ check "then the server sends no audio, and says why" \
 check "everyone else still has Deepgram" "$(curl -s -H "authorization: Bearer $OTHER" "$API/me" | j "d['user']['ttsEngine']")" "deepgram-aura-2"
 curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"tts_engine\":\"\",\"userId\":\"$ME_ID\"}"
 check "and it can be put back" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['ttsEngine']")" "deepgram-aura-2"
-# The Workers AI voices went with Workers AI: choosing one is refused.
+# The Workers AI voices went in v1 and didn't come back with Workers AI's
+# reply engine (2026-09-23): choosing one is refused.
 check "a Workers AI voice is refused" \
   "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"tts_engine":"workers-aura-2"}')" "400"
 # Speech to text is on the phone now (2026-09-23): the server never asks

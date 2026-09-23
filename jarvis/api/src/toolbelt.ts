@@ -86,7 +86,9 @@ export const SPOKEN_CORE = new Set([
   "money_status",
   // The three things people ask a wrist for.
   "phone_calendar_events",
-  "phone_reminder_create",
+  // "Remind me" is OVOA's own reminder, which buzzes the band (alarms.ts); the
+  // iPhone's Reminders app comes along when it's named (2026-09-23).
+  "reminder_set",
   "phone_reminders_list",
   "alarm_set",
   // Reaching someone.
@@ -121,7 +123,13 @@ const SYNONYMS: Record<string, string[]> = {
   task: ["todo", "tasks", "reminder"],
   tasks: ["todo", "reminder"],
   habit: ["routine"],
-  workout: ["exercise", "training"],
+  // Apple Health (phone_health_summary), which a spoken turn doesn't carry: without
+  // these, "how did I sleep" paid a more_tools round and then a phone pause.
+  workout: ["exercise", "training", "health"],
+  sleep: ["health"],
+  slept: ["health"],
+  heart: ["health"],
+  steps: ["health"],
   spent: ["money", "spend"],
   paid: ["money", "paycheck"],
   bill: ["money", "bills"],
@@ -137,6 +145,11 @@ const SYNONYMS: Record<string, string[]> = {
   reschedule: ["calendar", "event", "update"],
   move: ["update", "change"],
   cancel: ["delete", "cancel"],
+  // Said to stop what's buzzing (alarms.ts), which a spoken turn doesn't carry:
+  // "I'm awake" is alarm_stop, "I took my pill" is reminder_done.
+  awake: ["alarm", "stop"],
+  took: ["reminder", "done"],
+  taken: ["reminder", "done"],
   pills: ["medication", "routine"],
   pill: ["medication", "routine"],
   meds: ["medication", "routine"],
@@ -213,8 +226,14 @@ export function pickTools(catalogue: ToolSpec[], need: string, max = MAX_LOADED)
  * than pickTools, which is answering the model's own description of what it
  * needs: a wrong guess here is a few hundred characters of prompt, a right one
  * is a whole round trip the user never waits through.
+ *
+ * `preferred` breaks ties: tools whose instructions are already in the prompt.
+ * "Remind me to call Mum at four" names reminder_set, reminder_done and
+ * phone_reminder_complete equally, and the first two belong to the alarms
+ * guide a spoken turn carries, while the third needs an id from a list the
+ * model hasn't read (2026-09-23).
  */
-export function namedTools(catalogue: ToolSpec[], request: string, max = 2) {
+export function namedTools(catalogue: ToolSpec[], request: string, max = 2, preferred: ReadonlySet<string> = new Set()) {
   const asked = new Set<string>();
   const generic = new Set<string>();
   for (const w of words(request)) {
@@ -239,7 +258,7 @@ export function namedTools(catalogue: ToolSpec[], request: string, max = 2) {
         return { tool, score: parts.filter(names).length + 0.5 * parts.filter((n) => generic.has(n)).length, named: parts.some(names) };
       })
       .filter((m) => m.named)
-      .sort((a, b) => b.score - a.score)
+      .sort((a, b) => b.score - a.score || Number(preferred.has(b.tool.name)) - Number(preferred.has(a.tool.name)))
       .slice(0, max)
       .map((m) => m.tool)
   );
@@ -247,14 +266,15 @@ export function namedTools(catalogue: ToolSpec[], request: string, max = 2) {
 
 export const MORE_TOOLS = "more_tools";
 
+// Short on purpose: every turn carries it before the first word.
 const moreToolsSpec = (catalogue: ToolSpec[]): ToolSpec => ({
   name: MORE_TOOLS,
   description:
-    `You have the everyday tools already. ${catalogue.length} more are available but not loaded — email, editing calendar events, contacts, routines, health, past conversations, money records, background jobs and more. ` +
-    "Call this with a few words for what you need ('send an email', 'what did I say yesterday', 'log a workout') and the matching tools arrive for you to call on your next step. Only call it when none of the tools you have will do.",
+    `${catalogue.length} more tools, not loaded: email, calendar edits, contacts, routines, health, past conversations, money, background jobs. ` +
+    "Say what you need ('send an email') and they arrive for your next step. Only when none you have will do.",
   parameters: {
     type: "object",
-    properties: { need: { type: "string", description: "What you're trying to do, in a few words." } },
+    properties: { need: { type: "string", description: "What you're trying to do." } },
     required: ["need"],
   },
 });
@@ -273,10 +293,16 @@ export type Toolbelt = {
   load: (need: string) => { loaded: string[]; note: string };
   /** Names that were pulled in, for the turn's log line. */
   loaded: string[];
-  /** The guides whose tools are carried: their instructions belong in the prompt. */
+  /** The guides whose tools are carried, preloaded ones included: their instructions belong in the prompt. */
   carriedGuides: ToolGuide[];
   /** Tools the request itself named, loaded before the first round. */
   preload: (request: string) => string[];
+  /**
+   * A resumed turn's tools: what more_tools brought in before it paused. The
+   * paused messages already hold their instructions (more_tools' note), and
+   * without them the model asked for the same tools again, a whole round.
+   */
+  restore: (names: string[]) => void;
 };
 
 /**
@@ -294,6 +320,7 @@ export function toolbelt(all: ToolSpec[], core = SPOKEN_CORE, guides: ToolGuide[
   const carriedGuides = guides.filter((g) => g.tools.some((t) => tools.some((c) => c.name === t.name)));
   // Instructions that leave with their tools, handed over when the tools are.
   const shelved = guides.filter((g) => !carriedGuides.includes(g));
+  const guidedNames = () => new Set(carriedGuides.flatMap((g) => g.tools.map((t) => t.name)));
 
   const bring = (picks: ToolSpec[]) => {
     const fresh = picks.filter((t) => !tools.some((existing) => existing.name === t.name));
@@ -311,7 +338,19 @@ export function toolbelt(all: ToolSpec[], core = SPOKEN_CORE, guides: ToolGuide[
     loaded,
     carriedGuides,
     preload(request) {
-      return bring(namedTools(catalogue, request)).map((t) => t.name);
+      const fresh = bring(namedTools(catalogue, request, 2, guidedNames()));
+      // Loaded before the prompt is written, so their instructions go in it, as
+      // a carried tool's do: more_tools' note never hands these over.
+      for (const g of [...shelved]) {
+        if (g.tools.some((t) => fresh.some((f) => f.name === t.name))) {
+          shelved.splice(shelved.indexOf(g), 1);
+          carriedGuides.push(g);
+        }
+      }
+      return fresh.map((t) => t.name);
+    },
+    restore(names) {
+      bring(catalogue.filter((t) => names.includes(t.name)));
     },
     load(need) {
       const picks = bring(pickTools(catalogue, need));

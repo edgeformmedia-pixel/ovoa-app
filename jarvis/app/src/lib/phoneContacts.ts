@@ -1,5 +1,6 @@
 import { Contact, ContactField, requestPermissionsAsync } from "expo-contacts";
 import { Platform } from "react-native";
+import { literalRecipient, looksLikeValue, noteSearch, pickRecipient, sameEmail, samePhone, type Resolved } from "./recipientGuard";
 import { nameScore, SOUNDS_LIKE_THRESHOLD } from "./soundsLike";
 
 /** The iPhone's Contacts app: search, add, edit, and turning names into numbers or emails. */
@@ -25,14 +26,6 @@ export type ContactMatch = { id: string; name: string; detail: string };
 
 const FIELDS = [ContactField.FULL_NAME, ContactField.COMPANY, ContactField.PHONES, ContactField.EMAILS] as const;
 const SEARCH_FIELDS = [...FIELDS, ContactField.JOB_TITLE, ContactField.BIRTHDAY] as const;
-
-const digits = (s: string) => s.replace(/\D/g, "");
-const samePhone = (a: string, b: string) => {
-  const [x, y] = [digits(a), digits(b)];
-  // Ignore country codes: compare the last 10 digits.
-  return !!x && !!y && x.slice(-10) === y.slice(-10);
-};
-const sameEmail = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 const NAME_PARTS = [
   ContactField.GIVEN_NAME,
@@ -105,6 +98,17 @@ export async function findContacts(name: string): Promise<ContactMatch[]> {
 export async function searchContacts({ query }: { query: string }) {
   await ensureAccess();
   const found = await matchContacts(query, SEARCH_FIELDS, 10);
+  // The model passes on a number from here, or the contact's real spelling, and
+  // either looks certain on its own; so the numbers and addresses of the matches
+  // this wasn't sure of are remembered as unsure (recipientGuard.ts).
+  noteSearch(
+    query,
+    found.map((c) => ({
+      ...(c as unknown as Named),
+      soundsLike: c.soundsLike,
+      values: [...(c.phones ?? []).map((p) => p.number), ...(c.emails ?? []).map((e) => e.address)],
+    })),
+  );
   return found.map((c) => ({
     name: c.fullName,
     // Found by sound, not spelling: the user probably means this person.
@@ -119,28 +123,30 @@ export async function searchContacts({ query }: { query: string }) {
   }));
 }
 
-export type Recipient = { input: string; value: string | null; label: string };
+/** `exact`: certainly who was meant, so a text to them may go out with no tap (recipientGuard.ts). */
+export type Recipient = Resolved & { input: string };
 
 /**
  * Turns what the assistant passed ("Sarah", "555-1234", "sam@x.com") into a
- * number or email. Names use the first matching contact that has one.
+ * number or email. Names use the first matching contact that has one, a
+ * word-for-word match first.
  */
 export async function resolveRecipient(input: string, kind: "phone" | "email"): Promise<Recipient> {
-  const looksLike = kind === "phone" ? digits(input).length >= 3 && !/[a-z]/i.test(input) : input.includes("@");
-  if (looksLike) return { input, value: input, label: input };
+  if (looksLikeValue(input, kind)) return { input, ...literalRecipient(input) };
 
   await ensureAccess();
-  const found = await matchContacts(input, FIELDS, 10);
-  const exact = found.filter((c) => c.fullName?.toLowerCase() === input.toLowerCase());
-  for (const c of [...exact, ...found]) {
+  // More than a search shows: "only one contact has this name" means nothing if
+  // the second one was past the limit.
+  const found = await matchContacts(input, FIELDS, 50);
+  const candidates = found.map((c) => {
     const phones = c.phones ?? [];
     const value =
       kind === "phone"
         ? (phones.find((p) => p.label === "mobile" || p.label === "iPhone") ?? phones[0])?.number
         : c.emails?.[0]?.address;
-    if (value) return { input, value, label: `${c.fullName} (${value})` };
-  }
-  return { input, value: null, label: `${input}: no ${kind === "phone" ? "number" : "email"} found in Contacts` };
+    return { ...(c as unknown as Named), soundsLike: c.soundsLike, value };
+  });
+  return { input, ...pickRecipient(input, candidates, kind) };
 }
 
 export async function createContact(a: CreateArgs) {

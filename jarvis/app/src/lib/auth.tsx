@@ -23,12 +23,23 @@ const RESTORE_RETRY_MS = [3000, 10_000, 30_000, 60_000, 120_000];
 // Storage key kept from the original app name so existing sign-ins survive.
 const TOKEN_KEY = "jarvis.session";
 /**
- * Set the first time this phone holds a session, and never cleared — signing
- * out does not make the account stop existing. sign-in.tsx reads it to choose
- * which form to open on: 36 of the 38 devices in device_logs only ever tried to
- * sign in, never once tried to sign up, and left after 4-7 401s (2026-09-21).
+ * Set the first time this phone holds a session, and not cleared by signing out
+ * — that does not make the account stop existing; deleting it does (clear).
+ * sign-in.tsx reads it to choose which form to open on: 36 of the 38 devices in
+ * device_logs only ever tried to sign in, never once tried to sign up, and left
+ * after 4-7 401s (2026-09-21).
  */
 const HAS_ACCOUNT_KEY = "ovoa.hasAccount";
+/**
+ * The address of the last account signed in on this phone, kept through sign
+ * out so the sign-in form opens with it filled in. Signed out 20 s after a
+ * restore while the server moved accounts (build 59, device_logs 2026-09-23
+ * 16:25), someone met an empty form, tapped Create an account, typed the
+ * address they already had and got "An account with that email already
+ * exists". Only in the keychain, never logged; forgotten when the account
+ * itself is deleted (clear).
+ */
+const LAST_EMAIL_KEY = "ovoa.lastEmail";
 
 /** The signed-in session, for code that runs outside React (a background push, say). */
 export const savedToken = () => storage.get(TOKEN_KEY).catch(() => null);
@@ -58,7 +69,9 @@ type AuthState = {
   codeSentAt: number | null;
   /** This phone has been signed in before, so "Sign in" is the likelier form. */
   hasAccountHere: boolean;
-  /** Forget the session locally (e.g. after deleting the account). */
+  /** The address last signed in with on this phone, for the sign-in form to start with. */
+  lastEmail: string | null;
+  /** After deleting the account: forget it on this phone, its session, its address and that it was here. */
   clear: () => Promise<void>;
 };
 
@@ -79,6 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
   const [onboarding, setOnboardingState] = useState(false);
   const [hasAccountHere, setHasAccountHere] = useState(false);
+  const [lastEmail, setLastEmail] = useState<string | null>(null);
   const [codeSentAt, setCodeSentAt] = useState<number | null>(null);
   /** A new account on this phone: the permissions step is kept for it, even across a restart (lib/firstOpen.ts). */
   const setOnboarding = useCallback((on: boolean) => {
@@ -106,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => whenCodeNeeded(null);
   }, [refreshUser]);
 
-  const clear = useCallback(async () => {
+  const endSession = useCallback(async () => {
     // Everything this phone keeps for one person goes with their session (signOut.ts).
     await resetForSignOut();
     await storage.remove(TOKEN_KEY);
@@ -116,17 +130,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, [setUser]);
 
+  /** Remembers who signed in, for the form after they sign out (LAST_EMAIL_KEY). */
+  const rememberAccount = useCallback(async (email: string) => {
+    setHasAccountHere(true);
+    setLastEmail(email);
+    await storage.set(HAS_ACCOUNT_KEY, "1").catch(logFail("auth: remembering this phone has an account"));
+    await storage.set(LAST_EMAIL_KEY, email).catch(logFail("auth: remembering the last address"));
+  }, []);
+
   // The server said the session is gone (expired, revoked, the account deleted
-  // elsewhere): sign out here too, once, rather than failing every request.
+  // elsewhere): sign out here too, once, rather than failing every request. The
+  // address stays: the account is very likely still there, and the form opens on
+  // Sign in with it filled in.
   useEffect(() => {
     whenSessionDies((dead) => {
       if (dead !== tokenRef.current) return; // a request from an earlier session
       devlog("warn", "auth: the server no longer knows this session; signing out");
       tokenRef.current = null;
-      void clear();
+      void endSession();
     });
     return () => whenSessionDies(null);
-  }, [clear]);
+  }, [endSession]);
 
   useEffect(() => {
     let stopped = false;
@@ -134,6 +158,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let attempt = 0;
     let saved: string | null = null;
     let seen: string | null | void = null;
+    let known: string | null | void = null;
 
     /** Tries the saved session. False when it's worth trying again later (no network). */
     const restore = async () => {
@@ -145,11 +170,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(user);
         // A restored session never goes through start(), so without this every
         // phone that signed in before this shipped would still open on "Create
-        // account" the next time it was signed out.
-        if (seen !== "1") {
-          setHasAccountHere(true);
-          await storage.set(HAS_ACCOUNT_KEY, "1").catch(logFail("auth: remembering this phone has an account"));
-        }
+        // account" the next time it was signed out, and with an empty address.
+        if (seen !== "1" || known !== user.email) await rememberAccount(user.email);
         devlog("log", attempt ? `auth: session restored on try ${attempt + 1}` : "auth: session restored");
         return true;
       } catch (err) {
@@ -190,7 +212,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (async () => {
       // Before setLoading(false), so the sign-in screen never renders the wrong form first.
       seen = await storage.get(HAS_ACCOUNT_KEY).catch(logFail("auth: reading hasAccount"));
-      setHasAccountHere(seen === "1");
+      known = await storage.get(LAST_EMAIL_KEY).catch(logFail("auth: reading the last address"));
+      setLastEmail(known || null);
+      setHasAccountHere(seen === "1" || !!known);
       try {
         saved = await storage.get(TOKEN_KEY);
         if (!saved) {
@@ -217,9 +241,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // and throwing from here threw away an account that had just been created.
     setToken(token);
     setUser(user);
-    setHasAccountHere(true);
     await storage.set(TOKEN_KEY, token).catch(logFail("auth: saving the session"));
-    await storage.set(HAS_ACCOUNT_KEY, "1").catch(logFail("auth: remembering this phone has an account"));
+    await rememberAccount(user.email);
   };
 
   const value: AuthState = {
@@ -257,7 +280,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await Promise.race([tellServer, new Promise((r) => setTimeout(r, SIGN_OUT_WAIT_MS))]);
       }
       tokenRef.current = null;
-      await clear();
+      await endSession();
     },
     setUser,
     refreshUser,
@@ -265,7 +288,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     finishOnboarding: () => setOnboarding(false),
     codeSentAt,
     hasAccountHere,
-    clear,
+    lastEmail,
+    // Its only callers delete the account first (Settings, and "Use a different
+    // email?" on the code screen), so nothing of it is kept: the form after it
+    // opens on Create an account, empty, rather than offering an address that no
+    // longer has an account behind it.
+    clear: async () => {
+      await endSession();
+      setHasAccountHere(false);
+      setLastEmail(null);
+      await storage.remove(LAST_EMAIL_KEY).catch(logFail("auth: forgetting the last address"));
+      await storage.remove(HAS_ACCOUNT_KEY).catch(logFail("auth: forgetting this phone had an account"));
+    },
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

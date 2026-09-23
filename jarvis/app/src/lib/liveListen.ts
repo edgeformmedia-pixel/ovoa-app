@@ -5,6 +5,7 @@ import { devlog, devlogRepeat, devlogSettled } from "./devlog";
 import { EarWords } from "./earWords";
 import { audioWhy, onScreen } from "./foreground";
 import { listenLive, onDeviceSpeechBuilt } from "./onDeviceTranscribe";
+import { storage } from "./storage";
 import { nameCount } from "./turnGate";
 import { WakeWindow, type WakeReason } from "./wakeWindow";
 
@@ -44,6 +45,13 @@ import { WakeWindow, type WakeReason } from "./wakeWindow";
 /** Restarting backs off instead of retrying on the same beat forever (device_logs, 2026-09-21: 4,922 identical failures). */
 const MIN_RESTART_GAP_MS = 3000;
 const RESTART_BACKOFF_MS = [3000, 6000, 12000, 30000];
+/**
+ * ...except when iOS said '!pri' (OSStatus 561017449, insufficient priority):
+ * another audio session outranks ours for the moment, and it usually clears in
+ * well under a second. The long backoff above left the ear deaf for up to 14.6 s
+ * after one (device_logs, 2026-09-23). These don't count towards giving up.
+ */
+const PRIORITY_BACKOFF_MS = [500, 1000, 2000, 5000];
 /** After this many restarts in a row achieve nothing, stop and let the caller back off. */
 const MAX_RESTARTS = 5;
 /**
@@ -80,11 +88,57 @@ let lastEarLevelAt = 0;
 /** The open ear's hooks, fed by the one set of native listeners below. */
 let hooks: { word: (text: string) => void; name: () => void; level: (dbfs: number) => void } | null = null;
 let listening = false;
+/**
+ * The ear said it stopped on its own (an interruption, iOS resetting its audio,
+ * a microphone it couldn't pick up again): watchEar starts it again now rather
+ * than after EAR_ALIVE_MS of silence.
+ */
+let stoppedUnasked = false;
+
+/**
+ * The ear has listened on this phone before, so its speech model is installed.
+ * iOS 26 still reports "downloading" on every start (the model is asked for
+ * each time, NameEarModule.swift Analyzer26.prepare), and every restart logged
+ * "fetching its speech model (first use)" (device_logs, 2026-09-23).
+ */
+const MODEL_READY_KEY = "ovoa.earModelReady";
+let modelReady = false;
+
+/** The echo-cancel line last logged (logEcho), so it is written once and again only when it changes. */
+let echoLogged = "";
+
+/**
+ * Whether this phone takes its own speaker out of the microphone, the native
+ * fix for OVOA answering its own voice ("Give me a second. just fine", messages
+ * 2026-09-23). Apple offers it only on some 2024 and later iPhones, and whether
+ * iOS applies it to a session that is already active is unproven, so this is
+ * how a device log shows it: on the first "listening", and again when it
+ * changes (a headset turns it off). Builds before 2026-09-23 don't report it.
+ */
+function logEcho(e: NameEar.NameEarState) {
+  if (e.echoCancelAvailable === undefined) return;
+  const detail = {
+    echoCancelAvailable: e.echoCancelAvailable,
+    echoCancelled: e.echoCancelled,
+    echoCancelReactivated: e.echoCancelReactivated,
+    echoCancelError: e.echoCancelError,
+    sessionSampleRate: e.sessionSampleRate,
+  };
+  const key = JSON.stringify(detail);
+  if (key === echoLogged) return;
+  echoLogged = key;
+  const echo = !e.echoCancelAvailable ? "not on this phone" : e.echoCancelled ? "on" : "off";
+  devlog("voice", `the phone's ear: echo cancelling ${echo}, audio session at ${e.sessionSampleRate} Hz`, detail, { collapse: false });
+}
 
 /** The native ear's events, listened to once for the life of the app. */
 function listenToEar() {
   if (listening || !NameEar.nameEarAvailable) return;
   listening = true;
+  storage
+    .get(MODEL_READY_KEY)
+    .then((v) => (modelReady ||= v === "1"))
+    .catch(() => {});
   NameEar.addListener("onLevel", ({ dbfs }) => {
     lastEarLevelAt = Date.now();
     hooks?.level(dbfs);
@@ -97,12 +151,26 @@ function listenToEar() {
     hooks?.word(text);
   });
   NameEar.addListener("onName", () => hooks?.name());
-  NameEar.addListener("onState", ({ state, reason, engine }) => {
+  NameEar.addListener("onState", (event) => {
+    const { state, reason, cause, engine } = event;
     if (state === "error") devlog("err", "the phone's ear reported a problem", reason);
-    else if (state === "downloading") devlog("voice", "the phone is fetching its speech model (first use)");
-    else if (state === "listening") {
+    else if (state === "downloading") {
+      if (modelReady) devlog("voice", "the phone's ear asked iOS for its speech model again (installed before)", undefined, { level: "debug" });
+      else devlog("voice", "the phone is fetching its speech model (first use)");
+    } else if (state === "listening") {
       lastEarLevelAt = Date.now();
+      stoppedUnasked = false;
+      if (!modelReady) {
+        modelReady = true;
+        storage.set(MODEL_READY_KEY, "1").catch(() => {});
+      }
       if (engine) devlog("voice", `the phone's ear is listening (${engine === "analyzer" ? "iOS 26 transcriber" : "on-device recogniser"})`);
+      logEcho(event);
+    } else if (state === "stopped" && cause) {
+      // With a cause it stopped on its own; without one it's a stop() asked for here.
+      if (!holders.size) return;
+      stoppedUnasked = true;
+      devlog("voice", `the phone's ear stopped on its own (${cause})`, reason);
     }
   });
 }
@@ -195,6 +263,32 @@ function queueEar<T>(op: () => Promise<T>): Promise<T> {
 /** A restart in flight: watchEar waits for it rather than asking for another. */
 let restarting: Promise<void> | null = null;
 
+/**
+ * Someone is using the phone's ear, or it is running: the audio session has to
+ * stay play-and-record. Switching it to playback under a running ear is what
+ * iOS refused with '!pri' (OSStatus 561017449), leaving the ear deaf (voice.ts
+ * applyAudioMode, device_logs 2026-09-23).
+ */
+export function earHeld() {
+  return holders.size > 0 || NameEar.isRunning();
+}
+
+/** Called once the ear has stopped and nobody holds it: voice.ts puts the audio session back then. */
+let earReleased: (() => void) | null = null;
+
+/**
+ * What to do once the last holder has let go and the ear has stopped. A
+ * callback rather than an import, because voice.ts imports this file.
+ */
+export function onEarReleased(fn: () => void) {
+  earReleased = fn;
+}
+
+/** '!pri': another audio session outranks ours right now (see PRIORITY_BACKOFF_MS). */
+function wasOutranked(err: unknown) {
+  return /561017449|!pri/i.test(err instanceof Error ? err.message : String(err));
+}
+
 /** Keeps the phone's ear running for `holder`, starting it if it isn't. Starting only works in the foreground. */
 export async function holdEar(holder: string, name: string) {
   listenToEar();
@@ -232,18 +326,44 @@ export async function holdEar(holder: string, name: string) {
 export function releaseEar(holder: string) {
   if (!holders.delete(holder) || holders.size) return;
   if (source === "ear") source = null;
-  queueEar(() => NameEar.stop()).catch(() => {});
+  queueEar(async () => {
+    await NameEar.stop();
+    // Only now, with the ear stopped, may the audio session change (see earHeld).
+    if (!holders.size) earReleased?.();
+  }).catch(() => {});
 }
 
-/** The ear went silent on screen: stop it and start it again. One restart at a time, for everyone. */
+/**
+ * The ear went silent or stopped on screen: start it again. One restart at a
+ * time, for everyone. The light way where the build has it (NameEar.restartEngine:
+ * a new engine and tap, the recogniser and its model kept), else stop and start,
+ * which builds everything again. What was being said when it stopped is kept
+ * (no heard.reset()): the restarted recogniser's first words start a new stretch
+ * in earWords.ts, which hands the old one on first.
+ */
 function restartEar(name: string) {
   restarting ??= queueEar(async () => {
-    await NameEar.stop();
     // Everyone let go while this waited: it stays stopped.
     if (!holders.size) return;
+    const started = () => {
+      lastEarLevelAt = Date.now();
+      // Only once it's back: a restart that failed leaves the next one due at the backoff.
+      stoppedUnasked = false;
+    };
+    if (typeof NameEar.restartEngine === "function") {
+      try {
+        await NameEar.restartEngine();
+        return started();
+      } catch (err) {
+        // Outranked, a full start would be refused the same way: that is for the backoff.
+        if (wasOutranked(err)) throw err;
+        devlog("voice", "the phone's ear couldn't restart lightly; starting it afresh", err instanceof Error ? err.message : String(err));
+      }
+    }
+    await NameEar.stop();
+    if (!holders.size) return;
     await NameEar.start({ name });
-    lastEarLevelAt = Date.now();
-    heard.reset();
+    started();
   }).finally(() => {
     restarting = null;
   });
@@ -256,10 +376,11 @@ export type EarEvents = {
   onLevel: (level: number) => void;
   /** Words still being recognised (they may change). */
   onInterim: (text: string) => void;
-  /** Words that won't change any more. `sentenceEnd`: the speaker paused after them. */
-  onFinal: (text: string, sentenceEnd: boolean) => void;
-  /** Nobody has said a new word for a moment. */
-  onQuiet: () => void;
+  /**
+   * Words that won't change any more. `sentenceEnd`: the speaker paused after them.
+   * `lastWordAt`: when they were last heard changing, a pause before this is called (earWords.ts).
+   */
+  onFinal: (text: string, sentenceEnd: boolean, lastWordAt: number) => void;
   /** Listening stopped and couldn't be brought back (off screen too long, restarts failing). */
   onDown: (err: Error) => void;
   /** Room mode: the window opened, and the ear's words go to the gate: the name, the button, a follow-up. */
@@ -301,6 +422,8 @@ export async function openEar(
   let timer: ReturnType<typeof setInterval> | null = null;
   /** Restarts in a row that achieved nothing. Resets the moment one works. */
   let restartFailures = 0;
+  /** Restarts in a row refused with '!pri'. Resets the moment one works. */
+  let outranked = 0;
   let lastRestartAt = 0;
   /** When the ear went silent with the app off screen. 0 while it's on screen. */
   let offScreenAt = 0;
@@ -335,9 +458,20 @@ export async function openEar(
     events.onSleep?.();
   };
 
-  /** The ear's heartbeat is its loudness report. Silent off screen is iOS; silent on screen, it's started again. */
+  /** How long after the last restart the next may go. */
+  const restartGap = () => {
+    if (outranked) return PRIORITY_BACKOFF_MS[Math.min(outranked, PRIORITY_BACKOFF_MS.length) - 1];
+    if (restartFailures) return RESTART_BACKOFF_MS[restartFailures - 1] ?? 30_000;
+    // Stopped and said so: at once, bar a beat so an ear that keeps stopping can't spin.
+    return stoppedUnasked ? PRIORITY_BACKOFF_MS[0] : MIN_RESTART_GAP_MS;
+  };
+
+  /**
+   * The ear's heartbeat is its loudness report, and it says when iOS stops it.
+   * Silent or stopped off screen is iOS; on screen, it's started again.
+   */
   const watchEar = (now: number) => {
-    const quiet = now - lastEarLevelAt > EAR_ALIVE_MS;
+    const quiet = stoppedUnasked || now - lastEarLevelAt > EAR_ALIVE_MS;
     if (quiet && !onScreen()) {
       if (!offScreenAt) {
         offScreenAt = now;
@@ -353,20 +487,30 @@ export async function openEar(
       offScreenAt = 0;
       // Refusals collected on the way out say nothing about the microphone on the way in.
       restartFailures = 0;
+      outranked = 0;
       lastRestartAt = 0;
     }
-    const gap = restartFailures ? (RESTART_BACKOFF_MS[restartFailures - 1] ?? 30_000) : MIN_RESTART_GAP_MS;
-    if (restarting || !quiet || now - lastRestartAt <= gap) return;
+    if (restarting || !quiet || now - lastRestartAt <= restartGap()) return;
     lastRestartAt = now;
-    devlogRepeat("ear restart attempt", "voice", `no sound from the phone's ear for ${now - lastEarLevelAt} ms; starting it again`);
+    devlogRepeat(
+      "ear restart attempt",
+      "voice",
+      stoppedUnasked ? "the phone's ear stopped; starting it again" : `no sound from the phone's ear for ${now - lastEarLevelAt} ms; starting it again`,
+    );
     restartEar(name)
       .then(() => {
         restartFailures = 0;
+        outranked = 0;
         devlogSettled("ear restart");
       })
       .catch((err) => {
         // The app left the screen mid-restart: iOS was never going to allow it.
         if (!onScreen() || closed) return;
+        if (wasOutranked(err)) {
+          outranked++;
+          devlogRepeat("ear restart", "voice", `another audio session outranks the phone's ear; trying again in ${restartGap()} ms`, audioWhy(err));
+          return;
+        }
         restartFailures++;
         const where = audioWhy(err, { attempt: `${restartFailures}/${MAX_RESTARTS}` });
         if (restartFailures >= MAX_RESTARTS) {
@@ -428,7 +572,7 @@ export async function openEar(
     devlog("voice", `stopped listening on the phone${room ? ` · ${window.opens} waking${window.opens === 1 ? "" : "s"}` : ""}`);
   }
 
-  const detach = heard.attach({ onInterim: events.onInterim, onFinal: events.onFinal, onQuiet: events.onQuiet });
+  const detach = heard.attach({ onInterim: events.onInterim, onFinal: events.onFinal });
   const mine = {
     // The phone's own wider match on the stretch so far (the same rule as the
     // server's). The transcript grows as the person talks, so only one more

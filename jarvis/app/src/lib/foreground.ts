@@ -79,6 +79,14 @@ const KNOWN = [
     means: "'!int' AVAudioSessionErrorCodeCannotInterruptOthers — iOS will not open a microphone for an app that is not on screen",
   },
   {
+    // Not a foreground refusal, and not fixed by waiting for the app: it came with the app on
+    // screen, when the audio mode was switched under the running ear (device_logs, 2026-09-23).
+    match: "561017449",
+    means:
+      "'!pri' AVAudioSessionErrorCodeInsufficientPriority — another audio session outranks OVOA's right now " +
+      "(a call, Siri, another app's audio, or OVOA's own audio mode switched under the running microphone); not about being off screen",
+  },
+  {
     match: "Session activation failed",
     means: "the audio session would not activate (off screen, or another app holds it)",
   },

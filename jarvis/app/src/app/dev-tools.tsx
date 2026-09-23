@@ -483,8 +483,10 @@ function UsageToday() {
  * else, and the block is hidden for them. "Just me" tries an engine on this
  * account alone; "Everyone" flips it for every phone, within a minute, with no
  * deploy. An engine with no key on the server is shown but can't be picked.
- * The engines are GLM and Gemini (api/src/llm.ts); the voices are Deepgram's
- * Aura-2 and the iPhone's own.
+ * The engine buttons are whatever the server lists (api/src/llm.ts ENGINES), so
+ * a new one — GLM on Workers AI, the fast one for spoken turns — appears here,
+ * in both rows, with no app change. The voices are Deepgram's Aura-2 and the
+ * iPhone's own.
  */
 function EnginePicker() {
   const { token, user } = useSession();

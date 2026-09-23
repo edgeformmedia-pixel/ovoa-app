@@ -25,15 +25,18 @@ type GenerateOptions = {
   json?: { schema: Record<string, unknown> };
   /** Skip most of the model's thinking, for quick yes/no calls. */
   fast?: boolean;
+  /** Stops the request: llm.ts passes the caller's, so a call called off (the overheard-line check's "no") costs no more. */
+  signal?: AbortSignal;
 };
 
 /**
  * One plain call. Returns the text and, beside it, Gemini's own token counts
  * (usageMetadata) so the caller can write down what the call cost.
  */
-export async function generate({ apiKey, model, system, turns, json, fast }: GenerateOptions): Promise<{ text: string; usage: unknown }> {
+export async function generate({ apiKey, model, system, turns, json, fast, signal }: GenerateOptions): Promise<{ text: string; usage: unknown }> {
   const res = await fetch(`${BASE}/${model}:generateContent`, {
     method: "POST",
+    signal,
     headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },

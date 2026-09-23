@@ -275,7 +275,19 @@ export const isPhoneLookup = (name: string) => lookupTools.some((t) => t.name ==
 const spec = ({ name, description, parameters }: PhoneTool): ToolSpec => ({ name, description, parameters });
 
 /** What the app on the other end can do, as it reports in the chat request. */
-export type PhoneCaps = { lookups: boolean; capabilities: string[]; autoSendTexts?: boolean };
+export type PhoneCaps = {
+  lookups: boolean;
+  capabilities: string[];
+  autoSendTexts?: boolean;
+  /**
+   * The build only sends a text by itself to a contact it is sure of: an exact,
+   * unique match for the name (app lib/recipientGuard.ts). A near match or one
+   * of two gets the Messages sheet instead. Builds before it sent to the first
+   * contact that sounded like the name: "Sth Thai Ecker boss" went out as
+   * "Ty's boss" (messages, 2026-09-23).
+   */
+  recipientGuard?: boolean;
+};
 
 export function phoneToolSpecs(caps: PhoneCaps): ToolSpec[] {
   const lookups = caps.lookups
@@ -354,26 +366,61 @@ export function phoneSummary(name: string, a: Args) {
   return lines.join("\n");
 }
 
-export function phonePrompt(caps: PhoneCaps) {
+/**
+ * How this turn's prompt is worded. `voice`: a spoken turn. `carries`: whether a
+ * tool is in front of the model this turn. A spoken turn carries a handful
+ * (toolbelt.ts SPOKEN_CORE), and a line telling it to use a tool it doesn't
+ * have sent it round more_tools first, a whole extra round.
+ */
+export type PhonePromptOptions = { voice?: boolean; carries?: (tool: string) => boolean };
+
+export function phonePrompt(caps: PhoneCaps, { voice = false, carries = () => true }: PhonePromptOptions = {}) {
+  // Out loud, a text or a call goes straight to the name: phone_message_compose
+  // and phone_call take one and the phone finds the contact. Searching first
+  // cost a round, a phone pause and a resume (one text took 23.0 s,
+  // 2026-09-23). Only where the build guards auto-send (recipientGuard): on
+  // older builds the search is what stops a text going to a sound-alike.
+  const byName = voice && caps.lookups && !!caps.recipientGuard;
   return [
     "You can use the user's iPhone with the phone_ tools: Contacts, Calendar, Reminders, Messages, Mail, calls, and running shortcuts.",
-    "'Add a contact', 'my calendar', 'remind me' mean the iPhone apps unless the user mentions Google.",
+    "'Add a contact' and 'my calendar' mean the iPhone apps unless the user mentions Google. 'Remind me' is OVOA's own reminder (reminder_set, it buzzes the band); the Reminders app only when they name it.",
     "Changes and composing messages or calls wait for the user to tap Approve in the app. Never say one is done until approved.",
-    caps.autoSendTexts
-      ? "The user has \"Send texts automatically\" on: phone_message_compose sends the text outright, with no Messages sheet and nothing for them to tap. Say it as sent (\"Sent Malachi that text\"). Never say you opened Messages, that it's ready to send, or that they need to tap Send — that is wrong here and makes them repeat themselves. Emails still need a tap; say so for those only."
-      : "Texts and emails open a compose sheet the user still has to tap Send in; say so.",
-    caps.lookups
-      ? "Look things up with phone_contacts_search, phone_calendar_events, and phone_reminders_list before changing them or when you need a number or email. Pass phone numbers to phone_message_compose and phone_call when you have them."
-      : "You can't read the phone's contacts, calendar, or reminders from here. Pass contact names to phone_message_compose, phone_email_compose, and phone_call and the app looks them up. To change or delete an existing event or reminder, tell the user to ask in the OVOA app.",
-    caps.capabilities.includes("health")
-      ? "Use phone_health_summary for questions about heart rate, sleep, workouts, or other Apple Health data. You are not a medical professional."
-      : "Apple Health isn't available in this version of the app. If asked about heart rate, sleep, or workouts, say it needs the installed OVOA app (a development build), not Expo Go.",
+    !caps.autoSendTexts
+      ? "Texts and emails open a compose sheet the user still has to tap Send in; say so."
+      : caps.recipientGuard
+        ? // A guarded build sends by itself only to a contact it is sure of, and
+          // opens Messages for the rest (app lib/phoneActions.ts); the reply is
+          // written before the phone decides. A heard name passed straight in
+          // (byName) is often not a contact's name word for word, so "Say it
+          // as sent" would have OVOA saying "Sent" over an unsent Messages
+          // sheet in a pocket. "Texting Malachi now" is true either way, and
+          // isn't the "ready for you to send" that made them ask again.
+          "The user has \"Send texts automatically\" on: phone_message_compose sends the text by itself when the phone is sure who it's for, and opens Messages for them to check when it isn't. You can't tell which, so say you're texting them (\"Texting Malachi now\"). Never say it was sent, that it's ready to send, or that they need to tap Send. Emails still need a tap; say so for those only."
+        : "The user has \"Send texts automatically\" on: phone_message_compose sends the text outright, with no Messages sheet and nothing for them to tap. Say it as sent (\"Sent Malachi that text\"). Never say you opened Messages, that it's ready to send, or that they need to tap Send — that is wrong here and makes them repeat themselves. Emails still need a tap; say so for those only.",
+    !caps.lookups
+      ? "You can't read the phone's contacts, calendar, or reminders from here. Pass contact names to phone_message_compose, phone_email_compose, and phone_call and the app looks them up. To change or delete an existing event or reminder, tell the user to ask in the OVOA app."
+      : byName
+        ? "To text or call someone, pass their name as you heard it straight to phone_message_compose or phone_call: the phone finds them in Contacts. Search with phone_contacts_search only when they ask about a contact (a number, an email, a birthday). Look an event or reminder up with phone_calendar_events or phone_reminders_list before changing it."
+        : "Look things up with phone_contacts_search, phone_calendar_events, and phone_reminders_list before changing them or when you need a number or email. Pass phone numbers to phone_message_compose and phone_call when you have them.",
+    !caps.capabilities.includes("health")
+      ? "Apple Health isn't available in this version of the app. If asked about heart rate, sleep, or workouts, say it needs the installed OVOA app (a development build), not Expo Go."
+      : !carries("phone_health_summary")
+        ? ""
+        : voice
+          ? // The care section already says the medical line; out loud every sentence is prefill.
+            "Use phone_health_summary for questions about heart rate, sleep, workouts, or other Apple Health data."
+          : "Use phone_health_summary for questions about heart rate, sleep, workouts, or other Apple Health data. You are not a medical professional.",
     caps.lookups
       ? "Names the user says out loud are transcribed by sound, so they may be misspelled (\"Ty Eckard\" for \"Tigh Eckart\"). phone_contacts_search also returns contacts whose names sound alike, marked with a note; if one fits, treat it as the person they meant and use the contact's real spelling. If a search finds nobody, try again with just the first name or just the last name before saying you couldn't find them."
       : "",
-    caps.capabilities.includes("location")
-      ? "phone_location gives their current position. Look it up rather than asking where they are, and before searching for anything local — the weather, what's open nearby, how far something is. Don't volunteer their coordinates; say the place."
-      : "",
+    !caps.capabilities.includes("location")
+      ? ""
+      : carries("phone_location")
+        ? "phone_location gives their current position. Look it up rather than asking where they are, and before searching for anything local — the weather, what's open nearby, how far something is. Don't volunteer their coordinates; say the place."
+        : voice
+          ? // A spoken turn doesn't carry phone_location; where the phone last said they were rides on the message (index.ts runTurn).
+            "Where they are, when the phone has said lately, is in the square brackets at the start of their message: use it for the weather and anything nearby rather than asking. If it isn't there, get their location through more_tools. Say the place, never coordinates."
+          : "",
     "If you're not sure which person, event, or reminder the user means, ask.",
   ]
     .filter(Boolean)

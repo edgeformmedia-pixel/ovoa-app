@@ -264,6 +264,8 @@ const memo = new Map<string, { plan: Plan; email: string; at: number }>();
 const SITE_BACKOFF_MS = 60_000;
 let siteDownUntil = 0;
 let warnedNoKey = false;
+/** People whose plan is being asked about after a reply (loadPlan's waitUntil), so it's asked once. */
+const refreshing = new Set<string>();
 
 /** Forgets what this isolate remembered about one person (or everyone). */
 export function forgetPlan(userId?: string) {
@@ -274,6 +276,19 @@ export function forgetPlan(userId?: string) {
   }
 }
 
+type PlanOptions = {
+  force?: boolean;
+  now?: number;
+  fetcher?: Fetcher;
+  /**
+   * Work that can finish after the reply (ExecutionContext.waitUntil). With it,
+   * a tier the site gave within the day stands while the site is asked again
+   * afterwards: that ask took up to 4 s at the start of a /chat, once every ten
+   * minutes per person (PLAN_FRESH_MS), before the turn had begun.
+   */
+  waitUntil?: (work: Promise<unknown>) => void;
+};
+
 /**
  * The person's plan, and their email (for the development-account check).
  * `force` asks the site even when the cached answer is fresh: that is what
@@ -282,7 +297,7 @@ export function forgetPlan(userId?: string) {
 export async function loadPlan(
   env: Env,
   userId: string,
-  { force = false, now = Date.now(), fetcher }: { force?: boolean; now?: number; fetcher?: Fetcher } = {},
+  { force = false, now = Date.now(), fetcher, waitUntil }: PlanOptions = {},
 ): Promise<{ plan: Plan; email: string } | null> {
   const hit = memo.get(userId);
   if (!force && hit && now - hit.at < MEMO_MS) return hit;
@@ -301,31 +316,50 @@ export async function loadPlan(
   let { plan, ask } = planFromRow(row, now, keySet);
   const overridden = plan.from === "override" || plan.from === "no_key";
   if (!overridden && (ask || force) && (force || now >= siteDownUntil)) {
-    const got = await fetchMembership(env, row.email, fetcher);
-    if (got) {
-      plan = { ...got, from: "site" };
-      await env.DB.prepare(
-        `UPDATE users SET plan_tier = ?, plan_status = ?, plan_checked_at = ?, plan_trial_ends_at = ?, plan_renews_at = ?
-          WHERE id = ?`,
-      )
-        .bind(got.tier, got.status, now, got.trialEndsAt, got.renewsAt, userId)
-        .run()
-        .catch((err: unknown) => console.error("ovoa.err plan: couldn't keep the answer", err));
-      if (got.tier !== row.plan_tier) say("plan", { user: userId, was: row.plan_tier ?? "unknown", now: got.tier, status: got.status });
+    if (!force && waitUntil && plan.from === "stale") {
+      if (!refreshing.has(userId)) {
+        refreshing.add(userId);
+        waitUntil(askSite(env, userId, row, plan, now, fetcher).finally(() => refreshing.delete(userId)));
+      }
     } else {
-      siteDownUntil = now + SITE_BACKOFF_MS;
-      say("plan", { user: userId, outcome: "kept", tier: plan.tier, from: plan.from });
+      plan = await askSite(env, userId, row, plan, now, fetcher);
     }
   }
-  const entry = { plan, email: row.email, at: now };
+  return remember(userId, plan, row.email, now);
+}
+
+function remember(userId: string, plan: Plan, email: string, now: number) {
+  const entry = { plan, email, at: now };
   memo.delete(userId);
   memo.set(userId, entry);
   if (memo.size > MEMO_MAX) memo.delete(memo.keys().next().value!);
   return entry;
 }
 
-export async function planFor(env: Env, userId: string): Promise<Plan> {
-  return (await loadPlan(env, userId))?.plan ?? FREE;
+/** Asks the site and keeps its answer; `had` when it couldn't say. */
+async function askSite(env: Env, userId: string, row: PlanRow, had: Plan, now: number, fetcher?: Fetcher): Promise<Plan> {
+  const got = await fetchMembership(env, row.email, fetcher);
+  if (!got) {
+    siteDownUntil = now + SITE_BACKOFF_MS;
+    say("plan", { user: userId, outcome: "kept", tier: had.tier, from: had.from });
+    return had;
+  }
+  const plan: Plan = { ...got, from: "site" };
+  await env.DB.prepare(
+    `UPDATE users SET plan_tier = ?, plan_status = ?, plan_checked_at = ?, plan_trial_ends_at = ?, plan_renews_at = ?
+      WHERE id = ?`,
+  )
+    .bind(got.tier, got.status, now, got.trialEndsAt, got.renewsAt, userId)
+    .run()
+    .catch((err: unknown) => console.error("ovoa.err plan: couldn't keep the answer", err));
+  if (got.tier !== row.plan_tier) say("plan", { user: userId, was: row.plan_tier ?? "unknown", now: got.tier, status: got.status });
+  // Asked after the reply: the next request here sees the answer.
+  remember(userId, plan, row.email, now);
+  return plan;
+}
+
+export async function planFor(env: Env, userId: string, opts: Pick<PlanOptions, "waitUntil"> = {}): Promise<Plan> {
+  return (await loadPlan(env, userId, opts))?.plan ?? FREE;
 }
 
 /** Sets or clears the developer's override. Null clears it. */
@@ -382,7 +416,7 @@ export function requirePlan(): MiddlewareHandler<{ Bindings: Env; Variables: Var
   return async (c, next) => {
     const need = tierForRoute(c.req.method, c.req.path);
     if (need === "free") return next();
-    const plan = await planFor(c.env, c.var.userId);
+    const plan = await planFor(c.env, c.var.userId, { waitUntil: (work) => c.executionCtx.waitUntil(work) });
     c.set("plan", plan);
     if (!atLeast(plan.tier, need)) {
       say("plan", { outcome: "402", user: c.var.userId, path: c.req.path, has: plan.tier, needs: need });

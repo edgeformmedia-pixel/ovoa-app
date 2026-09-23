@@ -145,6 +145,45 @@ export function guessKind(visits: Visit[], timeZone: string): Place["kind"] {
 
 // ---------- Storage ----------
 
+/**
+ * How old the newest point may be to still say where they are. The phone only
+ * sends one once they've moved (75 m, batched every 5 minutes or 200 m: app
+ * lib/location.ts), so someone three hours on their sofa has a three-hour-old
+ * last point and is still on the sofa. The age rides along, so the model can
+ * weigh it.
+ */
+const LAST_PLACE_MS = 3 * 3_600_000;
+
+/**
+ * Where the phone last put them, in words: "Home, Elm St, Ferndale (40 min
+ * ago)", or rounded coordinates when it's nowhere OVOA has learned. Pure, so
+ * the wording is testable.
+ */
+export function describeWhere(point: { ts: number; lat: number; lng: number }, places: Place[], now: number) {
+  const place = placeFor(point, places);
+  const name = place?.name ?? (place && place.kind !== "other" ? `${place.kind[0].toUpperCase()}${place.kind.slice(1)}` : null);
+  const where = [name, place?.address].filter(Boolean).join(", ") || `near ${point.lat.toFixed(2)}, ${point.lng.toFixed(2)}`;
+  const mins = Math.max(0, Math.round((now - point.ts) / 60_000));
+  const ago = mins < 2 ? "just now" : mins < 90 ? `${mins} min ago` : `${Math.round(mins / 60)} h ago`;
+  return `${where} (${ago})`;
+}
+
+/**
+ * Where the phone last said they were, for a spoken turn's moment (index.ts
+ * runTurn), or null with no point in LAST_PLACE_MS. A spoken turn doesn't
+ * carry phone_location, and asking the phone for it cost a more_tools round, a
+ * pause and a resume before "what's the weather" could even be searched
+ * (2026-09-23). One round trip: the point and the places together.
+ */
+export async function lastKnownPlace(db: D1Database, userId: string, now = Date.now()) {
+  const [points, places] = await db.batch<unknown>([
+    db.prepare("SELECT ts, lat, lng FROM location_points WHERE user_id = ? AND ts > ? ORDER BY ts DESC LIMIT 1").bind(userId, now - LAST_PLACE_MS),
+    db.prepare("SELECT id, name, kind, lat, lng, radius, address, visit_count FROM places WHERE user_id = ?").bind(userId),
+  ]);
+  const point = (points.results as { ts: number; lat: number; lng: number }[])[0];
+  return point ? describeWhere(point, places.results as Place[], now) : null;
+}
+
 async function listPlaces(db: D1Database, userId: string) {
   const { results } = await db
     .prepare("SELECT id, name, kind, lat, lng, radius, address, visit_count FROM places WHERE user_id = ? ORDER BY visit_count DESC")

@@ -1,11 +1,12 @@
 // Whether an exchange is worth a trip to the model to update long-term memory.
 //
 // After every reply, a second model call read the exchange and decided what to
-// remember. That doubled the model calls per turn, and it spent the same free
-// Workers AI allocation spoken turns answer on first (llm.ts), so with more than
-// one person using the app the memory pass was using up the fast engine for
-// everyone's next question. Most turns can't hold a fact about the person at
-// all: "set an alarm for seven", "what's the weather", "stop".
+// remember. That doubled the model calls per turn, and each one ran just as the
+// person's next question might: it goes to GLM on Z.ai first (llm.ts), the
+// engine a spoken turn falls back to and every typed turn starts on, so with
+// more than one person using the app the memory pass was contending with
+// everyone's next question for the same engine. Most turns can't hold a fact
+// about the person at all: "set an alarm for seven", "what's the weather", "stop".
 //
 // What people say about themselves is said in the first person ("I'm vegan",
 // "my sister is Sarah", "we moved to Denver") or is an explicit instruction
@@ -15,8 +16,46 @@
 const ABOUT_THEM =
   /\b(i|i'm|im|i've|ive|i'd|i'll|me|my|mine|myself|we|we're|we've|our|ours|us|remember|forget|call me)\b/;
 
-export function mightBeAboutThem(said: string) {
-  return ABOUT_THEM.test(said.toLowerCase().replace(/[‘’]/g, "'"));
+// A request says "me" and "my" too, and tells OVOA nothing about the person:
+// "remind me to call my mum", "text my girlfriend I'm on the 7th floor",
+// "what's on my calendar". Each of those started a memory pass, a second
+// model call on the same key fired just as a quick follow-up might arrive
+// (2026-09-23). So a sentence shaped like an instruction or a question is
+// skipped. A statement next to it still counts ("set an alarm for six. I have
+// a flight"), and so does anything that says remember or forget.
+
+/** What opens a request once the greeting and the name are gone. "Call me Tom" is a name, not a call. */
+const REQUEST =
+  /^(?!call me\b)(?:remind|call|text|message|send|email|set|wake|turn|play|pause|stop|cancel|add|put|schedule|book|open|show|find|look|check|search|read|tell|give|start|what|what's|whats|when|where|who|how|is|are|do|does|did|can|could|would|will|any)\b/;
+/** Greetings and politeness before the request: "hey", "okay so", "can you", "I need you to". */
+const LEAD =
+  /^(?:(?:hey|hi|ok|okay|so|um|uh|oh|and|alright|yo|please|ovoa|i need you to|i want you to|i'?d like you to|can you|could you|would you|will you)\b[,.!]?\s*)+/;
+/** "Ovo," or "Hey Ooa,": the name as the recogniser heard it, then a comma. */
+const NAMED = /^[a-z'.]+(?:\s+[a-z'.]+)?,\s*/;
+
+function withoutLeadIn(sentence: string, name: string) {
+  const byName = name ? new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b[,.!]?\\s*`) : null;
+  let s = sentence;
+  for (let i = 0; i < 4; i++) {
+    let next = s.replace(LEAD, "");
+    if (byName) next = next.replace(byName, "");
+    // Not when the chunk is itself about them: "I'm vegan, text my mum" keeps "I'm vegan".
+    next = next.replace(NAMED, (chunk) => (ABOUT_THEM.test(chunk) ? chunk : ""));
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+}
+
+/** `assistantName`: what they call OVOA, which can open a request with no comma after it ("Max remind me…"). */
+export function mightBeAboutThem(said: string, assistantName?: string) {
+  const name = assistantName ? assistantName.toLowerCase().trim() : "";
+  const sentences = said.toLowerCase().replace(/[‘’]/g, "'").split(/[.!?;\n]+\s*/);
+  return sentences.some((sentence) => {
+    if (!ABOUT_THEM.test(sentence)) return false;
+    if (/\b(remember|forget)\b/.test(sentence)) return true;
+    return !REQUEST.test(withoutLeadIn(sentence.trim(), name));
+  });
 }
 
 // Which memories are kept (docs/retention.md). A memory the background pass

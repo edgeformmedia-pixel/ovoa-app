@@ -102,8 +102,12 @@ export default function Onboarding() {
     if (res.apps?.length) void myApps.refresh(token).catch(logFail("onboarding: reading the apps it made"));
   };
 
-  /** One answer, spoken or typed: record it, show what was understood, move on. */
-  const answer = async (said: string): Promise<string | null> => {
+  /**
+   * One answer, spoken or typed: record it, show what was understood, move on.
+   * `onSentence` is the voice loop's (voice.ts runTurn): each piece given to it
+   * is voiced on its own.
+   */
+  const answer = async (said: string, _addressed?: boolean, onSentence?: (piece: string) => void): Promise<string | null> => {
     const current = stepRef.current;
     if (!current) return null;
     say({ from: "you", text: said });
@@ -127,7 +131,14 @@ export default function Onboarding() {
       setCurrent(res.next);
       say({ from: "ovoa", text: res.next.question });
       await new Promise((r) => setTimeout(r, BEAT_MS));
-      // Spoken back to back: what it understood, then the next question.
+      // Spoken back to back: what it understood, then the next question — as two
+      // pieces, not one. Joined, the pair was a sentence nobody had voiced before,
+      // so every question paid for its own speech; alone, the question is the same
+      // words for everyone and comes from the server's speech cache (api/src/voice.ts).
+      if (onSentence) {
+        if (res.understood) onSentence(res.understood);
+        onSentence(res.next.question);
+      }
       return [res.understood, res.next.question].filter(Boolean).join(" ");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

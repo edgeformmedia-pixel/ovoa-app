@@ -302,7 +302,11 @@ async function setQuietAudio(on: boolean) {
       await holdAwake(true);
     }
     try {
-      quiet = createAudioPlayer(silenceFile().uri);
+      // keepAudioSessionActive, as for the wake-up line above: when the alarm is
+      // disarmed and this loop is removed, expo-audio would otherwise switch the
+      // session off under the phone's ear, which then hears nothing until the mic
+      // is restarted.
+      quiet = createAudioPlayer(silenceFile().uri, { keepAudioSessionActive: true });
       quiet.loop = true;
       quiet.volume = 0.01;
       quiet.play();

@@ -354,16 +354,17 @@ alarms.post("/nags/done", async (c) => {
 const TOOLS: ToolSpec[] = [
   {
     name: "alarm_set",
+    // Short on purpose: a spoken turn carries it before every reply (toolbelt.ts SPOKEN_CORE).
     description:
-      "Sets an alarm: 'wake me up at 7', 'alarm for 6:30 on weekdays'. It buzzes the band and talks until they say they're awake. hard: it keeps saying 'Morning, wake up' until they've walked 20 steps — for 'hard alarm', 'make sure I get up', 'don't let me go back to sleep'.",
+      "Sets an alarm that buzzes the band and talks until they're up. hard: it won't stop until they've walked 20 steps ('hard alarm', 'make sure I get up').",
     parameters: {
       type: "object",
       properties: {
         time: { type: "string", description: "HH:MM, 24-hour, local." },
-        days: { type: "array", items: { type: "string", enum: WEEKDAYS }, description: "Repeat on these days. Leave out for once." },
-        date: { type: "string", description: "YYYY-MM-DD, for a one-off on a later day." },
+        days: { type: "array", items: { type: "string", enum: WEEKDAYS }, description: "Repeats; leave out for once." },
+        date: { type: "string", description: "YYYY-MM-DD, a one-off on a later day." },
         hard: { type: "boolean" },
-        label: { type: "string", description: "What it's for, if they said: 'flight', 'gym'." },
+        label: { type: "string", description: "What it's for ('flight')." },
       },
       required: ["time"],
     },
@@ -386,7 +387,7 @@ const TOOLS: ToolSpec[] = [
   {
     name: "reminder_set",
     description:
-      "'Remind me to X at Y' — an OVOA reminder: it buzzes the band (or the phone) at that time and shows the words. urgent: it keeps buzzing every 30 seconds until they say it's done — for pills, 'make sure I', 'don't let me forget', 'urgent'. Use this for 'remind me' unless they ask for Apple Reminders by name.",
+      "'Remind me to X at Y': buzzes the band (or the phone) at that time and shows the words. urgent: keeps buzzing every 30 s until they say it's done — pills, 'make sure I', 'don't let me forget'. Use this unless they name the Reminders app.",
     parameters: {
       type: "object",
       properties: {
@@ -408,7 +409,7 @@ const TOOLS: ToolSpec[] = [
 const NAMES = new Set(TOOLS.map((t) => t.name));
 export const isAlarmTool = (name: string) => NAMES.has(name);
 
-export function alarmAssistant(env: Env, userId: string, timeZone: string) {
+export function alarmAssistant(env: Env, userId: string, timeZone: string, { voice = false } = {}) {
   const db = env.DB;
   const callTool: CallTool = async (name, args) => {
     if (name === "alarm_set") {
@@ -456,10 +457,19 @@ export function alarmAssistant(env: Env, userId: string, timeZone: string) {
     }
     return { error: `Unknown tool ${name}` };
   };
+  // "Remind me" is OVOA's own reminder, which buzzes the band: that was the
+  // decision when reminders that nag were built (2026-09-21), and the band is
+  // the point. The phone section and the spoken core had drifted to the iPhone's
+  // Reminders, so a spoken "remind me at four" could go either way; all three
+  // now say reminder_set, and the Reminders app is used when it's named
+  // (2026-09-23). "I'm awake" and "I took it" name no tool, and the app promises
+  // that saying them stops a buzzing alarm or urgent reminder as well as tapping
+  // does (NagOverlay), so the prompt names alarm_stop and reminder_done.
   return {
     tools: TOOLS,
     callTool,
-    prompt:
-      "Alarms and reminders are OVOA's own: they buzz the band. 'Wake me up at…' is alarm_set; 'I'm awake' is alarm_stop. 'Remind me to… at…' is reminder_set (urgent for pills or 'make sure'); 'I took it' / 'I did it' is reminder_done. Use the phone's Reminders app only when they name it.",
+    prompt: voice
+      ? "Alarms and reminders are OVOA's own and buzz the band: 'wake me up at…' is alarm_set; 'remind me to… at…' is reminder_set; 'I'm awake' / 'I'm up' is alarm_stop; 'I took it' / 'I did it' is reminder_done (ask more_tools for them if you don't have them). Use the phone's Reminders only when they name the Reminders app."
+      : "Alarms and reminders are OVOA's own and buzz the band: 'wake me up at…' is alarm_set; 'remind me to… at…' is reminder_set (urgent for pills or 'make sure'); 'I'm awake' is alarm_stop; 'I took it' / 'I did it' is reminder_done. Use the phone's Reminders (phone_reminder_create) only when they name the Reminders app.",
   };
 }

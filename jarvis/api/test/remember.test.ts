@@ -19,7 +19,10 @@ for (const said of [
   "Call me Tom",
   "remember that the gate code is 4412",
   "forget what I said about the job",
-  "Text Ty that I'm running late",
+  // A statement next to a request still counts.
+  "Set an alarm for six. I have a flight to Denver tomorrow",
+  "I'm vegan, find me somewhere to eat",
+  "Hey OVOA, can you remember that my sister is Sarah?",
 ]) {
   eq(`about them: "${said}"`, mightBeAboutThem(said), true);
 }
@@ -33,6 +36,21 @@ for (const said of [
 ]) {
   eq(`not about them: "${said}"`, mightBeAboutThem(said), false);
 }
+
+// Requests say "me" and "my" and tell OVOA nothing about the person: no memory pass (2026-09-23).
+for (const said of [
+  "Text Ty that I'm running late",
+  "Remind me to call my mum at five",
+  "Hey, Ovo, text my girlfriend Donya that I'm on the 7th floor",
+  "Hey OVOA, what's on my calendar tomorrow?",
+  "OVOA call my mom",
+  "can you set an alarm for me at 6",
+  "I need you to text my boss that I'm late",
+  "Okay so wake me up at seven",
+]) {
+  eq(`a request: "${said}"`, mightBeAboutThem(said), false);
+}
+eq("their name for OVOA opens a request too", mightBeAboutThem("Max remind me to take my pills", "Max"), false);
 
 // Which memories are kept past 14 days: only what they asked OVOA to remember.
 for (const said of [

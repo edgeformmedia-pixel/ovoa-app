@@ -334,7 +334,7 @@ export const isTodoTool = (name: string) => NAMES.has(name);
 
 const validDay = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
 
-export function todosAssistant(env: Env, userId: string, timeZone: string) {
+export function todosAssistant(env: Env, userId: string, timeZone: string, { voice = false } = {}) {
   const db = env.DB;
   const today = () => buckets(Date.now(), timeZone).day;
   const callTool: CallTool = async (name, args) => {
@@ -360,10 +360,11 @@ export function todosAssistant(env: Env, userId: string, timeZone: string) {
     }
     return { error: `Unknown tool ${name}` };
   };
+  // Out loud todo_done isn't there at all (index.ts NOT_SPOKEN), so the prompt doesn't name it.
   return {
     tools: TOOLS,
     callTool,
-    prompt: "Each evening, an hour before bed, OVOA builds tomorrow's to-do list and says goodnight at bedtime. Read it with todo_list; tick things off with todo_done.",
+    prompt: `Each evening, an hour before bed, OVOA builds tomorrow's to-do list and says goodnight at bedtime. Read it with todo_list${voice ? "." : "; tick things off with todo_done."}`,
   };
 }
 

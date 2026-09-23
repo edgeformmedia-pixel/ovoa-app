@@ -82,7 +82,7 @@ export type LogEntry = {
 export type LogOptions = {
   /** Overrides the kind's default level. */
   level?: LogLevel;
-  /** false: never collapse this line into a repeat. For lines whose whole point is the number in them. */
+  /** false: never collapse this line into a repeat. For lines whose whole point is the number in them. perf lines never are. */
   collapse?: boolean;
   /** Counts lines as the same repeat even when their text differs. */
   key?: string;
@@ -104,6 +104,16 @@ const CEILING_PER_MINUTE = 240;
 const REPAINT_MS = 500;
 /** How often the open groups are walked looking for ones that have gone quiet. */
 const SWEEP_EVERY_MS = 5000;
+/**
+ * Kinds that are never folded into a repeat. A perf line is one spoken turn's
+ * breakdown (turnTimer.ts) or one phone lookup, and with the digits blurred two
+ * turns read the same: "× 5 more in 2 min — phone turn 10.2 s after you stopped
+ * speaking" (device_logs, 2026-09-23) kept one breakdown out of six, and the slow
+ * turn could be any of the five that were only counted. There are a handful a
+ * minute at most, well under the ceiling. The streamed reply's timing lines in
+ * api.ts say the same with `collapse: false`.
+ */
+const NEVER_COLLAPSED = new Set<LogKind>(["perf"]);
 
 let entries: LogEntry[] = [];
 let nextId = 1;
@@ -195,8 +205,9 @@ function write(kind: LogKind, text: string, detail: unknown, options?: LogOption
   // logging on a 250 ms timer would walk it two hundred times a minute for nothing.
   if (now - lastSweep > SWEEP_EVERY_MS) sweepLog(now);
 
+  const collapse = options?.collapse ?? !NEVER_COLLAPSED.has(kind);
   const print = options?.key ?? fingerprint(kind, safeText, body);
-  const open = options?.collapse === false ? undefined : groups.get(print);
+  const open = collapse ? groups.get(print) : undefined;
   if (open) {
     open.count++;
     open.lastAt = now;
@@ -219,7 +230,7 @@ function write(kind: LogKind, text: string, detail: unknown, options?: LogOption
     ...(LEVEL_ORDER[level] >= LEVEL_ORDER.warn ? where() : null),
   });
   const crumb = addCrumb(`${clock(now)} ${kind} ${safeText.slice(0, 120)}`);
-  if (options?.collapse === false) return;
+  if (!collapse) return;
   if (groups.size >= MAX_GROUPS) closeStalest(now);
   groups.set(print, {
     kind,

@@ -2,7 +2,7 @@ import Constants from "expo-constants";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import { AppState, Platform } from "react-native";
-import { api } from "./api";
+import { api, serverOut } from "./api";
 import * as clip from "./clip";
 import { devlog } from "./devlog";
 import { healthAvailable, todayHealth } from "./health";
@@ -56,6 +56,11 @@ export async function reportDeviceState(token: string) {
       sleepHours: await lastNightSleep(),
     });
   } catch (err) {
+    // Down for maintenance or no connection: api.ts said so once for the whole
+    // outage, and the heartbeat is itself the retry that finds out it's over.
+    // Logging it here too wrote an error every five minutes through the move
+    // (device_logs, 2026-09-23 15:50-16:05).
+    if (serverOut()) return;
     devlog("err", "couldn't report the phone's state", String(err));
   }
 }

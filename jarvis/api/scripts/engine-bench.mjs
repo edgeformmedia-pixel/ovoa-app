@@ -44,8 +44,13 @@ const WAIT_S = Number(args.wait ?? 65);
 const PREFS = Object.fromEntries(["engine_order", "voice_engine"].filter((k) => args[k]).map((k) => [k, args[k]]));
 const OUT = args.out ?? `bench-${LABEL.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.json`;
 
-/** What the phone tells the server it can do, so the lookup tools exist (phone.ts). */
-const PHONE = { lookups: true, capabilities: ["calendar", "reminders", "contacts", "health", "location"] };
+/**
+ * What the phone tells the server it can do, so the lookup tools exist (phone.ts).
+ * recipientGuard as the app sends it in builds after 67 (phoneActions.ts
+ * phoneCaps): a spoken "Call Mom." may then go straight to phone_call by name,
+ * with no contact search first (phone.ts phonePrompt byName).
+ */
+const PHONE = { lookups: true, capabilities: ["calendar", "reminders", "contacts", "health", "location"], recipientGuard: true };
 
 /** expect: a tool name (or one of several) the turn should have called; none means "just answer". */
 const SPOKEN = [

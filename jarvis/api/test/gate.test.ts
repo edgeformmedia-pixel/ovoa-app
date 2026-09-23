@@ -73,7 +73,7 @@ for (const file of files) {
   // gemini.ts is the low-level Gemini caller: only llm.ts may import it (Turn is re-exported there).
   if (/from\s+["'](\.\.?\/)+gemini["']/.test(text)) outside.push(`${file} imports gemini.ts`);
   for (const sdk of MODEL_SDKS) if (new RegExp(`from\\s+["']${sdk.replace(/[/.]/g, "\\$&")}["']`).test(text)) outside.push(`${file} imports ${sdk}`);
-  // Workers AI went in the v1 release; a call to it would be a model the gate never saw.
+  // Workers AI is reached only from llm.ts (the workers engine); a call to env.AI.run anywhere else would be a model the gate never saw.
   if (/\bAI\.run\(/.test(text)) outside.push(`${file} calls Workers AI (env.AI.run)`);
   const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
   for (const name of BUILDING_BLOCKS) if (new RegExp(`\\b${name}\\b`).test(code)) outside.push(`${file} uses llm.ts's ${name}`);

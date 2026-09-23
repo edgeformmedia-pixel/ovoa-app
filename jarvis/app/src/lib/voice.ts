@@ -4,13 +4,26 @@ import { File, Paths } from "expo-file-system";
 import * as Speech from "expo-speech";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
-import { API_URL, ApiError, errorText, lockedOnPhone, noteCoded, noteDeadSession, notePlanNeeded, type ServerSpeech } from "./api";
+import { API_URL, ApiError, dropReply, errorText, lockedOnPhone, noteCoded, noteDeadSession, notePlanNeeded, type DropReason, type ServerSpeech } from "./api";
 import { consentMissing, onConsentChange } from "./consent";
+import { cue } from "./cues";
 import { devlog, devlogRepeat, devlogSettled, logFail } from "./devlog";
-import { pickFiller } from "./fillers";
+import { pickFillerLine } from "./fillers";
 import { audioWhy, onScreen, whenOnScreen } from "./foreground";
 import { flushHeard, keepHeard, keepsHeard } from "./heard";
-import { canHearName, canListen, earAlive, holdEar, openEar, releaseEar, wasNameEarFailure, wasOffScreen, type Ear } from "./liveListen";
+import {
+  canHearName,
+  canListen,
+  earAlive,
+  earHeld,
+  holdEar,
+  onEarReleased,
+  openEar,
+  releaseEar,
+  wasNameEarFailure,
+  wasOffScreen,
+  type Ear,
+} from "./liveListen";
 import { ensureSpeechPermission } from "./onDeviceTranscribe";
 import { onSignOut } from "./signOut";
 import { storage } from "./storage";
@@ -135,7 +148,7 @@ async function deviceVoiceFor(voice: VoiceId): Promise<string | undefined> {
  * Speaks one piece with the phone's own voice. Resolves when it has been said,
  * or cut off through `onStop`. Free, offline, and about as fast as a voice can start.
  */
-export async function speakOnDevice(text: string, onStop?: (stop: () => void) => void, onStart?: () => void) {
+export async function speakOnDevice(text: string, onStop?: (stop: () => void) => void, onStart?: (seconds?: number) => void) {
   // The stop is handed over before the voice is looked up: a stop that came
   // during that lookup used to be missed, and the line was said anyway (the
   // tour, with Next pressed quickly, talked over its own next card).
@@ -158,7 +171,7 @@ export async function speakOnDevice(text: string, onStop?: (stop: () => void) =>
       finish();
     };
     try {
-      Speech.speak(text, { voice, onStart, onDone: finish, onStopped: finish, onError: (err) => {
+      Speech.speak(text, { voice, onStart: () => onStart?.(), onDone: finish, onStopped: finish, onError: (err) => {
         devlog("err", "the phone's voice couldn't speak", err instanceof Error ? err.message : String(err));
         finish();
       } });
@@ -188,9 +201,20 @@ async function applyAudioMode(allowsRecording: boolean) {
   const mode = audioMode(allowsRecording);
   const key = JSON.stringify(mode);
   if (key === appliedMode) return;
-  await setAudioModeAsync(mode);
-  appliedMode = key;
+  try {
+    await setAudioModeAsync(mode);
+    appliedMode = key;
+  } catch (err) {
+    // A switch that failed half way leaves the session in neither mode: the next call
+    // mustn't be skipped as "already applied".
+    appliedMode = "";
+    throw err;
+  }
 }
+
+// While the phone's ear runs, the session stays play-and-record (audioMode, earHeld); once
+// the last holder has let go and the ear has stopped, it goes back to what the app needs.
+onEarReleased(() => void applyAudioMode(false).catch(logFail("voice: applyAudioMode")));
 
 /**
  * Something needs the app kept running with the screen off: an alarm armed for
@@ -205,7 +229,9 @@ export async function holdAwake(on: boolean) {
 
 function audioMode(allowsRecording: boolean) {
   return {
-    allowsRecording: allowsRecording || backgroundAudio,
+    // Never off under the phone's ear: switching the session to playback while it ran was
+    // refused with '!pri' (OSStatus 561017449) and left the ear deaf (device_logs, 2026-09-23).
+    allowsRecording: allowsRecording || backgroundAudio || earHeld(),
     playsInSilentMode: true,
     shouldPlayInBackground: backgroundAudio || awakeHolds > 0,
     allowsBackgroundRecording: backgroundAudio,
@@ -328,8 +354,11 @@ const STATUS_MS = 250;
  */
 const CLIP_STALL_MS = 4000;
 
-/** Plays whichever kind of piece this is: a clip from disk, or words for the phone's own voice. */
-function playPiece(piece: Spoken, onStop: (stop: () => void) => void, onStart?: () => void) {
+/**
+ * Plays whichever kind of piece this is: a clip from disk, or words for the phone's own voice.
+ * `onStart` gets the clip's length in seconds when the player knows it.
+ */
+function playPiece(piece: Spoken, onStop: (stop: () => void) => void, onStart?: (seconds?: number) => void) {
   return isDeviceUtterance(piece) ? speakOnDevice(piece.text, onStop, onStart) : playFile(piece, onStop, onStart);
 }
 
@@ -342,7 +371,7 @@ function discardPiece(piece: Spoken | null) {
 }
 
 /** Plays one file to the end, or until `stop` is called. */
-function playFile(file: File, onStop: (stop: () => void) => void, onStart?: () => void) {
+function playFile(file: File, onStop: (stop: () => void) => void, onStart?: (seconds?: number) => void) {
   return new Promise<void>((resolve) => {
     const uri = file.uri;
     // Everything here is written to disk before it arrives, so no bytes means whoever
@@ -438,7 +467,7 @@ function playFile(file: File, onStop: (stop: () => void) => void, onStart?: () =
           `playing a clip: ${s.duration.toFixed(1)} s of audio, ${Date.now() - asked} ms to start`,
           `${Math.round(bytes / 1024)} KB`,
         );
-        onStart?.();
+        onStart?.(s.duration > 0 ? s.duration : undefined);
       }
       // Some players never send didJustFinish; reaching the end counts too.
       if (s.didJustFinish || (started && !s.playing && s.duration > 0 && s.currentTime >= s.duration - 0.1)) finish();
@@ -468,8 +497,13 @@ function status(s: AudioStatus) {
 
 /** How many clips are voiced ahead of the one playing. */
 const FETCH_AHEAD = 3;
-/** A first sentence longer than this is split at a pause so the voice starts sooner. */
-const SPLIT_FIRST_OVER = 60;
+/**
+ * A first sentence longer than this is split at a pause so the voice starts
+ * sooner. 35, as the server's speechStream (api/src/voice.ts SPLIT_FIRST_OVER),
+ * down from 60 (2026-09-23): the first piece is the one waited on in silence,
+ * and the voice's time grows with its length.
+ */
+const SPLIT_FIRST_OVER = 35;
 /** ...looking this far into it for one. Past here, the piece is long enough anyway. */
 const FIRST_PIECE_MAX = 120;
 /**
@@ -481,6 +515,10 @@ const FIRST_PIECE_MAX = 120;
  */
 const FILLER_IF_SLOW_MS = 400;
 const SLOW = Symbol("slow");
+/** How `pieces` marks a cached filler line queued ahead of the reply. */
+const FILLER_PIECE = "(filler)";
+/** The phone's own voice, for how long a line lasts when the player can't say: about 14 characters a second. */
+const DEVICE_MS_PER_CHAR = 70;
 
 /**
  * Reads text aloud. `open` starts a reply that arrives a sentence at a time
@@ -501,23 +539,44 @@ export function createSpeaker(token: string) {
 
   /**
    * `keepMic`: keep the microphone usable so the user can talk over the reply.
-   * `filler` false: never cover a slow start with "Let me look into that" — for
-   * lines that are read out (the tour, setup's questions), not worked out.
+   * `filler` false: never cover a slow start with "One moment." — for lines
+   * that are read out (the tour, setup's questions), not worked out.
+   * `onFiller`: a filler line is audible until about `until` (called as it
+   * starts, and again as it ends), so the turn gate can tell its echo from the
+   * user (turnGate.ts hearFiller).
    */
-  const open = ({ keepMic = false, filler = true } = {}) => {
+  const open = ({
+    keepMic = false,
+    filler = true,
+    onFiller,
+  }: { keepMic?: boolean; filler?: boolean; onFiller?: (text: string, until: number) => void } = {}) => {
     stop();
     const mine = generation;
     const pieces: string[] = [];
     const clips: Promise<Spoken | null>[] = [];
+    /** What each queued filler says, by its place in `pieces`. */
+    const fillerSays = new Map<number, string>();
     let ended = false;
     let pending = ""; // short sentences wait to be joined with the next one
     /** Pieces of the reply itself. A cached filler is queued in front of them and isn't one. */
     let replyPieces = 0;
     /** How far playback has got: the fetch window runs FETCH_AHEAD past it. */
     let played = 0;
+    /** Pieces played to the end (or skipped): a second filler waits until everything before it has. */
+    let finished = 0;
     const voice = voicePref.get();
-    const ready = applyAudioMode(keepMic).catch((err) => devlog("err", "audio mode failed", String(err)));
+    // With the phone's ear running the session is already play-and-record, and every switch
+    // under a running ear risks '!pri' (see audioMode): leave it be.
+    const ready = keepMic && earAlive() ? Promise.resolve() : applyAudioMode(keepMic).catch((err) => devlog("err", "audio mode failed", String(err)));
     const wake = () => wakeCurrent?.();
+    /** A filler's words are audible from its start for about its length... */
+    const fillerStarts = (text: string, seconds?: number) => {
+      if (text) onFiller?.(text, Date.now() + (seconds ? seconds * 1000 : text.length * DEVICE_MS_PER_CHAR));
+    };
+    /** ...and until its end, which that may have missed. */
+    const fillerEnds = (text: string) => {
+      if (text) onFiller?.(text, Date.now());
+    };
 
     const fetchUpTo = (index: number) => {
       for (let i = clips.length; i < pieces.length && i <= index; i++) {
@@ -603,7 +662,8 @@ export function createSpeaker(token: string) {
       }
       pieces.push(text);
       replyPieces++;
-      if (replyPieces === 1) markTurn("reply clip requested");
+      // The server voiced it: this is its audio reaching the phone, not a request for it.
+      if (replyPieces === 1) markTurn("reply audio arrived");
       clips.push(
         file
           ? Promise.resolve(file)
@@ -618,25 +678,43 @@ export function createSpeaker(token: string) {
     };
 
     /**
-     * Plays a clip already on the phone, ahead of everything else ("One second
-     * while I get that"): no network, so it starts at once. First thing only.
+     * Plays a line already on the phone ("One moment."), ahead of the reply: no
+     * network, so it starts at once. Only before any of the reply is queued, and
+     * never stacked on another filler that hasn't finished. False when turned
+     * down, and the file (a copy made for this) is thrown away.
      */
     let fillerPlayed = !filler;
-    const clip = (file: Spoken) => {
-      if (!filler || mine !== generation || pieces.length) return;
-      pieces.push("(filler)");
+    const clip = (file: Spoken, text = "") => {
+      if (!filler || mine !== generation || replyPieces || finished < pieces.length) {
+        discardPiece(file);
+        return false;
+      }
+      fillerSays.set(pieces.length, text);
+      pieces.push(FILLER_PIECE);
       clips.push(Promise.resolve(file));
       fillerPlayed = true;
       wake();
+      return true;
     };
+    /** How many pieces are queued, fillers included: a filler is only picked when this is 0. */
+    const queued = () => pieces.length;
 
-    // The turn's timer wants the moment the user first hears something, not every clip.
+    // The turn's timer wants the moment the user first hears something, not every clip,
+    // and apart from that the moment they first hear the answer itself.
     let spoken = false;
     const firstWord = () => {
       if (spoken) return;
       spoken = true;
       markTurn("first word out loud");
     };
+    let answered = false;
+    const replyAudible = () => {
+      firstWord();
+      if (answered) return;
+      answered = true;
+      markTurn("reply audible");
+    };
+    let replyClipReady = false;
     const done = (async () => {
       await ready;
       // Switching the audio session can contend with the live microphone, so it
@@ -654,11 +732,15 @@ export function createSpeaker(token: string) {
         if (i === 0 && !fillerPlayed) {
           const soon = await Promise.race([clips[0], sleep(FILLER_IF_SLOW_MS).then(() => SLOW)]);
           if (soon === SLOW && mine === generation) {
-            const filler = pickFiller();
-            if (filler) {
+            const line = pickFillerLine("short");
+            if (line) {
               fillerPlayed = true;
               markTurn("filler while the voice is fetched");
-              await playPiece(filler, (s) => (stopCurrent = s), firstWord);
+              await playPiece(line.piece, (s) => (stopCurrent = s), (seconds) => {
+                firstWord();
+                fillerStarts(line.text, seconds);
+              });
+              fillerEnds(line.text);
             }
           }
           if (mine !== generation) break;
@@ -670,19 +752,29 @@ export function createSpeaker(token: string) {
         }
         played = i + 1; // playFile deletes it
         if (file) {
+          const says = pieces[i] === FILLER_PIECE ? (fillerSays.get(i) ?? "") : null;
           // Only the reply's first clip: the rest are voiced ahead and cost the user
           // nothing. i === 0 used to be the mark, but that is the cached filler on an
           // addressed turn, so the one number worth having was never recorded.
-          if (i === (pieces[0] === "(filler)" ? 1 : 0)) markTurn("voice clip ready");
-          await playPiece(file, (s) => (stopCurrent = s), firstWord);
+          if (says === null && !replyClipReady) {
+            replyClipReady = true;
+            markTurn("voice clip ready");
+          }
+          await playPiece(file, (s) => (stopCurrent = s), (seconds) => {
+            if (says === null) return replyAudible();
+            firstWord();
+            fillerStarts(says, seconds);
+          });
+          if (says !== null) fillerEnds(says);
         }
+        finished = i + 1;
         fetchUpTo(i + 1 + FETCH_AHEAD);
       }
       // Clean up clips voiced ahead that won't be played.
       clips.slice(played).forEach((c) => c.then(discardPiece));
     })();
 
-    return { say, end, done, clip, voiced };
+    return { say, end, done, clip, queued, voiced };
   };
 
   /**
@@ -716,13 +808,25 @@ const SERVER_VOICE = true;
  * the real answer back by its own length.
  */
 const SERVER_FILLER_AFTER_MS = 1000;
+/**
+ * ...and longer on a turn nobody is sure was for the assistant (a room follow-up
+ * without the name): no filler was said at send, and one here held the answer
+ * back by its own length for audio that was only a little late.
+ */
+const UNSURE_FILLER_AFTER_MS = 1800;
+/**
+ * Nothing of the answer this long after the request: say once that it's still
+ * coming ("Still on it."). The short line at send has long finished by then, and
+ * the model's first words have taken 4.5-6.6 s (2026-09-23).
+ */
+const STILL_ON_IT_MS = 3500;
 
 /**
  * One reply's side of ServerSpeech: whether the server said it is voicing this
  * reply, handing each voiced piece to the speaker, and a cached filler if the
- * first piece is slow to come.
+ * first piece is slow to come (after `fillerAfterMs`).
  */
-export function serverSpeech(reply: Reply, cancelled: () => boolean = () => false) {
+export function serverSpeech(reply: Reply, cancelled: () => boolean = () => false, fillerAfterMs = SERVER_FILLER_AFTER_MS) {
   let on = false;
   let heard = false;
   let slow: ReturnType<typeof setTimeout> | null = null;
@@ -738,12 +842,11 @@ export function serverSpeech(reply: Reply, cancelled: () => boolean = () => fals
       if (!on || heard || slow) return;
       slow = setTimeout(() => {
         slow = null;
-        if (heard || cancelled()) return;
-        const filler = pickFiller();
-        if (!filler) return;
-        markTurn("filler while the server voices");
-        reply.clip(filler);
-      }, SERVER_FILLER_AFTER_MS);
+        // Something is queued already (the line said at send): another would only hold the answer back.
+        if (heard || cancelled() || reply.queued()) return;
+        const line = pickFillerLine("short");
+        if (line && reply.clip(line.piece, line.text)) markTurn("filler while the server voices");
+      }, fillerAfterMs);
     },
     /** What to send with the request, or undefined to voice everything here. */
     async request(): Promise<ServerSpeech | undefined> {
@@ -847,11 +950,17 @@ export function useConversation(
   const nameRef = useRef(name);
   nameRef.current = name;
   const [words, setWords] = useState("");
-  // A twist or the clip's button: what's said until then counts as addressed.
+  // A twist or the clip's button: what's said until then counts as addressed. Clicks only: the
+  // name is told to the gate as it's heard (gate.named), and doesn't make a turn wait like a click.
   const summonedUntil = useRef(0);
   /** When the person last asked to be heard (a tap, a click): a running ear's earlier words aren't theirs. */
   const askedAt = useRef(0);
   const gateRef = useRef<TurnGate | null>(null);
+  /**
+   * Why the reply was last stopped mid-turn, for the dropped-reply log line
+   * (api.ts dropReply). Set just before each stop, cleared as each turn starts.
+   */
+  const stopWhy = useRef<DropReason | null>(null);
   /** The open ear, so a button press can wake it. */
   const earRef = useRef<Ear | null>(null);
   /**
@@ -958,11 +1067,19 @@ export function useConversation(
     const answerAloud = async (
       text: string,
       addressed: boolean,
-      options: { keepMic: boolean; room?: boolean; heardAt?: number; onSpeaking?: (soFar: string) => void },
+      options: {
+        keepMic: boolean;
+        room?: boolean;
+        heardAt?: number;
+        onSpeaking?: (soFar: string) => void;
+        onFiller?: (text: string, until: number) => void;
+      },
     ) => {
-      // Everything from here on is the user waiting, the same as a band turn (turnTimer.ts).
-      startTurn("phone");
-      markStopTalking();
+      // Everything from here on is the user waiting, the same as a band turn (turnTimer.ts),
+      // and so was the gate's wait for them to be done: the clock starts at their last word.
+      const heardAt = Math.min(options.heardAt ?? Date.now(), Date.now());
+      startTurn("phone", heardAt);
+      markStopTalking(heardAt);
       noteHeard(text);
       // The words were recognised on the phone as they were said; what the user
       // felt of it is the gate's wait for them to be done.
@@ -980,22 +1097,38 @@ export function useConversation(
     const answerOneTurn = async (
       text: string,
       addressed: boolean,
-      { keepMic, room = false, onSpeaking }: { keepMic: boolean; room?: boolean; onSpeaking?: (soFar: string) => void },
+      {
+        keepMic,
+        room = false,
+        onSpeaking,
+        onFiller,
+      }: { keepMic: boolean; room?: boolean; onSpeaking?: (soFar: string) => void; onFiller?: (text: string, until: number) => void },
     ) => {
       setPhase("thinking");
       setError(null);
       setWords(text);
+      stopWhy.current = null;
       const asked = Date.now();
       devlog("voice", `${addressed ? "heard its name; asking the assistant" : "asking the assistant"} (${text.length} chars)`);
-      const reply = speaker.current.open({ keepMic, filler: fillers });
-      // Something heard straight away while the answer is worked out. Only when it
-      // was said to the assistant: overheard speech mostly gets no answer at all.
-      if (addressed && fillers) {
-        const filler = pickFiller();
-        if (filler) reply.clip(filler);
+      const reply = speaker.current.open({ keepMic, filler: fillers, onFiller });
+      // Something heard straight away while the answer is worked out, when the turn is
+      // surely for the assistant: the name, a click, or open mode, where everything is. Not
+      // a room follow-up without the name: overheard speech mostly gets no answer at all.
+      const sure = addressed || !room;
+      if (sure && fillers) {
+        const line = pickFillerLine("short");
+        if (line) reply.clip(line.piece, line.text);
       }
       let soFar = "";
-      const server = serverSpeech(reply, cancelled);
+      const stillOnIt =
+        sure && fillers
+          ? setTimeout(() => {
+              if (soFar || cancelled()) return;
+              const line = pickFillerLine("still");
+              if (line && reply.clip(line.piece, line.text)) markTurn("still on it");
+            }, STILL_ON_IT_MS)
+          : null;
+      const server = serverSpeech(reply, cancelled, sure ? SERVER_FILLER_AFTER_MS : UNSURE_FILLER_AFTER_MS);
       const onSentence = (sentence: string) => {
         if (cancelled()) return;
         if (!soFar) {
@@ -1010,19 +1143,27 @@ export function useConversation(
         // the user; the audio arrives separately when the server is voicing it.
         if (!server.on()) reply.say(sentence);
       };
-      // Before end() the speech only finishes if it's stopped: the user talked over it.
+      // Before end() the speech only finishes if it's stopped: the user talked over it,
+      // told it to stop or cut it short, or listening ended (stopWhy says which).
       // Then stop waiting for the rest of the reply and drop the request.
       const abort = new AbortController();
       const interrupted = reply.done.then((): typeof INTERRUPTED => INTERRUPTED);
       let full: string | null;
+      let dropped = false;
       try {
         // `room`: the gate guessed this was for the assistant (a follow-up without
         // the name), so the server gets to disagree before anything is answered.
         const asking = handler.current(text, addressed, onSentence, abort.signal, { speech: await server.request(), room });
-        asking.catch(logFail("voice: handler.current")); // dropped after an interruption: its failure is expected
+        // Dropped because the reply was stopped: its "Cancelled" is what dropping it
+        // does, not a failure, and was a warning on every talk-over (2026-09-23). Any
+        // other failure reaches the race below and is logged by the loop.
+        asking.catch((err) => {
+          if (dropped) devlog("voice", "the dropped request ended", err instanceof Error ? err.message : String(err));
+        });
         const result = await Promise.race([asking, interrupted]);
         if (result === INTERRUPTED) {
-          abort.abort();
+          dropped = true;
+          dropReply(abort, cancelled() ? "conversation ended" : (stopWhy.current ?? "cut short"));
           return true;
         }
         full = result;
@@ -1031,6 +1172,7 @@ export function useConversation(
         speaker.current.stop();
         throw err;
       } finally {
+        if (stillOnIt) clearTimeout(stillOnIt);
         server.done();
       }
       if (cancelled()) {
@@ -1065,6 +1207,7 @@ export function useConversation(
       const room = listensForName();
       const gate = new TurnGate(nameRef.current, room, bargeIn.current, answers);
       gateRef.current = gate;
+      // A click that started this listening.
       if (Date.now() < summonedUntil.current) gate.summon(summonedUntil.current);
       const state = { down: null as Error | null, waiting: null as ((turn: Turn | null) => void) | null };
       const wake = (turn: Turn | null) => {
@@ -1083,6 +1226,7 @@ export function useConversation(
           if (keepsHeard()) keepHeard(token, r.text);
         } else if (r.kind === "interrupt") {
           devlog("voice", r.stopOnly ? "told to stop" : "that was you: interrupting");
+          stopWhy.current = r.stopOnly ? "told to stop" : "talked over";
           speaker.current.stop();
         } else {
           earRef.current?.wake("turn");
@@ -1101,12 +1245,11 @@ export function useConversation(
             if (text) earRef.current?.wake("speech");
             showWords();
           },
-          onFinal: (text, sentenceEnd) => {
+          onFinal: (text, sentenceEnd, lastWordAt) => {
             if (text) earRef.current?.wake("speech");
-            handle(gate.onFinal(text, sentenceEnd, Date.now()));
+            handle(gate.onFinal(text, sentenceEnd, Date.now(), lastWordAt));
             showWords();
           },
-          onQuiet: () => handle(gate.onQuiet()),
           onDown: (err) => {
             state.down = err;
             wake(null);
@@ -1114,10 +1257,11 @@ export function useConversation(
           onWake: (why) => {
             if (why !== "name") return;
             devlog("voice", "heard its name; listening to the request");
-            // The phone heard the name, so what follows is the request: the same as a button press.
-            const until = Date.now() + SUMMON_MS;
-            summonedUntil.current = until;
-            gate.summon(until);
+            // The phone heard the name, so what follows is the request. Not a click, though:
+            // a click made "Hey OVOA, what's the time?" wait out 1.8 s of quiet, and "Hey
+            // OVOA." on its own was sent as a question (turnGate.ts named).
+            gate.named(Date.now() + SUMMON_MS);
+            cue("wake");
           },
           onSleep: () => setWords(""),
         },
@@ -1150,7 +1294,7 @@ export function useConversation(
             setWords(gate.live());
           });
           if (!turn || cancelled()) break;
-          gate.think();
+          gate.think(Date.now());
           ear.wake("turn");
           let spoke: boolean;
           answering = true;
@@ -1165,6 +1309,8 @@ export function useConversation(
                 gate.speak(soFar);
                 ear.wake("reply");
               },
+              // What the filler says, and how long it's heard: its echo is the app's, not the user's.
+              onFiller: (text, until) => gate.hearFiller(text, until),
             });
           } catch (err) {
             if (cancelled()) break;
@@ -1279,7 +1425,8 @@ export function useConversation(
     // The click standby keeps the ear (and the app) running for the next click.
     if (!standbyRef.current && backgroundAudio) {
       backgroundAudio = false;
-      await applyAudioMode(false).catch(logFail("voice: applyAudioMode"));
+      // Not under the ear (see audioMode): letting go of it puts the session back (onEarReleased).
+      if (!earHeld()) await applyAudioMode(false).catch(logFail("voice: applyAudioMode"));
     }
     finished();
     return !stoppedItself;
@@ -1357,7 +1504,8 @@ export function useConversation(
       }
       if (phaseRef.current === "off" && !background) {
         backgroundAudio = false;
-        applyAudioMode(false).catch(logFail("voice: applyAudioMode"));
+        // Not under the ear (see audioMode): letting go of it puts the session back (onEarReleased).
+        if (!earHeld()) applyAudioMode(false).catch(logFail("voice: applyAudioMode"));
       }
     };
   }, [standby, background]);
@@ -1372,7 +1520,10 @@ export function useConversation(
   }, [token]);
 
   /** While speaking: cut the reply short and listen again. */
-  const interrupt = useCallback(() => speaker.current.stop(), []);
+  const interrupt = useCallback(() => {
+    stopWhy.current = "cut short";
+    speaker.current.stop();
+  }, []);
 
   /**
    * A twist (or the clip's button) asked for attention: listen now, and treat the
@@ -1387,7 +1538,10 @@ export function useConversation(
     // The button is as good as the name: the ear's words go to the gate from now.
     earRef.current?.wake("summon");
     devlog("voice", "summoned", `phase ${phaseRef.current}`);
-    if (phaseRef.current === "speaking") speaker.current.stop();
+    if (phaseRef.current === "speaking") {
+      stopWhy.current = "cut short";
+      speaker.current.stop();
+    }
     if (phaseRef.current === "off") {
       summonedStart.current = true;
       return start();

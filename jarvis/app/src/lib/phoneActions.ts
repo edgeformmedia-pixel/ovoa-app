@@ -34,6 +34,10 @@ import {
  * autoSendTexts rides along so the assistant's wording matches what actually happens:
  * without it the model told the user a text was "ready for you to send" after it had
  * already gone out, and they asked for it again and again.
+ *
+ * recipientGuard says this build only auto-sends a text to someone it is sure of
+ * (runPhoneAction below), so the server can let the model pass a spoken name
+ * straight to phone_message_compose instead of searching Contacts first.
  */
 export async function phoneCaps(): Promise<PhoneCaps> {
   return {
@@ -45,6 +49,7 @@ export async function phoneCaps(): Promise<PhoneCaps> {
     // is doing, not on some earlier screen.
     capabilities: ["location", ...(healthAvailable ? ["health"] : [])],
     autoSendTexts: await autoSendTextsPref.get().catch(() => false),
+    recipientGuard: true,
   };
 }
 
@@ -127,8 +132,14 @@ export async function runPhoneAction(action: PendingAction, { contactId, prep }:
     case "phone_message_compose": {
       // iOS never lets an app send a text by itself: the Messages sheet waits for a tap on Send.
       // The Shortcuts app can, so "Send texts automatically" hands the text to the user's
-      // "OVOA Send Text" shortcut as "recipients|message" and comes back here.
-      if (await autoSendTextsPref.get()) {
+      // "OVOA Send Text" shortcut as "recipients|message" and comes back here — but only
+      // when every recipient is certainly who was meant. A contact that only sounded like
+      // the name, or one of two with it, gets the Messages sheet, so a person sees who it's
+      // going to before it goes: "Sth Thai Ecker boss" went out to a half match with nobody
+      // looking (messages, 2026-09-23 22:00; recipientGuard.ts decides who is certain).
+      const unsure = prep?.kind === "recipients" ? prep.recipients.filter((r) => !r.exact) : [];
+      const auto = await autoSendTextsPref.get();
+      if (auto && !unsure.length) {
         // A line break didn't survive the shortcuts:// URL (the shortcut saw one line and failed on
         // item 2), so the two parts are separated by "|", which the shortcut splits on instead.
         const body = String(args.body ?? "")
@@ -146,7 +157,10 @@ export async function runPhoneAction(action: PendingAction, { contactId, prep }:
       if (!(await SMS.isAvailableAsync())) throw new Error("This device can't send texts.");
       const { result } = await SMS.sendSMSAsync(resolved(prep), args.body);
       if (result === "cancelled") throw new Error("You cancelled the text.");
-      return result === "sent" ? "text sent" : "opened your text in Messages";
+      if (result === "sent") return "text sent";
+      // Said, so the record of the action doesn't claim it went out on its own.
+      if (auto) return `opened your text in Messages to check who it's for, instead of sending it: ${unsure.map((r) => r.label).join("; ")}`;
+      return "opened your text in Messages";
     }
     case "phone_email_compose": {
       if (!(await MailComposer.isAvailableAsync())) {

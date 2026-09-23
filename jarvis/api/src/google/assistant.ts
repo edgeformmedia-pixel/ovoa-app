@@ -78,8 +78,10 @@ const AUTO_RUNNING = {
 /**
  * iPhone tools for one chat request. Lookups pause the turn for the app to run;
  * actions wait for approval (or, with "Approve for me", run as soon as the app gets them).
+ * `prompt` is worded for what the turn carries, so it's asked for once the tools
+ * are chosen (phone.ts PhonePromptOptions); `voice` is a spoken turn.
  */
-export function phoneAssistant(env: Env, userId: string, caps: PhoneCaps, autoApprove: boolean) {
+export function phoneAssistant(env: Env, userId: string, caps: PhoneCaps, autoApprove: boolean, voice = false) {
   const pending: PendingAction[] = [];
   const tools = phoneToolSpecs(caps);
   const offered = new Set(tools.map((t) => t.name));
@@ -91,7 +93,8 @@ export function phoneAssistant(env: Env, userId: string, caps: PhoneCaps, autoAp
     pending.push(await parkAction(env, userId, name, parsed.args, phoneSummary(name, parsed.args), autoApprove));
     return autoApprove ? AUTO_RUNNING : WAITING;
   };
-  const prompt = [phonePrompt(caps), autoApprovePrompt(autoApprove)].filter(Boolean).join("\n");
+  const prompt = (carries?: (tool: string) => boolean) =>
+    [phonePrompt(caps, { voice, carries }), autoApprovePrompt(autoApprove)].filter(Boolean).join("\n");
   return { tools, pending, callTool, prompt };
 }
 

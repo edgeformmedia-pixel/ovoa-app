@@ -5,7 +5,9 @@ import { cue } from "../lib/cues";
 // Marks the conversation's moments with the Glass cues (lib/cues.ts). Renders
 // nothing; it only watches the assistant.
 //
-//   off -> listening        "I'm listening"  (the orb was tapped)
+//   off -> listening        "I'm listening"  (the orb was tapped; hearing its
+//                           name plays the same cue, from voice.ts, since the
+//                           phase is "listening" already)
 //   listening -> thinking   "Got it"         (what you said was sent)
 //   thinking -> speaking    a tap only: a chime right before OVOA's voice
 //                           would talk over its first word

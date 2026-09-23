@@ -311,7 +311,13 @@ export type PendingAction = {
   auto?: boolean;
 };
 export type PhoneResult = { ok: boolean; detail: string };
-export type PhoneCaps = { lookups: boolean; capabilities: string[]; autoSendTexts?: boolean };
+export type PhoneCaps = {
+  lookups: boolean;
+  capabilities: string[];
+  autoSendTexts?: boolean;
+  /** This build auto-sends a text only to a recipient it is sure of; anyone else gets the Messages sheet (phoneActions.ts). */
+  recipientGuard?: boolean;
+};
 /** Something the assistant wants looked up on the phone before it can answer. */
 export type PhoneCall = { id: string; name: string; args: Record<string, any> };
 /** A chat turn either finishes, or pauses until the app sends lookup results to `resume`. */
@@ -618,6 +624,46 @@ export function noteDeadSession(status: number, token: string | null, error: unk
   if (status === 401 && token && error === "Not signed in") deadSession?.(token);
 }
 
+// ---------- The server out of reach ----------
+//
+// While the server was down for its move (every request answered 503
+// "maintenance"), each five-minute PUT /device/state wrote two error rows, and a
+// phone with no signal does the same for every request it tries (device_logs,
+// 2026-09-23 15:50-16:05). Neither is the phone doing anything wrong, and the
+// rows bury the ones that are. So an outage is said once, as a warning; the
+// requests that fail inside it stay on the phone, and the first answer after it
+// says how long it lasted.
+
+type Outage = { why: "maintenance" | "offline"; since: number; missed: number };
+let outage: Outage | null = null;
+
+/** Why the server can't be reached right now (already logged), or null once something has been answered. */
+export const serverOut = () => outage?.why ?? null;
+
+function noteOut(why: Outage["why"], what: string, detail: string) {
+  if (outage?.why === why) {
+    outage.missed++;
+    devlog("req", `${what} not answered (${why})`, detail, { level: "debug" });
+    return;
+  }
+  outage = { why, since: Date.now(), missed: 1 };
+  devlog(
+    "warn",
+    why === "maintenance"
+      ? "the server is down for maintenance; staying quiet until it answers again"
+      : "can't reach the server; staying quiet until it answers again",
+    `${what}: ${detail}`,
+  );
+}
+
+function noteAnswered() {
+  if (!outage) return;
+  const { why, since, missed } = outage;
+  outage = null;
+  const s = Math.round((Date.now() - since) / 1000);
+  devlog("log", `the server answers again after ${s} s (${missed} requests not answered, ${why})`);
+}
+
 /**
  * A request body for the log with what the person said taken out. The log
  * line is kept on the phone and rides up with errors as a breadcrumb, and the
@@ -668,12 +714,21 @@ export async function request<T>(path: string, token: string | null, init: Reque
     });
   } catch (err) {
     clearTimeout(timer);
-    devlog("err", `${method} ${path} failed after ${Date.now() - started} ms`, String(err));
-    if (timeout.signal.aborted) throw new Error(`No answer from the server after ${REQUEST_TIMEOUT_MS / 1000} s`);
+    if (timeout.signal.aborted) {
+      devlog("err", `${method} ${path} failed after ${Date.now() - started} ms`, String(err));
+      throw new Error(`No answer from the server after ${REQUEST_TIMEOUT_MS / 1000} s`);
+    }
+    // fetch only rejects like this when there is no connection to the server at all.
+    noteOut("offline", `${method} ${path}`, `${String(err)} after ${Date.now() - started} ms`);
     throw err;
   }
   clearTimeout(timer);
   const body = await res.json().catch(() => ({}));
+  if (res.status === 503 && body?.error === "maintenance") {
+    noteOut("maintenance", `${method} ${path}`, `503 after ${Date.now() - started} ms`);
+    throw new ApiError(errorText(body, res.status), res.status, {}, null, noteCoded(body));
+  }
+  noteAnswered();
   // Not part of their plan, not agreed to AI yet, or the code not typed yet:
   // ordinary answers, not faults, and logged as such, so a free phone's log
   // isn't a wall of errors.
@@ -714,6 +769,28 @@ export type ServerSpeech = {
 };
 
 /**
+ * Why the voice loop let go of a streamed reply, by the signal it aborted. The
+ * abort can't carry it: React Native's AbortController (the abort-controller
+ * polyfill) drops abort(reason). Every dropped stream used to be logged as
+ * "talked over", the ones a restarted or ended conversation dropped included,
+ * which led a read of the 2026-09-23 logs to blame a filler's echo for cutting
+ * a reply off, though the gate could then only interrupt a reply that was
+ * already speaking (turnGate.ts). With no reason given, the line claims none.
+ *
+ * "talked over" and "told to stop" are the turn gate's (the second can come
+ * while the answer is still being worked out); "cut short" is a tap or a click;
+ * "conversation ended" is listening stopped or restarted (voice.ts).
+ */
+const dropReasons = new WeakMap<AbortSignal, DropReason>();
+export type DropReason = "talked over" | "told to stop" | "cut short" | "conversation ended";
+
+/** Stops a streamed turn, saying why for the log (DropReason). */
+export function dropReply(abort: AbortController, why: DropReason) {
+  dropReasons.set(abort.signal, why);
+  abort.abort();
+}
+
+/**
  * A chat turn with the reply streamed: `onSentence` gets each sentence as soon as
  * the server has it (so it can be spoken while the rest is written), then this
  * resolves with the same response a plain request would.
@@ -734,7 +811,7 @@ async function streamedTurn(
   // No progress for this long means the connection is dead (the whole reply can take longer).
   const timeout = new AbortController();
   let timer = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
-  // The caller gave up (the user talked over the reply): stop reading.
+  // The caller gave up (the user talked over the reply, told it to stop or cut it short, or the conversation ended): stop reading.
   let dropped = false;
   const drop = () => {
     dropped = true;
@@ -760,10 +837,12 @@ async function streamedTurn(
       noteDeadSession(res.status, token, err.error);
       throw new ApiError(errorText(err, res.status), res.status, {}, notePlanNeeded(err), noteCoded(err));
     }
-    // A server without streaming answers plain JSON.
+    noteAnswered();
+    // A server without streaming answers plain JSON. The timing lines of a turn
+    // are never folded into a repeat (devlog.ts NEVER_COLLAPSED says why).
     if (!res.headers.get("content-type")?.includes("ndjson") || !res.body) {
       const json = (await res.json()) as ChatResponse;
-      devlog("res", `${res.status} POST ${path} · ${Date.now() - started} ms (not streamed)`, json);
+      devlog("res", `${res.status} POST ${path} · ${Date.now() - started} ms (not streamed)`, json, { collapse: false });
       return json;
     }
     const reader = res.body.getReader();
@@ -778,12 +857,14 @@ async function streamedTurn(
       if (msg.type === "sentence") {
         // The timing is the point of this line; the sentence is the reply itself,
         // and it used to ride up to device_logs with it whenever trace was on.
-        if (!sentences++) devlog("res", `first sentence after ${Date.now() - started} ms`, `${msg.text.length} chars`);
+        if (!sentences++) devlog("res", `first sentence after ${Date.now() - started} ms`, `${msg.text.length} chars`, { collapse: false });
         onSentence(msg.text);
       } else if (msg.type === "voice") {
         speech?.onVoicing(msg.on, msg.engine);
       } else if (msg.type === "audio") {
-        if (!voiced++) devlog("res", `first voiced piece after ${Date.now() - started} ms`, msg.error ?? `${msg.mp3?.length ?? 0} b64 chars`);
+        if (!voiced++) {
+          devlog("res", `first voiced piece after ${Date.now() - started} ms`, msg.error ?? `${msg.mp3?.length ?? 0} b64 chars`, { collapse: false });
+        }
         speech?.onVoiced(msg.text, msg.mp3 ?? null);
       } else if (msg.type === "error") {
         throw new ApiError(msg.error, 500);
@@ -807,11 +888,12 @@ async function streamedTurn(
     handle(buffer);
     if (!final) throw new Error("The reply was cut off");
     const done = final as ChatResponse;
-    devlog("res", `200 POST ${path} · ${Date.now() - started} ms, ${sentences} sentences streamed`, done.meta ?? done);
+    devlog("res", `200 POST ${path} · ${Date.now() - started} ms, ${sentences} sentences streamed`, done.meta ?? done, { collapse: false });
     return done;
   } catch (err) {
     if (dropped) {
-      devlog("voice", `stopped reading the reply after ${Date.now() - started} ms (talked over)`);
+      const why = signal && dropReasons.get(signal);
+      devlog("voice", `dropped the reply after ${Date.now() - started} ms${why ? ` (${why})` : ""}`);
       throw new Error("Cancelled");
     }
     if (timeout.signal.aborted) {

@@ -30,9 +30,10 @@
   // an odd minute on purpose, so it isn't queued behind everyone else's 04:00.
   "triggers": { "crons": ["*/2 * * * *", "13 4 * * *"] },
   "vars": {
-    // Every model call tries GLM first and Gemini second (llm.ts ENGINES); these
-    // two are the Gemini model it calls. Gemini 3.5 Flash-Lite for both, on the
-    // paid key; the id is the one GET v1beta/models listed for that key
+    // Typed and background calls try GLM on Z.ai, then Gemini, then Workers AI
+    // (llm.ts ENGINES); spoken turns try Workers AI first (VOICE_ENGINE, below).
+    // These two are the Gemini model it calls: Gemini 3.5 Flash-Lite for both,
+    // on the paid key; the id is the one GET v1beta/models listed for that key
     // (2026-09-23). CHAT_MODEL also does web search grounding (web.ts).
     "CHAT_MODEL": "gemini-3.5-flash-lite",
     "MEMORY_MODEL": "gemini-3.5-flash-lite",
@@ -45,13 +46,26 @@
     // million tokens).
     "GLM_BASE_URL": "https://api.z.ai/api/paas/v4",
     "GLM_MODEL": "glm-5.3-flash",
-    // How much GLM thinks on a typed turn: "off", "low" or "on". Spoken turns
-    // never think; the wait before the first word is the whole experience there.
-    // Thinking is billed as output tokens, at the output price.
+    // How much GLM thinks on a typed turn: "off", "low" or "on". Spoken and quick
+    // calls ask for "off", but Z.ai can't switch GLM 5.3 off, so there they
+    // think at "low" anyway (first word 4.5-6.6 s). Thinking is billed as output
+    // tokens, at the output price. GLM_TOOL_STREAM is left out of here on
+    // purpose: unset it is on, and `wrangler secret put GLM_TOOL_STREAM` with
+    // "off" stops Z.ai streaming tool-call arguments, without a deploy.
     "GLM_THINKING": "low",
+    // The same GLM 5.3 Flash on Cloudflare Workers AI, through the "ai" binding
+    // below (llm.ts OPENAI_PROVIDERS.workers). Asked for reasoning_effort "low",
+    // it doesn't reason at all and its first word comes in 0.66-1.5 s (probed
+    // 2026-09-23). Priced by this id in pricing.ts.
+    "WORKERS_MODEL": "@cf/zai-org/glm-5.3-flash",
+    // Who answers spoken turns first: an engine name, or "keyed" for the typed
+    // order. If Workers AI hasn't said a word in 6 s, the turn moves on to the
+    // next engine (VOICE_FIRST_CONTENT_MS, a secret, tunes that). Only Workers
+    // AI is held to it: GLM on Z.ai first is waited for, its first word being 4.5-6.6 s.
+    "VOICE_ENGINE": "workers",
     // ENGINE_ORDER, e.g. "gemini,glm", would put Gemini first. Left unset: GLM
-    // first. The order can also be set at run time (Dev tools, or
-    // PUT /debug/engines), which needs no deploy.
+    // first. Both orders can also be set at run time (Dev tools, or
+    // PUT /debug/engines with engine_order and voice_engine), which needs no deploy.
     // Which engine voices replies (voice.ts TTS_ENGINES): deepgram-aura-2 (the
     // default; the voice is the product) or device (the phone speaks with its
     // own voices). server_settings.tts_engine, set from Dev tools, overrides
@@ -93,6 +107,12 @@
     // Optional: "EXPO_GO_SIGNIN": "off" refuses Expo Go as the way back from the app's Google
     // sign-in, leaving only the installed app's ovoa://google-signin (src/signin.ts appReturnUrl).
   },
+  // Workers AI, as env.AI: the "workers" reply engine (src/llm.ts), GLM 5.3
+  // Flash on this account, billed per token (src/pricing.ts). No key: without
+  // the binding the engine doesn't exist. Under `wrangler dev --local` a call
+  // fails ("needs to be run remotely") and the turn falls through as if the
+  // engine were down.
+  "ai": { "binding": "AI" },
   // Per-person and per-address limits on the routes that spend shared quota
   // (src/limits.ts). Counted per Cloudflare location, no database writes, and set
   // well above what a person can reach by talking: they exist for runaways and

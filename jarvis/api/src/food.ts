@@ -748,8 +748,10 @@ export const isFoodTool = (name: string) => NAMES.has(name);
 /**
  * The food section of the prompt. food_log and food_amend are carried on every
  * turn (toolbelt.ts), so this is read before every reply: it earns its length.
+ * Out loud (`voice`) food_target isn't carried, so it isn't named: a line about
+ * a tool the model doesn't have sends it round more_tools first.
  */
-export function foodPrompt(level: FoodLevel | null) {
+export function foodPrompt(level: FoodLevel | null, voice = false) {
   const how =
     level === null
       ? "Log it quietly: don't ask about it, don't say you logged it, give no calorie numbers unless they ask, and reply as you normally would."
@@ -762,7 +764,7 @@ export function foodPrompt(level: FoodLevel | null) {
     "When they mention eating or drinking something, log it with food_log unasked (only what they had, not what they're cooking) and fix mistakes with food_amend.",
     how,
     level === null ? "" : "\"Just log it\" means stop asking and log your best guess.",
-    "food_target sets a daily goal and how closely to track (\"be more exact\" is strict, \"stop asking\" quick).",
+    voice ? "" : "food_target sets a daily goal and how closely to track (\"be more exact\" is strict, \"stop asking\" quick).",
     "Never praise eating less, never comment on going over, never moralise about food, and never bring up eating disorders.",
   ]
     .filter(Boolean)
@@ -861,7 +863,7 @@ export function foodAssistant(env: Env, userId: string, timeZone: string, { voic
     return { error: `Unknown tool ${name}` };
   };
 
-  return { tools: TOOLS, callTool, prompt: foodPrompt(level) };
+  return { tools: TOOLS, callTool, prompt: foodPrompt(level, voice) };
 }
 
 // ---------- Routes ----------

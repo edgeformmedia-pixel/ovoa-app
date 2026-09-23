@@ -12,7 +12,7 @@ import { phoneCaps, preparePhoneAction, runPhoneAction, runPhoneLookup, type App
 import { useOptionalContext, useProviderLog } from "./context";
 import { devlog, logFail } from "./devlog";
 import { onPush } from "./background";
-import { FILLERS, pickFiller } from "./fillers";
+import { SHORT_FILLERS, pickFiller } from "./fillers";
 import { syncAlarms } from "./nag";
 import * as clip from "./clip";
 import { showIsland, type IslandStatus } from "./island";
@@ -452,9 +452,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         const voicing = server;
         let streamed = false;
         // Thinking takes a few seconds on a good turn and much longer on a bad one. A
-        // filler from the phone's own cache ("One second while I get that") plays at
-        // once; the answer queues straight after it. Only if none is ready yet does it
-        // fall back to voicing a short word after a pause.
+        // filler from the phone's own cache ("One moment.") plays at once; the answer
+        // queues straight after it. Only if none is ready yet does it fall back to
+        // voicing a short line after a pause: a short one, since "Still on it." as
+        // the first thing said would claim a wait that hasn't happened.
         const cached = pickFiller();
         if (cached) {
           setBandPhase("speaking");
@@ -463,7 +464,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
           filler = setTimeout(() => {
             if (streamed) return;
             setBandPhase("speaking");
-            reply.say(FILLERS[Math.floor(Math.random() * FILLERS.length)]);
+            reply.say(SHORT_FILLERS[Math.floor(Math.random() * SHORT_FILLERS.length)]);
             devlog("voice", "band mic: saying a word while it thinks");
           }, FILLER_AFTER_MS);
         }

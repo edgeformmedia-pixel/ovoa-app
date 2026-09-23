@@ -7,11 +7,16 @@ import { nameCount } from "./turnGate";
 // the text of the current stretch of speech again and again as it grows or is
 // corrected, and now and then a "final" when it settles a stretch. The turn
 // gate (turnGate.ts) was written for Deepgram's shape instead: words still
-// forming (interim), words that won't change (final, flagged at a pause), and
-// a word when nobody has said anything for a moment. This turns the one into
-// the other. It has no timers of its own and is fed the time, like
-// wakeWindow.ts, so it can be checked in a test that never touches audio
-// (api/test/earWords.test.ts).
+// forming (interim), and words that won't change (final, flagged at a pause).
+// This turns the one into the other, and says with each final when its words
+// last changed: that is when they were said, give or take the recogniser, and
+// the final itself comes a pause later. The gate times the end of a request,
+// and tells its own echo from the user, by it. (A third event, "quiet", ended
+// requests a second after the last word whether they sounded finished or not,
+// and cut "Text Danya ..." off; it went on 2026-09-23, and the gate's tick
+// owns the end of a request now.) It has no timers of its own and is fed the
+// time, like wakeWindow.ts, so it can be checked in a test that never touches
+// audio (api/test/earWords.test.ts).
 //
 // Two kinds of recogniser feed it, and they cut speech into stretches differently:
 //   - iOS 26's SpeechAnalyzer sends each stretch on its own: volatile text,
@@ -41,10 +46,11 @@ import { nameCount } from "./turnGate";
 export type EarWordEvents = {
   /** Words still forming (they may change). "" when there are none. */
   onInterim: (text: string) => void;
-  /** Words that won't be handed on again. `sentenceEnd`: the speaker paused after them. */
-  onFinal: (text: string, sentenceEnd: boolean) => void;
-  /** Nobody has said a new word for a moment. */
-  onQuiet: () => void;
+  /**
+   * Words that won't be handed on again. `sentenceEnd`: the speaker paused after them.
+   * `lastWordAt`: when the last of them appeared as it is now.
+   */
+  onFinal: (text: string, sentenceEnd: boolean, lastWordAt: number) => void;
 };
 
 /**
@@ -53,8 +59,6 @@ export type EarWordEvents = {
  * land a little behind the voice.
  */
 export const PAUSE_MS = 700;
-/** ...and this long is quiet (Deepgram's utterance end was 1000 ms). */
-export const QUIET_MS = 1000;
 /** While talk goes on, a word unchanged this long is settled... */
 export const SETTLE_MS = 1500;
 /** ...except the last few, which the recogniser is still working out. */
@@ -89,8 +93,8 @@ export class EarWords {
   private bornAt: number[] = [];
   /** How many words at the start are dealt with: handed on, or heard while closed. */
   private done = 0;
+  /** When the stretch last changed: a word added, dropped or corrected. */
   private changedAt = 0;
-  private quietSent = true;
   /** Words handed on past the end of the last final (see CARRY_MS). */
   private carry: { words: string[]; until: number } | null = null;
   private opened = false;
@@ -120,7 +124,6 @@ export class EarWords {
     this.clearStretch();
     this.carry = null;
     this.changedAt = 0;
-    this.quietSent = true;
   }
 
   /**
@@ -180,10 +183,7 @@ export class EarWords {
     const prev = this.words;
     const prevDone = this.done;
     const same = sharedStart(prev, next);
-    if (same !== prev.length || same !== next.length) {
-      this.changedAt = now;
-      this.quietSent = false;
-    }
+    if (same !== prev.length || same !== next.length) this.changedAt = now;
     this.bornAt = next.map((_, i) => (i < same ? this.bornAt[i] : now));
     this.words = next;
     this.done = this.opened ? Math.min(prevDone, next.length) : next.length;
@@ -198,21 +198,14 @@ export class EarWords {
     this.showInterim();
   }
 
-  /** A few times a second: pauses, settled words, and quiet. */
+  /** A few times a second: pauses and settled words. */
   tick(now: number) {
-    if (this.done < this.words.length) {
-      if (now - this.changedAt >= PAUSE_MS) this.handOn(true);
-      else {
-        let settled = this.done;
-        const limit = this.words.length - TAIL_WORDS;
-        while (settled < limit && now - this.bornAt[settled] >= SETTLE_MS) settled++;
-        this.handOn(false, settled);
-      }
-    }
-    if (!this.quietSent && this.changedAt && now - this.changedAt >= QUIET_MS) {
-      this.quietSent = true;
-      if (this.opened) this.sink?.onQuiet();
-    }
+    if (this.done >= this.words.length) return;
+    if (now - this.changedAt >= PAUSE_MS) return this.handOn(true);
+    let settled = this.done;
+    const limit = this.words.length - TAIL_WORDS;
+    while (settled < limit && now - this.bornAt[settled] >= SETTLE_MS) settled++;
+    this.handOn(false, settled);
   }
 
   /** Text that starts differently and is much shorter: the recogniser started a new stretch. */
@@ -227,7 +220,10 @@ export class EarWords {
     const text = this.words.slice(this.done, upTo).join(" ");
     this.done = upTo;
     if (!this.opened || !this.sink) return;
-    this.sink.onFinal(text, sentenceEnd);
+    // The whole stretch: its last change (a word dropped at the end counts too). Part of it,
+    // while talk goes on: when its own last word appeared, not the words still forming after it.
+    const lastWordAt = upTo === this.words.length ? this.changedAt : this.bornAt[upTo - 1];
+    this.sink.onFinal(text, sentenceEnd, lastWordAt);
     this.showInterim();
   }
 

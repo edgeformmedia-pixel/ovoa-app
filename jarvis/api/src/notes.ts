@@ -135,15 +135,16 @@ export async function fireDueNotes(env: Env) {
 const TOOLS: ToolSpec[] = [
   {
     name: "note_add",
+    // Short on purpose: a spoken turn carries it before every reply (toolbelt.ts SPOKEN_CORE).
     description:
-      "Keeps something they want to remember, word for word: a fact, an idea, something to do. Use for 'remember that…', 'note that…', 'make a note…'. It can also bring the note back at a time. A plain 'remind me to call Mum at 5' is still an ordinary phone reminder, not a note. Tag with 'todo' for things to do, which then show up on tomorrow's list.",
+      "Keeps something word for word ('remember that…', 'make a note…'). Tag 'todo' for tomorrow's list. A plain 'remind me to…' is a phone reminder, not a note.",
     parameters: {
       type: "object",
       properties: {
         text: { type: "string", description: "The note, in their words, complete on its own." },
-        tags: { type: "array", items: { type: "string" }, description: "A few short tags: todo, house, work, gift…" },
-        remindAt: { type: "string", description: "Local YYYY-MM-DDTHH:MM to remind them, if they asked for a reminder." },
-        place: { type: "string", description: "A place it's about ('the pharmacy'), if they said one." },
+        tags: { type: "array", items: { type: "string" }, description: "Short tags: todo, house, work…" },
+        remindAt: { type: "string", description: "Local YYYY-MM-DDTHH:MM, if they asked for it back at a time." },
+        place: { type: "string", description: "A place it's about ('the pharmacy')." },
       },
       required: ["text"],
     },
@@ -214,11 +215,15 @@ export function notesAssistant(env: Env, userId: string, timeZone: string, opts:
     return { error: `Unknown tool ${name}` };
   };
 
+  // "Reminded at a time" left this (2026-09-23): a plain "remind me" is the
+  // phone's Reminders everywhere else in the prompt. Out loud it names only
+  // note_add, the one a spoken turn carries (toolbelt.ts SPOKEN_CORE).
   return {
     tools: opts.voice ? TOOLS.filter((t) => t.name !== "note_list") : TOOLS,
     callTool,
-    prompt:
-      "When they want something remembered word for word, or reminded at a time, keep it with note_add; find it again with note_search. Notes tagged 'todo' go on tomorrow's list.",
+    prompt: opts.voice
+      ? "When they want something kept word for word, keep it with note_add. Notes tagged 'todo' go on tomorrow's list."
+      : "When they want something kept word for word, keep it with note_add; find it again with note_search. Notes tagged 'todo' go on tomorrow's list.",
   };
 }
 

@@ -4,7 +4,7 @@
 // would make it say something plainly wrong.
 
 import { findSessions, restingBaseline, type Sample } from "../src/heart";
-import { distanceM, findPlaces, foldPoints, guessKind, placeFor, type Visit } from "../src/location";
+import { describeWhere, distanceM, findPlaces, foldPoints, guessKind, placeFor, type Visit } from "../src/location";
 import { atLocalTime } from "../src/time";
 
 let fails = 0;
@@ -68,6 +68,13 @@ eq("an evening hour is just 'other'", guessKind(visits.slice(-2), NY), "other");
 const places = [{ id: "p1", name: "Home", kind: "home" as const, ...HOME, radius: 100, address: null, visit_count: 5 }];
 eq("a spot near home is home", placeFor({ lat: HOME.lat + 0.0005, lng: HOME.lng }, places)?.id, "p1");
 eq("the gym isn't", placeFor(GYM, places), null);
+
+// Where a spoken turn says they are (index.ts runTurn's moment): the place, and how long ago the phone said so.
+const NOW = t0 + 10 * 60 * M;
+eq("a named place, with its age", describeWhere({ ts: NOW - 40 * M, lat: HOME.lat, lng: HOME.lng }, places, NOW), "Home (40 min ago)");
+const withAddress = [{ ...places[0], name: null, address: "Elm St, Ferndale" }];
+eq("home by kind, with the phone's address", describeWhere({ ts: NOW - 30_000, ...HOME }, withAddress, NOW), "Home, Elm St, Ferndale (just now)");
+eq("nowhere learned: rounded coordinates", describeWhere({ ts: NOW - 150 * M, ...GYM }, places, NOW), "near 42.50, -83.13 (3 h ago)");
 
 // ---------- Heart rate ----------
 

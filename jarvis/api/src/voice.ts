@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { say } from "./obs";
 import type { Env, Vars } from "./types";
 import { recordUsage, ttsRow } from "./usage";
 
@@ -84,21 +85,33 @@ voice.post("/voice/token", (c) => c.json(GONE, 410));
 // ---------- Voicing ----------
 
 /**
+ * Where one piece's audio came from and where its time went, for the piece's
+ * log line. The gap from a sentence being written to its audio reaching the
+ * phone was 523-1421 ms (2026-09-23) with nothing to say whether that was
+ * Deepgram thinking, Deepgram sending, or the cache: headersMs is Deepgram's
+ * answer starting, bodyMs the MP3 arriving after it.
+ */
+export type VoicedPiece = { cache: "hit" | "miss" | "none"; headersMs?: number; bodyMs?: number; bytes: number };
+
+/**
  * Voices one piece of text on one engine, as MP3, so the phone's player and the
  * cache never need to know which engine spoke. The phone's own voice is never
  * asked for here: it speaks on the phone.
  */
-async function synthesize(env: Env, engine: TtsEngine, voice: VoiceId, text: string): Promise<Uint8Array> {
+async function synthesize(env: Env, engine: TtsEngine, voice: VoiceId, text: string) {
   switch (engine) {
     case "deepgram-aura-2": {
       if (!env.DEEPGRAM_API_KEY) throw new Error("Voice isn't set up on the server yet");
+      const asked = Date.now();
       const res = await fetch(`${DEEPGRAM}/speak?model=${voice}&encoding=mp3`, {
         method: "POST",
         headers: { authorization: `Token ${env.DEEPGRAM_API_KEY}`, "content-type": "application/json" },
         body: JSON.stringify({ text }),
       });
+      const headersMs = Date.now() - asked;
       if (!res.ok) throw new Error(`Deepgram ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      return new Uint8Array(await res.arrayBuffer());
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      return { bytes, headersMs, bodyMs: Date.now() - asked - headersMs };
     }
     case "device":
       throw new Error("The phone voices this itself");
@@ -123,6 +136,8 @@ export async function voiceText(
   engine: TtsEngine,
   voice: VoiceId,
   text: string,
+  /** Told where the audio came from and how long Deepgram took (VoicedPiece). */
+  onVoiced?: (piece: VoicedPiece) => void,
 ): Promise<Uint8Array> {
   const key = new Request(`https://tts.ovoa.internal/${engine}/${voice}/${await sha256(text)}`);
   let cache: Cache | null = null;
@@ -131,14 +146,17 @@ export async function voiceText(
     const hit = await cache.match(key);
     if (hit) {
       ctx.waitUntil(recordUsage(env, [{ ...ttsRow(userId, engine, voice, text.length), engine: "cache", microUsd: 0 }]));
-      return new Uint8Array(await hit.arrayBuffer());
+      const bytes = new Uint8Array(await hit.arrayBuffer());
+      onVoiced?.({ cache: "hit", bytes: bytes.byteLength });
+      return bytes;
     }
   } catch {
     // No cache here (an odd runtime): voice it every time, which is only what it always cost.
   }
   // Counted whether or not the engine answers: a failed request is still a request.
   ctx.waitUntil(recordUsage(env, [ttsRow(userId, engine, voice, text.length)]));
-  const bytes = await synthesize(env, engine, voice, text);
+  const { bytes, headersMs, bodyMs } = await synthesize(env, engine, voice, text);
+  onVoiced?.({ cache: cache ? "miss" : "none", headersMs, bodyMs, bytes: bytes.byteLength });
   if (cache && bytes.byteLength) {
     ctx.waitUntil(
       cache
@@ -200,8 +218,13 @@ voice.post("/voice/speak", async (c) => {
 
 /** Voiced ahead of the one being written out, per reply. The phone's own FETCH_AHEAD. */
 const SPEAK_AHEAD = 3;
-/** A first sentence longer than this goes out in two pieces (app/src/lib/voice.ts SPLIT_FIRST_OVER). */
-const SPLIT_FIRST_OVER = 60;
+/**
+ * A first sentence longer than this goes out in two pieces (app/src/lib/voice.ts
+ * SPLIT_FIRST_OVER). 35, down from 60 (2026-09-23): the first piece is the one
+ * the user waits on in silence, and Deepgram's time grows with its length, so
+ * "Your dentist is tomorrow," goes on its own and the rest follows while it plays.
+ */
+const SPLIT_FIRST_OVER = 35;
 /** ...looking this far into it for a pause (FIRST_PIECE_MAX). */
 const FIRST_PIECE_MAX = 120;
 /** After the first piece, sentences shorter than this ride along with the next. */
@@ -230,7 +253,10 @@ export function speechStream(
   engine: TtsEngine,
   voice: VoiceId,
   write: (line: AudioLine) => Promise<void>,
+  /** The request's id (obs.ts observe), so each piece's ovoa.tts line joins its ovoa.turn line. */
+  rid?: string,
 ) {
+  const opened = Date.now();
   let pending = "";
   let pieces = 0;
   /** Characters handed to the voice so far: what this reply's speech is billed on. */
@@ -248,12 +274,17 @@ export function speechStream(
     waiting.shift()?.();
   };
 
-  const voiceOne = async (text: string): Promise<Uint8Array> => {
+  /** One piece's story for its log line: queued, given a slot, voiced. */
+  type Timing = { queued: number; began?: number; voiced?: VoicedPiece; ready?: number };
+
+  const voiceOne = async (text: string, timing: Timing): Promise<Uint8Array> => {
     await slot();
+    timing.began = Date.now();
     try {
       if (stopped) throw new Error("stopped");
-      return await voiceText(env, ctx, userId, engine, voice, text);
+      return await voiceText(env, ctx, userId, engine, voice, text, (piece) => (timing.voiced = piece));
     } finally {
+      timing.ready = Date.now();
       release();
     }
   };
@@ -263,8 +294,9 @@ export function speechStream(
     if (!/[\p{L}\p{N}]/u.test(text)) return;
     const seq = pieces++;
     chars += text.length;
+    const timing: Timing = { queued: Date.now() };
     // Started now; written out after every piece before it.
-    const audio = voiceOne(text).then(
+    const audio = voiceOne(text, timing).then(
       (bytes) => ({ bytes, error: null }),
       (err: unknown) => ({ bytes: null, error: err instanceof Error ? err.message : String(err) }),
     );
@@ -274,6 +306,21 @@ export function speechStream(
       if (error) console.error(`speak: piece ${seq} couldn't be voiced; the phone will`, error);
       // Without the audio the phone still gets the words, and voices them itself.
       await write(bytes ? { type: "audio", seq, text, mp3: base64(bytes) } : { type: "audio", seq, text, error: error ?? "no audio" });
+      // wait: for a slot (SPEAK_AHEAD). head and body: Deepgram (VoicedPiece). held:
+      // voiced, then waiting on an earlier piece. sent: since the stream opened.
+      const v = timing.voiced;
+      say("tts", {
+        rid,
+        seq,
+        chars: text.length,
+        cache: v?.cache ?? "failed",
+        wait: (timing.began ?? timing.queued) - timing.queued,
+        head: v?.headersMs,
+        body: v?.bodyMs,
+        bytes: v?.bytes,
+        held: timing.ready === undefined ? undefined : Date.now() - timing.ready,
+        sent: Date.now() - opened,
+      });
     });
   };
 

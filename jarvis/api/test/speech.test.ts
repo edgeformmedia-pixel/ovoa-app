@@ -61,7 +61,7 @@ async function main() {
   dg = fakeDeepgram(() => 20);
   lines = [];
   s = stream(async (l) => void lines.push(l));
-  for (let i = 0; i < 8; i++) s.say(`This is sentence number ${i + 1}, long enough to go out on its own.`);
+  for (let i = 0; i < 8; i++) s.say(`This is sentence number ${i + 1} and long enough to go out on its own.`);
   await s.end();
   eq("all eight arrive", lines.length, 8);
   eq("no more than three asked for at once", dg.most() <= 3, true);
@@ -99,7 +99,33 @@ async function main() {
   s = stream(async (l) => void lines.push(l));
   s.say("**Done** — see https://example.com for the rest of it, OVOA.");
   await s.end();
-  eq("symbols and links are stripped before voicing", lines[0]?.text, "Done — see for the rest of it, Ovoa.");
+  eq("symbols and links are stripped before voicing", lines.map((l) => l.text).join(" "), "Done — see for the rest of it, Ovoa.");
+
+  // The first piece is the one the user waits on: over 35 characters, it goes out at its first pause.
+  fakeDeepgram(() => 1);
+  lines = [];
+  s = stream(async (l) => void lines.push(l));
+  s.say("Your dentist is tomorrow, at three with Dr. Patel.");
+  await s.end();
+  eq("a first sentence over 35 characters is split at its pause", lines[0]?.text, "Your dentist is tomorrow,");
+  lines = [];
+  s = stream(async (l) => void lines.push(l));
+  s.say("It's sunny and 24 all afternoon.");
+  await s.end();
+  eq("a short first sentence goes whole", lines.map((l) => l.text), ["It's sunny and 24 all afternoon."]);
+
+  // Each piece says where its time went, joined to its turn by the request id.
+  fakeDeepgram(() => 5);
+  const logged: string[] = [];
+  const log = console.log;
+  console.log = (...args: unknown[]) => void logged.push(args.join(" "));
+  const timed = speechStream(env, ctx, null, "deepgram-aura-2", "aura-2-thalia-en", async () => {}, "ray-1");
+  timed.say("Checking your calendar now.");
+  await timed.end();
+  console.log = log;
+  const line = logged.find((l) => l.startsWith("ovoa.tts ")) ?? "";
+  eq("a piece's line names the request and the piece", /rid=ray-1 seq=0 chars=27/.test(line), true);
+  eq("and says it was voiced, not cached, with Deepgram's time and the bytes", /cache=none .*head=\d+ body=\d+ bytes=27/.test(line), true);
 
   if (fails) {
     console.log(`\n${fails} failed`);
