@@ -3,7 +3,7 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { Empty, GroupLabel, IconTile, Screen, TopBar } from "../../components/ui";
-import { ADDONS, installedAddons, searchAddons, useInstalledAddons, type Addon } from "../../lib/addons";
+import { ADDONS, installedAddons, searchAddons, USAGE_LABEL, useInstalledAddons, type Addon } from "../../lib/addons";
 import { useDevMode } from "../../lib/devMode";
 import { usePlan } from "../../lib/plan";
 import { colors, radius, space, type } from "../../lib/theme";
@@ -94,7 +94,13 @@ export default function Apps() {
         {found.length === 0 ? (
           <Empty icon="search" title="No apps found" body={`Nothing matches "${query.trim()}".`} />
         ) : (
-          yours.length > 0 && <Text style={styles.hint}>Press and hold one of your apps to remove it.</Text>
+          <>
+            <Text style={styles.hint}>
+              Daily usage is what your plan allows each day: your replies, and the work behind them. It resets every
+              day. Apps that use more leave less for talking.
+            </Text>
+            {yours.length > 0 && <Text style={styles.hint}>Press and hold one of your apps to remove it.</Text>}
+          </>
         )}
       </Screen>
     </View>
@@ -134,6 +140,17 @@ function AddonRow({
           {!!tag && <Text style={styles.tag}> · {tag}</Text>}
         </Text>
         <Text style={styles.about}>{addon.about}</Text>
+        <View style={styles.usage}>
+          <Ionicons
+            name={addon.usage === "none" ? "leaf-outline" : "flash-outline"}
+            size={13}
+            color={addon.usage === "more" ? colors.late : colors.inkMute}
+          />
+          <Text style={[styles.usageText, addon.usage === "more" && styles.usageMore]}>
+            {USAGE_LABEL[addon.usage]}
+            {!!addon.usageWhy && <Text style={styles.usageWhy}> · {addon.usageWhy}</Text>}
+          </Text>
+        </View>
       </View>
       {/* A label, not a button: the whole card is the button, and a button
           inside a button is two things to tap for one action. */}
@@ -172,6 +189,11 @@ const styles = StyleSheet.create({
   about: { ...type.sub, color: colors.inkDim, marginTop: 2 },
   action: { minHeight: 34, paddingHorizontal: 14, borderRadius: 17, justifyContent: "center", backgroundColor: colors.paper },
   actionText: { ...type.sub, fontWeight: "600", color: colors.ink },
+
+  usage: { flexDirection: "row", alignItems: "flex-start", gap: 5, marginTop: space.s1 },
+  usageText: { ...type.meta, color: colors.inkMute, flex: 1 },
+  usageMore: { color: colors.late, fontWeight: "600" },
+  usageWhy: { fontWeight: "400", color: colors.inkMute },
 
   hint: { ...type.meta, color: colors.inkMute, textAlign: "center", paddingTop: space.s4 },
 });

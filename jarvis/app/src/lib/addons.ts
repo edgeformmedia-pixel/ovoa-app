@@ -24,6 +24,22 @@ export type AddonNeeds =
   /** Background work: Pro. */
   | "agent";
 
+/**
+ * How much of the plan's daily usage it draws on (api/src/plans.ts: replies,
+ * and the spend ceiling behind them that catches model calls, voice and
+ * microphone time nobody counted as a reply).
+ *   none  its routes are free and call no model
+ *   some  a model call now and then, or one per thing you ask
+ *   more  runs on its own through the day, or streams the microphone
+ */
+export type AddonUsage = "none" | "some" | "more";
+
+export const USAGE_LABEL: Record<AddonUsage, string> = {
+  none: "No daily usage",
+  some: "Uses some daily usage",
+  more: "Uses more daily usage",
+};
+
 export type Addon = {
   id: string;
   name: string;
@@ -35,6 +51,9 @@ export type Addon = {
   href: Href;
   /** Which plan it comes with, if not every plan. */
   needs?: AddonNeeds;
+  usage: AddonUsage;
+  /** Why it uses what it does, when it uses any. */
+  usageWhy?: string;
   /** Installed on a phone that never chose. */
   preinstalled?: boolean;
   /** Only listed while dev mode is on (lib/devMode.ts). */
@@ -49,6 +68,8 @@ export const ADDONS: Addon[] = [
     name: "Morning Brief",
     by: "OVOA",
     about: "Your day, read out to you each morning.",
+    usage: "some",
+    usageWhy: "A few moments of it each morning.",
     icon: "sunny-outline",
     tone: "amber",
     href: "/brief" as Href,
@@ -61,6 +82,7 @@ export const ADDONS: Addon[] = [
     name: "Day",
     by: "OVOA",
     about: "Today on one timeline: what's next and what's done.",
+    usage: "none",
     icon: "time-outline",
     tone: "violet",
     href: "/day" as Href,
@@ -72,6 +94,7 @@ export const ADDONS: Addon[] = [
     name: "Activity",
     by: "OVOA",
     about: "Steps, heart rate and sleep from your band and Health.",
+    usage: "none",
     icon: "pulse",
     tone: "coral",
     href: "/activity" as Href,
@@ -83,6 +106,7 @@ export const ADDONS: Addon[] = [
     name: "Record",
     by: "OVOA",
     about: "Record notes on your phone or band and play them back.",
+    usage: "none",
     icon: "radio-button-on",
     tone: "blue",
     href: "/record",
@@ -94,6 +118,7 @@ export const ADDONS: Addon[] = [
     name: "Safety",
     by: "OVOA",
     about: "Fall detection that tells your emergency contacts.",
+    usage: "none",
     icon: "shield-checkmark-outline",
     tone: "green",
     href: "/safety",
@@ -104,6 +129,8 @@ export const ADDONS: Addon[] = [
     name: "Background Work",
     by: "OVOA",
     about: "OVOA works between chats and speaks up only when it matters.",
+    usage: "more",
+    usageWhy: "Works through the day on its own, even when you're not talking.",
     icon: "git-branch-outline",
     tone: "pink",
     href: "/agent" as Href,
@@ -115,6 +142,8 @@ export const ADDONS: Addon[] = [
     name: "Transcripts",
     by: "OVOA",
     about: "Everything said to OVOA, by day, searchable.",
+    usage: "some",
+    usageWhy: "Each hour of talk gets a title written for it.",
     icon: "document-text-outline",
     tone: "violet",
     href: "/transcripts" as Href,
@@ -128,6 +157,7 @@ export const ADDONS: Addon[] = [
     name: "Sensors & ES100",
     by: "OVOA",
     about: "The band's raw inputs and sensors, for testing.",
+    usage: "none",
     icon: "hardware-chip-outline",
     tone: "amber",
     href: "/dev-tools",
@@ -140,6 +170,8 @@ export const ADDONS: Addon[] = [
     name: "Live Listen",
     by: "OVOA",
     about: "Hear what the band's microphone hears, live.",
+    usage: "more",
+    usageWhy: "Streams the microphone the whole time it is open.",
     icon: "radio-outline",
     tone: "coral",
     href: "/live" as Href,
@@ -153,6 +185,8 @@ export const ADDONS: Addon[] = [
     name: "Ask Claude",
     by: "OVOA",
     about: "Ask Claude directly, without OVOA in between.",
+    usage: "some",
+    usageWhy: "Each question counts as a reply.",
     icon: "sparkles-outline",
     tone: "violet",
     href: "/claude" as Href,
@@ -163,12 +197,12 @@ export const ADDONS: Addon[] = [
   },
 ];
 
-/** Case-insensitive, over the name, maker, description and keywords. Every word must match. */
+/** Case-insensitive, over the name, maker, description, usage and keywords. Every word must match. */
 export function searchAddons(list: Addon[], query: string) {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return list;
   return list.filter((a) => {
-    const hay = `${a.name} ${a.by} ${a.about} ${a.keywords ?? ""}`.toLowerCase();
+    const hay = `${a.name} ${a.by} ${a.about} ${USAGE_LABEL[a.usage]} ${a.keywords ?? ""}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   });
 }

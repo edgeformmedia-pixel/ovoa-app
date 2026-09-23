@@ -49,7 +49,7 @@ function steps(assistant: string, free: boolean): Step[] {
       icon: "apps-outline",
       tone: "violet",
       title: "Apps",
-      body: "Everything else — your Morning Brief, Day, Activity, Record, Safety and more — is an app you add onto OVOA. Search for one, tap Install, and it's in Your apps. Press and hold one to remove it.",
+      body: "Everything else — your Morning Brief, Day, Activity, Record, Safety and more — is an app you add onto OVOA. Search for one, tap Install, and it's in Your apps. Each says how much of your daily usage it uses. Press and hold one to remove it.",
     },
     {
       icon: "person-circle-outline",
