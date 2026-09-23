@@ -45,12 +45,19 @@ const rows = (description: string): Schema => ({
 const ONLY_OVOA_FILES =
   "OVOA can only see Drive files it created; it can't search the rest of their Drive. For another Doc or Sheet, ask for its link.";
 
-/** Under drive.file, a file OVOA didn't create looks exactly like one that doesn't exist: a 404. Says which. */
+/**
+ * Under drive.file, a file OVOA didn't create looks like one that doesn't exist (a 404), or answers a 403 whose
+ * message says the user "has not granted the app … access to the file" (reason appNotAuthorizedToFile). Says which.
+ * Any other 403 (rate limits, a file they can only view) is passed on as it is.
+ */
 async function ovoaFile<T>(call: Promise<T>): Promise<T> {
   try {
     return await call;
   } catch (err) {
-    if (err instanceof Error && /^Google API error 404:/.test(err.message)) {
+    if (
+      err instanceof Error &&
+      (/^Google API error 404:/.test(err.message) || /^Google API error 403:.*has not granted the app/i.test(err.message))
+    ) {
       throw new Error(`That file isn't one OVOA created, or it no longer exists. ${ONLY_OVOA_FILES}`);
     }
     throw err;
@@ -363,7 +370,8 @@ export const googleTools: Tool[] = [
   },
 
   // Drive: the drive.file scope (oauth.ts) only reaches files OVOA created, so
-  // these search and trash those and nothing else. Any other file answers 404.
+  // these search and trash those and nothing else. Any other file answers 404,
+  // or a 403 "has not granted the app … access" (ovoaFile explains both).
   {
     name: "drive_search",
     description:
