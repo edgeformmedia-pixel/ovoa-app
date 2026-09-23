@@ -20,10 +20,10 @@ Read first: `docs/paywall/SPEC.md`, and every commit 01–05 made (`git log -p` 
 3. **Price sweep.** Grep both repos for anything that disagrees with SPEC §1: $99, $9.99, $19.99, $249, "lifetime", "1 month free".
 4. **Update `ovoa-team/setup.md`** with the new steps from 01's notes:
    - Re-running `stripe-setup.mjs`.
-   - The Supabase and D1 migrations.
-   - Setting `MEMBERSHIP_API_KEY` on **both** Lovable and the Worker (`wrangler secret put MEMBERSHIP_API_KEY` in `jarvis/api`).
+   - The D1 migrations.
+   - Setting `MEMBERSHIP_API_KEY` on **both** the site's Worker and the app's Worker (`wrangler secret put MEMBERSHIP_API_KEY` in `jarvis/api`).
    - App Review's comp Pro login.
    - The privacy URL for TestFlight.
    - Also remove the lifetime plan from the Roll comparison table.
 5. Rewrite `ovoa-app/contextforclaude.txt` to about 5 lines. Update the memory note `paid-early-access-site`: setup.md Part C (gating the app) is done now.
-6. Give the user a short list of three things: what's live, what needs a click from them (Lovable publish, Stripe live mode, the migration in the Lovable chat), and what still needs a device check.
+6. Give the user a short list of three things: what's live, what needs a click from them (Stripe live mode), and what still needs a device check.
