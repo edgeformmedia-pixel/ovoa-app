@@ -49,7 +49,9 @@ workflows:
         # Sign in with Apple (expo-apple-authentication, app.json ios.usesAppleSignIn) puts the
         # com.apple.developer.applesignin entitlement in the app, so the App ID com.ovoa.app needs the
         # "Sign In with Apple" capability (API name APPLE_ID_AUTH) or no profile can sign it. The block
-        # before fetch-signing-files turns it on once and never fails the build. Commands checked against
+        # before fetch-signing-files turns it on once. When it's off and can't be turned on, the build
+        # stops here instead of failing at the archive, the long part of the build; when the capabilities
+        # can't be read it carries on, since it may well be on. Commands checked against
         # codemagic-cli-tools 0.69.0's --help:
         #   app-store-connect bundle-ids list --bundle-id-identifier ID --strict-match-identifier --platform IOS --json
         #   app-store-connect bundle-ids capabilities RESOURCE_ID --json
@@ -58,8 +60,10 @@ workflows:
         #   app-store-connect profiles delete PROFILE_ID --ignore-not-found
         # A profile made before the capability doesn't carry the entitlement. Apple marks those INVALID
         # and fetch-signing-files only reuses ACTIVE ones, so --create makes a new one; any still ACTIVE
-        # are deleted too, on the one build that turns the capability on. If this can't turn it on, tick
-        # "Sign In with Apple" on com.ovoa.app at developer.apple.com (Identifiers) and build again.
+        # are deleted too, on the one build that turns the capability on. The enable call sends no
+        # settings (the CLI has no flag for them), which nobody has seen Apple accept yet: ticking
+        # "Sign In with Apple" on com.ovoa.app at developer.apple.com (Identifiers) before the first
+        # build means it's never made, and this only prints "already on".
         script: |
           keychain initialize
           app-store-connect bundle-ids create com.ovoa.app.LiveActivity --name "OVOA LiveActivity" --platform IOS || echo "LiveActivity bundle ID already exists"
@@ -85,6 +89,7 @@ workflows:
             done
           else
             echo "Couldn't turn on Sign In with Apple: tick it on com.ovoa.app at developer.apple.com (Identifiers)"
+            exit 1
           fi
           app-store-connect fetch-signing-files com.ovoa.app --type IOS_APP_STORE --create
           app-store-connect fetch-signing-files com.ovoa.app.LiveActivity --type IOS_APP_STORE --create

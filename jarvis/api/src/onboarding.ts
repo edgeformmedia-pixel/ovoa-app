@@ -203,7 +203,9 @@ const NOTHING_SAVED = new Set<string>([
 
 const STEP_SPECS: Record<Step, StepSpec> = {
   name: {
-    question: ({ name }) => `First things first: is ${name} what you'd like me to call you?`,
+    // No name: Sign in with Apple made the account without one (index.ts afterApple).
+    question: ({ name }) =>
+      name ? `First things first: is ${name} what you'd like me to call you?` : "First things first: what would you like me to call you?",
     schema: { type: "object", properties: { name: { type: "string", description: "What to call them, or empty to keep the current name" } } },
     apply: async (env, userId, d) => {
       const name = String(d.name ?? "").trim().slice(0, 80);
@@ -347,7 +349,7 @@ async function questionFor(env: Env, userId: string, step: Step) {
     env.DB.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
     listGoogleAccounts(env.DB, userId),
   ]);
-  return STEP_SPECS[step].question({ name: user?.name ?? "you", accounts: accounts.map((a) => a.email) });
+  return STEP_SPECS[step].question({ name: user?.name.trim() ?? "", accounts: accounts.map((a) => a.email) });
 }
 
 /** The next question, or done. */

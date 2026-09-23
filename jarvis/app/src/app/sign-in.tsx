@@ -28,14 +28,21 @@ import { colors } from "../lib/theme";
 // is wrong, and always leave a door open.
 //
 // Google and Apple are two more doors, on both forms: they sign in to the
-// account with that address, or, when there isn't one, ask only for a name and
-// a password to make it (lib/signInWith.ts, api/src/signin.ts).
+// account with that address. When there isn't one, Google asks only for a name
+// and a password to make it, and Apple makes it without asking anything. An
+// account made with the address before anyone proved it gets a new password
+// from the person Google just proved it for (lib/signInWith.ts, api/src/signin.ts).
 
 type Field = "name" | "email" | "password";
 type Fields = Partial<Record<Field, string>>;
 type Provider = "Google" | "Apple";
-/** Google or Apple proved an address with no account yet: the name + password step. */
-type Finishing = { ticket: string; email: string; via: Provider };
+/**
+ * Google proved an address with no account yet: the name + password step.
+ * (Apple never hands back a ticket now, api/src/index.ts afterApple, but the
+ * step takes one from either.) `existing`: there is an account, never proven,
+ * and this gives it a new password.
+ */
+type Finishing = { ticket: string; email: string; via: Provider; existing: boolean };
 
 /** Rough enough to catch a typo before a round trip; the server has the real rule. */
 const LOOKS_LIKE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -101,12 +108,13 @@ export default function SignIn() {
     return bad;
   };
 
-  /** The name + password step after Google or Apple, making the account with the proven address. */
+  /** The name + password step after Google, making (or claiming) the account with the proven address. */
   const finish = async (done: Finishing) => {
-    devlog("log", `sign-in: finishing a ${done.via} sign-up · ${domainOf(done.email)}`);
+    const what = done.existing ? "new password" : "sign-up";
+    devlog("log", `sign-in: finishing a ${done.via} ${what} · ${domainOf(done.email)}`);
     try {
       await signUpWithTicket(done.ticket, name.trim(), password);
-      devlog("log", `sign-in: account created with ${done.via}`);
+      devlog("log", `sign-in: ${done.existing ? "password set" : "account created"} with ${done.via}`);
     } catch (err) {
       setBusy(false);
       devlog("err", "sign-in: finishing refused", err instanceof Error ? err.message : String(err));
@@ -177,12 +185,13 @@ export default function SignIn() {
         return;
       }
       if ("token" in proven) {
-        await signInWithSession(proven);
-        devlog("log", `sign-in: signed in with ${via}`);
+        await signInWithSession(proven, !!proven.created);
+        devlog("log", `sign-in: ${proven.created ? "account created" : "signed in"} with ${via}`);
         return;
       }
-      devlog("log", `sign-in: ${via} proved an address with no account yet · ${domainOf(proven.email)}`);
-      setFinishing({ ticket: proven.ticket, email: proven.email, via });
+      const existing = !!proven.existing;
+      devlog("log", `sign-in: ${via} proved an address with ${existing ? "an unproven account" : "no account yet"} · ${domainOf(proven.email)}`);
+      setFinishing({ ticket: proven.ticket, email: proven.email, via, existing });
       if (proven.name) setName(proven.name);
       setPassword("");
     } catch (err) {
@@ -244,15 +253,17 @@ export default function SignIn() {
             <>
               <Text style={styles.subtitle}>One more step</Text>
               <Text style={styles.note}>
-                {finishing.via} confirmed {finishing.email}. Add your name, and a password for signing in with your email.
+                {finishing.existing
+                  ? `${finishing.via} confirmed ${finishing.email}. There's already an account with this email, made before anyone confirmed it, so pick a new password for it.`
+                  : `${finishing.via} confirmed ${finishing.email}. Add your name, and a password for signing in with your email.`}
               </Text>
               {nameField}
               {passwordField}
               {error && <Text style={styles.error}>{error}</Text>}
-              {mainButton("Create account")}
+              {mainButton(finishing.existing ? "Set password and sign in" : "Create account")}
               <Pressable
                 onPress={() => {
-                  devlog("log", `sign-in: left the ${finishing.via} sign-up`);
+                  devlog("log", `sign-in: left the ${finishing.via} ${finishing.existing ? "new password" : "sign-up"}`);
                   setFinishing(null);
                   setPassword("");
                   setFields({});

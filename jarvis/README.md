@@ -156,12 +156,22 @@ accounts**.
   screen's "Continue with Google" uses the same client and the same callback
   (a sign-in's state lives in `signin_states`, so the callback knows which it
   is), asks only `openid email profile`, and comes back to the app with a
-  one-time code that only the phone's key redeems. "Sign in with Apple" sends
-  Apple's identity token, checked against Apple's published keys, for
-  audience `com.ovoa.app`, with a nonce the server issued. Either signs in to
-  the account with that address, or hands back a ticket for a name and
-  password. Apple's `sub` is kept on the account so a returning Apple ID is
-  found even if its address changes.
+  one-time code that only the phone's key redeems. The way back is exactly
+  `ovoa://google-signin`, or Expo Go on a private-network dev server (not a
+  tunnel; `EXPO_GO_SIGNIN=off` refuses Expo Go). It signs in to the account
+  with that address, or hands back a ticket for a name and password. "Sign in
+  with Apple" sends Apple's identity token, checked against Apple's published
+  keys, for audience `com.ovoa.app`, with a nonce the server issued, and
+  never asks anything after Apple's sheet: it signs in, or makes the account
+  there and then with the name Apple sent (or none) and no password. Apple's
+  `sub` is kept on the account so a returning Apple ID is found even if its
+  address changes.
+- **An account nobody proved the address of** (made by `/auth/signup`, which
+  checks nothing) is taken back when the address is proven by an email code,
+  Google or Apple: its password stops working and every session and push
+  token on it goes, before anything else (`disown()` in `api/src/index.ts`).
+  Google and the email code then hand back a ticket with `existing: true`,
+  whose step sets the new password; Apple signs straight in.
 - **Token storage:** refresh and access tokens are AES-GCM encrypted in
   `google_accounts` (one row per connected account, unique per user + email)
   using the `TOKEN_ENC_KEY` secret. Google drops testing-mode grants after
@@ -437,13 +447,13 @@ agent's due work and its outbox, and 04:13 UTC for retention and log trimming.
 |---|---|---|
 | POST | /auth/signup, /auth/login | `{ email, password, name? }` → `{ token, user }` |
 | POST | /auth/email/code | `{ email }` → emails a 6-digit code from no-reply@ovoa.ai (ovoa.ai's sign-in; `src/emailauth.ts`) |
-| POST | /auth/email/verify | `{ email, code }` → `{ token, user }` for an existing account, else `{ ticket, email, name }` |
-| POST | /auth/email/signup | `{ ticket, name, password, session? }` → `{ token, user }`; `session: "app"` from the app, else a web session |
+| POST | /auth/email/verify | `{ email, code }` → `{ token, user }` for an account whose address was proven before, else `{ ticket, email, name, existing? }` |
+| POST | /auth/email/signup | `{ ticket, name, password, session? }` → `{ token, user, passwordChanged? }`; `session: "app"` from the app, else a web session. An unproven account gets this password; `passwordChanged: false` means a proven one kept its own |
 | POST | /auth/google | `{ idToken }` (checked with Google) → same as /auth/email/verify |
-| POST | /auth/google/start | `{ returnUrl }` (`ovoa://` or `exp://`) → `{ url, key }`: the app's "Continue with Google" (`src/signin.ts`) |
-| POST | /auth/google/redeem | `{ code, key }` (the one-time code /google/callback sent back, 60 s, once) → `{ token, user }` (app session) or `{ ticket, email, name }` |
+| POST | /auth/google/start | `{ returnUrl }` (`ovoa://google-signin`, or `exp://` to a private address) → `{ url, key }`: the app's "Continue with Google" (`src/signin.ts`) |
+| POST | /auth/google/redeem | `{ code, key }` (the one-time code /google/callback sent back, 60 s, once) → `{ token, user }` (app session) or `{ ticket, email, name, existing? }` |
 | POST | /auth/apple/start | → `{ nonce }`, good once for ten minutes |
-| POST | /auth/apple | `{ identityToken, nonce, fullName? }` (Sign in with Apple, checked against Apple's keys) → same as /auth/google/redeem |
+| POST | /auth/apple | `{ identityToken, nonce, fullName? }` (Sign in with Apple, checked against Apple's keys) → `{ token, user, created }` (app session; 201 when it made the account), never a ticket |
 | POST | /auth/logout | |
 | GET / PATCH / DELETE | /me | profile + settings (incl. `stepGoal`, `fallDetection`) |
 | POST | /me/password | `{ currentPassword, newPassword }` |

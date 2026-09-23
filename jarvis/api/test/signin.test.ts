@@ -81,13 +81,35 @@ const b64url = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");
 
 // ---------- Return URLs ----------
 
-eq("the installed app's scheme is allowed", appReturnUrl("ovoa://google-signin"), "ovoa://google-signin");
-eq("so is Expo Go's", appReturnUrl("exp://192.168.1.5:8081/--/google-signin"), "exp://192.168.1.5:8081/--/google-signin");
+eq("the installed app's return URL is allowed", appReturnUrl("ovoa://google-signin"), "ovoa://google-signin");
+eq("so is Expo Go's on a home network", appReturnUrl("exp://192.168.1.5:8081/--/google-signin"), "exp://192.168.1.5:8081/--/google-signin");
+eq("and on the other private ranges", [
+  appReturnUrl("exp://10.0.0.7:8081/--/google-signin"),
+  appReturnUrl("exp://172.20.10.2:8081/--/google-signin"),
+  appReturnUrl("exp://127.0.0.1:8081/--/google-signin"),
+  appReturnUrl("exps://localhost:8081/--/google-signin"),
+].every(Boolean), true);
+eq("another path in the app isn't", appReturnUrl("ovoa://anything-else"), null);
+eq("nor the right one with more on it", [appReturnUrl("ovoa://google-signin?x=1"), appReturnUrl("ovoa://google-signin/x")], [null, null]);
+eq("nor Expo Go at someone's own host", appReturnUrl("exp://attacker.example/--/x"), null);
+eq("nor a host that only starts like a private one", [
+  appReturnUrl("exp://10.attacker.example/--/x"),
+  appReturnUrl("exp://localhost.attacker.example/--/x"),
+  appReturnUrl("exp://192.168.evil.com/--/x"),
+  appReturnUrl("exp://127.evil.com/--/x"),
+], [null, null, null, null]);
+eq("nor a private address in front of an @", appReturnUrl("exp://192.168.1.5@attacker.example/--/x"), null);
+eq("nor 172.32, outside 172.16/12", appReturnUrl("exp://172.32.0.1:8081/--/x"), null);
+eq("nor an Expo tunnel", appReturnUrl("exp://abc-anonymous-8081.exp.direct/--/google-signin"), null);
+eq("with Expo Go off, only the installed app's", [
+  appReturnUrl("exp://192.168.1.5:8081/--/google-signin", { expoGo: false }),
+  appReturnUrl("ovoa://google-signin", { expoGo: false }),
+], [null, "ovoa://google-signin"]);
 eq("a web page isn't", appReturnUrl("https://evil.example/steal"), null);
 eq("nor javascript", appReturnUrl("javascript:alert(1)"), null);
 eq("nor another app's scheme", appReturnUrl("evil://x"), null);
 eq("nor something that isn't text", appReturnUrl(42), null);
-eq("nor a very long one", appReturnUrl(`ovoa://${"x".repeat(600)}`), null);
+eq("nor a very long one", appReturnUrl(`exp://192.168.1.5:8081/--/${"x".repeat(600)}`), null);
 
 // ---------- Google: the start ----------
 
@@ -391,6 +413,13 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
   try {
     // Google, a new person.
     eq("a web page can't be the return URL", (await call("POST", "/auth/google/start", { returnUrl: "https://evil.example" })).status, 400);
+    eq("nor someone's Expo project", (await call("POST", "/auth/google/start", { returnUrl: "exp://attacker.example/--/x" })).status, 400);
+    eq("nor another path in the app", (await call("POST", "/auth/google/start", { returnUrl: "ovoa://anything-else" })).status, 400);
+    const expoGo = { returnUrl: "exp://192.168.1.5:8081/--/google-signin" };
+    eq("Expo Go on a home network starts", (await call("POST", "/auth/google/start", expoGo)).status, 200);
+    (env as { EXPO_GO_SIGNIN?: string }).EXPO_GO_SIGNIN = "off";
+    eq("unless EXPO_GO_SIGNIN is off", (await call("POST", "/auth/google/start", expoGo)).status, 400);
+    delete (env as { EXPO_GO_SIGNIN?: string }).EXPO_GO_SIGNIN;
     const start = await call("POST", "/auth/google/start", { returnUrl: "ovoa://google-signin" });
     eq("start gives a Google URL and a key", [start.status, String(start.body?.url).startsWith("https://accounts.google.com/"), typeof start.body?.key], [200, true, "string"]);
     const state = new URL(start.body.url).searchParams.get("state")!;
@@ -410,18 +439,69 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
     eq("with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(made.body.token))?.kind, "app");
     eq("which works", (await call("GET", "/me", undefined, { authorization: `Bearer ${made.body.token}` })).body?.user?.email, "ada@example.com");
 
-    // Google, someone who already has an account (made with a password in the app).
-    const pw = await call("POST", "/auth/signup", { email: "bob@example.com", password: "password123", name: "Bob" });
-    eq("an unverified account to start with", row(sqlite, "SELECT email_verified_at v FROM users WHERE email = 'bob@example.com'")?.v, null);
-    google = googleClaims({ email: "bob@example.com", name: "Robert", exp: String(Math.floor(Date.now() / 1000) + 600) });
-    const s2 = await call("POST", "/auth/google/start", { returnUrl: "ovoa://google-signin" });
-    const cb2 = await call("GET", `/google/callback?state=${new URL(s2.body.url).searchParams.get("state")}&code=abc`);
-    const r2 = await call("POST", "/auth/google/redeem", { code: new URL(cb2.location!).searchParams.get("code"), key: s2.body.key });
-    eq("an existing account is signed straight in", [r2.body?.user?.email, r2.body?.user?.name, "ticket" in (r2.body ?? {})], ["bob@example.com", "Bob", false]);
-    eq("with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(r2.body.token))?.kind, "app");
-    eq("and the address now counts as verified", typeof row(sqlite, "SELECT email_verified_at v FROM users WHERE email = 'bob@example.com'")?.v, "number");
-    eq("the password account still signs in", (await call("POST", "/auth/login", { email: "bob@example.com", password: "password123" })).status, 200);
+    // A Google sign-in as far as the app's redeem, for whoever `google` says.
+    const viaGoogle = async (email: string, name: string | null) => {
+      google = googleClaims({ email, name, exp: String(Math.floor(Date.now() / 1000) + 600) });
+      const s = await call("POST", "/auth/google/start", { returnUrl: "ovoa://google-signin" });
+      const cb = await call("GET", `/google/callback?state=${new URL(s.body.url).searchParams.get("state")}&code=abc`);
+      return call("POST", "/auth/google/redeem", { code: new URL(cb.location!).searchParams.get("code"), key: s.body.key });
+    };
+    const me = async (token: string) => (await call("GET", "/me", undefined, { authorization: `Bearer ${token}` })).status;
+    const login = async (email: string, password: string) => (await call("POST", "/auth/login", { email, password })).status;
+    const sessionsOf = (email: string) =>
+      row(sqlite, "SELECT count(*) n FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)", email)?.n;
+
+    // Google, an address someone else registered first with a password, never proven.
+    const pw = await call("POST", "/auth/signup", { email: "bob@example.com", password: "password123", name: "Mallory" });
     eq("it was made with a password first", pw.status, 201);
+    eq("an unverified account to start with", row(sqlite, "SELECT email_verified_at v FROM users WHERE email = 'bob@example.com'")?.v, null);
+    eq("whose token works", await me(pw.body.token), 200);
+    const bobId = String(row(sqlite, "SELECT id FROM users WHERE email = 'bob@example.com'")?.id);
+    sqlite
+      .prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at, kind) VALUES (?, ?, ?, ?, 'siri')")
+      .run(await sha256("siri-key"), bobId, Date.now(), Date.now() + 86_400_000);
+    sqlite
+      .prepare("INSERT INTO push_tokens (token, user_id, platform, created_at) VALUES (?, ?, 'ios', ?)")
+      .run("ExponentPushToken[mallory]", bobId, Date.now());
+    const r2 = await viaGoogle("bob@example.com", "Robert");
+    eq("the owner's proof isn't signed in to someone else's account", "token" in (r2.body ?? {}), false);
+    eq("it gets a ticket to set a new password", [!!r2.body?.ticket, r2.body?.existing, r2.body?.email], [true, true, "bob@example.com"]);
+    eq("the registrant's password stops working at the proof", await login("bob@example.com", "password123"), 401);
+    eq("and their session with it", await me(pw.body.token), 401);
+    eq("every session goes, the Siri key too", sessionsOf("bob@example.com"), 0);
+    eq("and their phone stops getting its notifications", row(sqlite, "SELECT count(*) n FROM push_tokens WHERE user_id = ?", bobId)?.n, 0);
+    eq("it isn't verified until the owner picks a password", row(sqlite, "SELECT email_verified_at v FROM users WHERE id = ?", bobId)?.v, null);
+    const bob = await call("POST", "/auth/email/signup", { ticket: r2.body.ticket, name: "Robert", password: "newpassword1", session: "app" });
+    eq("the step signs the owner in to it", [bob.status, bob.body?.user?.id, bob.body?.user?.name, bob.body?.passwordChanged], [200, bobId, "Robert", true]);
+    eq("now verified", typeof row(sqlite, "SELECT email_verified_at v FROM users WHERE id = ?", bobId)?.v, "number");
+    eq("with the owner's password", await login("bob@example.com", "newpassword1"), 200);
+    eq("and not the registrant's", await login("bob@example.com", "password123"), 401);
+    eq("with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(bob.body.token))?.kind, "app");
+
+    // Google, an account whose address was proven before: signed straight in, password kept.
+    const r3 = await viaGoogle("bob@example.com", "Robert");
+    eq("a verified account is signed straight in", [r3.body?.user?.id, "ticket" in (r3.body ?? {})], [bobId, false]);
+    eq("with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(r3.body.token))?.kind, "app");
+    eq("and its password is left alone", await login("bob@example.com", "newpassword1"), 200);
+
+    // Registered by someone else after the owner's proof, before the owner's step.
+    const late = await viaGoogle("dan@example.com", "Dan");
+    const squat = await call("POST", "/auth/signup", { email: "dan@example.com", password: "password123", name: "Mallory" });
+    eq("an address can still be registered meanwhile", squat.status, 201);
+    const dan = await call("POST", "/auth/email/signup", { ticket: late.body.ticket, name: "Dan", password: "danspassword", session: "app" });
+    eq("the ticket takes it over", [dan.status, dan.body?.user?.name, dan.body?.passwordChanged], [200, "Dan", true]);
+    eq("the registrant is signed out", await me(squat.body.token), 401);
+    eq("and their password is gone", [await login("dan@example.com", "password123"), await login("dan@example.com", "danspassword")], [401, 200]);
+
+    // Two tickets for one new address: the second finds a proven account and keeps its password.
+    const t1 = await viaGoogle("eve@example.com", null);
+    const t2 = await viaGoogle("eve@example.com", null);
+    eq("a new address twice is two tickets", [!!t1.body?.ticket, !!t2.body?.ticket, "existing" in (t2.body ?? {})], [true, true, false]);
+    const eve = await call("POST", "/auth/email/signup", { ticket: t1.body.ticket, name: "Eve", password: "firstpassword", session: "app" });
+    eq("the first makes the account", [eve.status, "passwordChanged" in (eve.body ?? {})], [201, false]);
+    const second = await call("POST", "/auth/email/signup", { ticket: t2.body.ticket, name: "Eve", password: "otherpassword", session: "app" });
+    eq("the second signs in to it and says the password didn't change", [second.status, second.body?.passwordChanged], [200, false]);
+    eq("so the first password is still the one", [await login("eve@example.com", "firstpassword"), await login("eve@example.com", "otherpassword")], [200, 401]);
 
     // Cancelling on Google's page.
     const s3 = await call("POST", "/auth/google/start", { returnUrl: "ovoa://google-signin" });
@@ -452,14 +532,15 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
     const token1 = await appleToken(live({ nonce: n1 }));
     eq("a token without the nonce it carries is refused", (await call("POST", "/auth/apple", { identityToken: token1, nonce: "b".repeat(48) })).status, 401);
     const a1 = await call("POST", "/auth/apple", { identityToken: token1, nonce: n1, fullName: { givenName: "Grace", familyName: "Hopper" } });
-    eq("a new Apple ID gets a ticket with the name Apple sent", [a1.status, a1.body?.email, a1.body?.name, !!a1.body?.ticket], [200, "grace@example.com", "Grace Hopper", true]);
+    eq("a new Apple ID gets an account straight away, no step", [a1.status, a1.body?.created, a1.body?.user?.email, "ticket" in (a1.body ?? {})], [201, true, "grace@example.com", false]);
+    eq("named as Apple said", a1.body?.user?.name, "Grace Hopper");
     eq("the nonce works once", (await call("POST", "/auth/apple", { identityToken: token1, nonce: n1 })).status, 401);
-    const grace = await call("POST", "/auth/email/signup", { ticket: a1.body.ticket, name: "Grace Hopper", password: "password123", session: "app" });
-    eq("the name + password step makes the account", [grace.status, grace.body?.user?.email], [201, "grace@example.com"]);
     const g = row(sqlite, "SELECT apple_sub, email_verified_at FROM users WHERE email = 'grace@example.com'");
     eq("it keeps the Apple ID", g?.apple_sub, "001234.abcdef.0123");
     eq("and counts as verified", typeof g?.email_verified_at, "number");
-    eq("with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(grace.body.token))?.kind, "app");
+    eq("with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(a1.body.token))?.kind, "app");
+    eq("which works", await me(a1.body.token), 200);
+    eq("and no password matches it", [await login("grace@example.com", "password123"), await login("grace@example.com", "")], [401, 401]);
 
     // Apple, returning, after the address behind the Apple ID changed.
     const n2 = (await call("POST", "/auth/apple/start")).body.nonce as string;
@@ -467,11 +548,31 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
     eq("a returning Apple ID is found by its id, not its address", [a2.status, a2.body?.user?.email, "ticket" in (a2.body ?? {})], [200, "grace@example.com", false]);
     eq("signed in with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(a2.body.token))?.kind, "app");
 
-    // Apple, someone who already has an account under that address.
-    const n3 = (await call("POST", "/auth/apple/start")).body.nonce as string;
-    const a3 = await call("POST", "/auth/apple", { identityToken: await appleToken(live({ nonce: n3, sub: "009999.bob", email: "bob@example.com" })), nonce: n3 });
-    eq("an existing account is signed straight in", [a3.status, a3.body?.user?.email], [200, "bob@example.com"]);
-    eq("and remembers the Apple ID from now on", row(sqlite, "SELECT apple_sub s FROM users WHERE email = 'bob@example.com'")?.s, "009999.bob");
+    // Apple, a new person who didn't share their name (or it isn't their first time).
+    const apple = async (over: Record<string, unknown>, fullName?: unknown) => {
+      const nonce = (await call("POST", "/auth/apple/start")).body.nonce as string;
+      return call("POST", "/auth/apple", { identityToken: await appleToken(live({ nonce, ...over })), nonce, fullName });
+    };
+    const hidden = await apple({ sub: "001.hidden", email: "x1y2@privaterelay.appleid.com" });
+    eq("no name is still an account, not a step", [hidden.status, !!hidden.body?.token, "ticket" in (hidden.body ?? {}), hidden.body?.user?.name], [201, true, false, ""]);
+    const hiddenAgain = await apple({ sub: "001.hidden", email: "x1y2@privaterelay.appleid.com" });
+    eq("and the next Apple sign-in finds it by its id", [hiddenAgain.status, hiddenAgain.body?.user?.id], [200, hidden.body?.user?.id]);
+
+    // Apple, an address someone else registered first with a password, never proven.
+    const pw2 = await call("POST", "/auth/signup", { email: "fay@example.com", password: "password123", name: "Mallory" });
+    const a3 = await apple({ sub: "009999.fay", email: "fay@example.com" });
+    eq("Apple signs the owner in to it, no step", [a3.status, a3.body?.created, a3.body?.user?.email], [200, false, "fay@example.com"]);
+    eq("the registrant's password stops working", await login("fay@example.com", "password123"), 401);
+    eq("and their session with it", await me(pw2.body.token), 401);
+    const fay = row(sqlite, "SELECT apple_sub s, email_verified_at v FROM users WHERE email = 'fay@example.com'");
+    eq("it's verified and remembers the Apple ID from now on", [fay?.s, typeof fay?.v], ["009999.fay", "number"]);
+    eq("the owner's own session works", await me(a3.body.token), 200);
+
+    // Apple, an account whose address was proven before: signed in, password kept.
+    const a4 = await apple({ sub: "000777.bob", email: "bob@example.com" });
+    eq("a verified account is signed straight in", [a4.status, a4.body?.user?.id, a4.body?.created], [200, bobId, false]);
+    eq("keeping its password", await login("bob@example.com", "newpassword1"), 200);
+    eq("and remembers the Apple ID", row(sqlite, "SELECT apple_sub s FROM users WHERE id = ?", bobId)?.s, "000777.bob");
 
     const n4 = (await call("POST", "/auth/apple/start")).body.nonce as string;
     eq(

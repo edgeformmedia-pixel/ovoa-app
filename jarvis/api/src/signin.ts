@@ -1,12 +1,17 @@
 // Signing in to the app with Google or Apple (migrations/0040_app_signin.sql).
-// Both end where emailauth.ts's proofs end: the address has an account and is
-// signed in, or a signup ticket goes back for the name + password step. The
-// routes are in index.ts, beside /auth/email/* and afterProven().
+// Google ends where emailauth.ts's proofs end: the address has an account and
+// is signed in, or a signup ticket goes back for the name + password step.
+// Apple never gets that step: it signs in, or makes the account there and
+// then. An account whose address nobody had proven is taken back from whoever
+// made it first (index.ts disown()). The routes are in index.ts, beside
+// /auth/email/* and afterProven().
 //
 // Google, "Continue with Google":
 //
 //   1. POST /auth/google/start {returnUrl}: the app gets Google's URL and a
-//      key. Scopes openid email profile only, PKCE, state kept here.
+//      key. Scopes openid email profile only, PKCE, state kept here. The
+//      return URL is ovoa://google-signin exactly, or Expo Go on a dev server
+//      nearby (appReturnUrl).
 //   2. The app opens the URL in an auth session. Google sends the browser to
 //      /google/callback, the one redirect registered with Google, which the
 //      connect flow (google/oauth.ts) also uses: a sign-in state is found in
@@ -41,8 +46,16 @@ type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
 export const SIGNIN_STATE_TTL_MS = 10 * 60 * 1000;
 export const SIGNIN_CODE_TTL_MS = 60 * 1000;
-/** Expo Go (exp://) or the installed app (ovoa://): the same rule as RETURN_URL in google/oauth.ts. */
-export const APP_RETURN_URL = /^(exps?|ovoa):\/\//;
+/** The installed app's way back: scheme "ovoa" in app.json, and the path lib/signInWith.ts uses. */
+export const APP_RETURN_URL = "ovoa://google-signin";
+/**
+ * Expo Go's way back names the computer serving the app, and only a private
+ * or loopback IPv4 address or localhost, the whole host, is taken. Any other
+ * exp:// host could be someone else's Expo project: its JavaScript would read
+ * the code, and whoever called /auth/google/start holds the key that redeems it.
+ */
+const EXPO_GO_HOST =
+  /^(127(\.\d{1,3}){3}|10(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}|localhost)$/;
 export const GOOGLE_SIGNIN_SCOPES = "openid email profile";
 /** The app's bundle id: Apple's identity tokens for it name it as their audience. */
 export const APPLE_AUDIENCE = "com.ovoa.app";
@@ -60,12 +73,20 @@ function sameHash(a: string, b: string) {
   return diff === 0;
 }
 
-/** A return URL the app may be sent back to, or null. */
-export function appReturnUrl(raw: unknown): string | null {
-  if (typeof raw !== "string" || raw.length > 500 || !APP_RETURN_URL.test(raw)) return null;
+/**
+ * A return URL the app may be sent back to, or null: exactly the installed
+ * app's, or Expo Go on a dev server nearby (EXPO_GO_HOST) unless `expoGo` is
+ * off (EXPO_GO_SIGNIN "off" on the Worker). Anyone on the same network as the
+ * person signing in could still serve an Expo project, which is why it can be
+ * turned off once nobody runs the app in Expo Go.
+ */
+export function appReturnUrl(raw: unknown, { expoGo = true }: { expoGo?: boolean } = {}): string | null {
+  if (typeof raw !== "string" || raw.length > 500) return null;
+  if (raw === APP_RETURN_URL) return raw;
+  if (!expoGo) return null;
   try {
-    new URL(raw);
-    return raw;
+    const url = new URL(raw);
+    return (url.protocol === "exp:" || url.protocol === "exps:") && EXPO_GO_HOST.test(url.hostname) ? raw : null;
   } catch {
     return null;
   }

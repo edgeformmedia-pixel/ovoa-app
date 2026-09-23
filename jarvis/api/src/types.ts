@@ -69,6 +69,12 @@ export type Env = {
   RESEND_API_BASE?: string;
   /** More Google OAuth clients whose sign-ins count, comma-separated, beside GOOGLE_CLIENT_ID (emailauth.ts). */
   GOOGLE_SIGNIN_CLIENT_IDS?: string;
+  /**
+   * "off" refuses Expo Go (exp://) as the way back from the app's Google
+   * sign-in, leaving only the installed app's ovoa://google-signin (signin.ts
+   * appReturnUrl). Unset: Expo Go on a private-network dev server is allowed.
+   */
+  EXPO_GO_SIGNIN?: string;
   /** Comma-separated account emails allowed the dev-only capture-everything flag. */
   DEV_EMAILS?: string;
   /** For "ask Claude" (claude.ts). Without it that tool says it isn't set up. */

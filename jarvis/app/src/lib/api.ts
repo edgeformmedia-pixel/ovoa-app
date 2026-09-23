@@ -405,10 +405,14 @@ export const timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /**
  * What Google or Apple proving an address comes back as (api/src/index.ts
- * afterProven): signed in to the account with that address, or a ticket for
- * the name + password step that makes one.
+ * afterProven, afterApple): signed in to the account with that address
+ * (`created`: Apple just made it), or a ticket for the name + password step
+ * that makes one. `existing`: there is an account, made with the address by
+ * someone who never proved it; the step gives it a new password.
  */
-export type ProvenSignIn = { token: string; user: User } | { ticket: string; email: string; name: string | null };
+export type ProvenSignIn =
+  | { token: string; user: User; created?: boolean }
+  | { ticket: string; email: string; name: string | null; existing?: boolean };
 
 export class ApiError extends Error {
   /** Per-field messages, when the server said which box is wrong. Signup does. */
@@ -714,9 +718,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ identityToken, nonce, fullName }),
     }),
-  /** The name + password step after Google or Apple proved an address with no account behind it. */
+  /** The name + password step after Google proved an address with no account (or an unproven one) behind it. */
   ticketSignup: (ticket: string, name: string, password: string) =>
-    request<{ token: string; user: User }>("/auth/email/signup", null, {
+    // `passwordChanged` is there only when the account already existed.
+    request<{ token: string; user: User; passwordChanged?: boolean }>("/auth/email/signup", null, {
       method: "POST",
       body: JSON.stringify({ ticket, name, password, session: "app" }),
     }),

@@ -605,6 +605,10 @@ gq() { echo "$GS" | python -c "import sys,json,urllib.parse as u;print(dict(u.pa
 hex() { printf "$1%.0s" $(seq "$2"); }
 check "a web page can't be the return URL" \
   "$(code -X POST "$API/auth/google/start" -H 'content-type: application/json' -d '{"returnUrl":"https://evil.example"}')" "400"
+check "nor someone else's Expo project" \
+  "$(code -X POST "$API/auth/google/start" -H 'content-type: application/json' -d '{"returnUrl":"exp://10.attacker.example/--/x"}')" "400"
+check "nor another path in the app" \
+  "$(code -X POST "$API/auth/google/start" -H 'content-type: application/json' -d '{"returnUrl":"ovoa://anything-else"}')" "400"
 GS=$(jpost /auth/google/start '{"returnUrl":"ovoa://google-signin"}')
 if [ "$(echo "$GS" | j "d.get('error','')")" = "Google sign-in isn't set up on the server yet" ]; then
   echo "     (no GOOGLE_CLIENT_SECRET: start the worker with --var GOOGLE_CLIENT_SECRET:x to check the URL too)"

@@ -7,6 +7,7 @@ import {
   deleteSession,
   deleteSessions,
   hashPassword,
+  randomHex,
   sessionForToken,
   touchSession,
   verifyPassword,
@@ -450,14 +451,15 @@ app.post("/auth/signup", async (c) => {
  * A new account and its settings row, in one batch. `verified`: the address
  * was proven first (emailauth.ts). The app's own signup leaves that column out
  * altogether, so it keeps working on a database without migration 0039.
+ * `password` null: none (Sign in with Apple), a hash nothing matches (disown()).
  */
 async function insertUser(
   db: D1Database,
-  { email, password, name, verified }: { email: string; password: string; name: string; verified: boolean },
+  { email, password, name, verified }: { email: string; password: string | null; name: string; verified: boolean },
 ) {
   const id = crypto.randomUUID();
   const now = Date.now();
-  const { hash, salt } = await hashPassword(password);
+  const { hash, salt } = password === null ? { hash: "", salt: randomHex(16) } : await hashPassword(password);
   await db.batch([
     verified
       ? db
@@ -524,14 +526,18 @@ app.post("/auth/login", async (c) => {
 // browser, so the per-address limits count visitors, not the site. Each proof
 // ends one of two ways:
 //
-//   { token, user }          the address has an account (made in the app or on
-//                            the site): signed in, with a "web" session
+//   { token, user }          the address has an account whose address was
+//                            proven before: signed in, with a "web" session
 //   { ticket, email, name }  it hasn't: POST /auth/email/signup spends the ticket
-//                            with a name and the password the app will ask for
+//                            with a name and the password the app will ask for.
+//                            `existing: true` when there is an account, made
+//                            with this address by someone who never proved it:
+//                            the proof has taken it back (disown), and the
+//                            password given with the ticket becomes its password
 //
-// The app's own "Continue with Google" and "Sign in with Apple" (signin.ts,
-// further down) end the same two ways, with an "app" session, and their
-// tickets are spent with `session: "app"`.
+// The app's own "Continue with Google" (signin.ts, further down) ends the same
+// two ways, with an "app" session, and its tickets are spent with
+// `session: "app"`. Sign in with Apple never gets a ticket (afterApple).
 
 const codeSchema = z.object({ email: emailField });
 const verifySchema = z.object({ email: emailField, code: z.string().max(20) });
@@ -539,29 +545,100 @@ const ticketSignupSchema = z.object({
   ticket: z.string().max(100),
   name: signupSchema.shape.name,
   password: signupSchema.shape.password,
-  // The app's sign-up after Google or Apple: a session like /auth/login's. The
-  // site leaves it out and gets its "web" one.
+  // The app's sign-up after Google: a session like /auth/login's. The site
+  // leaves it out and gets its "web" one.
   session: z.enum(["app", "web"]).optional(),
 });
 const BAD_EMAIL = "That email doesn't look right. Check it for a typo.";
 
 /**
- * Signed in, or a ticket to make the account. Either way the address is now
- * proven. `kind`: "app" from the app's own sign-ins (signin.ts). `appleSub`:
- * proven by Sign in with Apple, whose id the account keeps.
+ * Ends every way into an account that isn't a password: every session (the
+ * app's, the site's and the Siri key) and every phone's push token, so a
+ * signed-out phone stops getting its notifications too. After the password
+ * has changed, or a sign-in that lands between the two keeps its session.
  */
-async function afterProven(
-  env: Env,
-  email: string,
-  name: string | null,
-  { kind = "web", appleSub = null }: { kind?: SessionKind; appleSub?: string | null } = {},
-) {
-  const user = await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first<{ id: string }>();
-  if (!user) return { ticket: await issueTicket(env.DB, email, name, Date.now(), appleSub), email, name };
-  await env.DB.prepare("UPDATE users SET email_verified_at = ? WHERE id = ?").bind(Date.now(), user.id).run();
-  if (appleSub) await linkAppleSub(env.DB, user.id, appleSub);
+async function signOutEverywhere(db: D1Database, userId: string) {
+  await db.prepare("DELETE FROM push_tokens WHERE user_id = ?").bind(userId).run();
+  await deleteSessions(db, userId);
+}
+
+/**
+ * /auth/signup makes an account for any address without checking it, so an
+ * account nobody has proven the address of may have been made by someone
+ * else, ahead of the address's owner, to be waiting for them with a password
+ * and sessions of its own. When the address is proven that is taken back
+ * before anything else: the password stops matching (verifyPassword compares
+ * lengths first, as with NO_SUCH_USER) and everyone is signed out. The prover
+ * then picks a new password (/auth/email/signup), or Apple signs them in.
+ * Existing accounts from before verification pay this once, at their first proof.
+ */
+async function disown(db: D1Database, userId: string) {
+  await db.prepare("UPDATE users SET password_hash = '' WHERE id = ?").bind(userId).run();
+  await signOutEverywhere(db, userId);
+}
+
+/**
+ * The account with a just-proven address, if there is one, and whether its
+ * address was proven before this. One that wasn't has been disowned.
+ */
+async function provenAccount(db: D1Database, email: string) {
+  const user = await db
+    .prepare("SELECT id, email_verified_at FROM users WHERE email = ?")
+    .bind(email)
+    .first<{ id: string; email_verified_at: number | null }>();
+  if (!user) return null;
+  const provenBefore = user.email_verified_at != null;
+  if (!provenBefore) await disown(db, user.id);
+  return { id: user.id, provenBefore };
+}
+
+/**
+ * Signed in, or a ticket for the name + password step. Either way the address
+ * is now proven. `kind`: "app" from the app's own Google sign-in (signin.ts).
+ */
+async function afterProven(env: Env, email: string, name: string | null, { kind = "web" }: { kind?: SessionKind } = {}) {
+  const user = await provenAccount(env.DB, email);
+  if (!user?.provenBefore) {
+    return { ticket: await issueTicket(env.DB, email, name), email, name, ...(user && { existing: true }) };
+  }
   const token = await createSession(env.DB, user.id, { kind });
   return { token, user: await publicUser(env, user.id) };
+}
+
+/** How afterProven ended, for the log. */
+function provenOutcome(result: Awaited<ReturnType<typeof afterProven>>) {
+  if ("token" in result) return "signed in";
+  return "existing" in result ? "proven, took an unproven account back" : "proven, no account yet";
+}
+
+/**
+ * Sign in with Apple, once Apple has proven the address: always signed in,
+ * never a name + password step. App Review turns away an app that asks for a
+ * name or an address after Sign in with Apple (Guideline 4.0), Apple sends the
+ * name only the first time, and a Hide My Email address isn't one the person
+ * could sign in with anyway. So an account is made there and then, with the
+ * name Apple sent or none (setup's first question asks it; Settings can
+ * change it) and no password. The Apple ID is linked either way.
+ */
+async function afterApple(env: Env, email: string, name: string | null, appleSub: string) {
+  let user = await provenAccount(env.DB, email);
+  let created = false;
+  if (!user) {
+    try {
+      user = { id: await insertUser(env.DB, { email, password: null, name: name ?? "", verified: true }), provenBefore: true };
+      created = true;
+    } catch (err) {
+      // Made a moment ago, by another sign-in or /auth/signup: that one, then.
+      user = await provenAccount(env.DB, email);
+      if (!user) throw err;
+    }
+  }
+  if (!user.provenBefore) {
+    await env.DB.prepare("UPDATE users SET email_verified_at = ? WHERE id = ?").bind(Date.now(), user.id).run();
+  }
+  await linkAppleSub(env.DB, user.id, appleSub);
+  const token = await createSession(env.DB, user.id, { kind: "app" });
+  return { token, user: await publicUser(env, user.id), created };
 }
 
 app.post("/auth/email/code", async (c) => {
@@ -633,7 +710,7 @@ app.post("/auth/email/verify", async (c) => {
     return c.json({ error: `That code isn't right. ${left}, then you'll need a new one.`, attemptsLeft: checked.attemptsLeft }, 400);
   }
   const result = await afterProven(c.env, email, null);
-  logAuth("code", "token" in result ? "signed in" : "proven, no account yet", email);
+  logAuth("code", provenOutcome(result), email);
   return c.json(result);
 });
 
@@ -658,26 +735,44 @@ app.post("/auth/email/signup", async (c) => {
     );
   }
   const { email } = ticket;
-  // Made in the app since the address was proven: it's theirs, so this signs
-  // in to it and leaves its password alone.
-  const findId = () =>
-    c.env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first<{ id: string }>().then((r) => r?.id);
-  let id = await findId();
-  const created = !id;
-  if (!id) {
+  const { name, password } = parsed.data;
+  const find = () =>
+    c.env.DB.prepare("SELECT id, email_verified_at FROM users WHERE email = ?")
+      .bind(email)
+      .first<{ id: string; email_verified_at: number | null }>();
+  let user = await find();
+  let created = false;
+  if (!user) {
     try {
-      id = await insertUser(c.env.DB, { email, password: parsed.data.password, name: parsed.data.name, verified: true });
+      user = { id: await insertUser(c.env.DB, { email, password, name, verified: true }), email_verified_at: Date.now() };
+      created = true;
     } catch (err) {
       // The same race, a moment later: the app's signup won it.
-      id = await findId();
-      if (!id) throw err;
+      user = await find();
+      if (!user) throw err;
     }
   }
-  if (ticket.appleSub) await linkAppleSub(c.env.DB, id, ticket.appleSub);
+  const { id } = user;
+  // An account nobody had proven the address of: the one the proof disowned
+  // (afterProven's `existing`), or one made with the address since the ticket.
+  // The ticket proves the address is theirs, so the password picked here
+  // becomes its password and whoever made it is signed out. One whose address
+  // was proven before is signed in to as it is, its password left alone.
+  const claimed = !created && user.email_verified_at == null;
+  if (claimed) {
+    const { hash, salt } = await hashPassword(password);
+    await c.env.DB
+      .prepare("UPDATE users SET password_hash = ?, password_salt = ?, name = ?, email_verified_at = ? WHERE id = ?")
+      .bind(hash, salt, name, Date.now(), id)
+      .run();
+    await signOutEverywhere(c.env.DB, id);
+  }
   const kind = parsed.data.session === "app" ? "app" : "web";
   const token = await createSession(c.env.DB, id, { kind });
-  logAuth("signup", created ? "created, email proven" : "proven, already exists", email, { user: id, kind });
-  return c.json({ token, user: await publicUser(c.env, id) }, created ? 201 : 200);
+  const outcome = created ? "created, email proven" : claimed ? "proven, took an unproven account back" : "proven, already exists";
+  logAuth("signup", outcome, email, { user: id, kind });
+  // `passwordChanged` false: the account was already theirs, and kept its password.
+  return c.json({ token, user: await publicUser(c.env, id), ...(!created && { passwordChanged: claimed }) }, created ? 201 : 200);
 });
 
 /**
@@ -694,15 +789,16 @@ app.post("/auth/google", async (c) => {
     return c.json({ error: "Google didn't confirm that sign-in. Try again." }, 401);
   }
   const result = await afterProven(c.env, who.email, who.name);
-  logAuth("google", "token" in result ? "signed in" : "proven, no account yet", who.email);
+  logAuth("google", provenOutcome(result), who.email);
   return c.json(result);
 });
 
 // ---------- The app's own Google and Apple sign-ins (signin.ts) ----------
 //
-// Each ends like the routes above, { token, user } or { ticket, email, name },
-// but with an "app" session, and a ticket is spent with `session: "app"`. They
-// come from the phone itself, so the per-address limit counts phones.
+// Google ends like the routes above, { token, user } or { ticket, email, name,
+// existing? }, but with an "app" session, and a ticket is spent with
+// `session: "app"`. Apple always ends { token, user, created } (afterApple).
+// They come from the phone itself, so the per-address limit counts phones.
 
 const googleStartSchema = z.object({ returnUrl: z.string().max(500) });
 const googleRedeemSchema = z.object({ code: z.string().max(100), key: z.string().max(100) });
@@ -721,10 +817,20 @@ app.post("/auth/google/start", async (c) => {
     logAuth("google", "rate limited", null);
     return tooMany(c, "attempts");
   }
-  if (!c.env.GOOGLE_CLIENT_SECRET) return c.json({ error: "Google sign-in isn't set up on the server yet" }, 503);
   const parsed = googleStartSchema.safeParse(await c.req.json().catch(() => null));
-  const returnUrl = parsed.success ? appReturnUrl(parsed.data.returnUrl) : null;
-  if (!returnUrl) return c.json({ error: "Only the OVOA app can use this sign-in" }, 400);
+  const expoGo = c.env.EXPO_GO_SIGNIN !== "off";
+  const returnUrl = parsed.success ? appReturnUrl(parsed.data.returnUrl, { expoGo }) : null;
+  if (!returnUrl) {
+    // Where it asked to go, host only: an Expo Go tunnel (*.exp.direct) is refused too.
+    let to = "unreadable";
+    try {
+      const url = new URL(String(parsed.data?.returnUrl));
+      to = `${url.protocol}//${url.hostname}`;
+    } catch {}
+    logAuth("google", "return URL refused", null, { to, expoGo });
+    return c.json({ error: "Only the OVOA app can use this sign-in" }, 400);
+  }
+  if (!c.env.GOOGLE_CLIENT_SECRET) return c.json({ error: "Google sign-in isn't set up on the server yet" }, 503);
   return c.json(await startGoogleSignin(c.env, returnUrl));
 });
 
@@ -741,7 +847,7 @@ app.post("/auth/google/redeem", async (c) => {
     return c.json({ error: "That Google sign-in has run out of time. Try again.", expired: true }, 400);
   }
   const result = await afterProven(c.env, who.email, who.name, { kind: "app" });
-  logAuth("google", "token" in result ? "signed in (app)" : "proven in the app, no account yet", who.email);
+  logAuth("google", `${provenOutcome(result)} (app)`, who.email);
   return c.json(result);
 });
 
@@ -781,9 +887,9 @@ app.post("/auth/apple", async (c) => {
     logAuth("apple", "signed in (app)", who.email, { user: linked.id });
     return c.json({ token, user: await publicUser(c.env, linked.id) });
   }
-  const result = await afterProven(c.env, who.email, appleName(fullName), { kind: "app", appleSub: who.sub });
-  logAuth("apple", "token" in result ? "signed in (app)" : "proven in the app, no account yet", who.email);
-  return c.json(result);
+  const result = await afterApple(c.env, who.email, appleName(fullName), who.sub);
+  logAuth("apple", result.created ? "created (app)" : "signed in (app)", who.email, { user: result.user?.id });
+  return c.json(result, result.created ? 201 : 200);
 });
 
 // Everything below requires a bearer token.

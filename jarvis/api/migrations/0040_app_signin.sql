@@ -27,9 +27,7 @@ CREATE TABLE signin_codes (
 ) WITHOUT ROWID;
 
 -- 3. Apple's own id for a person ("sub"), so a returning Apple sign-in finds
---    its account even after the address behind the Apple ID has changed. A
---    signup ticket from an Apple sign-in carries it to the account it makes.
+--    its account even after the address behind the Apple ID has changed.
 --    NULLs don't collide in a UNIQUE index, so every other account is fine.
 ALTER TABLE users ADD COLUMN apple_sub TEXT;
 CREATE UNIQUE INDEX idx_users_apple_sub ON users(apple_sub);
-ALTER TABLE signup_tickets ADD COLUMN apple_sub TEXT;
