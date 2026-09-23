@@ -2,6 +2,7 @@ import { createContext, useCallback, useEffect, useMemo, useRef, useState, type 
 import { AppState } from "react-native";
 import { api, whenPlanKnown, whenPlanNeeded, type Plan, type PlanNeeded, type Tier } from "./api";
 import { useAuth } from "./auth";
+import { useConsentState } from "./consent";
 import { useOptionalContext } from "./context";
 import { devlog, logFail } from "./devlog";
 import { onSignOut } from "./signOut";
@@ -25,6 +26,12 @@ import { storage } from "./storage";
 //
 // Kept on the phone between launches, per person, so a free phone opens on the
 // free home rather than flashing the assistant first.
+//
+// Consent to AI (lib/consent.ts) is folded in here too: until someone on a plan
+// with AI has agreed, `can` says none of it, exactly as if their plan didn't
+// have it, so every screen and every listening path that asks `can` stays shut.
+// `needsConsent` tells the locked states to say "Agree to use AI" (with a way
+// to the consent screen) instead of "That's for Base users".
 
 const PLAN_KEY = "ovoa.plan";
 /** Coming back to the app asks again, but not more often than this. */
@@ -37,6 +44,7 @@ onSignOut("plan", () => storage.remove(PLAN_KEY));
 type Stored = { userId: string; plan: Plan };
 
 const ALL: Plan["features"] = { chat: true, voice: true, wake: true, agent: true };
+const NONE: Plan["features"] = { chat: false, voice: false, wake: false, agent: false };
 
 /** What the plan is called on screen. */
 export const PLAN_NAMES: Record<Tier, string> = { free: "Free", base: "Base", pro: "Pro" };
@@ -46,8 +54,13 @@ export type PlanState = {
   plan: Plan | null;
   /** Known to be free: no AI (health, notes, the apps that call no model). False while unknown. */
   free: boolean;
-  /** What the plan includes. Everything while the plan isn't known: the server still decides. */
+  /**
+   * What they can use: what the plan includes, and only once they've agreed to
+   * AI. Everything while the plan isn't known: the server still decides.
+   */
   can: Plan["features"];
+  /** On a plan with AI, but they haven't agreed to it yet (app/consent.tsx). */
+  needsConsent: boolean;
   refreshing: boolean;
   /** The plan is known, or the first ask for it has come back either way. */
   ready: boolean;
@@ -173,14 +186,24 @@ export function PlanProvider({ children }: { children: ReactNode }) {
     return () => whenPlanNeeded(null);
   }, [refresh]);
 
-  const value = useMemo<PlanState>(
-    () => ({ plan, free: plan?.tier === "free", can: plan?.features ?? ALL, refreshing, ready: !!plan || asked, refresh }),
-    [plan, refreshing, asked, refresh],
-  );
+  const consent = useConsentState();
+  const value = useMemo<PlanState>(() => {
+    const free = plan?.tier === "free";
+    const needsConsent = !free && consent === "needed";
+    return {
+      plan,
+      free,
+      can: needsConsent ? NONE : (plan?.features ?? ALL),
+      needsConsent,
+      refreshing,
+      ready: !!plan || asked,
+      refresh,
+    };
+  }, [plan, consent, refreshing, asked, refresh]);
   return <PlanContext.Provider value={value}>{children}</PlanContext.Provider>;
 }
 
-const UNKNOWN: PlanState = { plan: null, free: false, can: ALL, refreshing: false, ready: true, refresh: async () => {} };
+const UNKNOWN: PlanState = { plan: null, free: false, can: ALL, needsConsent: false, refreshing: false, ready: true, refresh: async () => {} };
 
 export function usePlan() {
   return useOptionalContext(PlanContext, "usePlan", UNKNOWN);

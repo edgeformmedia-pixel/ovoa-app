@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { useRouter, type Href } from "expo-router";
 import { Linking, RefreshControl, StyleSheet, Text, View } from "react-native";
 import { logFail } from "../lib/devlog";
 import { spotRef } from "../lib/drawer";
@@ -15,6 +16,10 @@ import { Btn, Row, Screen, TopBar, text } from "./ui";
 // checkout, and it lives only in StoreActions, where in-app purchase replaces
 // it for the App Store. No prices and no buy buttons in the app. The words are
 // plain: "for Base users", never "tier", "entitlement" or "paywall".
+//
+// Someone on Base who hasn't agreed to AI yet (lib/consent.ts, usePlan's
+// needsConsent) sees the same places locked another way: "Agree to use AI",
+// and a button to the consent screen (app/consent.tsx). Nothing to buy.
 
 /** The one line that says where plans live. */
 export const MANAGED_AT = "Plans are on ovoa.ai.";
@@ -24,6 +29,14 @@ export const PLANS_URL = "https://ovoa.ai/early-access#plans";
 
 /** The locked state's headline, wherever it shows. */
 export const FOR_BASE = "That's for Base users";
+
+/** The headline, and the tag, where they have the plan but haven't agreed to AI. */
+export const AGREE_FIRST = "Agree to use AI";
+
+/** What a locked AI feature is tagged with in a list: why it's locked, in three or four words. */
+export function lockTag(needsConsent: boolean) {
+  return needsConsent ? AGREE_FIRST : "For Base users";
+}
 
 /**
  * The free home's one card about the assistant. Said once, in one place, and
@@ -64,7 +77,8 @@ export function PartOfPlan({
   /** Names See options for the tour's spotlight (StoreActions). Talk's alone passes it. */
   spot?: string;
 }) {
-  const { refresh, refreshing } = usePlan();
+  const { refresh, refreshing, needsConsent } = usePlan();
+  if (needsConsent) return <AgreeFirst title={title} what={what} bar={bar} spot={spot} />;
   return (
     <View style={styles.page}>
       {bar && <TopBar title={title} />}
@@ -85,15 +99,41 @@ export function PartOfPlan({
   );
 }
 
-/** One line in Settings where a switch would be: the feature, and that it's for Base users. */
+/**
+ * PartOfPlan for someone whose plan has it but who hasn't agreed to AI: what
+ * it would do, that OVOA needs their OK before anything goes to an AI company,
+ * and the way to the consent screen. Never "for Base users": they are.
+ */
+function AgreeFirst({ title, what, bar, spot }: { title: string; what: string; bar: boolean; spot?: string }) {
+  const router = useRouter();
+  return (
+    <View style={styles.page}>
+      {bar && <TopBar title={title} />}
+      <Screen>
+        <View style={styles.part}>
+          <Ionicons name="lock-closed-outline" size={28} color={colors.inkMute} />
+          <Text style={styles.partTitle}>{AGREE_FIRST}</Text>
+          <Text style={styles.partBody}>{what}</Text>
+          <Text style={styles.partMeta}>OVOA needs your OK before anything you say goes to an AI company.</Text>
+          <View ref={spot ? spotRef(spot) : undefined} collapsable={false} style={styles.options}>
+            <Btn label="Review and agree" kind="go" onPress={() => router.push("/consent" as Href)} />
+          </View>
+        </View>
+      </Screen>
+    </View>
+  );
+}
+
+/** One line in Settings where a switch would be: the feature, and why it's locked. */
 export function LockedLine({ label, what }: { label: string; what: string }) {
+  const { needsConsent } = usePlan();
   return (
     <View style={styles.proRow}>
       <View style={{ flex: 1, gap: 2 }}>
         <Text style={styles.proLabel}>{label}</Text>
         <Text style={text.meta}>{what}</Text>
       </View>
-      <Text style={styles.proTag}>For Base users</Text>
+      <Text style={styles.proTag}>{lockTag(needsConsent)}</Text>
     </View>
   );
 }

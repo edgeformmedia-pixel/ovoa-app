@@ -22,7 +22,7 @@ import { Btn, IconTile, type IconName, type Tone } from "./ui";
 // the menu, points at the row, taps it, and leaves them on that screen while
 // it explains it. So by the end they have watched every step once.
 //
-// Shown once (lib/tour.ts), straight after the setup conversation. Skippable at
+// Shown once (lib/tour.ts), at the end of first open (app/_layout.tsx). Skippable at
 // any point; the speaker button silences it and stops it moving on its own, for
 // somewhere it can't talk. With a plan it speaks in their chosen OVOA voice; the
 // free plan has no server voice, so it uses the phone's own. It never asks a
@@ -30,7 +30,9 @@ import { Btn, IconTile, type IconName, type Tone } from "./ui";
 //
 // The free plan sees the same menu (components/Drawer.tsx), so its tour walks
 // the same rows: Talk is shown locked, with See options, and it starts and ends
-// on its day (the Day app), where the free plan lands.
+// on its day (the Day app), where the free plan lands. Someone on Base who said
+// "Not now" to AI (app/consent.tsx) hears the Base tour, in the phone's voice,
+// with Talk's card saying it waits for their OK, and no "you're all set up".
 
 type Step = {
   icon: IconName;
@@ -47,14 +49,14 @@ type Step = {
     | { point: string; on: Href };
 };
 
-function steps(assistant: string, free: boolean): Step[] {
+function steps(assistant: string, free: boolean, needsConsent = false): Step[] {
   const home: Href = free ? ("/day" as Href) : "/chat";
   return [
     {
       icon: "sparkles-outline",
       tone: "violet",
-      title: free ? "Welcome to OVOA" : `${assistant} is ready`,
-      body: free
+      title: free || needsConsent ? "Welcome to OVOA" : `${assistant} is ready`,
+      body: free || needsConsent
         ? "Let me show you around. It takes half a minute."
         : `You're all set up. I'm ${assistant}. Let me show you around — it takes half a minute.`,
       show: { go: home },
@@ -88,7 +90,9 @@ function steps(assistant: string, free: boolean): Step[] {
             icon: "mic",
             tone: "teal",
             title: "Talk",
-            body: "Talk is where the app opens. Tap the circle and speak. Ask me to remind you of something, plan your day, or text someone.",
+            body: needsConsent
+              ? "Talk is where you talk to me: tap the circle and speak, and I'll remind you of things, plan your day or text someone. It needs your OK first, before anything you say goes to an AI company. Talk shows you what goes where."
+              : "Talk is where the app opens. Tap the circle and speak. Ask me to remind you of something, plan your day, or text someone.",
             show: { menu: "tap", row: "Talk", href: "/chat" },
           },
         ] satisfies Step[])),
@@ -162,7 +166,7 @@ function Walkthrough() {
   const drawer = useDrawer();
   const insets = useSafeAreaInsets();
   const { token, user } = useSession();
-  const { free, can } = usePlan();
+  const { free, can, needsConsent } = usePlan();
   const [at, setAt] = useState(0);
   const [voiceOn, setVoiceOn] = useState(true);
   const [speaking, setSpeaking] = useState(false);
@@ -178,11 +182,13 @@ function Walkthrough() {
     return () => release();
   }, [hold]);
 
-  const all = steps(user?.settings.assistantName || "OVOA", free);
+  const all = steps(user?.settings.assistantName || "OVOA", free, needsConsent);
   const step = all[at];
   const last = at === all.length - 1;
 
   // With a plan, the chosen OVOA voice; otherwise the phone's own, which is free.
+  // Before they've agreed to AI, `can` is all false, so the phone's own too:
+  // nothing goes to Deepgram before consent.
   const speaker = useRef(createSpeaker(token));
   const stopDevice = useRef<(() => void) | null>(null);
   const hush = () => {

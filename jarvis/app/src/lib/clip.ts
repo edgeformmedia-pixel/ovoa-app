@@ -102,7 +102,7 @@ const subscribe = (l: () => void) => {
 
 /** Whether a clip is paired (remembered), without re-rendering on every motion reading. */
 export function useClipPaired() {
-  ensureStarted();
+  startIfPaired();
   return useSyncExternalStore(subscribe, () => !!state.savedDeviceId);
 }
 
@@ -140,8 +140,28 @@ function clearConnectTimer() {
   connectTimer = null;
 }
 
-/** Starts the SDK and reconnects to the remembered clip. Safe to call repeatedly. */
-export const startClip = () => ensureStarted();
+/**
+ * Starts the SDK and reconnects to the remembered clip, on a phone that has
+ * paired one. Safe to call repeatedly. Starting the SDK is what makes iOS ask
+ * about Bluetooth, and that question belongs to pairing a Band (the v1
+ * release's first open asks for Bluetooth only then): a phone with no Band
+ * starts it on the screens that pair one, which use useClip.
+ */
+export const startClip = () => startIfPaired();
+
+let checkedPaired = false;
+function startIfPaired() {
+  if (started || checkedPaired || !ute.uteAvailable) return;
+  checkedPaired = true;
+  storage
+    .get(SAVED_DEVICE)
+    .then((saved) => {
+      if (!saved) return;
+      set({ savedDeviceId: saved });
+      ensureStarted();
+    })
+    .catch(logFail("clip: reading the paired band"));
+}
 
 function ensureStarted() {
   if (started || !ute.uteAvailable) return;

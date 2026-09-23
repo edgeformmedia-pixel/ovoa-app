@@ -1,5 +1,6 @@
 import { fetch as streamingFetch } from "expo/fetch";
 import { openAppId } from "./activeApp";
+import { consentMissing, noteConsentNeeded, type AiConsent } from "./consent";
 import { devlog } from "./devlog";
 
 // The server (jarvis/api) on the ovoa.ai account since the v1 move. Builds from
@@ -246,6 +247,15 @@ export type User = {
   devTools?: boolean;
   /** Which engine voices replies for this person (api/src/voice.ts). "device" means the phone does. */
   ttsEngine?: string;
+  /**
+   * The address has been proven with the emailed code (or on ovoa.ai). False:
+   * the app asks for a code (app/verify-email.tsx). Missing from older servers.
+   */
+  emailVerified?: boolean;
+  /** And nothing else works until it is: an account made by the app's sign-up since v1 (api/src/verify.ts). */
+  mustVerify?: boolean;
+  /** Whether they've agreed to AI (lib/consent.ts). Missing from older servers, which never ask. */
+  aiConsent?: AiConsent;
 };
 
 /** One reply engine as the server sees it right now (api/src/llm.ts engineStatus). */
@@ -271,6 +281,12 @@ export type EngineStatus = {
 };
 
 export type OnboardingStep = { done: false; step: string; index: number; total: number; question: string };
+/**
+ * An answer, read. `addons`: add-ons setup turned on for them (Calorie, for an
+ * eating goal), for the phone to add to its menu. `apps`: apps it made for
+ * their goals, so the phone reads its list of apps again.
+ */
+export type OnboardingAnswer = { understood: string | null; next: OnboardingNext; addons?: string[]; apps?: string[] };
 export type OnboardingNext = OnboardingStep | { done: true };
 export type Message = { id: string; role: "user" | "assistant"; content: string; created_at: number };
 export type Memory = { id: string; content: string; created_at: number };
@@ -414,9 +430,42 @@ export class ApiError extends Error {
     readonly fields: Record<string, string> = {},
     /** Set when the server answered needs_plan: which plan the call is part of. */
     readonly needs: PlanNeeded | null = null,
+    /** The server's own name for what went wrong, when it gave one: needs_consent, needs_verification, allowance... */
+    readonly code: string | null = null,
+    /** Seconds to wait before trying again, when the server said (a 429). */
+    readonly retryAfter: number | null = null,
   ) {
     super(message);
   }
+}
+
+/** A code the server keys a reply off (api/src/verify.ts, consent.ts, plans.ts), or null. */
+const errorCode = (body: unknown) => {
+  const e = (body as { error?: unknown } | null)?.error;
+  return typeof e === "string" && /^[a-z][a-z_]*$/.test(e) ? e : null;
+};
+
+/** A request this person hasn't agreed to AI for: stopped here, or refused by the server. */
+export const isNeedsConsent = (err: unknown): err is ApiError => err instanceof ApiError && err.code === "needs_consent";
+
+/**
+ * Who to tell when a call comes back needs_verification: a new account whose
+ * address isn't proven yet (auth.tsx reads GET /me again, and the code screen
+ * comes up). One listener, like whenSessionDies.
+ */
+let codeNeeded: (() => void) | null = null;
+export function whenCodeNeeded(handler: (() => void) | null) {
+  codeNeeded = handler;
+}
+
+/** needs_consent and needs_verification, off any failed reply: each has someone to tell. Returns the code. */
+export function noteCoded(body: unknown) {
+  const code = errorCode(body);
+  try {
+    if (code === "needs_consent") noteConsentNeeded();
+    if (code === "needs_verification") codeNeeded?.();
+  } catch {}
+  return code;
 }
 
 // ---------- Plans ----------
@@ -477,6 +526,8 @@ export function errorText(body: unknown, status: number) {
 // knows it's on the free plan never sends an AI request only to be told no:
 // it stops it here, before it's sent, with the same needs_plan the server would
 // give, and the screen shows its locked state (plan.tsx, components/Plan.tsx).
+// The same for someone who hasn't agreed to AI yet (lib/consent.ts): stopped
+// with needs_consent, so nothing reaches an AI company before they agree.
 // While the plan isn't known, everything is sent and the server decides.
 
 /**
@@ -514,12 +565,26 @@ export function whenPlanKnown(read: (() => Tier | null) | null) {
 /** The sentence a request stopped on the phone carries. The server's needs_plan says it at more length. */
 export const LOCKED_MESSAGE = "That's for Base users.";
 
-/** The error to throw instead of sending, when this phone knows its plan doesn't include the request. */
+/** The sentence a request stopped for want of consent carries (lib/consent.ts). */
+export const CONSENT_LOCKED_MESSAGE = "Agree to how OVOA uses AI first. It's in Settings.";
+
+/**
+ * The error to throw instead of sending, when this phone knows the request
+ * isn't theirs to make: their plan doesn't include it, or they haven't agreed
+ * to AI yet, so nothing is sent to a model (or to Deepgram) before they do.
+ */
 export function lockedOnPhone(method: string, path: string): ApiError | null {
   const needs = aiRequestNeeds(method, path);
-  if (!needs || knownTier?.() !== "free") return null;
-  devlog("log", `${method} ${path.split("?")[0]} not sent: that's for Base users`);
-  return new ApiError(LOCKED_MESSAGE, 402, {}, needs);
+  if (!needs) return null;
+  if (knownTier?.() === "free") {
+    devlog("log", `${method} ${path.split("?")[0]} not sent: that's for Base users`);
+    return new ApiError(LOCKED_MESSAGE, 402, {}, needs, "needs_plan");
+  }
+  if (consentMissing()) {
+    devlog("log", `${method} ${path.split("?")[0]} not sent: they haven't agreed to AI yet`);
+    return new ApiError(CONSENT_LOCKED_MESSAGE, 403, {}, null, "needs_consent");
+  }
+  return null;
 }
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -599,18 +664,20 @@ export async function request<T>(path: string, token: string | null, init: Reque
   }
   clearTimeout(timer);
   const body = await res.json().catch(() => ({}));
-  // Not part of their plan is an ordinary answer, not a fault, and is logged as
-  // one, so a free phone's log isn't a wall of errors.
-  const locked = !res.ok && body?.error === "needs_plan";
+  // Not part of their plan, not agreed to AI yet, or the code not typed yet:
+  // ordinary answers, not faults, and logged as such, so a free phone's log
+  // isn't a wall of errors.
+  const locked = !res.ok && ["needs_plan", "needs_consent", "needs_verification"].includes(body?.error);
   devlog(
     res.ok ? "res" : locked ? "log" : "err",
     `${res.status} ${method} ${path} · ${Date.now() - started} ms`,
-    secret && res.ok ? undefined : locked ? `needs ${body.needs}` : body,
+    secret && res.ok ? undefined : locked ? `${body.error}${body.needs ? ` (${body.needs})` : ""}` : body,
   );
   if (!res.ok) {
     noteDeadSession(res.status, token, body.error);
     const needs = notePlanNeeded(body);
-    throw new ApiError(errorText(body, res.status), res.status, body.fields ?? {}, needs);
+    const retryAfter = typeof body.retryAfter === "number" ? body.retryAfter : null;
+    throw new ApiError(errorText(body, res.status), res.status, body.fields ?? {}, needs, noteCoded(body), retryAfter);
   }
   return body as T;
 }
@@ -678,9 +745,10 @@ async function streamedTurn(
     });
     if (!res.ok) {
       const err = (await res.json().catch(() => ({}))) as { error?: string };
-      devlog(err.error === "needs_plan" ? "log" : "err", `${res.status} POST ${path} · ${Date.now() - started} ms`, err);
+      const locked = ["needs_plan", "needs_consent", "needs_verification"].includes(err.error ?? "");
+      devlog(locked ? "log" : "err", `${res.status} POST ${path} · ${Date.now() - started} ms`, err);
       noteDeadSession(res.status, token, err.error);
-      throw new ApiError(errorText(err, res.status), res.status, {}, notePlanNeeded(err));
+      throw new ApiError(errorText(err, res.status), res.status, {}, notePlanNeeded(err), noteCoded(err));
     }
     // A server without streaming answers plain JSON.
     if (!res.headers.get("content-type")?.includes("ndjson") || !res.body) {
@@ -749,8 +817,9 @@ async function streamedTurn(
 }
 
 export const api = {
+  /** `codeSent`: the first code went to the address with the sign-up (api/src/verify.ts). Missing from older servers. */
   signup: (email: string, password: string, name: string) =>
-    request<{ token: string; user: User }>("/auth/signup", null, {
+    request<{ token: string; user: User; codeSent?: boolean }>("/auth/signup", null, {
       method: "POST",
       body: JSON.stringify({ email, password, name }),
     }),
@@ -777,6 +846,16 @@ export const api = {
   changePassword: (token: string, currentPassword: string, newPassword: string) =>
     request("/me/password", token, { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) }),
   deleteAccount: (token: string) => request("/me", token, { method: "DELETE" }),
+  /** A code to the account's own address, for the code step. 429 with `retryAfter` when one went out in the last minute. */
+  sendCode: (token: string) =>
+    request<{ ok: true; emailVerified?: true; resendInSeconds?: number }>("/me/email/code", token, { method: "POST" }),
+  verifyCode: (token: string, code: string) =>
+    request<{ ok: true; emailVerified: true }>("/me/email/verify", token, { method: "POST", body: JSON.stringify({ code }) }),
+  /** They pressed Agree on app/consent.tsx; `version` is the wording it showed (lib/consent.ts CONSENT_VERSION). */
+  agreeToAi: (token: string, version: number) =>
+    request<{ aiConsent: AiConsent }>("/me/consent", token, { method: "POST", body: JSON.stringify({ version }) }),
+  /** They took it back, in Settings. AI stops until they agree again. */
+  withdrawAi: (token: string) => request<{ aiConsent: AiConsent }>("/me/consent", token, { method: "DELETE" }),
 
   messages: (token: string) => request<{ messages: Message[] }>("/chat/messages", token),
   /**
@@ -934,7 +1013,7 @@ export const api = {
 
   onboarding: (token: string) => request<OnboardingNext>("/onboarding", token),
   onboardingAnswer: (token: string, step: string, text: string) =>
-    request<{ understood: string | null; next: OnboardingNext }>("/onboarding/answer", token, {
+    request<OnboardingAnswer>("/onboarding/answer", token, {
       method: "POST",
       body: JSON.stringify({ step, text }),
     }),

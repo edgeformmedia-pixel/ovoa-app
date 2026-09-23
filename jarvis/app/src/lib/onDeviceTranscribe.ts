@@ -96,11 +96,12 @@ export async function speechAllowed(): Promise<boolean> {
  * files) allowed. Asks only when it has never been answered, and only after a
  * one-line reason. Returns whether it's allowed now. A "no" from iOS stays a
  * no until Settings. Off screen it can't ask (iOS shows no prompt there) and
- * says no, which is why the app asks in the foreground ahead of time: when
- * talking starts, and as soon as a band is paired (assistant.tsx), so a band
- * click from the wrist later doesn't find it unanswered.
+ * says no, which is why the app asks in the foreground ahead of time: on the
+ * permissions screen after sign-up (app/permissions.tsx), when talking starts,
+ * and as soon as a band is paired (assistant.tsx), so a band click from the
+ * wrist later doesn't find it unanswered.
  */
-export async function ensureSpeechPermission(): Promise<boolean> {
+export async function ensureSpeechPermission({ explained = false }: { explained?: boolean } = {}): Promise<boolean> {
   if (!native) return false;
   try {
     const now = await native.getPermissionsAsync();
@@ -108,7 +109,8 @@ export async function ensureSpeechPermission(): Promise<boolean> {
     if (!now.canAskAgain || now.status === "denied" || declinedThisLaunch) return false;
     // A system prompt can't show from the background; the next recording in the foreground asks.
     if (AppState.currentState !== "active") return false;
-    const go = await new Promise<boolean>((resolve) =>
+    // `explained`: the screen asking already says why (app/permissions.tsx), so no second reason first.
+    const go = explained || await new Promise<boolean>((resolve) =>
       Alert.alert(
         "Let your iPhone hear you",
         SPEECH_PROMISE,

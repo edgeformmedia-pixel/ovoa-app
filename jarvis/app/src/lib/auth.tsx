@@ -1,7 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AppState } from "react-native";
 import { devlog, logFail } from "./devlog";
-import { api, ApiError, whenSessionDies, type User } from "./api";
+import { api, ApiError, whenCodeNeeded, whenSessionDies, type User } from "./api";
+import { noteConsentFromUser } from "./consent";
+import { firstOpen } from "./firstOpen";
 import { unregisterPush } from "./push";
 import { setLogToken } from "./remoteLog";
 import { setRecordingsOwner } from "./recordings";
@@ -39,9 +41,17 @@ type AuthState = {
   signUp: (email: string, password: string, name: string) => Promise<void>;
   signOut: () => Promise<void>;
   setUser: (user: User) => void;
-  /** True right after sign-up, until the "connect Google" step is finished or skipped. */
+  /** Reads GET /me again: after the code is typed, consent is given, or the server said either is missing. */
+  refreshUser: () => Promise<void>;
+  /**
+   * True right after sign-up, until the first-open permissions step is done
+   * (app/permissions.tsx). Connect Google isn't part of first open any more:
+   * it's in Settings.
+   */
   onboarding: boolean;
   finishOnboarding: () => void;
+  /** When sign-up's own code went out, so the code screen counts down from it instead of asking again. */
+  codeSentAt: number | null;
   /** This phone has been signed in before, so "Sign in" is the likelier form. */
   hasAccountHere: boolean;
   /** Forget the session locally (e.g. after deleting the account). */
@@ -54,20 +64,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
-  const [onboarding, setOnboarding] = useState(false);
+  const [onboarding, setOnboardingState] = useState(false);
   const [hasAccountHere, setHasAccountHere] = useState(false);
+  const [codeSentAt, setCodeSentAt] = useState<number | null>(null);
+  /** A new account on this phone: the permissions step is kept for it, even across a restart (lib/firstOpen.ts). */
+  const setOnboarding = useCallback((on: boolean) => {
+    setOnboardingState(on);
+    if (on) firstOpen.signedUp();
+  }, []);
 
   // Server-side logs get tagged with whoever is signed in, and recordings are theirs.
   useEffect(() => setLogToken(token), [token]);
   useEffect(() => setRecordingsOwner(user?.id ?? null), [user?.id]);
+  // Whether they've agreed to AI, for the code outside React that must not send
+  // anything to an AI company before they have (lib/consent.ts).
+  useEffect(() => noteConsentFromUser(user?.aiConsent, !!user), [user]);
   const tokenRef = useRef(token);
   tokenRef.current = token;
+
+  const refreshUser = useCallback(async () => {
+    const t = tokenRef.current;
+    if (!t) return;
+    const { user: fresh } = await api.me(t);
+    if (tokenRef.current === t) setUser(fresh);
+  }, []);
+
+  // The server said this account's address isn't proven yet (a new account from
+  // before this build knew about codes, say): read /me, and the code screen comes up.
+  useEffect(() => {
+    whenCodeNeeded(() => void refreshUser().catch(logFail("auth: reading /me after needs_verification")));
+    return () => whenCodeNeeded(null);
+  }, [refreshUser]);
 
   const clear = useCallback(async () => {
     // Everything this phone keeps for one person goes with their session (signOut.ts).
     await resetForSignOut();
     await storage.remove(TOKEN_KEY);
-    setOnboarding(false);
+    setOnboardingState(false);
+    setCodeSentAt(null);
     setToken(null);
     setUser(null);
   }, []);
@@ -185,6 +219,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signIn: async (email, password) => start(await api.login(email, password)),
     signUp: async (email, password, name) => {
       const session = await api.signup(email, password, name);
+      // Then the emailed code (app/verify-email.tsx), then the permissions.
+      setCodeSentAt(session.codeSent ? Date.now() : null);
       setOnboarding(true);
       await start(session);
     },
@@ -204,8 +240,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await clear();
     },
     setUser,
+    refreshUser,
     onboarding,
     finishOnboarding: () => setOnboarding(false),
+    codeSentAt,
     hasAccountHere,
     clear,
   };

@@ -38,7 +38,7 @@ export default function MadeApp() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { token } = useSession();
-  const { can } = usePlan();
+  const { can, needsConsent } = usePlan();
   const a = useAssistant();
   const app = useMyApp(token, id);
   const [text, setText] = useState("");
@@ -86,6 +86,13 @@ export default function MadeApp() {
     const q = question.trim();
     if (!q || thinking || !app) return;
     if (!can.chat) {
+      if (needsConsent) {
+        Alert.alert("Agree to use AI", "Your lists, counters and logs still work. Asking OVOA needs your OK first, before anything you say goes to an AI company.", [
+          { text: "Not now", style: "cancel" },
+          { text: "Review and agree", onPress: () => router.push("/consent" as Href) },
+        ]);
+        return;
+      }
       Alert.alert("That's for Base users", "Your lists, counters and logs still work. Asking OVOA is for Base users; See options in Settings shows the plans.");
       return;
     }

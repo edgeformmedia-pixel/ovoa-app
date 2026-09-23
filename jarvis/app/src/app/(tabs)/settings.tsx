@@ -45,7 +45,7 @@ export default function Settings() {
   // one of them comes with Base (Pro is only more usage), so the locked lines
   // below ("For Base users") show only where the plan's features say otherwise,
   // as a server from before v1 still does for the wake word and background work.
-  const { free, can } = usePlan();
+  const { free, can, needsConsent } = usePlan();
   // Always listen runs on the phone's own recogniser or not at all (decision 1).
   const phoneEar = usePhoneEar();
   const devMode = useDevMode();
@@ -220,6 +220,16 @@ export default function Settings() {
       <AccountSection />
       {!free && (
       <>
+      {/* Whether they've agreed to AI, what that covers, and the way to take it back (app/consent.tsx). */}
+      <Section title="AI and your data">
+        <About>
+          {needsConsent
+            ? "You haven't agreed yet, so OVOA doesn't send anything to an AI company, and talking to it is off until you do."
+            : "You've agreed: what you say, and what's needed to answer it, goes to the AI companies that write OVOA's replies and voice them."}
+        </About>
+        <Button label={needsConsent ? "Review and agree" : "What goes where"} onPress={() => router.push("/consent" as Href)} />
+      </Section>
+
       <Section title="Assistant">
         <Field label="Assistant name" value={assistantName} onChangeText={setAssistantName} />
         <Field
@@ -250,7 +260,9 @@ export default function Settings() {
         </View>
         <About>
           {listenMode === "wake" && !can.wake
-            ? "Saying its name to start is for Base users. For now, tap the orb on Talk and speak."
+            ? needsConsent
+              ? "Saying its name to start works once you've agreed to AI, under AI and your data above."
+              : "Saying its name to start is for Base users. For now, tap the orb on Talk and speak."
             : LISTEN_MODES.find((m) => m.mode === listenMode)?.hint}
         </About>
         <Text style={[styles.label, { marginTop: 18 }]}>Microphone</Text>

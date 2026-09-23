@@ -14,9 +14,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { OrbMode } from "../components/Orb";
 import { OrbView } from "../components/OrbView";
-import { api, isNeedsPlan, type OnboardingStep } from "../lib/api";
+import { Btn } from "../components/ui";
+import { VoiceList } from "../components/VoicePicker";
+import { installedAddons } from "../lib/addons";
+import { api, isNeedsConsent, isNeedsPlan, type OnboardingAnswer, type OnboardingStep } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { devlog, logFail } from "../lib/devlog";
+import { myApps } from "../lib/myApps";
 import { syncRoutines } from "../lib/routines";
 import { colors } from "../lib/theme";
 import { createSpeaker, useConversation } from "../lib/voice";
@@ -37,6 +41,14 @@ import { createSpeaker, useConversation } from "../lib/voice";
 //
 // The keyboard never goes away: a noisy room, a quiet carriage, or simply not
 // wanting to talk are all ordinary, and every question can still be typed.
+//
+// It comes the first time someone has Base, after they've agreed to AI
+// (app/consent.tsx; app/_layout.tsx puts the steps in order), and starts with
+// picking OVOA's voice, the current one ticked, before the call rings. One of
+// the questions is about goals: the server makes an app for each (api/src/
+// onboarding.ts), which this screen reads into the list of apps, and an eating
+// goal turns on Calorie, which it adds to the menu. The tour follows, if it
+// hasn't been seen (components/Tour.tsx).
 
 type Line = { from: "ovoa" | "you"; text: string };
 
@@ -53,6 +65,8 @@ export default function Onboarding() {
   const [calling, setCallingState] = useState(false);
   const [introSpeaking, setIntroSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Picking the voice comes first, on a setup that's starting from the beginning. */
+  const [pickingVoice, setPickingVoice] = useState(false);
   // Read from the voice loop's callback, which keeps the render it was made in.
   const callingRef = useRef(false);
   const typingRef = useRef(false);
@@ -82,6 +96,12 @@ export default function Onboarding() {
     setUser(user);
   };
 
+  /** What an answer set up besides the profile: apps made for their goals, and Calorie for an eating one. */
+  const took = (res: OnboardingAnswer) => {
+    if (res.addons?.includes("calorie")) void installedAddons.install("calorie");
+    if (res.apps?.length) void myApps.refresh(token).catch(logFail("onboarding: reading the apps it made"));
+  };
+
   /** One answer, spoken or typed: record it, show what was understood, move on. */
   const answer = async (said: string): Promise<string | null> => {
     const current = stepRef.current;
@@ -91,6 +111,7 @@ export default function Onboarding() {
     setError(null);
     try {
       const res = await api.onboardingAnswer(token, current.step, said);
+      took(res);
       if (res.understood) say({ from: "ovoa", text: res.understood });
       if (res.next.done) {
         setCurrent(null);
@@ -138,36 +159,53 @@ export default function Onboarding() {
     }
   };
 
+  /** Rings: the greeting and the first question out loud, then the voice loop listens. */
+  const cancelledRef = useRef(false);
+  const ring = async (next: OnboardingStep) => {
+    const greeting =
+      next.index === 0
+        ? `Hi, I'm ${assistant}. A few quick questions so I can plan around your day. Just answer out loud, and say skip for any you'd rather not.`
+        : "Picking up where we left off.";
+    say({ from: "ovoa", text: greeting });
+    say({ from: "ovoa", text: next.question });
+    // Microphone access asked for first: asked after the greeting, the prompt
+    // came up just as they started answering, and that first answer was lost.
+    await requestRecordingPermissionsAsync().catch(logFail("onboarding: microphone permission"));
+    if (cancelledRef.current) return;
+    setCalling(true);
+    await speakIntro(`${greeting} ${next.question}`);
+    if (!cancelledRef.current && !typingRef.current) await convo.start();
+  };
+
   useEffect(() => {
-    let cancelled = false;
+    cancelledRef.current = false;
     api
       .onboarding(token)
       .then(async (next) => {
-        if (cancelled) return;
+        if (cancelledRef.current) return;
         if (next.done) return finish();
         setCurrent(next);
-        const greeting =
-          next.index === 0
-            ? `Hi, I'm ${assistant}. A few quick questions so I can plan around your day. Just answer out loud, and say skip for any you'd rather not.`
-            : "Picking up where we left off.";
-        say({ from: "ovoa", text: greeting });
-        say({ from: "ovoa", text: next.question });
-        // Microphone access asked for first: asked after the greeting, the prompt
-        // came up just as they started answering, and that first answer was lost.
-        await requestRecordingPermissionsAsync().catch(logFail("onboarding: microphone permission"));
-        if (cancelled) return;
-        setCalling(true);
-        await speakIntro(`${greeting} ${next.question}`);
-        if (!cancelled && !typingRef.current) await convo.start();
+        // From the beginning: their voice first, then the call. Picking up
+        // where they left off: straight back into it.
+        if (next.index === 0) setPickingVoice(true);
+        else await ring(next);
       })
       // Setup is part of the assistant. On the free plan the answer is needs_plan,
-      // which already moved the plan to free, and the free app opens instead of this.
-      .catch((err) => !isNeedsPlan(err) && setError(err instanceof Error ? err.message : String(err)));
+      // which already moved the plan to free, and the free app opens instead of
+      // this; without consent (taken back on another phone, say) the consent
+      // state moves the same way, and setup waits for it.
+      .catch((err) => !isNeedsPlan(err) && !isNeedsConsent(err) && setError(err instanceof Error ? err.message : String(err)));
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
       intro.current.stop();
     };
   }, [token]);
+
+  const voicePicked = () => {
+    setPickingVoice(false);
+    const next = stepRef.current;
+    if (next) void ring(next);
+  };
 
   useEffect(() => {
     setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 50);
@@ -221,6 +259,19 @@ export default function Onboarding() {
       if (reply && callingRef.current) await speakIntro(reply);
     });
   };
+
+  if (pickingVoice) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ScrollView contentContainerStyle={styles.voicePage}>
+          <Text style={styles.who}>How should I sound?</Text>
+          <Text style={styles.voiceLead}>Pick a voice for {assistant}. You can change it any time in Settings.</Text>
+          <VoiceList token={token} />
+          <Btn label="Continue" kind="go" onPress={voicePicked} style={{ marginTop: 12 }} />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   const talking = convo.phase === "listening";
   // Map roughly -60..-10 dBFS onto the halo, the same as the assistant's orb.
@@ -378,6 +429,8 @@ const styles = StyleSheet.create({
   trackFill: { height: 3, backgroundColor: colors.now },
 
   stage: { alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 12 },
+  voicePage: { paddingTop: 24, paddingBottom: 32, gap: 10 },
+  voiceLead: { color: colors.inkMute, fontSize: 15, lineHeight: 21 },
   question: { color: colors.ink, fontSize: 21, lineHeight: 28, textAlign: "center", paddingHorizontal: 8 },
   questionSmall: { fontSize: 17, lineHeight: 23 },
   heard: { color: colors.now, fontSize: 16, lineHeight: 22, textAlign: "center", opacity: 0.9 },

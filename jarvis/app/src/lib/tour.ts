@@ -6,8 +6,10 @@ import { storage } from "./storage";
 // Whether the quick tour of the menu has been seen (components/Tour.tsx).
 //
 // It comes up once, the first time the signed-in app opens: straight after the
-// setup conversation for someone new, and on the first open of this version for
-// everyone else, because the menu they knew is gone. Settings can bring it back.
+// setup conversation for someone new on Base, after the permissions step for
+// someone new on the free plan (the simple tutorial with no AI, in the phone's
+// own voice), and on the first open of this version for everyone else, because
+// the menu they knew is gone. Settings can bring it back.
 
 const KEY = "ovoa.tour.v1";
 const listeners = new Set<(seen: boolean) => void>();

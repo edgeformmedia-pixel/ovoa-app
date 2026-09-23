@@ -4,7 +4,8 @@ import { File, Paths } from "expo-file-system";
 import * as Speech from "expo-speech";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
-import { API_URL, ApiError, errorText, lockedOnPhone, noteDeadSession, notePlanNeeded, type ServerSpeech } from "./api";
+import { API_URL, ApiError, errorText, lockedOnPhone, noteCoded, noteDeadSession, notePlanNeeded, type ServerSpeech } from "./api";
+import { consentMissing, onConsentChange } from "./consent";
 import { devlog, devlogRepeat, devlogSettled, logFail } from "./devlog";
 import { pickFiller } from "./fillers";
 import { audioWhy, onScreen, whenOnScreen } from "./foreground";
@@ -65,6 +66,11 @@ export const voicePref = {
 // The server chooses (voice.ts TTS_ENGINES) and tells the phone through /me
 // and on every voiced reply. Only "device" changes anything here: then the
 // phone speaks with its own voices and never asks the server for audio.
+//
+// Until the person has agreed to AI (lib/consent.ts) it's the phone's voice
+// too, whatever the server said: Deepgram is an AI company, and nothing goes
+// to one before they agree, not even the tour's lines, a voice sample or the
+// fillers (decision 4).
 
 /** A line the phone will speak itself, in place of an audio file. */
 export type DeviceUtterance = { device: true; text: string };
@@ -81,12 +87,19 @@ export function setTtsEngine(engine: string | undefined) {
   ttsEngine = engine;
   ttsEngineListeners.forEach((l) => l(engine));
 }
-export const currentTtsEngine = () => ttsEngine;
-export const usesDeviceVoice = () => ttsEngine === "device";
+/** The engine that speaks now: the server's, or the phone's own while they haven't agreed to AI. */
+export const currentTtsEngine = () => (consentMissing() ? "device" : ttsEngine);
+export const usesDeviceVoice = () => currentTtsEngine() === "device";
 export function onTtsEngineChange(listener: (engine: string) => void) {
   ttsEngineListeners.add(listener);
   return () => void ttsEngineListeners.delete(listener);
 }
+// Agreeing (or taking it back) changes who speaks, as a switch of engine would:
+// the fillers are voiced again in the right one (fillers.ts watchVoiceForFillers).
+onConsentChange(() => {
+  const engine = currentTtsEngine();
+  ttsEngineListeners.forEach((l) => l(engine));
+});
 
 /**
  * The phone's own voice that sounds most like the chosen one. iOS doesn't say
@@ -207,7 +220,8 @@ async function authedFetch(
   init: { method: string; headers?: Record<string, string>; body?: any },
   logBody?: string,
 ) {
-  // OVOA's voice is Base's: a phone known to be free doesn't ask (api.ts lockedOnPhone).
+  // OVOA's voice is Base's, and Deepgram's only once they've agreed to AI: a
+  // phone known to be free, or known not to have agreed, doesn't ask (api.ts lockedOnPhone).
   const locked = lockedOnPhone(init.method, path);
   if (locked) throw locked;
   devlog("req", `${init.method} ${path}`, logBody);
@@ -224,9 +238,9 @@ async function authedFetch(
   }
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    devlog(body.error === "needs_plan" ? "log" : "err", `${res.status} ${init.method} ${path} · ${Date.now() - started} ms`, body);
+    devlog(body.error === "needs_plan" || body.error === "needs_consent" ? "log" : "err", `${res.status} ${init.method} ${path} · ${Date.now() - started} ms`, body);
     noteDeadSession(res.status, token, body.error);
-    throw new ApiError(errorText(body, res.status), res.status, {}, notePlanNeeded(body));
+    throw new ApiError(errorText(body, res.status), res.status, {}, notePlanNeeded(body), noteCoded(body));
   }
   devlog("res", `${res.status} ${init.method} ${path} · ${Date.now() - started} ms`);
   return res;

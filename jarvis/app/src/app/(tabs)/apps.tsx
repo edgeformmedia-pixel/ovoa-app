@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { expandFrom } from "../../components/Expand";
 import { PressScale, Rise } from "../../components/motion";
+import { lockTag } from "../../components/Plan";
 import { Empty, GroupLabel, IconTile, Screen, TopBar, toneWash, type IconName, type Tone } from "../../components/ui";
 import {
   ADDONS,
@@ -36,6 +37,8 @@ import { colors, radius, space, type } from "../../lib/theme";
 // Create and the add-ons that use AI are for Base users. On the free plan they
 // are listed all the same, tagged, and open on "That's for Base users" with See
 // options (components/Plan.tsx PartOfPlan); the ones that don't use AI are free.
+// Someone on Base who hasn't agreed to AI yet sees them tagged "Agree to use AI"
+// instead, and they open on the way to the consent screen.
 
 /** What every row shows, whoever made the app. */
 type Card = {
@@ -63,7 +66,7 @@ export default function Apps() {
   const router = useRouter();
   const devMode = useDevMode();
   const installed = useInstalledAddons();
-  const { can } = usePlan();
+  const { can, needsConsent } = usePlan();
   const { token, user } = useSession();
   const made = useMyApps(token);
   const pointed = usePointedAt();
@@ -97,7 +100,7 @@ export default function Apps() {
     ]);
 
   const planTag = (a: Addon) =>
-    (a.needs === "agent" && !can.agent) || (a.needs === "assistant" && !can.chat) ? "For Base users" : undefined;
+    (a.needs === "agent" && !can.agent) || (a.needs === "assistant" && !can.chat) ? lockTag(needsConsent) : undefined;
 
   // Calorie is the one whose state lives on the server too: installing it is
   // what makes OVOA count and ask (lib/food.ts).
@@ -160,7 +163,7 @@ export default function Apps() {
             <View style={styles.body}>
               <Text style={styles.name}>Create</Text>
               <Text style={styles.about}>Say or type what you want, and OVOA makes it into an app.</Text>
-              {!can.chat && <Text style={[styles.by, styles.tag]}>For Base users</Text>}
+              {!can.chat && <Text style={[styles.by, styles.tag]}>{lockTag(needsConsent)}</Text>}
             </View>
             <Ionicons name="mic-outline" size={22} color={colors.now} />
           </PressScale>
