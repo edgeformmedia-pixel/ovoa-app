@@ -39,6 +39,6 @@ Rules:
 ## 4. Report
 At the end, give the user a short summary:
 - what shipped (with commit hashes);
-- what they must click themselves (Lovable publish, applying the migration in the Lovable chat, Stripe setup script, `MEMBERSHIP_API_KEY` on both sides);
+- what they must click themselves (Stripe setup script, `MEMBERSHIP_API_KEY` on both sides);
 - what still needs checking on a phone;
 - the open decisions in SPEC §1: free week vs month with a Band, and what's in Pro.

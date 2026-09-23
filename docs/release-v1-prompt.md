@@ -5,7 +5,8 @@ You are working in the OVOA repo `C:\Users\thoma\OneDrive\Documents\GitHub\ovoa-
 
 - **App:** Expo SDK 57 iOS app in `jarvis/app`.
 - **Server:** Cloudflare Worker (Hono, D1 `jarvis-db`) in `jarvis/api`.
-- **Site:** `ovoa-team`, a Lovable-connected TanStack Start site that sells the plans and the Band through Stripe.
+- **Site:** `ovoa-team`, a TanStack Start site that sells the plans and the Band through Stripe. It runs as the
+  Cloudflare Worker `ovoa-site` on the new account (`npm run deploy` there; see its AGENTS.md).
 - **Shipping:** pushing `main` in `ovoa-app` starts Codemagic → TestFlight, but only when `jarvis/app` or `codemagic.yaml` changed.
 
 The user is getting ready to release **v1 on TestFlight**; the App Store comes later. Every decision below was made by
@@ -68,7 +69,7 @@ writing back a short plan and waiting for "go".
 - **iOS won't OPEN a microphone while the app is off screen.** Background audio only keeps one that's already
   running alive (OSStatus 560557684 `'!int'`).
 - **Don't set `MEMBERSHIP_API_KEY`** on either side. Plans stay off (everyone is Pro) until the user does it, after
-  Lovable is published with the tiers code and free Pro accounts exist for App Review.
+  free Pro accounts exist for App Review.
 - **Stripe is live-only.** No test keys. Don't run the Stripe setup script; the user does that.
 - **Food:** never mention eating disorders. No streaks, no praise for eating less, no red numbers, no moralising.
 - **Don't build shortcut signing.** Assistant-written shortcuts are a future update.
@@ -162,9 +163,9 @@ account, and only after Phase 1 is done.
    (reminders would fire twice) and the gap where writes land on the old database stays small.
    - Keep the old D1 untouched as a backup.
    - Note in `contextforclaude.txt`: "delete the forwarder and old D1 after <date + 3 weeks>".
-9. **Site test Worker.** "Everything" includes the site's test Worker (`edgeformmedia-pixel-ovoa-team`,
-   `wrangler.site.jsonc`). The new account already has an empty D1 called `ovoa-site-db` that someone created on
-   2026-09-23. **Ask the user** before using it.
+9. **The site is already moved.** Since 2026-09-23 ovoa.ai is the Worker `ovoa-site` on the new account
+   (`ovoa-team/wrangler.site.jsonc`, D1 `ovoa-site-db`, custom domains `ovoa.ai` and `www.ovoa.ai`). Nothing to
+   copy. After `api.ovoa.ai` is up, set the site's `OVOA_API_URL` var to it.
 10. **Docs and notes.** Update every deploy instruction that names the edgeformmedia profile or account, starting
     with `contextforclaude.txt` and `docs/`, to the new profile and id.
 
@@ -408,8 +409,8 @@ wording. It must cover:
 - **Contact email.**
 - **Minimum age:** ask the user. Draft 13+ and flag it in the report.
 
-Apple needs this page live at ovoa.ai before the TestFlight build goes to beta review. Lovable was down on
-2026-09-23, so commit, push `main` (it syncs to Lovable), and tell the user it's waiting on Lovable to publish.
+Apple needs this page live at ovoa.ai before the TestFlight build goes to beta review. Commit, push `main` in
+`ovoa-team`, and deploy the site (`npm run deploy` with the new account's profile).
 The site work (Phases 4.7, 4.8, 9) is in a different repo, so a subagent can run it in parallel with the app
 phases.
 
@@ -442,11 +443,10 @@ phases.
 ## Waiting on the user (don't do these, remind them)
 
 - Key files in `ovoa-team`: `gemini/.env`, `deepgram/.env`, `zai/.env`, `google/.env`.
-- Google: `https://api.ovoa.ai/google/callback` added as a redirect. Say which mode the Google app is in. In
-  Testing mode each tester has to be added, with a limit of 100, and reconnect every 7 days. Unverified apps show a
-  warning, with a 100-user limit.
+- Google (done 2026-09-23): the new client is in `ovoa-team/google/.env` (project `ovoa-509511`, admin@ovoa.ai),
+  with `https://api.ovoa.ai/google/callback` as a redirect, and the Google app is **In production** but not verified:
+  Gmail/Calendar show the "unverified app" warning, with a 100-user limit, until the user submits for verification.
 - Workers Paid on the new account.
-- Lovable: apply the pending Supabase migrations and publish.
 - Stripe: live keys in `ovoa-team/stripe/.env`, then the setup script.
 - Free Pro accounts for App Review and testers on the admin page, **then** `MEMBERSHIP_API_KEY` on both sides.
 - App Store Connect external testing details: privacy policy URL, beta description, demo login, feedback email.
