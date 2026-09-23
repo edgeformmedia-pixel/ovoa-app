@@ -806,7 +806,7 @@ export const api = {
    */
   brief: (token: string, fresh = false) => request<MorningBrief>(fresh ? "/brief?fresh=1" : "/brief", token),
 
-  // ---------- Alarms, urgent reminders, Claude ----------
+  // ---------- Alarms, urgent reminders ----------
 
   alarms: (token: string) =>
     request<{
@@ -818,8 +818,6 @@ export const api = {
   stopAlarm: (token: string, id: string, steps: number) =>
     request(`/alarms/${id}/stop`, token, { method: "POST", body: JSON.stringify({ steps }) }),
   nagDone: (token: string, key: string) => request("/nags/done", token, { method: "POST", body: JSON.stringify({ key }) }),
-  askClaude: (token: string, prompt: string) =>
-    request<{ answer: string; model: string }>("/claude", token, { method: "POST", body: JSON.stringify({ prompt }) }),
   confirmFavor: (token: string, id: string) => request(`/favors/${id}/confirm`, token, { method: "POST" }),
   setCommitment: (token: string, id: string, status: "open" | "done" | "dropped") =>
     request(`/context/commitments/${id}`, token, { method: "PATCH", body: JSON.stringify({ status }) }),

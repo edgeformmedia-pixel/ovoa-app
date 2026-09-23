@@ -24,7 +24,6 @@ const ROUTE_LIMITS: [RegExp, Limiter, string][] = [
   // A turn, however it arrives. 20 a minute is a question every three seconds.
   [/^\/(chat|chat\/resume|siri)$/, "RL_TURN", "turn"],
   [/^\/voice\/token$/, "RL_TURN", "listen"],
-  [/^\/claude$/, "RL_TURN", "claude"],
   // One per sentence from builds that voice replies themselves.
   [/^\/voice\/speak$/, "RL_SPEAK", "speak"],
   // Talking over a reply without live transcription uploads a 1.8 s piece at a

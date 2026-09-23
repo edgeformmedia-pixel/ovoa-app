@@ -88,7 +88,7 @@
   "ratelimits": [
     // Sign-in and sign-up, per address and per account being signed into.
     { "name": "RL_AUTH", "namespace_id": "1101", "simple": { "limit": 10, "period": 60 } },
-    // Chat turns, live-listening tokens, ask-Claude: per person.
+    // Chat turns and live-listening tokens: per person.
     { "name": "RL_TURN", "namespace_id": "1102", "simple": { "limit": 20, "period": 60 } },
     // Voicing and transcribing, a sentence or a short clip at a time: per person.
     { "name": "RL_SPEAK", "namespace_id": "1103", "simple": { "limit": 120, "period": 60 } },

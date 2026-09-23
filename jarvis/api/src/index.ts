@@ -69,7 +69,6 @@ import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "
 import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
-import { askClaude, askClaudeTool, claude } from "./claude";
 import { appAssistant, appFor, describeScreen, isAppTool, myApps, type MadeApp } from "./myapps";
 import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
 import { isWebTool, webAssistant } from "./web";
@@ -1088,7 +1087,6 @@ async function runTurn(
     ...extraTools.tools,
     ...alarmTools.tools,
     ...moneyTools.tools,
-    askClaudeTool,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -1296,8 +1294,6 @@ async function runTurn(
                                     ? alarmTools.callTool
                                   : isMoneyTool(name)
                                     ? moneyTools.callTool
-                                  : name === askClaudeTool.name
-                                    ? async () => askClaude(env, String(args.prompt ?? ""), { voice })
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name
@@ -2506,7 +2502,6 @@ authed.route("/", heart);
 authed.route("/", transcripts);
 authed.route("/", people);
 authed.route("/", alarms);
-authed.route("/", claude);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
 authed.route("/", actions);

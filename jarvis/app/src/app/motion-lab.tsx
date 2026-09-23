@@ -52,7 +52,7 @@ export default function MotionLab() {
             <Pressable style={[styles.button, !connected && styles.disabled]} disabled={!connected} onPress={runProbe}>
               <Text style={styles.buttonText}>{probe.finishedAt ? "Run again" : "Run motion probe"}</Text>
             </Pressable>
-            {!connected && <Text style={styles.dim}>Connect the clip first (Dev tools → ES100 recorder).</Text>}
+            {!connected && <Text style={styles.dim}>Connect the clip first (Dev tools → OVOA Band recorder).</Text>}
           </>
         )}
 

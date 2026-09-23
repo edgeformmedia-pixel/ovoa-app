@@ -101,7 +101,7 @@ export const ROUTE_TIERS: RouteRule[] = [
 
   // Base: everything that calls a model, voices, transcribes, or is part of
   // the assistant. Listed so the table reads whole; the default is base anyway.
-  { method: "POST", path: /^\/(chat|chat\/resume|siri|siri\/key|claude)$/, tier: "base", why: "chat, Siri and ask-Claude" },
+  { method: "POST", path: /^\/(chat|chat\/resume|siri|siri\/key)$/, tier: "base", why: "chat and Siri" },
   { method: "GET", path: /^\/brief$/, tier: "base", why: "the morning brief" },
   { method: "POST", path: /^\/voice\/(transcribe|speak|token)$/, tier: "base", why: "speech: clips, voice, live listening" },
   { method: "*", path: /^\/context\//, tier: "base", why: "the timeline (summaries are a model)" },

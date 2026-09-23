@@ -49,7 +49,7 @@ export default function TabsLayout() {
   // Talk, Apps, the apps they've added, and Settings; see components/Drawer.tsx.
   //
   // SafetyProvider, AgentProvider, AssistantProvider and NagOverlay live in
-  // app/_layout.tsx: /agent, /transcripts, /live, /claude, /dev-tools, /es100
+  // app/_layout.tsx: /agent, /transcripts, /live, /dev-tools, /es100
   // and /motion-lab are siblings of (tabs) in the root stack rather than
   // children, so from here they sat outside the providers and /agent threw on
   // every open (device_logs, 2026-09-21).

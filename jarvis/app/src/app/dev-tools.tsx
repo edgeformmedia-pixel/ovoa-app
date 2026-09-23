@@ -192,7 +192,7 @@ export default function DevTools() {
         <Pressable style={styles.link} onPress={() => router.push("/es100")}>
           <View style={styles.linkLeft}>
             <Ionicons name="bluetooth" size={18} color={colors.blue} />
-            <Text style={styles.itemText}>ES100 recorder</Text>
+            <Text style={styles.itemText}>OVOA Band recorder</Text>
           </View>
           <Ionicons name="chevron-forward" size={16} color={colors.inkMute} />
         </Pressable>
@@ -749,7 +749,7 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
   const motion = supported.filter((name) => /sensor|gyro|motion|accel|posture|wear/i.test(name));
   return (
     <>
-      <Text style={styles.section}>ES100 clip</Text>
+      <Text style={styles.section}>OVOA Band</Text>
       <Card title="Clip — live" available={state.phase === "unavailable" ? false : true}>
         <Row label="connection" value={state.phase} good={connected} />
         <Row
@@ -816,7 +816,7 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
         </View>
         <Text style={styles.hint}>
           Twist uses the clip's gyroscope test (gyro3), about one reading a second. Read gyro is the older command,
-          which the ES100 doesn't answer (a timeout).
+          which the band doesn't answer (a timeout).
         </Text>
       </Card>
 

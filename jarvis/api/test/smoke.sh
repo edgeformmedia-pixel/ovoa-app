@@ -337,7 +337,6 @@ check "the alarm tick runs" "$(curl -s -X POST "${D[@]}" "$API/debug/agent/tick?
 check "not someone else's alarms" "$(curl -s -H "authorization: Bearer $OTHER" "$API/alarms" | j "len(d['alarms'])")" "0"
 check "cancelled" "$(curl -s -X DELETE "${A[@]}" "$API/alarms/$AID" | j "d['ok']")" "True"
 check "a nag can be answered" "$(curl -s -X POST "${A[@]}" "$API/nags/done" -d '{"key":"note:nope"}' | j "d['ok']")" "True"
-check "Claude without a key says so" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/claude" -d '{"prompt":"hi"}')" "503"
 
 echo
 echo "── capture everything is dev-only ─────────────────"
