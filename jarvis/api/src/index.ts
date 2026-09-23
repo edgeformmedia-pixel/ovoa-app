@@ -90,6 +90,7 @@ import {
   issueCode,
   issueTicket,
   spendTicket,
+  unmailable,
   unsendCode,
   verifyGoogleIdToken,
 } from "./emailauth";
@@ -468,8 +469,17 @@ app.post("/auth/signup", async (c) => {
   }
   const { email, password, name } = parsed.data;
 
-  const exists = await c.env.DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(email).first();
-  if (exists) {
+  const exists = await c.env.DB.prepare("SELECT id, must_verify, email_verified_at, created_at FROM users WHERE email = ?")
+    .bind(email)
+    .first<VerifyRow & { id: string; created_at: number }>();
+  if (exists && mustVerifyNow(exists) && exists.created_at < Date.now() - CODE_TTL_MS) {
+    // An app sign-up nobody proved while its code lived: it can reach nothing
+    // but /me (verify.ts), and whoever made it may not own the address. It
+    // gives way to this one, rather than keep the owner out with a 409.
+    await deleteSessions(c.env.DB, exists.id);
+    await c.env.DB.prepare("DELETE FROM users WHERE id = ? AND must_verify = 1 AND email_verified_at IS NULL").bind(exists.id).run();
+    logAuth("signup", "replaced an unproven account", email, { user: exists.id });
+  } else if (exists) {
     logAuth("signup", "already exists", email);
     return c.json(
       { error: "An account with that email already exists", fields: { email: "An account with that email already exists" } },
@@ -477,11 +487,12 @@ app.post("/auth/signup", async (c) => {
     );
   }
 
-  const id = await insertUser(c.env.DB, { email, password, name, verified: false });
   // The address isn't proven yet: until the emailed code is typed, the account
   // reaches only /me, sign-out, deleting it, and the code routes (verify.ts).
   // The first code goes now; the app's code step asks for another if it didn't.
-  await c.env.DB.prepare("UPDATE users SET must_verify = 1 WHERE id = ?").bind(id).run();
+  // Where no code can go out at all (a Worker without RESEND_API_KEY), it isn't
+  // held: the app's code step can be put off, as for accounts from before.
+  const id = await insertUser(c.env.DB, { email, password, name, verified: false, mustVerify: codesAvailable(c.env) });
   const token = await createSession(c.env.DB, id);
   const code = await sendAccountCode(c.env, { email, name }).catch((err: unknown) => {
     console.error("ovoa.err signup: couldn't send the first code", err);
@@ -494,11 +505,13 @@ app.post("/auth/signup", async (c) => {
 /**
  * A new account and its settings row, in one batch. `verified`: the address
  * was proven first (emailauth.ts). The app's own signup leaves that column out
- * and proves the address afterwards, with a code (verify.ts).
+ * and proves the address afterwards, with a code (verify.ts); `mustVerify`
+ * holds it until then, written in the same INSERT, so an account can't exist
+ * without the hold it was meant to have.
  */
 async function insertUser(
   db: D1Database,
-  { email, password, name, verified }: { email: string; password: string; name: string; verified: boolean },
+  { email, password, name, verified, mustVerify = false }: { email: string; password: string; name: string; verified: boolean; mustVerify?: boolean },
 ) {
   const id = crypto.randomUUID();
   const now = Date.now();
@@ -511,8 +524,8 @@ async function insertUser(
           )
           .bind(id, email, hash, salt, name, now, now)
       : db
-          .prepare("INSERT INTO users (id, email, password_hash, password_salt, name, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-          .bind(id, email, hash, salt, name, now),
+          .prepare("INSERT INTO users (id, email, password_hash, password_salt, name, created_at, must_verify) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(id, email, hash, salt, name, now, mustVerify ? 1 : 0),
     db.prepare("INSERT INTO settings (user_id, assistant_name, updated_at) VALUES (?, ?, ?)").bind(id, "OVOA", now),
   ]);
   return id;
@@ -583,10 +596,17 @@ const ticketSignupSchema = z.object({
 });
 const BAD_EMAIL = "That email doesn't look right. Check it for a typo.";
 
-/** Signed in, or a ticket to make the account. Either way the address is now proven. */
+/**
+ * Signed in, or a ticket to make the account. Either way the address is now
+ * proven. An app sign-up nobody has proved yet gets the ticket too: anyone
+ * could have made it with this address, so it isn't signed into, and "Create
+ * your account" takes it over (/auth/email/signup).
+ */
 async function afterProven(env: Env, email: string, name: string | null) {
-  const user = await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first<{ id: string }>();
-  if (!user) return { ticket: await issueTicket(env.DB, email, name), email, name };
+  const user = await env.DB.prepare("SELECT id, must_verify, email_verified_at FROM users WHERE email = ?")
+    .bind(email)
+    .first<VerifyRow & { id: string }>();
+  if (!user || mustVerifyNow(user)) return { ticket: await issueTicket(env.DB, email, name), email, name };
   await env.DB.prepare("UPDATE users SET email_verified_at = ? WHERE id = ?").bind(Date.now(), user.id).run();
   const token = await createSession(env.DB, user.id, { kind: "web" });
   return { token, user: await publicUser(env, user.id) };
@@ -603,13 +623,18 @@ app.post("/auth/email/code", async (c) => {
     logAuth("code", "rejected", null, emailShape(body));
     return c.json({ error: BAD_EMAIL, fields: { email: BAD_EMAIL } }, 400);
   }
-  // No Resend key: only a worker with DEBUG_KEY (a local one) goes on, and
+  // No Resend key: only a local worker (EMAIL_CODES_TO_LOG) goes on, and
   // writes the code to its own log instead of sending it (deliverCode).
   if (!codesAvailable(c.env)) {
     logAuth("code", "no RESEND_API_KEY", null);
     return c.json({ error: "Email codes aren't switched on yet. Write to support@ovoa.ai and we'll set you up." }, 503);
   }
   const { email } = parsed.data;
+  // example.com and the like can't receive it: said, not bounced.
+  if (unmailable(c.env, email)) {
+    logAuth("code", "reserved address", email);
+    return c.json({ error: BAD_EMAIL, fields: { email: BAD_EMAIL } }, 400);
+  }
   const issued = await issueCode(c.env.DB, email);
   if ("waitSeconds" in issued) {
     logAuth("code", "too soon", email);
@@ -679,12 +704,29 @@ app.post("/auth/email/signup", async (c) => {
     return c.json({ error: "This sign-up has run out of time. Start again with your email.", expired: true }, 400);
   }
   const { email } = ticket;
-  // Made in the app since the address was proven: it's theirs, so this signs
-  // in to it and leaves its password alone.
-  const findId = () =>
-    c.env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first<{ id: string }>().then((r) => r?.id);
-  let id = await findId();
+  // Made in the app and proved since the ticket was issued: it's theirs, so
+  // this signs in to it and leaves its password alone.
+  const findUser = () =>
+    c.env.DB.prepare("SELECT id, must_verify, email_verified_at FROM users WHERE email = ?")
+      .bind(email)
+      .first<VerifyRow & { id: string }>();
+  const findId = () => findUser().then((r) => r?.id);
+  const found = await findUser();
+  let id = found?.id;
   const created = !id;
+  if (found && mustVerifyNow(found)) {
+    // An app sign-up nobody proved: whoever made it didn't prove the address,
+    // and this person just did. It's theirs, with their name and password;
+    // every session it had is signed out. It could reach nothing but /me, so
+    // nothing in it is lost.
+    const { hash, salt } = await hashPassword(parsed.data.password);
+    await deleteSessions(c.env.DB, found.id);
+    await c.env.DB.prepare("UPDATE users SET password_hash = ?, password_salt = ?, name = ? WHERE id = ?")
+      .bind(hash, salt, parsed.data.name, found.id)
+      .run();
+    await markVerified(c.env, found.id);
+    logAuth("signup", "took over an unproven account", email, { user: found.id });
+  }
   if (!id) {
     try {
       id = await insertUser(c.env.DB, { email, password: parsed.data.password, name: parsed.data.name, verified: true });
@@ -2693,6 +2735,11 @@ app.put("/debug/plan", async (c) => {
  *   POST /debug/verify      {"email" or "userId"}   marks it proven
  *   POST /debug/email/code  {"email" or "userId"}   a live code for it, not sent,
  *                                                   so the code step itself can be tested
+ *
+ * A code is a credential: email_codes is shared with ovoa.ai's sign-in, where
+ * it opens a session. So /debug/email/code only answers on a local worker
+ * (EMAIL_CODES_TO_LOG, never deployed; production has DEBUG_KEY too), and only
+ * for an app sign-up that hasn't been proven yet, never for a real account.
  */
 app.post("/debug/verify", async (c) => {
   if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
@@ -2704,9 +2751,13 @@ app.post("/debug/verify", async (c) => {
 });
 
 app.post("/debug/email/code", async (c) => {
-  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  if (!c.env.EMAIL_CODES_TO_LOG || !c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) {
+    return c.json({ error: "Not found" }, 404);
+  }
   const user = await debugPlanUser(c.env, ((await c.req.json().catch(() => null)) ?? {}) as { email?: unknown; userId?: unknown });
   if (!user) return c.json({ error: "No such account" }, 404);
+  const hold = await c.env.DB.prepare("SELECT must_verify, email_verified_at FROM users WHERE id = ?").bind(user.id).first<VerifyRow>();
+  if (!mustVerifyNow(hold)) return c.json({ error: "Only for a sign-up that hasn't been proven yet" }, 409);
   // Past the minute between codes, and without counting against the hour: the
   // one already out is voided first, as when an email fails to send.
   await unsendCode(c.env.DB, user.email);

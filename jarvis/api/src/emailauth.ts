@@ -4,9 +4,11 @@
 //
 //   1. A six-digit code, emailed from no-reply@ovoa.ai through Resend. Ten
 //      minutes to type it, five tries at it, a minute between two codes and
-//      five codes an hour per address. Without RESEND_API_KEY, a Worker with
-//      DEBUG_KEY set (a local one) writes the code to its own log instead of
-//      sending it (deliverCode), so sign-up can be tried without mail.
+//      five codes an hour per address. Without RESEND_API_KEY, a local worker
+//      (EMAIL_CODES_TO_LOG, passed to wrangler dev and never deployed) writes
+//      the code to its own log instead of sending it (deliverCode), so sign-up
+//      can be tried without mail. Reserved test addresses (example.com and the
+//      like) are never mailed: they bounce, against no-reply@ovoa.ai's name.
 //   2. Google. The site does the OAuth round trip with its own client and
 //      hands over the ID token, which is checked with Google here: the site
 //      can't just say "this is so-and-so".
@@ -264,20 +266,35 @@ export async function sendEmail(
 }
 
 /**
+ * Addresses no one can receive mail at (RFC 2606 and 6761): example.com/.net/.org
+ * and anything under .test, .invalid, .example or .localhost. Test sign-ups use
+ * them (scripts/engine-bench.mjs); mailing them is a bounce on the record of
+ * the address real people's codes come from.
+ */
+export function reservedAddress(email: string) {
+  const domain = email.slice(email.lastIndexOf("@") + 1).toLowerCase();
+  return /(^|\.)example\.(com|net|org)$/.test(domain) || /\.(test|invalid|example|localhost)$/.test(domain);
+}
+
+/** A code for this address would actually be mailed, and can't be: it's reserved. Logged codes still go. */
+export const unmailable = (env: Pick<Env, "RESEND_API_KEY">, email: string) => emailConfigured(env) && reservedAddress(email);
+
+/**
  * A code on its way: "sent" through Resend, "logged" to this Worker's own log
- * (no RESEND_API_KEY, and DEBUG_KEY set: a local worker, where sign-up must
- * still be possible), or "failed" (Resend said no, or neither is set). Never
- * throws. The logged line has the code and a tag for the address, never the
- * address, and goes to console.log only: never device_logs or error_events.
+ * (no RESEND_API_KEY, and EMAIL_CODES_TO_LOG set: a local worker, where
+ * sign-up must still be possible), or "failed" (Resend said no, the address is
+ * reserved, or neither is set). Never throws. The logged line has the code and
+ * a tag for the address, never the address, and goes to console.log only:
+ * never device_logs or error_events.
  */
 export async function deliverCode(
-  env: Pick<Env, "RESEND_API_KEY" | "EMAIL_FROM" | "RESEND_API_BASE" | "DEBUG_KEY">,
+  env: Pick<Env, "RESEND_API_KEY" | "EMAIL_FROM" | "RESEND_API_BASE" | "EMAIL_CODES_TO_LOG">,
   email: Email,
   code: string,
   fetcher?: Fetcher,
 ): Promise<"sent" | "logged" | "failed"> {
-  if (emailConfigured(env)) return (await sendEmail(env, email, fetcher)) ? "sent" : "failed";
-  if (!env.DEBUG_KEY) return "failed";
+  if (emailConfigured(env)) return !reservedAddress(email.to) && (await sendEmail(env, email, fetcher)) ? "sent" : "failed";
+  if (!env.EMAIL_CODES_TO_LOG) return "failed";
   const at = email.to.lastIndexOf("@");
   console.log(`ovoa.dev email code ${code} for ${addressTag(email.to)}@${email.to.slice(at + 1)} (no RESEND_API_KEY, so it wasn't sent)`);
   return "logged";
@@ -294,7 +311,7 @@ export function addressTag(email: string) {
 }
 
 /** Codes can go out at all: through Resend, or into a local worker's log. */
-export const codesAvailable = (env: Pick<Env, "RESEND_API_KEY" | "DEBUG_KEY">) => emailConfigured(env) || !!env.DEBUG_KEY;
+export const codesAvailable = (env: Pick<Env, "RESEND_API_KEY" | "EMAIL_CODES_TO_LOG">) => emailConfigured(env) || !!env.EMAIL_CODES_TO_LOG;
 
 // ---------- Google ----------
 

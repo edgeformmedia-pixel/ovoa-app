@@ -1,10 +1,11 @@
 // The forwarder (../forwarder): the Worker left at the old address that hands
 // every request to api.ovoa.ai. Checked with a stand-in fetch, so nothing here
 // needs a network: what it sends on (address, method, headers, body, redirect
-// handling) and that the answer comes back untouched, streams included.
+// handling) and that the answer comes back untouched, streams included, but
+// for the two refusals an old build could only show as a code.
 
 import worker from "../../forwarder/src/index";
-import { forwardHeaders, UPSTREAM, upstreamUrl } from "../../forwarder/src/forward";
+import { FOR_OLD_BUILDS, forwardHeaders, UPSTREAM, upstreamUrl } from "../../forwarder/src/forward";
 
 let fails = 0;
 function eq(label: string, got: unknown, want: unknown) {
@@ -134,6 +135,29 @@ reply = () => new Response('{"error":"maintenance"}', { status: 503, headers: { 
 const busy = await call(new Request(`${OLD}/me`));
 eq("upstream 503 passes", busy.status, 503);
 eq("with its headers", busy.headers.get("retry-after"), "120");
+
+// The two refusals an old build can't act on come back as a sentence it shows (it only reads `error`).
+const json403 = (body: unknown) => () => Response.json(body, { status: 403, headers: { "x-kept": "yes" } });
+reply = json403({ error: "needs_consent", message: "Before I can answer, please agree…" });
+const consent = await call(new Request(`${OLD}/chat`, { method: "POST", body: "{}" }));
+const consentBody = (await consent.json()) as { error: string; code: string; message: string };
+eq("needs_consent: still a 403", consent.status, 403);
+eq("needs_consent: a sentence under error", consentBody.error, FOR_OLD_BUILDS.needs_consent);
+eq("needs_consent: says to update", /Update OVOA from TestFlight/.test(consentBody.error), true);
+eq("needs_consent: the code kept", consentBody.code, "needs_consent");
+eq("needs_consent: the rest kept", consentBody.message, "Before I can answer, please agree…");
+eq("needs_consent: headers kept", consent.headers.get("x-kept"), "yes");
+reply = json403({ error: "needs_verification" });
+const verify = (await (await call(new Request(`${OLD}/notes`))).json()) as { error: string; code: string };
+eq("needs_verification: a sentence under error", verify.error, FOR_OLD_BUILDS.needs_verification);
+eq("needs_verification: the code kept", verify.code, "needs_verification");
+const plan403 = Response.json({ error: "needs_plan" }, { status: 403 });
+reply = () => plan403;
+eq("another 403 passes untouched", await call(new Request(`${OLD}/chat`, { method: "POST", body: "{}" })), plan403);
+const siri = new Response("Before I can answer, please agree to how OVOA uses AI.", { status: 403, headers: { "content-type": "text/plain" } });
+reply = () => siri;
+eq("a plain-text 403 (Siri's) passes untouched", await call(new Request(`${OLD}/siri`, { method: "POST", body: "{}" })), siri);
+
 reply = () => {
   throw new TypeError("network down");
 };

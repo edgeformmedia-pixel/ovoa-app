@@ -13,10 +13,12 @@
 // every turn to a JSON file, and deletes the account and its rows.
 //
 // A new account can do nothing until its address is proven (src/verify.ts),
-// and an example.com address can't receive the code. So the account is marked
-// proven: through POST /debug/verify when DEBUG_KEY is in the environment, or
-// otherwise with wrangler, like the settings rows. Then it agrees to AI, as the
-// app's consent screen would (src/consent.ts), or every turn is refused.
+// and an example.com address can't receive the code (the server doesn't even try:
+// emailauth.ts reservedAddress, so no bounce counts against no-reply@ovoa.ai).
+// So the account is marked proven: through POST /debug/verify when DEBUG_KEY is
+// in the environment, or otherwise with wrangler, like the settings rows. Then
+// it agrees to AI, as the app's consent screen would (src/consent.ts), or every
+// turn is refused.
 //
 // Phone lookups (reminders, the calendar, contacts) pause the turn for the app;
 // this answers them with a plain made-up result and resumes, exactly as the

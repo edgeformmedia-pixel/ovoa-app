@@ -22,9 +22,11 @@ import {
   newCode,
   pruneEmailAuth,
   readTicket,
+  reservedAddress,
   sendEmail,
   spendTicket,
   TICKET_TTL_MS,
+  unmailable,
   unsendCode,
   verifyGoogleIdToken,
 } from "../src/emailauth";
@@ -250,23 +252,34 @@ eq("spaces and dashes pasted from the email go", cleanCode(" 123-456 "), "123456
     sent.push(url);
     return new Response("{}", { status: 200 });
   };
-  const email = codeEmail({ to: "e@example.com", code: "271828", name: null, existing: true, confirm: true });
+  const email = codeEmail({ to: "sam@mail.ovoa.ai", code: "271828", name: null, existing: true, confirm: true });
   const logged: string[] = [];
   const log = console.log;
   console.log = (...args: unknown[]) => void logged.push(args.join(" "));
-  const withKey = await deliverCode({ RESEND_API_KEY: "re_test", DEBUG_KEY: "localtest" }, email, "271828", resend);
-  const local = await deliverCode({ DEBUG_KEY: "localtest" }, email, "271828", resend);
+  const withKey = await deliverCode({ RESEND_API_KEY: "re_test", EMAIL_CODES_TO_LOG: "1" }, email, "271828", resend);
+  const local = await deliverCode({ EMAIL_CODES_TO_LOG: "1" }, email, "271828", resend);
   const neither = await deliverCode({}, email, "271828", resend);
+  // Production has DEBUG_KEY too: it never makes a code a log line.
+  const debugOnly = await deliverCode({ DEBUG_KEY: "x" } as Parameters<typeof deliverCode>[0], email, "271828", resend);
+  const reserved = await deliverCode({ RESEND_API_KEY: "re_test" }, { ...email, to: "bench-1@example.com" }, "271828", resend);
   console.log = log;
-  eq("with a Resend key it's sent, debug key or not", withKey, "sent");
+  eq("with a Resend key it's sent, local or not", withKey, "sent");
   eq("once", sent.length, 1);
-  eq("no key but a debug key (a local worker): logged, not sent", local, "logged");
+  eq("no key on a local worker: logged, not sent", local, "logged");
   eq("the log line has the code", logged.some((l) => l.includes("271828")), true);
-  eq("and not the address", logged.some((l) => l.includes("e@example.com")), false);
+  eq("and not the address", logged.some((l) => l.includes("sam@mail.ovoa.ai")), false);
   eq("neither: it failed, and nothing was logged", [neither, logged.length], ["failed", 1]);
+  eq("a debug key alone: failed, nothing logged", [debugOnly, logged.length], ["failed", 1]);
+  eq("a reserved address isn't mailed", [reserved, sent.length], ["failed", 1]);
   eq("codes can go out with a key", codesAvailable({ RESEND_API_KEY: "re_test" }), true);
-  eq("or a debug key", codesAvailable({ DEBUG_KEY: "x" }), true);
-  eq("but not with neither", codesAvailable({}), false);
+  eq("or on a local worker", codesAvailable({ EMAIL_CODES_TO_LOG: "1" }), true);
+  eq("but not with a debug key alone", codesAvailable({ DEBUG_KEY: "x" } as Parameters<typeof codesAvailable>[0]), false);
+  eq("nor with neither", codesAvailable({}), false);
+  for (const to of ["a@example.com", "a@mail.example.org", "a@x.test", "a@y.invalid", "a@z.localhost", "a@w.example"]) {
+    eq(`${to} is reserved`, reservedAddress(to), true);
+  }
+  for (const to of ["a@gmail.com", "a@myexample.com", "a@example.co", "a@ovoa.ai"]) eq(`${to} isn't`, reservedAddress(to), false);
+  eq("reserved only matters when it would be mailed", [unmailable({ RESEND_API_KEY: "k" }, "a@example.com"), unmailable({}, "a@example.com")], [true, false]);
 }
 
 // ---------- Google ----------

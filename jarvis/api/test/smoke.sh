@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # End-to-end smoke test of the agent surface, against a local worker.
 #
-#     npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest
+#     npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest --var EMAIL_CODES_TO_LOG:1
 #     npm run smoke
+#
+# EMAIL_CODES_TO_LOG marks the worker as local: with no Resend key, sign-up
+# codes go to its log, and /debug/email/code hands the test a live one. It is
+# never set on a deployed Worker (production has DEBUG_KEY too, so that can't
+# be the sign).
 #
 # Everything here runs against real D1 and the real routes, which is what makes
 # it worth having: the unit tests cover the clock arithmetic, and this covers
@@ -47,10 +52,11 @@ A=(-H "authorization: Bearer $TOKEN" -H 'content-type: application/json')
 
 echo
 echo "── the code step: nothing until the address is proven ──"
-# verify.ts. A local worker has no RESEND_API_KEY, so with DEBUG_KEY set the
-# code goes to its own log instead of an inbox (emailauth.ts deliverCode), and
-# /debug/email/code hands the test a live one.
+# verify.ts. A local worker has no RESEND_API_KEY, so with EMAIL_CODES_TO_LOG
+# set the code goes to its own log instead of an inbox (emailauth.ts
+# deliverCode), and /debug/email/code hands the test a live one.
 check "sign-up sent the first code" "$(echo "$SIGNUP" | j "d['codeSent']")" "True"
+[ "$(echo "$SIGNUP" | j "d['codeSent']")" = "True" ] || echo "     (start the worker with --var EMAIL_CODES_TO_LOG:1 as well as the debug key)"
 check "and says the address isn't proven" "$(echo "$SIGNUP" | j "d['user']['emailVerified']")" "False"
 ME=$(curl -s "${A[@]}" "$API/me")
 check "/me works before the code" "$(echo "$ME" | j "d['user']['emailVerified']")" "False"
@@ -69,6 +75,26 @@ check "a wrong code is refused" "$(curl -s -X POST "${A[@]}" "$API/me/email/veri
 check "the right one is taken" "$(curl -s -X POST "${A[@]}" "$API/me/email/verify" -d "{\"code\":\"$CODE\"}" | j "d['emailVerified']")" "True"
 check "and /me says so" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['emailVerified']")" "True"
 check "everything opens up" "$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" "$API/agent/jobs")" "200"
+# A code is a credential (it signs in on ovoa.ai), so the debug route never
+# makes one for an account that has been proven.
+check "no live code for a proven account" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "x-debug-key: $DEBUG_KEY" -H 'content-type: application/json' "$API/debug/email/code" -d "{\"email\":\"$EMAIL\"}")" "409"
+
+# Someone signs up in the app with an address that isn't theirs and never
+# proves it. The owner proving it on ovoa.ai gets "Create your account", not
+# the squatter's account, and making it signs the squatter out.
+SQUAT_EMAIL="squat$(date +%s)@example.com"
+SQUAT=$(curl -s -X POST "$API/auth/signup" -H 'content-type: application/json' \
+  -d "{\"email\":\"$SQUAT_EMAIL\",\"password\":\"squatter123\",\"name\":\"Squatter\"}" | j "d['token']")
+SCODE=$(curl -s -X POST -H "x-debug-key: $DEBUG_KEY" -H 'content-type: application/json' "$API/debug/email/code" -d "{\"email\":\"$SQUAT_EMAIL\"}" | j "d['code']")
+PROVEN=$(curl -s -X POST -H 'content-type: application/json' "$API/auth/email/verify" -d "{\"email\":\"$SQUAT_EMAIL\",\"code\":\"$SCODE\"}")
+check "proving an unproven sign-up's address gives a ticket, not its session" "$(echo "$PROVEN" | j "('ticket' in d, 'token' in d)")" "(True, False)"
+OWNED=$(curl -s -X POST -H 'content-type: application/json' "$API/auth/email/signup" \
+  -d "{\"ticket\":\"$(echo "$PROVEN" | j "d['ticket']")\",\"name\":\"Owner\",\"password\":\"owner12345\"}")
+check "the owner takes the account over" "$(echo "$OWNED" | j "(d['user']['name'], d['user']['emailVerified'])")" "('Owner', True)"
+check "the squatter's session is gone" "$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $SQUAT" "$API/me")" "401"
+check "and the owner's password is the one that signs in" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' "$API/auth/login" -d "{\"email\":\"$SQUAT_EMAIL\",\"password\":\"owner12345\"}")" "200"
 
 echo
 echo "── consent: nothing to an AI company before it ────"

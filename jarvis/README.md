@@ -447,7 +447,7 @@ where the silent bugs live). `npm run smoke` runs the API end to end against a
 local worker:
 
 ```powershell
-npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest
+npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest --var EMAIL_CODES_TO_LOG:1
 npm run smoke
 ```
 

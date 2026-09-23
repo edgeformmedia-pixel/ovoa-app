@@ -79,7 +79,7 @@ export async function aiConsentFor(env: Pick<Env, "DB">, userId: string, now = D
 
 /** What a person hears or reads when they haven't agreed yet. Plain, one sentence. */
 export const CONSENT_NEEDED =
-  "Before I can answer, please agree to how OVOA uses AI. You can do that in the app.";
+  "Before I can answer, please agree to how OVOA uses AI in the app. If you don't see where, update OVOA from TestFlight.";
 
 /** The 403 body. The app keys off `error`, as it does for needs_plan. */
 export const needsConsentBody = () => ({ error: "needs_consent" as const, message: CONSENT_NEEDED });

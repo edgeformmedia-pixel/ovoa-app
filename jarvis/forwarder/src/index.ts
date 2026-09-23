@@ -11,7 +11,9 @@
 // also streamed, so the NDJSON /chat stream and the audio from /voice/speak
 // reach the phone piece by piece. Redirects come back unfollowed
 // (redirect: "manual"), so the /google/callback 302 to ovoa:// reaches the
-// phone's browser as a 302.
+// phone's browser as a 302. The one change: a 403 needs_consent or
+// needs_verification, which an old build could only show as that code, comes
+// back with a sentence telling them to update (forward.ts forOldBuild).
 //
 // Two kinds of request header are left out, because Cloudflare writes its own
 // on the hop to api.ovoa.ai: host (from the URL) and the cf-* ones. So the

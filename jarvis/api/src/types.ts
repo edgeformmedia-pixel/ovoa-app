@@ -61,6 +61,13 @@ export type Env = {
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
   RESEND_API_BASE?: string;
+  /**
+   * A worker on this computer, never a deployed one: passed as
+   * `--var EMAIL_CODES_TO_LOG:1` to `wrangler dev` (test/smoke.sh). Without a
+   * Resend key, codes go to the worker's own log instead, and
+   * /debug/email/code works. Not DEBUG_KEY, which production has too.
+   */
+  EMAIL_CODES_TO_LOG?: string;
   /** More Google OAuth clients whose sign-ins count, comma-separated, beside GOOGLE_CLIENT_ID (emailauth.ts). */
   GOOGLE_SIGNIN_CLIENT_IDS?: string;
   /** Comma-separated account emails allowed the dev-only capture-everything flag. */

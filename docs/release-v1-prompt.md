@@ -28,7 +28,7 @@ writing back a short plan and waiting for "go".
   inside heredocs, so use the Edit/Write tools for anything with escapes.
 - **Checks:**
   - `jarvis/api`: `npm run typecheck`, `npm test`, `npm run smoke` against
-    `npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest`. Run **one** smoke suite at a time: stop the
+    `npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest --var EMAIL_CODES_TO_LOG:1`. Run **one** smoke suite at a time: stop the
     worker and the suite (PowerShell), wipe `.wrangler/state`, apply migrations locally
     (`npx wrangler d1 migrations apply jarvis-db --local`), then run it. Running suites at the same time produces
     fake tick and 429 failures.
@@ -275,8 +275,9 @@ request is forwarded and answered.
    - Sent through Resend (`RESEND_API_KEY`) from `OVOA <no-reply@ovoa.ai>`, as a plain short email.
    - An account can't do anything until it's verified.
    - Existing accounts get `email_verified_at = NULL` and verify once at their next sign-in.
-   - Without the key (local), the code goes to the dev log, only when `DEBUG_KEY` is set. Tests use a fake Resend
-     and never send real email.
+   - Without the key (local), the code goes to the dev log, only on a worker started with `EMAIL_CODES_TO_LOG`
+     (never deployed; production has `DEBUG_KEY` too, so that can't be the sign). Tests use a fake Resend and never
+     send real email.
    - App: `sign-in.tsx` gets a code step with `textContentType="oneTimeCode"`, so iOS offers the code from Mail.
 2. **Consent** (new, before any AI):
    - A screen that says plainly:

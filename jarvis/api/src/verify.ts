@@ -1,6 +1,6 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
-import { checkCode, codeEmail, codesAvailable, CODE_RESEND_MS, CODE_TTL_MS, deliverCode, issueCode, unsendCode } from "./emailauth";
+import { checkCode, codeEmail, codesAvailable, CODE_RESEND_MS, CODE_TTL_MS, deliverCode, issueCode, unmailable, unsendCode } from "./emailauth";
 import { allowed, tooMany } from "./limits";
 import { say } from "./obs";
 import type { Env, Vars } from "./types";
@@ -22,8 +22,10 @@ import type { Env, Vars } from "./types";
 // (migration 0039) is set by whichever proof comes first, here or on ovoa.ai.
 //
 // For smoke tests and the bench scripts, POST /debug/verify (index.ts, DEBUG_KEY
-// only) marks an account proven, and a local worker without RESEND_API_KEY
-// writes each code to its log (emailauth.ts deliverCode).
+// only) marks an account proven, and a local worker (EMAIL_CODES_TO_LOG)
+// without RESEND_API_KEY writes each code to its log (emailauth.ts deliverCode).
+// Where no code can go out at all (no Resend key on a deployed Worker), a new
+// account isn't held (index.ts /auth/signup): the app's code step can be put off.
 
 /** What an unproven new account may still reach. Everything else is 403 until the code is typed. */
 const OPEN_ROUTES: [method: string, path: RegExp][] = [
@@ -96,13 +98,14 @@ export async function markVerified(env: Pick<Env, "DB">, userId: string, now = D
 /**
  * Sends a code to the account's own address, for the app's code step. Shared
  * by POST /me/email/code and the sign-up itself (index.ts), which sends the
- * first one. `waitSeconds` when it's too soon for another.
+ * first one. `waitSeconds` when it's too soon for another. Nothing for a
+ * reserved test address (emailauth.ts reservedAddress), which can't receive it.
  */
 export async function sendAccountCode(
   env: Env,
   user: { email: string; name: string | null },
 ): Promise<{ sent: true; via: "sent" | "logged" } | { sent: false; waitSeconds?: number }> {
-  if (!codesAvailable(env)) return { sent: false };
+  if (!codesAvailable(env) || unmailable(env, user.email)) return { sent: false };
   const issued = await issueCode(env.DB, user.email);
   if ("waitSeconds" in issued) return { sent: false, waitSeconds: issued.waitSeconds };
   const email = codeEmail({ to: user.email, code: issued.code, name: user.name, existing: true, confirm: true });

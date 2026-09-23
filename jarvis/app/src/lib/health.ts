@@ -184,6 +184,23 @@ export const HEART_WINDOW_HOURS = 12;
 const HEART_POINTS = 48;
 
 /**
+ * Health access has been asked for already (on the permissions screen after
+ * sign-up, or on Activity), so reading now shows no prompt. What runs by
+ * itself (heart rate from Health, lib/heart.ts) checks this first: "Not now"
+ * on the permissions screen means not at the next launch either. False when
+ * it can't be told.
+ */
+export async function healthAsked(): Promise<boolean> {
+  if (!healthAvailable) return false;
+  try {
+    const { AuthorizationRequestStatus } = require("@kingstinct/react-native-healthkit/types") as typeof import("@kingstinct/react-native-healthkit/types");
+    return (await healthKit().getRequestStatusForAuthorization({ toRead: READ })) === AuthorizationRequestStatus.unnecessary;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Asks for Health access once, and says whether it can be read. Returns
  * "unavailable" in Expo Go and on any device without HealthKit.
  *

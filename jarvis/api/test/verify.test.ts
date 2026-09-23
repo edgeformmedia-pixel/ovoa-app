@@ -84,7 +84,7 @@ globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
 }) as typeof fetch;
 
 const RESEND = { DB, RESEND_API_KEY: "re_test", RESEND_API_BASE: "https://resend.test" } as unknown as Env;
-const LOCAL = { DB, DEBUG_KEY: "localtest" } as unknown as Env;
+const LOCAL = { DB, EMAIL_CODES_TO_LOG: "1" } as unknown as Env;
 const BARE = { DB } as unknown as Env;
 
 async function call(env: Env, user: string, method: string, path: string, body?: unknown) {
@@ -115,8 +115,8 @@ eq("new and proven: free to go", mustVerifyNow({ must_verify: 1, email_verified_
 eq("from before, unproven: not held by the server", mustVerifyNow({ must_verify: 0, email_verified_at: null }), false);
 
 {
-  addUser("new", "new@example.com", { mustVerify: true });
-  addUser("old", "old@example.com");
+  addUser("new", "new@mail.ovoa.ai", { mustVerify: true });
+  addUser("old", "old@mail.ovoa.ai");
   eq("new account: /me works", (await call(RESEND, "new", "GET", "/me")).status, 200);
   const blocked = await call(RESEND, "new", "GET", "/routines");
   eq("new account: anything else is 403", blocked.status, 403);
@@ -130,7 +130,7 @@ eq("from before, unproven: not held by the server", mustVerifyNow({ must_verify:
   const sent = await call(RESEND, "new", "POST", "/me/email/code");
   eq("a code is sent", sent.status, 200);
   eq("with the wait before another", sent.json.resendInSeconds, 60);
-  eq("to the account's own address", outbox[0]?.to, ["new@example.com"]);
+  eq("to the account's own address", outbox[0]?.to, ["new@mail.ovoa.ai"]);
   eq("saying what it's for", outbox[0]?.text.includes("confirm your email for OVOA"), true);
   const code = /(\d{6}) is your OVOA code/.exec(outbox[0]?.subject ?? "")?.[1] ?? "";
   eq("the subject leads with the code", code.length, 6);
@@ -155,9 +155,9 @@ eq("from before, unproven: not held by the server", mustVerifyNow({ must_verify:
   eq("no such account: not held (GET /me answers 401 for it)", await needsVerification({ DB }, "gone"), false);
 }
 
-// A local worker: no Resend key, a debug key. The code goes to its log, not to anyone.
+// A local worker: no Resend key, EMAIL_CODES_TO_LOG. The code goes to its log, not to anyone.
 {
-  addUser("local", "local@example.com", { mustVerify: true });
+  addUser("local", "local@mail.ovoa.ai", { mustVerify: true });
   const logged: string[] = [];
   const log = console.log;
   console.log = (...args: unknown[]) => void logged.push(args.join(" "));
@@ -166,21 +166,29 @@ eq("from before, unproven: not held by the server", mustVerifyNow({ must_verify:
   eq("a local worker gives a code", res.status, 200);
   const line = logged.find((l) => l.startsWith("ovoa.dev email code"));
   eq("to its own log", !!line, true);
-  eq("without the address", line?.includes("local@example.com"), false);
+  eq("without the address", line?.includes("local@mail.ovoa.ai"), false);
   eq("and nothing went to Resend", outbox.length, 1);
   const code = /code (\d{6})/.exec(line ?? "")?.[1] ?? "";
   eq("the logged code works", (await call(LOCAL, "local", "POST", "/me/email/verify", { code })).status, 200);
 
-  addUser("nokey", "nokey@example.com", { mustVerify: true });
+  addUser("nokey", "nokey@mail.ovoa.ai", { mustVerify: true });
   const none = await call(BARE, "nokey", "POST", "/me/email/code");
-  eq("no Resend key and no debug key: 502, not a silent success", none.status, 502);
+  eq("no Resend key and not local: 502, not a silent success", none.status, 502);
   eq("and the failed one didn't count: a new try isn't told to wait", (await call(BARE, "nokey", "POST", "/me/email/code")).status, 502);
+  // Production has DEBUG_KEY too: it doesn't make a code a log line.
+  const debugOnly = await call({ DB, DEBUG_KEY: "localtest" } as unknown as Env, "nokey", "POST", "/me/email/code");
+  eq("a debug key alone doesn't either", debugOnly.status, 502);
+
+  // A reserved test address (the bench's) is never mailed: it would bounce.
+  addUser("bench", "bench-1@example.com", { mustVerify: true });
+  const before = outbox.length;
+  eq("example.com gets no email", [(await call(RESEND, "bench", "POST", "/me/email/code")).status, outbox.length - before], [502, 0]);
 }
 
 // ---------- Consent ----------
 
 {
-  addUser("ai", "ai@example.com", { verified: true });
+  addUser("ai", "ai@mail.ovoa.ai", { verified: true });
   forgetConsent();
   eq("not agreed yet", await aiConsentFor({ DB }, "ai"), "needed");
   const chat = await call(BARE, "ai", "POST", "/chat", { message: "hi" });

@@ -405,9 +405,10 @@ const listed = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -
 /**
  * The goals step. Eating goals turn on Calorie (tracking level and target, if
  * they said them); every other goal gets an app of its own, designed and kept
- * the way Apps → Create does it. A design that fails is said, not hidden, and
- * the rest still go ahead; only the gate saying no (plan, allowance, consent)
- * stops the answer, and the route says why.
+ * the way Apps → Create does it. A design that fails, or that the gate turns
+ * down (the day's spend used up halfway), is said, not hidden, and the apps
+ * already made are kept and reported: the step is done either way (it was
+ * claimed before any of this, onboardingAnswer), so they're never made twice.
  */
 async function applyGoals(env: Env, userId: string, raw: unknown): Promise<Applied> {
   const goals: Goal[] = (Array.isArray(raw) ? raw : [])
@@ -433,8 +434,7 @@ async function applyGoals(env: Env, userId: string, raw: unknown): Promise<Appli
         const app = await saveApp(env.DB, userId, draft);
         return app ? { goal: g.goal, app } : { goal: g.goal, full: true };
       } catch (err) {
-        if (isModelRefused(err)) throw err;
-        console.error("onboarding: couldn't make an app for a goal", err);
+        if (!isModelRefused(err)) console.error("onboarding: couldn't make an app for a goal", err);
         return { goal: g.goal };
       }
     }),
@@ -504,8 +504,28 @@ const withAck = (schema: Record<string, unknown>) => ({
   properties: { ...(schema.properties as object), ack: { type: "string" } },
 });
 
+/**
+ * The goals step is claimed (moved on) before its apps are made, only if it's
+ * still the current step: a second try that arrives while the first is still
+ * designing finds it gone. False when someone else already has it.
+ */
+async function claimStep(env: Env, userId: string, step: Step) {
+  const next = STEPS[STEPS.indexOf(step) + 1];
+  if (!next) return true;
+  const res = await env.DB.prepare("UPDATE profile SET step = ?, updated_at = ? WHERE user_id = ? AND step = ?")
+    .bind(next, Date.now(), userId, step)
+    .run();
+  return res.meta.changes > 0;
+}
+
 /** Reads one answer into fields with the model, then saves them. */
 export async function onboardingAnswer(env: Env, userId: string, step: Step, text: string) {
+  // An answer for a step that isn't the current one is neither read nor
+  // applied again: a retry after the first try went through but its reply was
+  // lost (a timeout), or setup already done. The goals step makes apps, so
+  // twice would be twice the apps. The phone is told where setup is now.
+  const profile = await getProfile(env.DB, userId);
+  if (profile.onboardedAt || step !== (profile.step ?? STEPS[0])) return { understood: null, next: await onboardingNext(env, userId) };
   const spec = STEP_SPECS[step];
   const tz = await env.DB.prepare("SELECT time_zone FROM settings WHERE user_id = ?").bind(userId).first<{ time_zone: string | null }>();
   const question = await questionFor(env, userId, step);
@@ -537,12 +557,17 @@ export async function onboardingAnswer(env: Env, userId: string, step: Step, tex
     }
   }
   if (!data) throw new Error("I didn't quite get that. Could you say it another way?");
+  // Goals: taken before a single app is designed (see claimStep). It isn't
+  // handed back if something fails after: apps may already have been made.
+  const claimed = step === "goals";
+  if (claimed && !(await claimStep(env, userId, step))) return { understood: null, next: await onboardingNext(env, userId) };
   const applied = await spec.apply(env, userId, data);
   const { facts, addons, apps } = typeof applied === "string" ? ({ facts: applied } as Applied) : applied;
   const ack = typeof data.ack === "string" && !NOTHING_SAVED.has(facts) ? data.ack.trim().slice(0, 200) : "";
   const understood = ack ? `${ack} ${facts}` : facts;
   // addons: for the phone to add to its menu (Calorie); apps: made for them, for it to read again.
-  return { understood, next: await advance(env, userId, step), ...(addons?.length && { addons }), ...(apps?.length && { apps }) };
+  const next = claimed ? await onboardingNext(env, userId) : await advance(env, userId, step);
+  return { understood, next, ...(addons?.length && { addons }), ...(apps?.length && { apps }) };
 }
 
 // ---------- Routes ----------

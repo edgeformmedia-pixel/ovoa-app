@@ -63,7 +63,16 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUserState] = useState<User | null>(null);
+  // Whether they've agreed to AI, for the code outside React that must not send
+  // anything to an AI company before they have (lib/consent.ts). Published with
+  // the user, not in an effect after: this provider's effects run after the
+  // screens', so for one commit an unconsented user was signed in with consent
+  // "unknown", and the tabs started asking for OVOA's voice and the brief.
+  const setUser = useCallback((next: User | null) => {
+    noteConsentFromUser(next?.aiConsent, !!next);
+    setUserState(next);
+  }, []);
   const [onboarding, setOnboardingState] = useState(false);
   const [hasAccountHere, setHasAccountHere] = useState(false);
   const [codeSentAt, setCodeSentAt] = useState<number | null>(null);
@@ -76,9 +85,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Server-side logs get tagged with whoever is signed in, and recordings are theirs.
   useEffect(() => setLogToken(token), [token]);
   useEffect(() => setRecordingsOwner(user?.id ?? null), [user?.id]);
-  // Whether they've agreed to AI, for the code outside React that must not send
-  // anything to an AI company before they have (lib/consent.ts).
-  useEffect(() => noteConsentFromUser(user?.aiConsent, !!user), [user]);
   const tokenRef = useRef(token);
   tokenRef.current = token;
 
@@ -87,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!t) return;
     const { user: fresh } = await api.me(t);
     if (tokenRef.current === t) setUser(fresh);
-  }, []);
+  }, [setUser]);
 
   // The server said this account's address isn't proven yet (a new account from
   // before this build knew about codes, say): read /me, and the code screen comes up.
@@ -104,7 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCodeSentAt(null);
     setToken(null);
     setUser(null);
-  }, []);
+  }, [setUser]);
 
   // The server said the session is gone (expired, revoked, the account deleted
   // elsewhere): sign out here too, once, rather than failing every request.

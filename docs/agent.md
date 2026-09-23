@@ -149,7 +149,7 @@ Remote push doesn't work in Expo Go on recent SDKs. It needs the built app.
 `wrangler dev --local` runs the whole API offline against real D1.
 
 ```bash
-npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest
+npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest --var EMAIL_CODES_TO_LOG:1
 npm run smoke        # in jarvis/api
 ```
 
