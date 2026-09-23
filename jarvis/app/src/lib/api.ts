@@ -229,7 +229,17 @@ export type Commitment = { said: string; text: string; theirWords: string | null
  * onboarded: false until the setup conversation is finished or put off.
  * devTools: a development account, so Dev tools shows the switches only those may use.
  */
-export type User = { id: string; email: string; name: string; created_at: number; settings: Settings; onboarded?: boolean; devTools?: boolean };
+export type User = {
+  id: string;
+  email: string;
+  name: string;
+  created_at: number;
+  settings: Settings;
+  onboarded?: boolean;
+  devTools?: boolean;
+  /** Which engine voices replies for this person (api/src/voice.ts). "device" means the phone does. */
+  ttsEngine?: string;
+};
 
 /** One reply engine as the server sees it right now (api/src/llm.ts engineStatus). */
 export type EngineInfo = {
@@ -242,7 +252,7 @@ export type EngineInfo = {
 };
 
 /** What the server's own settings say: the order typed turns try, who answers spoken turns, which Workers AI model, which voice. */
-export type ServerSettings = { engine_order?: string; voice_engine?: string; workers_model?: string; tts_engine?: string };
+export type ServerSettings = { engine_order?: string; voice_engine?: string; workers_model?: string; tts_engine?: string; stt_clip_engine?: string };
 
 export type EngineStatus = {
   engines: EngineInfo[];
@@ -414,7 +424,7 @@ export async function request<T>(path: string, token: string | null, init: Reque
 
 type StreamLine =
   | { type: "sentence"; text: string }
-  | { type: "voice"; on: boolean }
+  | { type: "voice"; on: boolean; engine?: string }
   | { type: "audio"; seq: number; text: string; mp3?: string; error?: string }
   | ({ type: "done" } & ChatResponse)
   | { type: "error"; error: string };
@@ -427,8 +437,8 @@ type StreamLine =
  */
 export type ServerSpeech = {
   voice: string;
-  /** Arrives before any sentence: whether the audio is coming. False: voice the sentences here. */
-  onVoicing: (on: boolean) => void;
+  /** Arrives before any sentence: whether the audio is coming, and from which engine. False: voice the sentences here. */
+  onVoicing: (on: boolean, engine?: string) => void;
   /** A piece of the reply, in order: mp3 as base64, or null when the server couldn't voice it. */
   onVoiced: (text: string, mp3: string | null) => void;
 };
@@ -498,7 +508,7 @@ async function streamedTurn(
         if (!sentences++) devlog("res", `first sentence after ${Date.now() - started} ms`, `${msg.text.length} chars`);
         onSentence(msg.text);
       } else if (msg.type === "voice") {
-        speech?.onVoicing(msg.on);
+        speech?.onVoicing(msg.on, msg.engine);
       } else if (msg.type === "audio") {
         if (!voiced++) devlog("res", `first voiced piece after ${Date.now() - started} ms`, msg.error ?? `${msg.mp3?.length ?? 0} b64 chars`);
         speech?.onVoiced(msg.text, msg.mp3 ?? null);

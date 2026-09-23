@@ -98,11 +98,28 @@ function isName(word: string, name: string) {
  * it. Same rule as the server's check (api/src/ambient.ts).
  */
 export function saysName(text: string, name: string) {
+  return nameCount(text, name) > 0;
+}
+
+/**
+ * How many times the name is said in `text`. The phone's ear hands over a
+ * transcript that grows as the person keeps talking, so "is the name in it"
+ * would stay true for a minute after one mention; "is it in it one more time
+ * than before" is what waking on it needs.
+ */
+export function nameCount(text: string, name: string) {
   // "O.V.O.A." and "o v o a" become "ovoa".
   const joined = text.toLowerCase().replace(/\b([a-z])[. ]+(?=[a-z]\b)/g, "$1");
   const words = clean(joined.replace(/[^a-z0-9]+/gi, " ")).split(/\s+/).filter(Boolean);
-  const candidates = [...words, ...words.slice(1).map((w, i) => words[i] + w)];
-  return candidates.some((w) => isName(w, name));
+  let count = 0;
+  for (let i = 0; i < words.length; i++) {
+    if (isName(words[i], name)) count++;
+    else if (i + 1 < words.length && isName(words[i] + words[i + 1], name)) {
+      count++;
+      i++;
+    }
+  }
+  return count;
 }
 
 /** The words that carry a request: not the name, greetings or stray letters. */

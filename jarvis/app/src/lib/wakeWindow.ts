@@ -12,7 +12,7 @@
 // checked in a test that never touches audio. api/test/wake.test.ts does.
 
 /** Why the window opened or was kept open. */
-export type WakeReason = "name" | "summon" | "turn" | "reply" | "follow-up";
+export type WakeReason = "name" | "summon" | "speech" | "turn" | "reply" | "busy" | "follow-up";
 
 /** How long each reason keeps the connection open, in ms. */
 export const WAKE_MS: Record<WakeReason, number> = {
@@ -20,10 +20,18 @@ export const WAKE_MS: Record<WakeReason, number> = {
   name: 12_000,
   /** The band's button: the same, from the press. */
   summon: 10_000,
-  /** A request is being spoken or is on its way to the server. */
+  /** Words are still arriving: a long request is not cut off while it is being said. */
+  speech: 10_000,
+  /** A request is on its way to the server, or being answered. */
   turn: 30_000,
-  /** The reply is being read out; the user may talk over it. */
-  reply: 30_000,
+  /** The reply is being read out; the user may talk over it. Audio can outlast the words. */
+  reply: 60_000,
+  /**
+   * The assistant is still thinking, or its reply is still playing: renewed
+   * every moment that lasts, so the connection outlives a slow first sentence
+   * or a long read-aloud by only this much, and the user can still cut in.
+   */
+  busy: 10_000,
   /** After a reply: an answer without the name still counts (turnGate.ts FOLLOW_UP_MS is 8 s). */
   "follow-up": 10_000,
 };
@@ -89,7 +97,12 @@ export class WakeWindow {
  */
 export type DailyMeter = { day: string; seconds: number };
 
-export const dayKey = (now: number) => new Date(now).toISOString().slice(0, 10);
+/** The phone's own calendar day, so "it's back tomorrow" means the user's tomorrow. */
+export const dayKey = (now: number) => {
+  const d = new Date(now);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
 
 /** Adds seconds to today's total, starting fresh on a new day. */
 export function meterAdd(meter: DailyMeter | null, seconds: number, now: number): DailyMeter {

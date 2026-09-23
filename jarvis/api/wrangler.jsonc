@@ -48,6 +48,15 @@
     // ENGINE_ORDER, e.g. "glm,deepseek,gemini,workers", would replace PRIMARY_ENGINE
     // above. Left unset: the order is set at run time instead (Dev tools, or
     // PUT /debug/engines), which needs no deploy.
+    // Which engine voices replies (voice.ts TTS_ENGINES): deepgram-aura-2 (the
+    // default; the voice is the product), workers-aura-2, workers-aura-1,
+    // workers-melotts, or device (the phone speaks with its own voices).
+    // server_settings.tts_engine, set from Dev tools, overrides this without a deploy.
+    "TTS_ENGINE": "deepgram-aura-2",
+    // What transcribes recorded clips (the band's button, the recorded fallback):
+    // "deepgram" (Nova-3, $0.0043/min) or "workers-whisper" ($0.0005/min, with
+    // Deepgram as the fallback when it fails). server_settings.stt_clip_engine overrides it.
+    "STT_CLIP_ENGINE": "deepgram",
     "PUBLIC_URL": "https://jarvis-api.edgeformmedia.workers.dev",
     // The only accounts allowed the dev-only capture-everything flag (always-listening
     // experiments, ruled out for the product on 2026-09-20). Comma-separated.

@@ -10,7 +10,7 @@ import { savedToken } from "./auth";
 import { onPush } from "./background";
 import * as clip from "./clip";
 import { devlog, logFail } from "./devlog";
-import { holdAwake, renderSpeech } from "./voice";
+import { holdAwake, isDeviceUtterance, renderSpeech, speakOnDevice, type Spoken } from "./voice";
 
 // Things that don't stop until they're answered (server: api/src/alarms.ts).
 //
@@ -68,7 +68,7 @@ export function useNags() {
 let buzzTimer: ReturnType<typeof setInterval> | null = null;
 let talking = false;
 let stepSub: { remove: () => void } | null = null;
-let phrase: { text: string; file: File | null } | null = null;
+let phrase: { text: string; file: Spoken | null } | null = null;
 
 export function startNag(n: Omit<Nag, "startedAt" | "steps">) {
   if (nags.some((x) => x.key === n.key)) return;
@@ -132,7 +132,7 @@ async function talk() {
 /** Plays the line from a file voiced once (and kept), so it can repeat with no network. */
 async function sayLine(text: string) {
   try {
-    if (phrase?.text !== text || !phrase.file?.exists) {
+    if (phrase?.text !== text || !phrase.file || (!isDeviceUtterance(phrase.file) && !phrase.file.exists)) {
       const token = await savedToken();
       const made = token ? await renderSpeech(token, text).catch(() => null) : null;
       phrase = { text, file: made };
@@ -144,6 +144,11 @@ async function sayLine(text: string) {
     // The words themselves stay on the phone: this uploads to device_logs, which
     // is read back over HTTP, and the wake-up line carries the user's name.
     devlog("agent", `saying the wake-up line (${text.length} chars)`);
+    // The phone's own voice: no file, no player.
+    if (isDeviceUtterance(phrase.file)) {
+      await speakOnDevice(text);
+      return;
+    }
     const copy = new File(Paths.cache, `ovoa-wake-${Date.now()}.mp3`);
     // copySync, not copy: copy() is async in SDK 57, and an un-awaited one hands
     // the player a file that hasn't been written yet — the same race that silenced

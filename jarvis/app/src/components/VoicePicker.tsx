@@ -2,8 +2,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useAssistant } from "../lib/assistant";
+import { useSession } from "../lib/auth";
 import { colors } from "../lib/theme";
 import { createSpeaker, voicePref, VOICES, type VoiceId } from "../lib/voice";
+
+/** Engines with one voice of their own, and how to say so. */
+const ONE_VOICE: Record<string, string> = {
+  "workers-melotts": "The assistant is using a plain voice right now, which sounds the same whichever you pick. Your choice is kept for when it changes back.",
+  device: "The assistant is using your iPhone's own voice right now. Your choice here picks the one that sounds closest.",
+};
 
 /** Picks the assistant's speaking voice and plays a short sample of it. */
 export function VoicePicker({ token }: { token: string }) {
@@ -11,6 +18,8 @@ export function VoicePicker({ token }: { token: string }) {
   const [error, setError] = useState<string | null>(null);
   const speaker = useRef(createSpeaker(token));
   const { hold } = useAssistant();
+  const { user } = useSession();
+  const note = ONE_VOICE[user?.ttsEngine ?? ""];
 
   useEffect(() => {
     voicePref.get().then(setSelected);
@@ -30,6 +39,7 @@ export function VoicePicker({ token }: { token: string }) {
   return (
     <View style={{ gap: 4 }}>
       <Text style={styles.meta}>How the assistant sounds. Tap a voice to hear it.</Text>
+      {note && <Text style={styles.meta}>{note}</Text>}
       {VOICES.map((v) => (
         <Pressable key={v.id} style={styles.row} onPress={() => choose(v.id, v.label)}>
           <View style={{ flex: 1 }}>

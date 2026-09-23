@@ -557,6 +557,50 @@ function EnginePicker() {
             <Text style={styles.buttonText}>Usual</Text>
           </Pressable>
         </View>
+        <Text style={styles.hint}>
+          Voice: which engine speaks the replies. Deepgram Aura-2 is the voice people know; Aura-1 costs half; the plain one
+          costs almost nothing; the iPhone's own voice is free and fastest. Tap a voice in Settings afterwards to hear it.
+        </Text>
+        <View style={styles.row}>
+          {[
+            ["deepgram-aura-2", "Aura-2 (Deepgram)"],
+            ["workers-aura-2", "Aura-2 (Workers AI)"],
+            ["workers-aura-1", "Aura-1"],
+            ["workers-melotts", "Plain (MeloTTS)"],
+            ["device", "iPhone voice"],
+          ].map(([engine, label]) => (
+            <Pressable
+              key={engine}
+              style={[styles.button, (current?.tts_engine ?? "") === engine && { borderColor: colors.blue, borderWidth: 1 }]}
+              disabled={busy}
+              onPress={() => set({ tts_engine: engine })}
+            >
+              <Text style={styles.buttonText}>{label}</Text>
+            </Pressable>
+          ))}
+          <Pressable style={[styles.button, !current?.tts_engine && { borderColor: colors.blue, borderWidth: 1 }]} disabled={busy} onPress={() => set({ tts_engine: "" })}>
+            <Text style={styles.buttonText}>Usual</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.hint}>Clips: what transcribes a recorded clip (the band's button). Whisper costs a tenth; Deepgram stays the fallback.</Text>
+        <View style={styles.row}>
+          {[
+            ["deepgram", "Deepgram"],
+            ["workers-whisper", "Whisper (Workers AI)"],
+          ].map(([engine, label]) => (
+            <Pressable
+              key={engine}
+              style={[styles.button, (current?.stt_clip_engine ?? "") === engine && { borderColor: colors.blue, borderWidth: 1 }]}
+              disabled={busy}
+              onPress={() => set({ stt_clip_engine: engine })}
+            >
+              <Text style={styles.buttonText}>{label}</Text>
+            </Pressable>
+          ))}
+          <Pressable style={[styles.button, !current?.stt_clip_engine && { borderColor: colors.blue, borderWidth: 1 }]} disabled={busy} onPress={() => set({ stt_clip_engine: "" })}>
+            <Text style={styles.buttonText}>Usual</Text>
+          </Pressable>
+        </View>
         {error && <Text style={styles.error}>{error}</Text>}
         <Pressable style={styles.button} onPress={load}>
           <Text style={styles.buttonText}>Refresh</Text>

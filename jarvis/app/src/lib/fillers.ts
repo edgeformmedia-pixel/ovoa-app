@@ -1,6 +1,6 @@
 import { Directory, File, Paths } from "expo-file-system";
 import { devlog } from "./devlog";
-import { renderSpeech, voicePref, type VoiceId } from "./voice";
+import { currentTtsEngine, isDeviceUtterance, onTtsEngineChange, renderSpeech, usesDeviceVoice, voicePref, type Spoken, type VoiceId } from "./voice";
 
 // What OVOA says the moment you stop talking, while the answer is worked out:
 // "One second while I get that." Voiced once per voice and kept on the phone,
@@ -31,24 +31,33 @@ export const FILLERS = [
 // down before the first screen rendered. recordings.ts is lazy for the same reason.
 const dir = () => new Directory(Paths.document, "fillers");
 let ready: File[] = [];
-let voice: VoiceId | null = null;
+/** Which voice, on which engine, the ready files are in. */
+let voice: string | null = null;
 let preparing: Promise<void> | null = null;
 /** So two picks in the same millisecond can't collide on one cache filename. */
 let pickCount = 0;
 
-const fileFor = (v: VoiceId, i: number) => new File(dir(), `${v}-${i}.mp3`);
+/** Named by engine and voice: the same voice on another engine sounds different, so it is voiced again. */
+const fileFor = (engine: string, v: VoiceId, i: number) => new File(dir(), `${engine}-${v}-${i}.mp3`);
 
 /** Voices every filler in the chosen voice, once; later calls only pick up what's on disk. */
 export function prepareFillers(token: string) {
   preparing ??= (async () => {
     try {
+      // The phone's own voice needs nothing prepared: pickFiller speaks the words.
+      if (usesDeviceVoice()) {
+        voice = `device:${await voicePref.get()}`;
+        ready = [];
+        return;
+      }
       const v = await voicePref.get();
+      const engine = currentTtsEngine();
       const folder = dir();
       if (!folder.exists) folder.create({ intermediates: true });
       const files: File[] = [];
       let voiced = 0;
       for (let i = 0; i < FILLERS.length; i++) {
-        const target = fileFor(v, i);
+        const target = fileFor(engine, v, i);
         // A slot that exists but is empty poisons itself for good: `exists` skips
         // re-voicing it, and pickFiller then throws that pick away every time it
         // comes up. One failed TTS response should cost one attempt, not the slot.
@@ -64,6 +73,8 @@ export function prepareFillers(token: string) {
             return null;
           });
           if (!made) continue;
+          // The server switched to the phone's voice mid-way: nothing more to keep.
+          if (isDeviceUtterance(made)) break;
           // Awaited: move() returns a promise in SDK 57, so the old un-awaited call
           // could list a filler as ready before it had reached its final path.
           try {
@@ -76,9 +87,9 @@ export function prepareFillers(token: string) {
         }
         files.push(target);
       }
-      voice = v;
+      voice = `${engine}:${v}`;
       ready = files;
-      devlog("file", `${files.length} fillers ready in ${v} (${voiced} newly voiced)`, folder.uri);
+      devlog("file", `${files.length} fillers ready in ${v} on ${engine} (${voiced} newly voiced)`, folder.uri);
     } catch (err) {
       devlog("err", "couldn't prepare the fillers", String(err));
     } finally {
@@ -92,7 +103,9 @@ export function prepareFillers(token: string) {
  * A random filler, as a copy (playing a clip deletes it). Null when none are
  * ready yet, or they're in a different voice than the one now chosen.
  */
-export function pickFiller(): File | null {
+export function pickFiller(): Spoken | null {
+  // The phone's own voice: the words are enough, and there is nothing to copy.
+  if (usesDeviceVoice()) return { device: true, text: FILLERS[Math.floor(Math.random() * FILLERS.length)] };
   if (!ready.length) return null;
   const source = ready[Math.floor(Math.random() * ready.length)];
   try {
@@ -118,11 +131,18 @@ export function pickFiller(): File | null {
   }
 }
 
-/** When the voice changes the old fillers are wrong: drop them and voice the new ones. */
+/** When the voice or the engine changes the old fillers are wrong: drop them and voice the new ones. */
 export function watchVoiceForFillers(token: string) {
-  return voicePref.onChange((v) => {
-    if (v === voice) return;
+  const again = () => {
     ready = [];
     void prepareFillers(token);
+  };
+  const offVoice = voicePref.onChange((v) => {
+    if (`${currentTtsEngine()}:${v}` !== voice) again();
   });
+  const offEngine = onTtsEngineChange(again);
+  return () => {
+    offVoice();
+    offEngine();
+  };
 }

@@ -62,8 +62,10 @@ public class NameEarModule: Module {
         return
       }
       let ear = NameEar(name: name, preRollSeconds: preRoll)
+      // emit, not sendEvent: only the typed emitter turns a NativeArrayBuffer
+      // into a JavaScript ArrayBuffer. Through sendEvent the audio arrives as undefined.
       ear.onEvent = { [weak self] event, payload in
-        self?.sendEvent(event, payload)
+        self?.emit(event: event, payload: payload)
       }
       self.ear = ear
       ear.start { error in
@@ -120,19 +122,38 @@ struct NameMatcher {
       .trimmingCharacters(in: .whitespaces)
   }
 
-  func matches(_ text: String) -> Bool {
-    guard target.count >= 3 else { return false }
+  /// How many times the name is said in `text`. A recogniser's transcript grows
+  /// as the person keeps talking, so "is the name in it" would stay true for a
+  /// minute after one mention; one more mention than before is what counts.
+  func count(_ text: String) -> Int {
+    guard target.count >= 3 else { return 0 }
     // "O.V.O.A." and "o v o a" become "ovoa".
-    let joinedLetters = NameMatcher.clean(text)
-    let words = joinedLetters.split(separator: " ").map(String.init).filter { !$0.isEmpty }
-    var candidates = words
-    // Single letters run together ("o v o a"), and neighbouring words joined ("ovo a").
-    let singles = words.filter { $0.count == 1 }
-    if singles.count >= 3 { candidates.append(singles.joined()) }
-    for i in 0..<max(0, words.count - 1) { candidates.append(words[i] + words[i + 1]) }
-    return candidates.contains { word in
-      abs(word.count - target.count) <= allowed && NameMatcher.distance(word, target) <= allowed
+    let words = NameMatcher.clean(text).split(separator: " ").map(String.init).filter { !$0.isEmpty }
+    var found = 0
+    var i = 0
+    while i < words.count {
+      if isName(words[i]) {
+        found += 1
+      } else if i + 1 < words.count, isName(words[i] + words[i + 1]) {
+        found += 1
+        i += 1
+      } else if words[i].count == 1 {
+        // Single letters run together ("o v o a").
+        var run = words[i]
+        var j = i + 1
+        while j < words.count, words[j].count == 1, run.count < target.count { run += words[j]; j += 1 }
+        if run.count >= 3, isName(run) {
+          found += 1
+          i = j - 1
+        }
+      }
+      i += 1
     }
+    return found
+  }
+
+  private func isName(_ word: String) -> Bool {
+    return abs(word.count - target.count) <= allowed && NameMatcher.distance(word, target) <= allowed
   }
 
   private static func distance(_ a: String, _ b: String) -> Int {
@@ -176,8 +197,9 @@ final class NameEar {
   private var ring = Data()
   private var ringCap: Int { Int(preRollSeconds * 16_000 * 2) }
   private var lastLevelAt: TimeInterval = 0
-  private var lastNameAt: TimeInterval = 0
   private var lastWords = ""
+  /// Mentions of the name in the transcript so far, so a growing transcript wakes once per mention.
+  private var namesHeard = 0
   private var observers: [NSObjectProtocol] = []
 
   // iOS before 26. The request is swapped on the main thread and read on the
@@ -191,6 +213,10 @@ final class NameEar {
   private var storedRequest: SFSpeechAudioBufferRecognitionRequest?
   private var task: SFSpeechRecognitionTask?
   private var taskStartedAt: Date?
+  /// Which recognition task is the current one. A retired task's last callbacks
+  /// (cancelling it produces one) carry an older number and are ignored, which
+  /// is what stops "retire, callback, retire again" from running forever.
+  private var taskGeneration = 0
   /// Apple stops recognition tasks after about a minute; a fresh one starts before that.
   private let taskLifetime: TimeInterval = 50
   // iOS 26 and later. Typed loosely so the class compiles on older SDK targets.
@@ -308,7 +334,21 @@ final class NameEar {
     try session.setActive(true)
 
     let engine = AVAudioEngine()
+    try installTap(on: engine)
+    audioEngine = engine
+    try engine.start()
+    watchSession()
+  }
+
+  /**
+   * The tap and the converter, built for the microphone's format right now.
+   * Done again after a route change (headphones in, Bluetooth out): the
+   * hardware format can change with it, and a tap built for the old one
+   * delivers nothing.
+   */
+  private func installTap(on engine: AVAudioEngine) throws {
     let input = engine.inputNode
+    input.removeTap(onBus: 0)
     let hardware = input.outputFormat(forBus: 0)
     guard hardware.sampleRate > 0 else {
       throw NameEarException("The microphone reported no audio format. Is another app using it?")
@@ -322,9 +362,6 @@ final class NameEar {
     input.installTap(onBus: 0, bufferSize: frames, format: hardware) { [weak self] buffer, _ in
       self?.tapped(buffer)
     }
-    audioEngine = engine
-    try engine.start()
-    watchSession()
   }
 
   func stop() {
@@ -371,6 +408,7 @@ final class NameEar {
     observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: audioEngine, queue: .main) { [weak self] _ in
       guard let self, self.isRunning, let engine = self.audioEngine, !engine.isRunning else { return }
       do {
+        try self.installTap(on: engine)
         try engine.start()
       } catch {
         self.emit("onState", ["state": "error", "reason": NameEar.explain(error)])
@@ -473,15 +511,16 @@ final class NameEar {
   private func heard(_ text: String, isFinal: Bool) {
     queue.async { [weak self] in
       guard let self else { return }
-      if text != self.lastWords {
-        self.lastWords = text
-        self.emit("onWord", ["text": text, "isFinal": isFinal])
+      if text == self.lastWords { return }
+      // A shorter transcript is a new stretch of speech: the count starts over.
+      if text.count < self.lastWords.count { self.namesHeard = 0 }
+      self.lastWords = text
+      self.emit("onWord", ["text": text, "isFinal": isFinal])
+      let heard = self.matcher.count(text)
+      if heard > self.namesHeard {
+        self.emit("onName", ["at": Int(Date().timeIntervalSince1970 * 1000)])
       }
-      let now = Date().timeIntervalSince1970
-      if now - self.lastNameAt >= 2, self.matcher.matches(text) {
-        self.lastNameAt = now
-        self.emit("onName", ["at": Int(now * 1000)])
-      }
+      self.namesHeard = heard
     }
   }
 
@@ -491,8 +530,11 @@ final class NameEar {
 
   // MARK: - SFSpeechRecognizer (iOS before 26)
 
+  /// On the main thread only.
   private func beginRecognitionTask() {
     guard let recognizer else { return }
+    taskGeneration += 1
+    let generation = taskGeneration
     let request = SFSpeechAudioBufferRecognitionRequest()
     request.shouldReportPartialResults = true
     request.requiresOnDeviceRecognition = true
@@ -501,7 +543,7 @@ final class NameEar {
     self.request = request
     taskStartedAt = Date()
     task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-      guard let self, self.isRunning else { return }
+      guard let self, self.isRunning, generation == self.taskGeneration else { return }
       if let result {
         self.heard(result.bestTranscription.formattedString, isFinal: result.isFinal)
       }
@@ -510,9 +552,10 @@ final class NameEar {
       if ended || old {
         // A task ends on its own (a pause, the one-minute limit) or is retired
         // before Apple retires it; either way a new one takes over so the ear
-        // is never closed for long.
+        // is never closed for long. Only the current task may do this: the
+        // retired one's own last callback arrives a moment later and must not.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-          guard let self, self.isRunning, self.engineKind == "sfspeech" else { return }
+          guard let self, self.isRunning, self.engineKind == "sfspeech", generation == self.taskGeneration else { return }
           self.endRecognitionTask()
           self.beginRecognitionTask()
         }
@@ -521,10 +564,12 @@ final class NameEar {
   }
 
   private func endRecognitionTask() {
-    request?.endAudio()
-    task?.cancel()
-    task = nil
+    let ending = request
+    let endingTask = task
     request = nil
+    task = nil
+    ending?.endAudio()
+    endingTask?.cancel()
   }
 }
 

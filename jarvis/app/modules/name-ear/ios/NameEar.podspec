@@ -13,6 +13,10 @@ Pod::Spec.new do |s|
 
   s.dependency 'ExpoModulesCore'
 
+  # Swift 5 language mode, as expo-audio pins it: the Task and closure captures
+  # here are fine in 5 and would need reworking under 6's strict concurrency.
+  s.swift_version = '5.9'
+
   s.frameworks = 'AVFoundation', 'Speech'
 
   s.source_files = 'src/**/*.{h,m,swift}'

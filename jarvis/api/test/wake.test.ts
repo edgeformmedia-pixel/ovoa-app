@@ -31,15 +31,34 @@ const r = new WakeWindow();
 r.wake("name", t0);
 eq("the request extends it, without reopening", r.wake("turn", t0 + 3_000), false);
 eq("still open when the name's window would have lapsed", r.awake(t0 + 15_000), true);
+eq("words still arriving keep it open", r.wake("speech", t0 + 11_000), false);
 eq("the reply extends it again", r.wake("reply", t0 + 20_000), false);
-eq("after the reply, the follow-up window", r.wake("follow-up", t0 + 40_000), false);
-eq("open through the follow-up", r.awake(t0 + 40_000 + WAKE_MS["follow-up"] - 1), true);
-eq("closed after it", r.awake(t0 + 40_000 + WAKE_MS["follow-up"]), false);
+// The reply's audio finishes inside its minute; the follow-up window runs on from there.
+eq("after the reply, the follow-up window", r.wake("follow-up", t0 + 75_000), false);
+eq("open through the follow-up", r.awake(t0 + 75_000 + WAKE_MS["follow-up"] - 1), true);
+eq("closed after it", r.awake(t0 + 75_000 + WAKE_MS["follow-up"]), false);
 eq("still one opening in all that", r.opens, 1);
-eq("a second name is a second opening", r.wake("name", t0 + 60_000), true);
+eq("a second name is a second opening", r.wake("name", t0 + 120_000), true);
 eq("counted", r.opens, 2);
-eq("how long it has been open", r.openFor(t0 + 61_000), 1_000);
-eq("zero when closed", r.openFor(t0 + 200_000), 0);
+eq("how long it has been open", r.openFor(t0 + 121_000), 1_000);
+eq("zero when closed", r.openFor(t0 + 300_000), 0);
+
+// ---------- A slow or long reply ----------
+
+// The assistant thinks for a minute, then reads aloud for two: "busy" is renewed
+// every tick the whole time, and the window shuts ten seconds after it stops.
+const b = new WakeWindow();
+b.wake("name", t0);
+b.wake("turn", t0 + 4_000);
+let tick = t0 + 4_000;
+while (tick < t0 + 184_000) {
+  b.wake("busy", tick);
+  tick += 150;
+}
+eq("open right through it", b.awake(t0 + 183_000), true);
+eq("still only the one opening", b.opens, 1);
+eq("open ten seconds after it stops", b.awake(tick + WAKE_MS.busy - 1), true);
+eq("closed after that", b.awake(tick + WAKE_MS.busy), false);
 
 // ---------- The button ----------
 
@@ -60,7 +79,8 @@ eq("ten minutes after it: stale again", f.stale(t0 + 5 * 60_000 + AUTO_OFF_MS, t
 
 // ---------- The fallback's daily allowance ----------
 
-const day1 = Date.UTC(2026, 8, 22, 12);
+// Local days, because "it's back tomorrow" means the user's tomorrow.
+const day1 = new Date(2026, 8, 22, 12).getTime();
 let m = meterAdd(null, 600, day1);
 eq("ten minutes on a fresh day", m.seconds, 600);
 eq("filed under the day", m.day, "2026-09-22");
@@ -68,7 +88,7 @@ m = meterAdd(m, 3000, day1 + 3_600_000);
 eq("adds up within the day", m.seconds, 3600);
 eq("an hour is the cap", meterOver(m, day1 + 3_600_000), true);
 eq("just under is fine", meterOver(meterAdd(null, DAILY_STREAM_CAP_S - 1, day1), day1), false);
-const day2 = Date.UTC(2026, 8, 23, 1);
+const day2 = new Date(2026, 8, 23, 1).getTime();
 eq("a new day starts fresh", meterAdd(m, 10, day2).seconds, 10);
 eq("yesterday's total doesn't count today", meterOver(m, day2), false);
 eq("a negative number can't lower it", meterAdd(m, -500, day1).seconds, 3600);

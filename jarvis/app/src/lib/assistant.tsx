@@ -22,6 +22,7 @@ import {
   listeningPref,
   serverSpeech,
   listenModePref,
+  setTtsEngine,
   transcribe,
   useConversation,
   type ListenMode,
@@ -189,16 +190,17 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     addressed: boolean,
     onSentence?: (sentence: string) => void,
     signal?: AbortSignal,
-    { source, speech }: { source?: "agent"; speech?: ServerSpeech } = {},
+    { source, speech, room }: { source?: "agent"; speech?: ServerSpeech; room?: boolean } = {},
   ): Promise<string | null> => {
     if (busy.current) return null;
     busy.current = true;
     // Actions from every step of the turn; shown (or auto-run) once the reply is in.
     const parked: PendingAction[] = [];
     try {
-      // Always-listening hears everything, so unless its name was said the server first
+      // Always-listening hears everything, and the phone's ear hears the room for a
+      // moment after each reply, so unless its name was said the server first
       // decides whether this was meant for the assistant.
-      const ambient = ambientRef.current && !addressed;
+      const ambient = (ambientRef.current || !!room) && !addressed;
       const caps = await phoneCaps();
       // One mark for the first sentence, however many round trips it takes to get there.
       let firstSentence = false;
@@ -216,7 +218,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         : await api.send(token, text, caps, !source, ambient, source);
       if (res.meta) noteServer(res.meta);
       if (res.ignored) {
-        devlog("voice", "not meant for the assistant; staying quiet", text);
+        // Only that it happened: the words were the room's, and they stay on the phone.
+        devlog("voice", `not meant for the assistant; staying quiet (${text.length} chars)`);
         return null;
       }
       // The assistant may pause to look things up on this phone, possibly more than once.
@@ -310,6 +313,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setKeepsHeard(!!user?.settings.captureEverything);
   }, [user?.settings.captureEverything]);
+  // Which engine voices replies for this person; "device" means this phone does.
+  useEffect(() => {
+    setTtsEngine(user?.ttsEngine);
+  }, [user?.ttsEngine]);
   const twistOn = listenMode !== "wake";
   const clipPaired = clip.useClipPaired();
   // Twist mode without Always listen: keep the mic (and the app) running so a twist works from other apps.
@@ -705,6 +712,16 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     });
     return end;
   }, [shouldListen, start, end]);
+
+  // Listening stopped itself (the old way's ten quiet minutes or its hour a
+  // day): the orb follows, so it doesn't stay lit over a microphone that is off.
+  // The reason is already on screen as the conversation's error.
+  useEffect(() => {
+    if (!conversation.stoppedBy || !enabled) return;
+    devlog("voice", `listening stopped itself after ${conversation.stoppedBy}; the orb is off`);
+    setEnabled(false);
+    listeningPref.set(false);
+  }, [conversation.stoppedBy]);
 
   const toggleEnabled = () => {
     const on = !enabled;

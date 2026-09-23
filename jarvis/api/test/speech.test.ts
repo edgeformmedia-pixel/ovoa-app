@@ -7,6 +7,13 @@
 
 import { speechStream, type AudioLine } from "../src/voice";
 
+// A server with a Deepgram key and a database that swallows the usage rows it
+// is handed; there is no Workers cache here, so every piece is voiced.
+// The usage rows written after a clip go to a database that swallows them.
+const env = { DEEPGRAM_API_KEY: "key", DB: { prepare: () => ({ bind: () => ({}) }), batch: async () => [] } } as never;
+const ctx = { waitUntil: () => {} };
+const stream = (write: (l: AudioLine) => Promise<void>) => speechStream(env, ctx, null, "deepgram-aura-2", "aura-2-thalia-en", write);
+
 let fails = 0;
 function eq(label: string, got: unknown, want: unknown) {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -40,7 +47,7 @@ async function main() {
   // Later pieces answer first: the long first piece is the slowest.
   let dg = fakeDeepgram((t) => (t.startsWith("Your dentist") ? 60 : 5));
   let lines: AudioLine[] = [];
-  let s = speechStream("key", "aura-2-thalia-en", async (l) => void lines.push(l));
+  let s = stream(async (l) => void lines.push(l));
   s.say("Your dentist appointment is tomorrow afternoon, at three, with Dr. Patel on Main Street.");
   s.say("Want a reminder?");
   s.say("I can set one for the morning so you don't forget it.");
@@ -53,7 +60,7 @@ async function main() {
   // Many pieces at once: never more than three in flight.
   dg = fakeDeepgram(() => 20);
   lines = [];
-  s = speechStream("key", "aura-2-thalia-en", async (l) => void lines.push(l));
+  s = stream(async (l) => void lines.push(l));
   for (let i = 0; i < 8; i++) s.say(`This is sentence number ${i + 1}, long enough to go out on its own.`);
   await s.end();
   eq("all eight arrive", lines.length, 8);
@@ -62,7 +69,7 @@ async function main() {
   // Deepgram refuses one: the words still go, for the phone to voice.
   fakeDeepgram(() => 5, (t) => t.includes("second"));
   lines = [];
-  s = speechStream("key", "aura-2-thalia-en", async (l) => void lines.push(l));
+  s = stream(async (l) => void lines.push(l));
   s.say("The first sentence is perfectly ordinary and fine.");
   s.say("The second sentence is the one that fails to voice.");
   s.say("The third sentence carries on as if nothing happened.");
@@ -77,7 +84,7 @@ async function main() {
   // The phone hangs up: nothing more is voiced or written.
   dg = fakeDeepgram(() => 30);
   lines = [];
-  s = speechStream("key", "aura-2-thalia-en", async (l) => void lines.push(l));
+  s = stream(async (l) => void lines.push(l));
   s.say("The first sentence is perfectly ordinary and fine.");
   s.stop();
   s.say("Nobody is listening to this one any more.");
@@ -89,7 +96,7 @@ async function main() {
   // Markdown never reaches the voice.
   fakeDeepgram(() => 1);
   lines = [];
-  s = speechStream("key", "aura-2-thalia-en", async (l) => void lines.push(l));
+  s = stream(async (l) => void lines.push(l));
   s.say("**Done** — see https://example.com for the rest of it, OVOA.");
   await s.end();
   eq("symbols and links are stripped before voicing", lines[0]?.text, "Done — see for the rest of it, Ovoa.");

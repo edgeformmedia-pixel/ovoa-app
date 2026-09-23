@@ -51,7 +51,7 @@ import { dropRepeats, sentenceStream } from "./sentences";
 import { isPhoneTool, type PhoneCaps } from "./phone";
 import { isShortcutTool, shortcutAssistant, shortcutFiles } from "./shortcuts/assistant";
 import type { Env, Vars } from "./types";
-import { speechStream, voice, VOICES, type VoiceId } from "./voice";
+import { speechStream, STT_CLIP_ENGINES, sttClipEngineFrom, TTS_ENGINES, ttsEngineFrom, voice, VOICES, type TtsEngine, type VoiceId } from "./voice";
 import { logs } from "./logs";
 import { forgetPushToken, registerPushToken } from "./push";
 import { BUZZ_PATTERNS, sendBuzz, type BuzzPattern } from "./buzz";
@@ -302,7 +302,16 @@ async function publicUser(env: Env, userId: string) {
   // onboarded: the app shows the setup conversation until this is true.
   // devTools: a development account (DEV_EMAILS), so Dev tools shows the
   // switches only those accounts may use. The server checks again on every use.
-  return { ...user, settings: formatSettings(settings), onboarded: !!profile.onboardedAt, devTools: isDevEmail(env, user.email) };
+  // ttsEngine: which engine voices replies for this person, so the app knows
+  // when to speak on the phone itself and which voices to offer.
+  const mine = await settingsFor(env, userId);
+  return {
+    ...user,
+    settings: formatSettings(settings),
+    onboarded: !!profile.onboardedAt,
+    devTools: isDevEmail(env, user.email),
+    ttsEngine: ttsEngineFrom(mine.tts_engine, env.TTS_ENGINE),
+  };
 }
 
 const SETTINGS_QUERY = `SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone,
@@ -456,8 +465,12 @@ authed.use("*", async (c, next) => {
   await touchSession(c.env.DB, session).catch((err) => console.error("auth: couldn't extend the session", err));
   c.set("userId", session.userId);
   c.set("token", token);
-  // Which engine answers may have been switched in the table since this isolate last looked.
+  // Which engine answers may have been switched in the table since this isolate
+  // last looked, and which voice speaks for this person. One cached read.
   await applyRuntime(c.env);
+  const mine = await settingsFor(c.env, session.userId);
+  c.set("ttsEngine", ttsEngineFrom(mine.tts_engine, c.env.TTS_ENGINE));
+  c.set("sttClipEngine", sttClipEngineFrom(mine.stt_clip_engine, c.env.STT_CLIP_ENGINE));
   await next();
 });
 
@@ -1160,6 +1173,9 @@ function streamTurn(
   /** Voice the reply here, in this voice, and stream the audio too (voice.ts speechStream). */
   speak?: VoiceId,
 ) {
+  // Which engine speaks for this person. "device" means the phone does, so no
+  // audio is sent and the phone is told which engine to use instead.
+  const tts: TtsEngine = c.get("ttsEngine") ?? ttsEngineFrom(undefined, c.env.TTS_ENGINE);
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
@@ -1177,12 +1193,13 @@ function streamTurn(
       gone = true;
       voicer?.stop();
     });
-  const deepgram = c.env.DEEPGRAM_API_KEY;
   if (speak) {
-    voicer = deepgram ? speechStream(deepgram, speak, send) : null;
-    // First, before any sentence: whether the audio is coming. When it isn't, the
-    // phone voices the sentences itself, exactly as it did before this existed.
-    void send({ type: "voice", on: !!voicer });
+    const canVoice = tts !== "device" && (tts !== "deepgram-aura-2" || !!c.env.DEEPGRAM_API_KEY);
+    voicer = canVoice ? speechStream(c.env, c.executionCtx, userId ?? null, tts, speak, send) : null;
+    // First, before any sentence: whether the audio is coming, and from which
+    // engine. When it isn't, the phone voices the sentences itself: with its own
+    // voices when the engine is "device", or by asking /voice/speak as before.
+    void send({ type: "voice", on: !!voicer, engine: tts });
   }
   let sentences = 0;
   // Re-armed on every sentence, so this measures silence rather than length. As
@@ -1218,11 +1235,9 @@ function streamTurn(
           voicer?.say(text);
         });
         // Every piece of audio before "done": the phone stops reading at "done".
-        if (voicer) {
-          await voicer.end();
-          const { chars, engine, voice } = voicer.spent();
-          if (chars) c.executionCtx.waitUntil(recordUsage(c.env, [ttsRow(userId ?? null, engine, voice, chars)]));
-        }
+        // Every piece of audio before "done": the phone stops reading at "done".
+        // (voiceText already wrote each piece's usage as it was voiced.)
+        if (voicer) await voicer.end();
         await send("ignored" in result ? { type: "done", ...IGNORED } : { type: "done", ...turnResponse(result) });
       } catch (err) {
         voicer?.stop();
@@ -1894,9 +1909,6 @@ authed.get("/usage/me", async (c) => c.json(await usageForPerson(c.env.DB, c.var
 // Changes go to server_settings (settings.ts) and take effect within a minute
 // on every isolate, with no deploy.
 
-/** The voice engines the server knows (voice.ts, Phase 4). Checked here so a typo can't silence everyone. */
-const TTS_ENGINES = ["deepgram-aura-2", "workers-aura-2", "workers-aura-1", "workers-melotts", "device"];
-
 /**
  * Whether a value may go in the table under this key. Returns a sentence saying
  * what is wrong, or null. Names are checked against what llm.ts knows: an
@@ -1917,7 +1929,11 @@ function settingProblem(key: SettingKey, value: string): string | null {
     case "workers_model":
       return /^@cf\/[\w.-]+\/[\w.-]+$/.test(value.trim()) ? null : `"${value}" doesn't look like a Workers AI model id (they start with @cf/).`;
     case "tts_engine":
-      return TTS_ENGINES.includes(value.trim()) ? null : `"${value}" isn't a voice engine. The choices are ${TTS_ENGINES.join(", ")}.`;
+      return (TTS_ENGINES as readonly string[]).includes(value.trim()) ? null : `"${value}" isn't a voice engine. The choices are ${TTS_ENGINES.join(", ")}.`;
+    case "stt_clip_engine":
+      return (STT_CLIP_ENGINES as readonly string[]).includes(value.trim())
+        ? null
+        : `"${value}" isn't a clip transcriber. The choices are ${STT_CLIP_ENGINES.join(" and ")}.`;
   }
 }
 
@@ -1926,6 +1942,7 @@ const settingsPatchSchema = z.object({
   voice_engine: z.string().max(40).optional(),
   workers_model: z.string().max(80).optional(),
   tts_engine: z.string().max(40).optional(),
+  stt_clip_engine: z.string().max(40).optional(),
 });
 
 /** Everything the switchboard shows: each engine's state, the orders, and what is set for everyone and for `userId`. */

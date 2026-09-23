@@ -11,6 +11,7 @@
 --   voice_engine   "workers" | "keyed" | an engine name: who answers spoken turns
 --   workers_model  the Workers AI model, e.g. "@cf/zai-org/glm-5.3-flash"
 --   tts_engine     which voice engine speaks (Phase 4)
+--   stt_clip_engine  "deepgram" | "workers-whisper": what transcribes recorded clips (Phase 5)
 --   <key>:<user_id>  the same, for one person only (a developer testing an engine)
 CREATE TABLE server_settings (
   key        TEXT PRIMARY KEY,

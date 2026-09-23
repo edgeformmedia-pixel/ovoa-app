@@ -10,6 +10,7 @@ import {
 } from "expo-audio";
 import { fetch } from "expo/fetch";
 import { File, Paths } from "expo-file-system";
+import * as Speech from "expo-speech";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { API_URL, ApiError, noteDeadSession, type ServerSpeech } from "./api";
@@ -78,8 +79,95 @@ export const voicePref = {
   },
 };
 
-/** One line voiced in the chosen voice, as a file (the caller keeps or deletes it). */
-export async function renderSpeech(token: string, text: string) {
+// ---------- Which engine speaks ----------
+//
+// The server chooses (voice.ts TTS_ENGINES) and tells the phone through /me
+// and on every voiced reply. Only "device" changes anything here: then the
+// phone speaks with its own voices and never asks the server for audio.
+
+/** A line the phone will speak itself, in place of an audio file. */
+export type DeviceUtterance = { device: true; text: string };
+/** Something the speaker can play: a clip on disk, or words for the phone's own voice. */
+export type Spoken = File | DeviceUtterance;
+export const isDeviceUtterance = (s: Spoken | null | undefined): s is DeviceUtterance => !!s && (s as DeviceUtterance).device === true;
+
+let ttsEngine = "deepgram-aura-2";
+const ttsEngineListeners = new Set<(engine: string) => void>();
+
+/** The engine the server said it uses for this person. */
+export function setTtsEngine(engine: string | undefined) {
+  if (!engine || engine === ttsEngine) return;
+  ttsEngine = engine;
+  ttsEngineListeners.forEach((l) => l(engine));
+}
+export const currentTtsEngine = () => ttsEngine;
+export const usesDeviceVoice = () => ttsEngine === "device";
+export function onTtsEngineChange(listener: (engine: string) => void) {
+  ttsEngineListeners.add(listener);
+  return () => void ttsEngineListeners.delete(listener);
+}
+
+/**
+ * The phone's own voice that sounds most like the chosen one. iOS doesn't say
+ * which of its voices are which, so this goes by name: the chosen Aura voice's
+ * character (a woman's or a man's voice) picks a list, and the first installed
+ * voice on it wins, the enhanced version when there is one. Nothing on the
+ * list means the system's default voice.
+ */
+const DEVICE_VOICES: Record<VoiceId, string[]> = {
+  "aura-2-thalia-en": ["Ava", "Samantha", "Zoe", "Allison", "Karen", "Nicky"],
+  "aura-2-andromeda-en": ["Zoe", "Nicky", "Ava", "Samantha", "Tessa"],
+  "aura-2-helena-en": ["Samantha", "Allison", "Ava", "Moira", "Karen"],
+  "aura-2-luna-en": ["Allison", "Ava", "Samantha", "Moira", "Zoe"],
+  "aura-2-apollo-en": ["Evan", "Nathan", "Tom", "Alex", "Daniel"],
+  "aura-2-arcas-en": ["Nathan", "Evan", "Alex", "Daniel", "Aaron"],
+  "aura-2-orion-en": ["Tom", "Daniel", "Alex", "Nathan", "Evan"],
+  "aura-2-hermes-en": ["Alex", "Evan", "Aaron", "Nathan", "Daniel"],
+};
+let deviceVoices: Speech.Voice[] | null = null;
+
+async function deviceVoiceFor(voice: VoiceId): Promise<string | undefined> {
+  deviceVoices ??= await Speech.getAvailableVoicesAsync().catch(() => []);
+  const english = deviceVoices.filter((v) => v.language.toLowerCase().startsWith("en"));
+  for (const name of DEVICE_VOICES[voice]) {
+    const named = english.filter((v) => v.name.split(" ")[0] === name);
+    if (!named.length) continue;
+    return (named.find((v) => v.quality === Speech.VoiceQuality.Enhanced) ?? named[0]).identifier;
+  }
+  return undefined;
+}
+
+/**
+ * Speaks one piece with the phone's own voice. Resolves when it has been said,
+ * or cut off through `onStop`. Free, offline, and about as fast as a voice can start.
+ */
+export async function speakOnDevice(text: string, onStop?: (stop: () => void) => void, onStart?: () => void) {
+  const voice = await deviceVoiceFor(await voicePref.get()).catch(() => undefined);
+  return new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    onStop?.(() => {
+      Speech.stop();
+      finish();
+    });
+    try {
+      Speech.speak(text, { voice, onStart, onDone: finish, onStopped: finish, onError: (err) => {
+        devlog("err", "the phone's voice couldn't speak", err instanceof Error ? err.message : String(err));
+        finish();
+      } });
+    } catch (err) {
+      devlog("err", "the phone's voice couldn't start", err instanceof Error ? err.message : String(err));
+      finish();
+    }
+  });
+}
+
+/** One line voiced in the chosen voice: a file the caller keeps or deletes, or words for the phone's own voice. */
+export async function renderSpeech(token: string, text: string): Promise<Spoken> {
   return fetchClip(token, text, await voicePref.get());
 }
 
@@ -233,14 +321,22 @@ function speechChunks(text: string) {
 
 let clipCount = 0;
 
-async function fetchClip(token: string, text: string, voice: VoiceId) {
+async function fetchClip(token: string, text: string, voice: VoiceId): Promise<Spoken> {
+  // The phone's own voice: nothing to fetch.
+  if (usesDeviceVoice()) return { device: true, text };
   const asked = Date.now();
   const res = await authedFetch(
     token,
     "/voice/speak",
     { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, voice }) },
-    `${voice}: "${text}"`,
+    `${voice}: ${text.length} chars`,
   );
+  // The server switched to the phone's voice since /me was read: it sends no
+  // audio and says so. From here on nothing is asked of it.
+  if (res.status === 204 || res.headers.get("x-tts-engine") === "device") {
+    setTtsEngine("device");
+    return { device: true, text };
+  }
   // expo/fetch resolves on the headers, so this is time to first byte; the whole clip
   // is buffered before a note of it plays, and that second leg is the wait the user
   // actually hears. Timed apart because they have different causes and different fixes.
@@ -286,6 +382,19 @@ const STATUS_MS = 250;
  * a reply short is worse than waiting.
  */
 const CLIP_STALL_MS = 4000;
+
+/** Plays whichever kind of piece this is: a clip from disk, or words for the phone's own voice. */
+function playPiece(piece: Spoken, onStop: (stop: () => void) => void, onStart?: () => void) {
+  return isDeviceUtterance(piece) ? speakOnDevice(piece.text, onStop, onStart) : playFile(piece, onStop, onStart);
+}
+
+/** Throws away a piece that won't be played. Only a file has anything to throw away. */
+function discardPiece(piece: Spoken | null) {
+  if (!piece || isDeviceUtterance(piece)) return;
+  try {
+    piece.delete();
+  } catch {}
+}
 
 /** Plays one file to the end, or until `stop` is called. */
 function playFile(file: File, onStop: (stop: () => void) => void, onStart?: () => void) {
@@ -450,7 +559,7 @@ export function createSpeaker(token: string) {
     stop();
     const mine = generation;
     const pieces: string[] = [];
-    const clips: Promise<File | null>[] = [];
+    const clips: Promise<Spoken | null>[] = [];
     let ended = false;
     let pending = ""; // short sentences wait to be joined with the next one
     /** Pieces of the reply itself. A cached filler is queued in front of them and isn't one. */
@@ -536,7 +645,7 @@ export function createSpeaker(token: string) {
       // Anything `say` queued but hasn't asked for yet goes first, keeping the two lists in step.
       fetchUpTo(pieces.length - 1);
       let file: File | null = null;
-      if (mp3) {
+      if (mp3 && !usesDeviceVoice()) {
         try {
           file = saveClip(mp3);
         } catch (err) {
@@ -564,7 +673,7 @@ export function createSpeaker(token: string) {
      * while I get that"): no network, so it starts at once. First thing only.
      */
     let fillerPlayed = false;
-    const clip = (file: File) => {
+    const clip = (file: Spoken) => {
       if (mine !== generation || pieces.length) return;
       pieces.push("(filler)");
       clips.push(Promise.resolve(file));
@@ -600,14 +709,14 @@ export function createSpeaker(token: string) {
             if (filler) {
               fillerPlayed = true;
               markTurn("filler while the voice is fetched");
-              await playFile(filler, (s) => (stopCurrent = s), firstWord);
+              await playPiece(filler, (s) => (stopCurrent = s), firstWord);
             }
           }
           if (mine !== generation) break;
         }
         const file = await clips[i];
         if (mine !== generation) {
-          file?.delete();
+          discardPiece(file);
           break;
         }
         played = i + 1; // playFile deletes it
@@ -616,18 +725,12 @@ export function createSpeaker(token: string) {
           // nothing. i === 0 used to be the mark, but that is the cached filler on an
           // addressed turn, so the one number worth having was never recorded.
           if (i === (pieces[0] === "(filler)" ? 1 : 0)) markTurn("voice clip ready");
-          await playFile(file, (s) => (stopCurrent = s), firstWord);
+          await playPiece(file, (s) => (stopCurrent = s), firstWord);
         }
         fetchUpTo(i + 1 + FETCH_AHEAD);
       }
       // Clean up clips voiced ahead that won't be played.
-      clips.slice(played).forEach((c) =>
-        c.then((f) => {
-          try {
-            f?.delete();
-          } catch {}
-        }),
-      );
+      clips.slice(played).forEach((c) => c.then(discardPiece));
     })();
 
     return { say, end, done, clip, voiced };
@@ -692,9 +795,11 @@ export function serverSpeech(reply: Reply, cancelled: () => boolean = () => fals
       if (!SERVER_VOICE) return undefined;
       return {
         voice: await voicePref.get(),
-        onVoicing: (voicing) => {
+        onVoicing: (voicing, engine) => {
           on = voicing;
-          if (!voicing) devlog("voice", "the server isn't voicing this reply; voicing it here");
+          // The server names the engine it uses; "device" means this phone speaks.
+          setTtsEngine(engine);
+          if (!voicing) devlog("voice", usesDeviceVoice() ? "voicing this reply with the phone's own voice" : "the server isn't voicing this reply; voicing it here");
         },
         onVoiced: (text, mp3) => {
           if (cancelled()) return;
@@ -896,7 +1001,7 @@ export function useConversation(
     addressed: boolean,
     onSentence?: (sentence: string) => void,
     signal?: AbortSignal,
-    extra?: { speech?: ServerSpeech },
+    extra?: { speech?: ServerSpeech; room?: boolean },
   ) => Promise<string | null>,
   { interruptible = false, background = false, standby = false, name = "OVOA" } = {},
 ) {
@@ -909,6 +1014,12 @@ export function useConversation(
   };
   const [level, setLevel] = useState(-160);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Set when listening stopped itself (the old way's ten quiet minutes or its
+   * hour a day) rather than being ended. The orb's owner watches it, so the orb
+   * doesn't stay lit over a microphone that is off.
+   */
+  const [stoppedBy, setStoppedBy] = useState<string | null>(null);
   const session = useRef(0);
   // The previous listening loop, so a new one never shares the microphone with it.
   const running = useRef(Promise.resolve());
@@ -966,6 +1077,7 @@ export function useConversation(
 
   const start = useCallback(async () => {
     setError(null);
+    setStoppedBy(null);
     const { granted } = await requestRecordingPermissionsAsync();
     if (!granted) {
       devlog("err", "microphone permission denied");
@@ -993,7 +1105,7 @@ export function useConversation(
     const answerAloud = async (
       text: string,
       addressed: boolean,
-      options: { keepMic: boolean; onSpeaking?: (soFar: string) => void },
+      options: { keepMic: boolean; room?: boolean; onSpeaking?: (soFar: string) => void },
     ) => {
       // Everything from here on is the user waiting, the same as a band turn (turnTimer.ts).
       startTurn("phone");
@@ -1047,7 +1159,9 @@ export function useConversation(
       const interrupted = reply.done.then((): typeof INTERRUPTED => INTERRUPTED);
       let full: string | null;
       try {
-        const asking = handler.current(text, addressed, onSentence, abort.signal, { speech: await server.request() });
+        // `room`: the gate guessed this was for the assistant (a follow-up without
+        // the name), so the server gets to disagree before anything is answered.
+        const asking = handler.current(text, addressed, onSentence, abort.signal, { speech: await server.request(), room });
         asking.catch(logFail("voice: handler.current")); // dropped after an interruption: its failure is expected
         const result = await Promise.race([asking, interrupted]);
         if (result === INTERRUPTED) {
@@ -1091,7 +1205,8 @@ export function useConversation(
       // Nothing streams until then anyway, so the drop is cheap; it is there for
       // the follow-up window, when the connection is open and the room may talk.
       const wakeWord = useNameEar() ? { name: nameRef.current } : null;
-      const gate = new TurnGate(nameRef.current, background || !!wakeWord, bargeIn.current);
+      const room = background || !!wakeWord;
+      const gate = new TurnGate(nameRef.current, room, bargeIn.current);
       gateRef.current = gate;
       if (Date.now() < summonedUntil.current) gate.summon(summonedUntil.current);
       const state = { down: null as Error | null, waiting: null as ((turn: Turn | null) => void) | null };
@@ -1126,9 +1241,12 @@ export function useConversation(
         onLevel: setLevel,
         onInterim: (text) => {
           gate.onInterim(text, Date.now());
+          // Words still arriving: the request isn't over, so the connection isn't either.
+          if (text) earRef.current?.wake("speech");
           showWords();
         },
         onFinal: (text, sentenceEnd) => {
+          if (text) earRef.current?.wake("speech");
           handle(gate.onFinal(text, sentenceEnd, Date.now()));
           showWords();
         },
@@ -1138,14 +1256,29 @@ export function useConversation(
           wake(null);
         },
         onWake: (why) => {
-          if (why === "name") devlog("voice", "heard its name; streaming what's said now");
+          if (why !== "name") return;
+          devlog("voice", "heard its name; streaming what's said now");
+          // The phone heard the name, so what follows is the request whatever
+          // Deepgram makes of the name itself: the same as a button press.
+          const until = Date.now() + SUMMON_MS;
+          summonedUntil.current = until;
+          gate.summon(until);
         },
         onSleep: () => setWords(""),
       }, { reuse: keepsAudio(), wakeWord });
       earRef.current = ear;
+      // A button press that started this listening: the ear opens for it now.
+      if (Date.now() < summonedUntil.current) ear.wake("summon");
+      // While a reply is being worked out or read aloud, the connection is kept
+      // open moment by moment: a slow first sentence or a long read-aloud would
+      // otherwise outlast the window, and a "stop" in its tail would be missed.
+      let answering = false;
       const timer = setInterval(() => {
         if (cancelled()) wake(null);
-        else handle(gate.tick(Date.now()));
+        else {
+          if (answering) ear.wake("busy");
+          handle(gate.tick(Date.now()));
+        }
       }, 150);
       devlog(
         "voice",
@@ -1163,11 +1296,13 @@ export function useConversation(
           gate.think();
           ear.wake("turn");
           let spoke: boolean;
+          answering = true;
           try {
             // The microphone keeps streaming while the reply plays; the gate hears
             // the reply so far, to tell its echo from the user talking over it.
             spoke = await answerAloud(turn.text, turn.addressed, {
               keepMic: true,
+              room,
               onSpeaking: (soFar) => {
                 gate.speak(soFar);
                 ear.wake("reply");
@@ -1178,6 +1313,8 @@ export function useConversation(
             devlog("err", "couldn't get a reply", err instanceof Error ? err.message : String(err));
             setError(err instanceof Error ? err.message : "Couldn't reach the assistant");
             continue;
+          } finally {
+            answering = false;
           }
           if (cancelled() || !spoke) continue;
           gate.spoke(Date.now());
@@ -1301,7 +1438,10 @@ export function useConversation(
             // day. Say so on screen and stop, rather than starting again.
             if (wasAutoOff(err) || wasCapped(err)) {
               setError(err instanceof Error ? err.message : String(err));
+              setWords("");
               setPhase("off");
+              // The orb has to follow: the assistant provider turns it off when it sees this.
+              setStoppedBy(wasCapped(err) ? "the day's hour of listening" : "ten quiet minutes");
               break;
             }
             liveFailures.current++;
@@ -1433,7 +1573,7 @@ export function useConversation(
   /** The phase right now (the state can be a render behind). */
   const currentPhase = useCallback(() => phaseRef.current, []);
 
-  return { phase, currentPhase, level, error, setError, words, start, end, interrupt, summon, finishNow };
+  return { phase, currentPhase, level, error, setError, words, start, end, interrupt, summon, finishNow, stoppedBy };
 }
 
 /** Twist standby: how often the mic is checked, and how long without audio means iOS stopped it. */

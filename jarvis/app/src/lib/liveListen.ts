@@ -5,8 +5,8 @@ import { API_URL, request } from "./api";
 import { devlog, devlogRepeat, devlogSettled } from "./devlog";
 import { audioWhy, onScreen } from "./foreground";
 import { storage } from "./storage";
-import { saysName } from "./turnGate";
-import { DAILY_STREAM_CAP_S, meterAdd, meterOver, WakeWindow, type DailyMeter, type WakeReason } from "./wakeWindow";
+import { nameCount } from "./turnGate";
+import { DAILY_STREAM_CAP_S, dayKey, meterAdd, meterOver, WakeWindow, type DailyMeter, type WakeReason } from "./wakeWindow";
 
 // Live transcription: the microphone streams to Deepgram over a WebSocket, the
 // words come back while people are still talking, and deciding which of them
@@ -53,7 +53,8 @@ const KEEPALIVE_MS = 4000;
 // (the conversation falls back to recording for a while).
 const MAX_RECONNECTS = 3;
 const RECONNECT_DELAYS_MS = [300, 1500, 4000];
-const MAX_PENDING_BUFFERS = 100; // ~10 s of audio kept while (re)connecting
+/** Seconds of audio kept while (re)connecting; older audio is dropped first. */
+const MAX_PENDING_S = 20;
 /**
  * The app has been off screen with a halted mic this long: hand the ear back
  * rather than hold a Deepgram connection open for a microphone that iOS has
@@ -141,14 +142,21 @@ async function loadMeter() {
   }
 }
 
-/** Adds to today's streamed seconds and saves them, so the cap survives a relaunch. */
-function noteStreamed(seconds: number) {
-  meter = meterAdd(meter, seconds, Date.now());
+/** Saving is a keychain write: every half minute is plenty, plus once when an ear closes. */
+const METER_SAVE_MS = 30_000;
+let meterSavedAt = 0;
+
+/** Adds to today's streamed seconds and, now and then, saves them so the cap survives a relaunch. */
+function noteStreamed(seconds: number, save = false) {
+  const now = Date.now();
+  meter = meterAdd(meter, seconds, now);
+  if (!save && now - meterSavedAt < METER_SAVE_MS) return;
+  meterSavedAt = now;
   storage.set(STREAM_METER_KEY, JSON.stringify(meter)).catch(() => {});
 }
 
 /** Seconds streamed today, for Dev tools. */
-export const streamedToday = () => (meter && meter.day === new Date().toISOString().slice(0, 10) ? meter.seconds : 0);
+export const streamedToday = () => (meter && meter.day === dayKey(Date.now()) ? meter.seconds : 0);
 
 // ---------- The microphone the old way ----------
 
@@ -277,6 +285,8 @@ function levelOf(data: ArrayBuffer) {
 
 let cachedToken: { token: string; keyterms: string[]; expiresAt: number } | null = null;
 let fetchingToken: Promise<void> | null = null;
+/** After a failed fetch, not before this: the server may be down, and a tick is 250 ms. */
+let nextTokenTryAt = 0;
 
 /** A token good for a while, from the server. Shared by every ear on this phone. */
 async function fetchToken(apiToken: string) {
@@ -302,11 +312,14 @@ async function tokenFor(apiToken: string) {
   return cachedToken!;
 }
 
-/** Fetched in the background whenever the cached one is about to run out. */
+/** Fetched in the background whenever the cached one is about to run out. Backs off after a failure. */
 function refreshTokenSoon(apiToken: string) {
-  if (fetchingToken) return;
+  if (fetchingToken || Date.now() < nextTokenTryAt) return;
   if (!cachedToken || cachedToken.expiresAt - Date.now() < TOKEN_REFRESH_S * 1000) {
-    fetchToken(apiToken).catch((err) => devlog("warn", "couldn't fetch a live transcription token ahead of time", err instanceof Error ? err.message : String(err)));
+    fetchToken(apiToken).catch((err) => {
+      nextTokenTryAt = Date.now() + 15_000;
+      devlog("warn", "couldn't fetch a live transcription token ahead of time", err instanceof Error ? err.message : String(err));
+    });
   }
 }
 
@@ -379,6 +392,11 @@ export async function openEar(
   const openedAt = Date.now();
   const window = new WakeWindow();
   const subs: { remove: () => void }[] = [];
+  /** Whether the native ear has been told to hand audio over (it is told again on every waking). */
+  let sending = false;
+  /** How many times the name has been heard in the transcript so far, so a growing transcript wakes once per mention. */
+  let namesHeard = 0;
+  let lastWordsLength = 0;
 
   /** Counts audio the moment it goes out: the only honest measure of what Deepgram will bill. */
   const send = (socket: WebSocket, data: ArrayBuffer) => {
@@ -390,11 +408,17 @@ export async function openEar(
 
   /** A buffer of microphone audio, from whichever ear: out it goes, or it waits for the socket. */
   const onBuffer = (data: ArrayBuffer) => {
+    // A buffer the native ear handed over after the window closed (it takes a
+    // moment to be told) must not wait for the next waking, ahead of its pre-roll.
+    if (native && !sending) return;
     lastAudioAt = Date.now();
     if (ws?.readyState === WebSocket.OPEN) send(ws, data);
     else {
       pending.push(data);
-      if (pending.length > MAX_PENDING_BUFFERS) pending.shift();
+      // Bounded by seconds of audio, not by count: the pre-roll is one big buffer
+      // and must not be the first thing thrown away while the socket opens.
+      let held = pending.reduce((n, b) => n + b.byteLength, 0);
+      while (pending.length > 1 && held > MAX_PENDING_S * bytesPerSecond(sampleRate)) held -= pending.shift()!.byteLength;
     }
   };
 
@@ -460,12 +484,16 @@ export async function openEar(
         if (!open) reject(new Error("Couldn't connect to live transcription"));
       };
       socket.onclose = (event) => {
-        if (ws === socket) ws = null;
+        // A socket that was already replaced (closed on purpose, or superseded)
+        // has nothing to reconnect: doing so opened a second connection beside
+        // the live one, and a third after that.
+        const current = ws === socket;
+        if (current) ws = null;
         if (!open) {
           reject(new Error(`Live transcription closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`));
           return;
         }
-        if (closed) return;
+        if (closed || !current) return;
         // A window that has since closed doesn't need the connection back.
         if (native && !window.awake(Date.now())) return;
         devlog("voice", `live transcription dropped (${event.code}); reconnecting`, event.reason || undefined);
@@ -516,9 +544,11 @@ export async function openEar(
     const opened = window.wake(reason, now);
     if (!native || !opened) return;
     windowBytes = 0;
+    pending.length = 0;
     devlog("voice", `woke (${reason}); opening live transcription`);
     events.onWake?.(reason);
     // The few seconds kept, then live audio, as onAudio events; they queue until the socket is open.
+    sending = true;
     NameEar.setSending(true).catch(() => {});
     if (!ws) {
       connect().catch((err) => {
@@ -531,12 +561,12 @@ export async function openEar(
 
   /** The window ran out: stop sending, and close the connection. */
   const sleep = () => {
+    sending = false;
     NameEar.setSending(false).catch(() => {});
-    if (ws) {
-      closeSocket();
-      // The number the whole change is judged by: seconds streamed per waking. No words in it.
-      devlog("voice", `back to listening on the phone · ${Math.round(windowBytes / bytesPerSecond(sampleRate))} s of audio sent this time`);
-    }
+    if (ws) closeSocket();
+    pending.length = 0;
+    // The number the whole change is judged by: seconds streamed per waking. No words in it.
+    devlog("voice", `back to listening on the phone · ${Math.round(windowBytes / bytesPerSecond(sampleRate))} s of audio sent this time`);
     events.onSleep?.();
     events.onInterim("");
   };
@@ -549,7 +579,7 @@ export async function openEar(
       meteredBytes = sentBytes;
     }
     if (native) {
-      if (ws && !window.awake(now)) sleep();
+      if (sending && !window.awake(now)) sleep();
       if (window.awake(now)) refreshTokenSoon(apiToken);
       else if (!cachedToken || cachedToken.expiresAt - now < TOKEN_REFRESH_S * 1000) refreshTokenSoon(apiToken);
       // The ear's heartbeat is its loudness report. Silence from it means the
@@ -713,7 +743,7 @@ export async function openEar(
     if (sentBytes || native) {
       devlog("voice", `live transcription closed · ${seconds} s of audio sent${native ? ` over ${window.opens} waking${window.opens === 1 ? "" : "s"}` : ""}`);
     }
-    if (sentBytes - meteredBytes > 0) noteStreamed((sentBytes - meteredBytes) / bytesPerSecond(sampleRate));
+    noteStreamed((sentBytes - meteredBytes) / bytesPerSecond(sampleRate), true);
     void reportStreamUsage(apiToken, sampleRate, true);
   }
 
@@ -733,9 +763,16 @@ export async function openEar(
         NameEar.addListener("onAudio", ({ data }) => onBuffer(data)),
         NameEar.addListener("onName", () => wake("name")),
         // The phone's own wider match, on the words the recogniser has so far. The
-        // words are used for this and nothing else: never logged, never sent.
+        // words are used for this and nothing else: never logged, never sent. The
+        // transcript grows as the person talks, so only one more mention than
+        // before counts; a shorter one is a new stretch and starts the count over.
         NameEar.addListener("onWord", ({ text }) => {
-          if (saysName(text, wakeWord!.name)) wake("name");
+          if (text.length < lastWordsLength) namesHeard = 0;
+          lastWordsLength = text.length;
+          const heard = nameCount(text, wakeWord!.name);
+          if (heard > namesHeard) wake("name");
+          namesHeard = Math.max(namesHeard, heard);
+          if (heard < namesHeard) namesHeard = heard;
         }),
         NameEar.addListener("onState", ({ state, reason, engine }) => {
           if (state === "error") devlog("err", "the phone's ear reported a problem", reason);

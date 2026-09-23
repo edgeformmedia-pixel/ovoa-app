@@ -44,6 +44,10 @@ export type Env = {
   SHORTCUT_SIGNING_TOKEN?: string;
   /** Deepgram key for speech to text and text to speech. Without it, voice routes return 503. */
   DEEPGRAM_API_KEY?: string;
+  /** Which engine voices replies (voice.ts TTS_ENGINES). server_settings.tts_engine overrides it without a deploy. */
+  TTS_ENGINE?: string;
+  /** What transcribes recorded clips: "deepgram" (default) or "workers-whisper". server_settings.stt_clip_engine overrides it. */
+  STT_CLIP_ENGINE?: string;
   /** Comma-separated account emails allowed the dev-only capture-everything flag. */
   DEV_EMAILS?: string;
   /** For "ask Claude" (claude.ts). Without it that tool says it isn't set up. */
@@ -60,4 +64,12 @@ export type Env = {
  * runs. It is the id the Workers Logs entry carries, so a row in error_events
  * can be looked up in the dashboard while it is still retained there.
  */
-export type Vars = { userId: string; token: string; requestId: string };
+export type Vars = {
+  userId: string;
+  token: string;
+  requestId: string;
+  /** The voice engine for this person's request, resolved once after sign-in (voice.ts). */
+  ttsEngine?: import("./voice").TtsEngine;
+  /** What transcribes this person's recorded clips (voice.ts). */
+  sttClipEngine?: import("./voice").SttClipEngine;
+};

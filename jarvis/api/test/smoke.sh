@@ -465,7 +465,7 @@ echo "── switching engines ────────────────�
 # The switchboard: no key means an engine doesn't exist, Workers AI is always
 # the net, a bad name is refused with a reason, one person can differ from
 # everyone, and a plain account can't touch any of it.
-UID=$(curl -s "${A[@]}" "$API/me" | j "d['user']['id']")
+ME_ID=$(curl -s "${A[@]}" "$API/me" | j "d['user']['id']")
 ENG=$(curl -s "${D[@]}" "$API/debug/engines")
 check "GLM has no key here"        "$(echo "$ENG" | j "[e['key'] for e in d['engines'] if e['engine']=='glm'][0]")" "missing"
 check "Workers AI needs none"      "$(echo "$ENG" | j "[e['key'] for e in d['engines'] if e['engine']=='workers'][0]")" "not needed"
@@ -478,15 +478,40 @@ check "the order can be set for everyone" \
   "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":"glm,deepseek,workers"}' | j "d['everyone']['engine_order']")" "glm,deepseek,workers"
 check "without a key GLM is left out of it" "$(curl -s "${D[@]}" "$API/debug/engines" | j "'glm' not in d['typedOrder']")" "True"
 check "one person can be given their own" \
-  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"keyed\",\"userId\":\"$UID\"}" | j "d['mine']['voice_engine']")" "keyed"
+  "$(curl -s -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"keyed\",\"userId\":\"$ME_ID\"}" | j "d['mine']['voice_engine']")" "keyed"
 check "and everyone else is untouched" "$(curl -s "${D[@]}" "$API/debug/engines" | j "'voice_engine' not in d['everyone']")" "True"
 check "a plain account can't see the switchboard" "$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" "$API/engines")" "403"
 check "nor flip it" "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${A[@]}" "$API/engines" -d '{"voice_engine":"keyed"}')" "403"
 check "and isn't told it's a developer" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['devTools']")" "False"
 curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"engine_order":""}'
-curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"\",\"userId\":\"$UID\"}"
+curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"voice_engine\":\"\",\"userId\":\"$ME_ID\"}"
 check "clearing it restores the default" "$(curl -s "${D[@]}" "$API/debug/engines" | j "'engine_order' not in d['everyone']")" "True"
 check "the switchboard needs the key" "$(curl -s -o /dev/null -w '%{http_code}' "$API/debug/engines")" "404"
+
+echo
+echo "── which voice speaks ─────────────────────────────"
+# The voice engine is a setting too. With the phone's own voice the server sends
+# no audio and says so; an unknown engine is refused; the account is told which
+# engine it has.
+check "the usual engine is Deepgram's Aura-2" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['ttsEngine']")" "deepgram-aura-2"
+check "a made-up voice engine is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"tts_engine":"siri"}')" "400"
+curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"tts_engine\":\"device\",\"userId\":\"$ME_ID\"}"
+check "one person can be given the phone's voice" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['ttsEngine']")" "device"
+check "then the server sends no audio, and says why" \
+  "$(curl -s -D - -o /dev/null -X POST "${A[@]}" "$API/voice/speak" -d '{"text":"Hello there"}' | tr -d '\r' | awk 'NR==1{printf "%s ", $2} tolower($1)=="x-tts-engine:"{print $2}')" "204 device"
+check "everyone else still has Deepgram" "$(curl -s -H "authorization: Bearer $OTHER" "$API/me" | j "d['user']['ttsEngine']")" "deepgram-aura-2"
+curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"tts_engine\":\"\",\"userId\":\"$ME_ID\"}"
+check "and it can be put back" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['ttsEngine']")" "deepgram-aura-2"
+# Clips: a made-up transcriber is refused; with Whisper chosen and no model
+# here (Workers AI needs the real thing), the clip fails honestly rather than
+# silently going somewhere else.
+check "a made-up clip transcriber is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d '{"stt_clip_engine":"nova"}')" "400"
+curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"stt_clip_engine\":\"workers-whisper\",\"userId\":\"$ME_ID\"}"
+check "a clip with no transcriber to hand fails, not lies" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $TOKEN" -H 'content-type: audio/wav' "$API/voice/transcribe" --data-binary 'RIFF....WAVEfmt ')" "502"
+curl -s -o /dev/null -X PUT "${D[@]}" -H 'content-type: application/json' "$API/debug/engines" -d "{\"stt_clip_engine\":\"\",\"userId\":\"$ME_ID\"}"
 
 echo
 echo "───────────────────────────────────────────────────"
