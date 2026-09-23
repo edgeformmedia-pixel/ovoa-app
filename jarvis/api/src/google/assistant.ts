@@ -25,6 +25,8 @@ import { pickAccountFor } from "./routing";
 import { googleTools, toolsByName, type ToolContext } from "./tools";
 
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
+/** The old whole-Drive scope. Accounts connected since hold drive.file instead. */
+const FULL_DRIVE = "https://www.googleapis.com/auth/drive";
 
 export type PendingAction = {
   id: string;
@@ -226,6 +228,13 @@ export async function googleAssistant(
     const routed = unnamed ? await pickAccountFor(env, userId, accounts, toolArgs, timeZone).catch(() => null) : null;
     const found = routed?.account ?? pickAccount(accounts, args.account);
     if ("error" in found) return { error: found.error };
+    // Connected before Drive narrowed to drive.file (oauth.ts): that grant still
+    // reaches their whole Drive, so the Drive tools wait for a reconnect instead.
+    if (name.startsWith("drive_") && found.scopes.includes(FULL_DRIVE)) {
+      return {
+        error: `${describe(found)} was connected before OVOA's Drive access was narrowed to the files it creates. Ask the user to reconnect it in the Settings tab, then try again.`,
+      };
+    }
     const usedNote = routed
       ? routed.confident
         ? `Used ${describe(found)} because ${routed.why}. Say which account in a few words.`
@@ -275,6 +284,7 @@ export async function googleAssistant(
             .join("\n")}`
         : `The user's Google account (${describe(accounts[0])}) is connected.`,
       "You can use tools for Gmail, Google Calendar, Drive, Sheets, Docs, Tasks, and Contacts.",
+      "In Drive you can only see the files OVOA created (the sheets and docs you made for them); you can't search or browse the rest of their Drive. To work on another Google Doc or Sheet, ask them for its link.",
       multi
         ? [
             'Every Google tool takes an optional "account" argument: the tag or email above. Leave it out to use the default account.',
