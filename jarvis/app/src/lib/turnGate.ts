@@ -12,12 +12,14 @@
 // Open mode (the Assistant tab's orb): everything heard is for the assistant,
 // one sentence at a time.
 
+import { FILLERS } from "./fillerLines";
+
 /** Once the name is heard, how long to wait for the request that follows it. */
 const NAME_WAIT_MS = 3000;
 /** No new words for this long ends a request. */
 const QUIET_MS = 900;
 /** ...but a request that is plainly mid-sentence gets this long instead (see UNFINISHED). */
-const UNFINISHED_QUIET_MS = 2500;
+const UNFINISHED_QUIET_MS = 4000;
 /**
  * After a click on the clip, the user is talking to the assistant on purpose: wait for them to be
  * done (this much quiet) instead of ending at the first sentence break or short pause.
@@ -27,6 +29,11 @@ const CLICKED_QUIET_MS = 1800;
 const CLICKED_MAX_MS = 60_000;
 /** Longest request in a full room: other people's talk keeps it from ever going quiet. */
 const ROOM_MAX_MS = 9000;
+/**
+ * ...but one that started with the name gets longer: "Hey OVOA, send my girlfriend Danya a
+ * text message ... saying I love you" was cut at nine seconds and at the pause (2026-09-23).
+ */
+const NAMED_MAX_MS = 15_000;
 const OPEN_MAX_MS = 30_000;
 /**
  * After a reply, words that match it are its echo. Transcription finishes the
@@ -55,11 +62,50 @@ const UNFINISHED = new Set([
   "but", "or", "so", "say", "says", "text", "call", "email", "message",
 ]);
 
-/** Whether what has been heard so far is obviously mid-sentence. */
+/** Words that start a message to someone; what follows them is who, then what to say. */
+const MESSAGING = new Set(["text", "texts", "message", "msg", "tell", "email", "dm"]);
+const NOT_THE_MESSAGE = new Set(["a", "an", "to", "my", "her", "him", "them", "girlfriend", "boyfriend", "wife", "husband", "mom", "dad"]);
+
+/**
+ * Whether what has been heard so far is obviously mid-sentence. That includes a
+ * message with nobody's words in it yet: "Send my girlfriend Danya a text message"
+ * or "Text Danya" — the pause after it is the user getting to what it should say.
+ */
 export function soundsUnfinished(text: string) {
   const words = wordsOf(text);
   const last = words[words.length - 1];
-  return !!last && UNFINISHED.has(last);
+  if (!last) return false;
+  if (UNFINISHED.has(last)) return true;
+  let at = -1;
+  words.forEach((w, i) => { if (MESSAGING.has(w)) at = i; });
+  if (at < 0) return false;
+  const after = words.slice(at + 1).filter((w) => !NOT_THE_MESSAGE.has(w));
+  return after.length <= 1;
+}
+
+/** Every word the filler lines use ("Let me look into that."). */
+let fillerWords: Set<string> | null = null;
+const isFillerWord = (w: string) => (fillerWords ??= new Set(FILLERS.flatMap((line) => wordsOf(line)))).has(w);
+
+/**
+ * Leaves out what is only the app's own filler, heard back through the microphone.
+ * "Give me a second." was being kept while the answer was worked out and then sent
+ * as the next question, answered with "Take your time" — eight times in three
+ * minutes, and once into a text: "just tell her that Cake, your time" (2026-09-23).
+ */
+export function withoutFiller(heard: string, openings = true) {
+  return sentencesOf(heard)
+    .map((sentence) => {
+      // While the app is answering (`openings`), a filler run opening the sentence
+      // ("Sure one sec say?") goes too; two words at least, so the user's own "Okay, ..."
+      // stays. Not otherwise: "Let me see my calendar" is a request.
+      const tokens = sentence.split(/\s+/);
+      let n = 0;
+      while (n < tokens.length && wordsOf(tokens[n]).length && wordsOf(tokens[n]).every(isFillerWord)) n++;
+      return n === tokens.length || (openings && n >= 2) ? tokens.slice(n).join(" ") : sentence;
+    })
+    .filter(Boolean)
+    .join(" ");
 }
 
 const STOP_WORDS = new Set(["stop", "wait", "cancel", "quiet", "enough", "pause", "hold", "shut"]);
@@ -285,6 +331,9 @@ export class TurnGate {
 
   onFinal(text: string, sentenceEnd: boolean, now: number): GateResult {
     this.interim = "";
+    const heard = text;
+    text = withoutFiller(text, this.phase !== "listening" || now < this.echoUntil);
+    if (!text) return { kind: "ignored", text: heard, why: "the filler's own echo" };
     if (this.phase === "thinking") {
       // An answer to a question that hasn't been asked yet would be filed under the wrong one.
       if (this.answers) return { kind: "ignored", text, why: "still saving the last answer" };
@@ -292,8 +341,11 @@ export class TurnGate {
       // carries on saying is usually the rest of what they were asking for. It is
       // picked up again by listen().
       const rest = withoutEcho(text, this.reply);
-      if (rest) this.held = { text: this.held ? `${this.held.text} ${rest}`.trim() : rest, at: now };
-      return { kind: "ignored", text, why: rest ? "still answering the last one (kept for after)" : "still answering the last one" };
+      // A word or two is the tail of the reply's echo arriving late ("just fine", "into?"),
+      // not the rest of a request; the name, or a few words, is.
+      const theirs = !!rest && (saysName(rest, this.name) || contentWords(rest, this.name).length >= 3);
+      if (theirs) this.held = { text: this.held ? `${this.held.text} ${rest}`.trim() : rest, at: now };
+      return { kind: "ignored", text, why: theirs ? "still answering the last one (kept for after)" : "still answering the last one" };
     }
 
     if (this.phase === "speaking") {
@@ -388,7 +440,7 @@ export class TurnGate {
     // message should say, and that pause is not the end of the request.
     const quiet = soundsUnfinished(p.text) ? UNFINISHED_QUIET_MS : QUIET_MS;
     if (now - Math.max(p.lastAt, this.interimAt) > quiet) return this.finish();
-    if (now - p.at > (this.room ? ROOM_MAX_MS : OPEN_MAX_MS)) return this.finish();
+    if (now - p.at > (!this.room ? OPEN_MAX_MS : p.addressed ? NAMED_MAX_MS : ROOM_MAX_MS)) return this.finish();
     return null;
   }
 

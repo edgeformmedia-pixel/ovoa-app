@@ -13,18 +13,9 @@ import { currentTtsEngine, isDeviceUtterance, onTtsEngineChange, renderSpeech, u
 // addressed turns then sat in silence for the whole eight-second playback
 // watchdog — the one thing a filler exists to prevent (device_logs, 2026-09-21).
 
-export const FILLERS = [
-  "One second while I get that.",
-  "Give me a second.",
-  "Let me check on that.",
-  "Hang on, getting that for you.",
-  "One moment.",
-  "Sure, one sec.",
-  "Let me look into that.",
-  "Okay, give me a second.",
-  "Right, one moment.",
-  "Let me see.",
-];
+import { FILLERS } from "./fillerLines";
+
+export { FILLERS };
 
 // Built on demand, not at import: expo-file-system throws when the module is
 // merely loaded on a platform it does not support, which took the whole app
