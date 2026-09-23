@@ -1,38 +1,51 @@
-# F34 — Food: calorie tracking by talking
+# Food: noted by talking, and the Calorie add-on
 
-## What v1 built (2026-09-23)
+## What v1 is (2026-09-23)
 
-The release pass (docs/release-v1-prompt.md Phase 8) built a smaller version of this spec. Where this section
-and the older text below disagree, this section is what the code does.
+This is what the code does. The v1 release (`docs/release-v1-prompt.md` Phase 8, and the decisions made with it)
+built a smaller version of the first design further down, which is kept for its reasoning. Where the two disagree,
+this section and the Decisions at the bottom win.
 
-- **Food memory is on for everyone on Base**, with nothing to install. The tracking level is
-  `profile.food_detail`: NULL means nothing is set up, and food is noted quietly (never asks, says no number,
-  doesn't say it logged anything). Installing **Calorie** sets it to `normal` (or the last level they chose);
-  removing it clears it and remembers the choice in `food_detail_last`. An eating goal in setup
-  (`setFoodLevel`) or "be more exact" by voice sets it too, and the app then installs Calorie itself.
-- **Levels:** quick never asks and says "about 900"; normal asks one question when it matters and says
-  "about"; strict asks for the details and says the plain number ("roughly" if the estimate was clamped).
-  "Just log it" ends the questions. On screen every number is plain.
-- **Server:** `migrations/0040_food.sql` (`food_log`, `food_catalog`, four `profile` columns; no dishes, no
-  `food_days`, no `health_id`) and `api/src/food.ts`. Tools: `food_log` and `food_amend` (carried on every
-  turn, spoken and typed), `food_target` (goal and level) and `food_today` (a `more_tools` away). A food day
-  starts at local midnight, like every other day in OVOA.
+- **Food memory is on for everyone on Base, at quick**, with nothing to install. Someone says "I had a burrito" in
+  passing and OVOA notes it: it never asks. With nothing set up (`profile.food_detail` is NULL, which acts as
+  quick) it's also quiet: it doesn't say it logged anything, gives no number unless asked, and replies as it
+  normally would.
+- **Calorie is the screen plus the tracking level.** The "by OVOA" add-on shows the food and sets how closely OVOA
+  asks. Installing it sets `food_detail` to `normal` (or the last level they chose); removing it clears it and
+  remembers the choice in `food_detail_last`. Its first open asks "Do you want a rough idea, or should I ask
+  what's in things?" with two buttons ("A rough idea" = quick, "Ask what's in things" = normal; strict only by
+  voice, "be more exact"). An eating goal in setup, a goal said by voice ("keep me to 2,000") or "be more exact"
+  sets the level too (`food_target`, `setFoodLevel`), and the app then installs Calorie itself. No extra made app.
+- **Levels:** quick never asks and says "about 900"; normal asks one question when the answer moves the number a
+  lot and says "about"; strict asks for the details and says the plain number ("roughly" if the estimate was
+  clamped). "Just log it" ends the questions. On screen every number is plain.
+- **A food day starts at local midnight**, like every other day in OVOA. There's no wake-to-wake day.
+- **Server:** `migrations/0040_food.sql` (`food_log`, `food_catalog`, and four `profile` columns: `food_detail`,
+  `food_detail_last`, `kcal_target`, `protein_target`; no dishes, no `food_days`, no `health_id`) and
+  `api/src/food.ts`. Tools: `food_log` and `food_amend` are in the core lists (`toolbelt.ts` `SPOKEN_CORE` and
+  `TYPED_CORE`), so they and the food guide ride on every turn, spoken and typed, because "I had a burrito"
+  names no tool; `food_target` (goal and level) and `food_today` are a `more_tools` away, and the synonyms
+  (ate, eat, meal, calories) point at them. The same food logged twice inside 20 minutes is one entry.
 - **Clamp:** wider bounds than the table below, and out-of-bounds goes to the nearest bound, not the midpoint.
-- **Under-eating:** at most once a week, said the next time they talk, when the last seven days are clearly
-  lower (under 75%) than their own usual (the days before that): "That's lower than usual, did I miss
-  anything?" Only for someone with a level set. No numbers, no advice.
-- **Retention:** 14 days for `food_log`; catalog rows go once unused for 14 days. The day's total lives on in
-  the day summary (`foodDayLine`), with a number only for someone who set up tracking.
-- **Screen:** the Calorie add-on (`app/src/app/(tabs)/calorie.tsx`) replaces the feed card. Its routes
-  (`/food`, `/food/settings`, `/food/log/:id`) call no model and are free.
-- **Not in v1:** dishes and servings, missed-meal nudges, the wind-down line, the brief and weekly-report
-  lines, body measurements and a computed target (a target is only a number they state), Health active-energy
-  credit, Health write-back, photos, the offline queue.
+- **Under-eating:** at most once a week (`daily_marks`), said the next time they talk, when the last seven days
+  are clearly lower (under 75%) than their own usual (the days before that): "That's lower than usual, did I
+  miss anything?" Only for someone with a level set. No numbers, no advice.
+- **Retention:** 14 days for `food_log`; catalog rows go once unused for 14 days. The day's food lives on in the
+  day summary (`foodDayLine`), with a number only for someone who set up tracking (`docs/retention.md`).
+- **Screen only:** the Calorie add-on (`app/src/app/(tabs)/calorie.tsx`, with `app/src/lib/food.ts`): today's
+  ring (eaten against the target when there is one, otherwise just eaten), protein, the entries with a sheet to
+  fix one, the last 14 days, the most-eaten foods and the protein average. No feed card, no offline queue, no
+  Apple Health writes. Its routes (`/food`, `/food/settings`, `/food/log/:id`) call no model and are free;
+  noting food is part of a turn, which is Base.
+- **Not in v1:** dishes and servings, missed-meal nudges, the wind-down line, the brief and weekly-report lines,
+  body measurements and a computed target (a target is only a number they state), Health active-energy credit,
+  Health write-back, photos, the offline queue.
 
 ---
 
-Spec only below: the first design, kept for the reasoning. Ships as a **"by OVOA" add-on** (installable from
-Apps, needs Base because it calls the model). The user's decisions at the bottom override this spec where they differ.
+The first design, kept for the reasoning. It planned food as an add-on you install before anything is noted,
+with its own feed card; v1 turned that round (above). The user's decisions at the bottom override it where they
+differ.
 Server = `jarvis/api` (Worker + D1). App = `jarvis/app` (Expo).
 Reuses: `capabilities()` (`api/src/capabilities.ts`), the assistant tool pattern (`api/src/notes.ts` is the
 closest model), `profile` (0017), `daily_marks` (0019), HealthKit (`app/src/lib/health.ts`),
@@ -83,6 +96,8 @@ wants a rough idea. So the add-on has a **tracking level**, `profile.food_detail
 - `food_target` takes `detail` to save it; the prompt section reads it. A goal said by voice ("keep me to
   2,000") with no level set turns Calorie on at the level they chose before, or `normal`, as an eating goal in
   setup does.
+- **Nothing set up** (`food_detail` NULL: everyone on Base who hasn't installed Calorie) acts as `quick`, and
+  quietly: noted without a word, and no number unless they ask.
 
 ## Standalone rule
 
@@ -94,7 +109,11 @@ Everything here works with no Google, no watch, no band, no HealthKit. That matc
 
 ---
 
-## Tables — `migrations/0028_food.sql`
+## Tables (the first design)
+
+v1's tables are `migrations/0040_food.sql`: `food_log` and `food_catalog` (per 100 g, with `used_at` for the
+14-day purge) and four `profile` columns. No `food_dishes`, no `food_days` (a day's total is summed from
+`food_log`), no `health_id`, and no body measurements. The first design follows.
 
 ```sql
 -- Eating, tracked by talking about it.
@@ -202,9 +221,10 @@ ALTER TABLE profile ADD COLUMN kcal_target   REAL;   -- stated outright, wins ov
 ALTER TABLE profile ADD COLUMN protein_target REAL;
 ```
 
-**Day boundary.** A day runs from wake to wake, not midnight to midnight: anything logged before
-`wake_time` (default 4 a.m.) belongs to the previous day. Someone eating at 1 a.m. means it as last
-night's, and a tracker that disagrees is a tracker they stop trusting.
+**Day boundary: local midnight** (decision 8 below). The first design ran a day from wake to wake, so a 1 a.m.
+snack counted as last night's. v1 doesn't: a food day starts at local midnight, like every other day in OVOA
+(the day summary, the timeline, the allowance), so the Calorie screen, the day summary and "what did I eat
+today" never disagree about which day a meal was.
 
 ---
 
@@ -255,6 +275,10 @@ Spoken as a range when the day is young ("about 900 left") and a number when it 
 
 ### Ticks (folded into the existing rhythm cron, no new schedule)
 
+None of these ship in v1. Outside a turn, food only shows up in the day summary's food line and in the
+under-eating check, which is said the next time they talk; the nightly purge deletes at 14 days
+(`retention.ts`), not 90, and keeps no totals.
+
 | When | What |
 |---|---|
 | A meal window passes with nothing logged (>3 h after the usual time, learned from `food_log` history the way `expectations` are learned) | One nudge, at most twice a day: buzz + "Did you eat?" — and only after 5 days of history, so it never nags a new user. |
@@ -265,6 +289,9 @@ Spoken as a range when the day is young ("about 900 left") and a number when it 
 
 ### Apple Health
 
+Not in v1: OVOA doesn't write to Apple Health (`NSHealthUpdateUsageDescription` says so), so there's no
+`health_id`. The first design:
+
 When `caps.health`, the app writes each entry as `HKQuantityTypeIdentifierDietaryEnergyConsumed` (plus
 protein/carbs/fat) and reports back the sample id into `health_id`. Needs a HealthKit **write** scope,
 which `health.ts` doesn't request today — it's a one-line addition to a new `WRITE` list, and it's
@@ -274,8 +301,12 @@ optional: refusing the permission costs nothing but the mirror.
 
 ## Tools
 
-Follows `notesAssistant`: `TOOLS`, `NAMES`, `isFoodTool`, `foodAssistant(env, userId, timeZone, {voice})`,
-wired into the two lists in `index.ts` and one `["food", foodTools.prompt]` section.
+Follows `notesAssistant`: `TOOLS`, `NAMES`, `isFoodTool`, `foodAssistant(env, userId, timeZone, {voice, level})`,
+wired into `runTurn` in `index.ts` like every other tool set (the tool list, the guides, the toolbelt, the
+`["food", …]` section and the dispatch). In v1 `food_log` and `food_amend` are also in the **core lists**
+(`toolbelt.ts` `SPOKEN_CORE` and `TYPED_CORE`): "I had a burrito" names no tool, so only a core tool, and the
+food guide that comes with it, is there when it's said. v1 ships four of the five below: no `food_eat_dish`, and
+`food_target` takes only a stated `kcal`, `protein` and `detail` (no body measurements).
 
 ```ts
 const TOOLS: ToolSpec[] = [
@@ -367,21 +398,28 @@ most the last 6 items when `voice`, since the rest can't be heard anyway.
 
 ---
 
-## App — `app/src/lib/food.ts` + a card
+## App: the Calorie screen
 
-- **No new capture path.** The band double-click already opens a turn (`liveListen.ts`), which is exactly
-  what you want with raw chicken on your hands.
-- `writeDietaryEnergy(entries)` — the HealthKit mirror, called after a successful log, plus a backfill
-  sweep on foreground for anything with a null `health_id`.
-- A **card in the feed**: a ring (eaten / target), a protein bar under it, and today's entries as rows.
-  Tapping a row opens an amend sheet with a grams stepper — the one place where touching beats talking,
-  because "make it 140 grams" is fiddly by voice.
-- **Offline**: queue logs in `storage.ts` the way the existing queues work and flush on reconnect. Eating
-  happens in basements.
+v1 is a screen only: the Calorie add-on (`app/src/app/(tabs)/calorie.tsx`, `app/src/lib/food.ts` for its routes
+and for installing it when the server says a level is set). There is no feed card, no HealthKit mirror and no
+offline queue; food is noted from a turn, so it goes wherever the turn goes.
+
+- **No new capture path.** A Band click already opens a turn (the phone's ear hears it; `liveListen.ts`),
+  which is exactly what you want with raw chicken on your hands.
+- Today is a ring (eaten against the target, or just eaten when there's no target), a protein bar, and
+  today's entries as rows. Tapping a row opens a sheet with a grams stepper, the one place where touching
+  beats talking, because "make it 140 grams" is fiddly by voice. Under it: the last 14 days, the most-eaten
+  foods and the protein average.
+- Not built: `writeDietaryEnergy` (the HealthKit mirror and its `health_id` backfill), the feed card, and an
+  offline queue in `storage.ts`.
 
 ---
 
 ## Phases
+
+The first design's plan. v1 shipped phase 1 without the wind-down line or a stored day rollup, plus a stated
+target (no Mifflin-St Jeor, no burn credit) and the Calorie screen in place of the feed card; the top of this file
+has the list.
 
 | Phase | What ships | Why here |
 |---|---|---|
@@ -456,20 +494,30 @@ stay under?"* — or nothing at all, because phase 1 works with no target.
 
 These override the spec above where they differ.
 
-1. **An AI add-on.** "By OVOA", installable from Apps, needs Base. The model judges the calories from
-   what they say: Cal AI, but by talking instead of photos.
-2. **Retention: 14 days.** Everything except day titles is deleted after 14 days. That replaces the
-   90-day log, forever totals and forever catalog above. Still to confirm: whether the per-person food
-   catalog counts as "everything".
+1. **Food memory for everyone on Base; Calorie is the screen and the tracking level.** OVOA notes food
+   whenever it's mentioned, for everyone on Base, with nothing to install, at `quick` (never asks), and
+   quietly while nothing is set up. The model judges the calories from what they say: Cal AI, but by talking
+   instead of photos. The "by OVOA" **Calorie** add-on in Apps is the screen that shows it, plus the tracking
+   level: installing it turns the level on (`normal` by default), removing it turns it off and remembers the
+   choice. The screen's reads and fixes call no model and are free; noting food is part of a turn, which is
+   Base.
+2. **Retention: 14 days.** Everything except the day summary is deleted after 14 days. That replaces the
+   90-day log, forever totals and forever catalog above: `food_log` rows go at 14 days, catalog rows once
+   unused for 14 days, and there are no stored day totals. The day's food lives on in the day summary.
 3. **How closely depends on the user.** OVOA asks what kind of burrito when the user is serious about
    tracking, and doesn't when they aren't. See "How closely" near the top.
-4. **Under-eating: yes.** When a logged day comes in under ~1,000 kcal more than twice in a week, it says
-   "that's lower than usual, did I miss anything?" once, and never comments on the number.
+4. **Under-eating: yes.** At most once a week, said the next time they talk, when the last week is clearly
+   lower than their own usual: "that's lower than usual, did I miss anything?" It never comments on the
+   number. (This replaces the first idea of a fixed "under ~1,000 kcal more than twice in a week".)
 5. **No controversy.** No streaks, no praise for being under, no red numbers for going over, no
    moralizing, and it never brings up eating disorders.
 6. **Setup builds the goal app.** The setup conversation asks about fitness or health goals and habits
-   and makes an app for them. When the goal is about eating, it installs this add-on and sets the
-   tracking level.
-
+   and makes an app for each. When the goal is about eating, it installs Calorie and sets the tracking
+   level instead, with no extra made app.
 7. **How the number is said.** "About" at `quick` and `normal`; the plain number at `strict`, after it
-   has asked. "Roughly" only when `estimated` isn't `ok`.
+   has asked, and "roughly" there when the estimate had to be clamped. With nothing set up, no number
+   unless they ask. On screen every number is plain.
+8. **A food day starts at local midnight**, like the rest of OVOA.
+9. **Screen only.** The Calorie screen replaces the feed card. No offline queue, no Apple Health writes
+   (no `health_id`), no photos, no dishes, no missed-meal nudges, no wind-down line, and no food in the
+   morning brief or weekly report in v1.

@@ -1,7 +1,10 @@
 # OVOA app
 
-An iPhone app with accounts, an AI assistant with memory, step tracking, and
-fall and SOS safety alerts.
+An iPhone voice assistant with memory, an in-app Apps store (health, notes,
+routines, safety, food and apps people make by describing them), and the OVOA
+Band. v1 ships on TestFlight only. What's free and what needs a plan is in
+[docs/paywall/SPEC.md](../docs/paywall/SPEC.md); the v1 release brief is
+[docs/release-v1-prompt.md](../docs/release-v1-prompt.md).
 
 ```
 jarvis/
@@ -20,7 +23,26 @@ move call `https://jarvis-api.edgeformmedia.workers.dev`, which is now a
 forwarder ([`forwarder/`](forwarder/)) on the old edgeformmedia account. That
 account keeps only the forwarder and the old D1 as a backup, until 2026-10-14.
 
-## App tabs
+## The app
+
+The menu is **Talk**, **Apps** (with the apps someone added listed under it)
+and **Settings**, which holds the account too (`app/src/components/Drawer.tsx`).
+It's the same on every plan: on the free plan Talk, Create and the AI add-ons
+show a lock and "That's for Base users" with **See options**
+(`https://ovoa.ai/early-access#plans`), and before someone has agreed to AI
+they say "Agree to use AI". Free accounts land on the first free screen.
+
+First open, in order (`app/src/app/_layout.tsx`): the emailed code
+(`verify-email.tsx`), the phone's permissions (Health, microphone,
+notifications, Speech Recognition; Bluetooth only when pairing the Band), then,
+the first time someone has Base: consent (`consent.tsx`), the voice picker and
+the setup conversation (`onboarding.tsx`), which builds an app for each goal.
+The tour comes last, with no AI in it.
+
+Every screen other than Talk and Settings is an add-on from **Apps**
+(`app/src/lib/addons.ts`): Morning Brief, Day, Activity and Record come
+installed; Safety, Background Work, Transcripts and Calorie are a tap away.
+**Create** makes an app from a description (`create.tsx`, `made/[id].tsx`).
 
 - **Activity**: today's steps, a goal progress bar, distance and calorie
   estimates, a goal streak, a 7-day chart, and a daily goal picker. Steps come
@@ -33,7 +55,7 @@ account keeps only the forwarder and the old D1 as a backup, until 2026-10-14.
   Health needs a development build; in Expo Go the card says so, and the tab
   still works with steps alone. Each card hides itself when Health has nothing
   for it, so a phone with no watch isn't a wall of dashes.
-- **Assistant**: a voice-only assistant with memory (see [Voice](#voice)). The assistant also sees the last 7 days of
+- **Talk**: a voice-only assistant with memory (see [Voice](#voice)). The assistant also sees the last 7 days of
   steps and the daily goal, and can use the iPhone's Contacts, Calendar,
   Reminders, Messages, Mail, and Phone (see [iPhone apps](#iphone-apps)).
 - **Safety**:
@@ -43,13 +65,15 @@ account keeps only the forwarder and the old D1 as a backup, until 2026-10-14.
     impact, then lying still. It shows a 30-second "Did you fall?" countdown,
     then opens the same text. There's a button to test the alert.
   - **Call 911**, up to 5 emergency contacts, and a list of recent alerts.
-- **Journal**: two views of the same question, from two directions.
-  **From OVOA** is what the agent went and found out while you weren't
-  looking; **Your days** is what your days were made of, by day or by week.
-  See [Background work](#background-work) and [Timeline](#timeline).
-- **Settings**: name, assistant name and personality, Google, Siri, memory
-  controls, background work, timeline, password, and sign out. **Danger zone**
-  has **Approve for me** and delete account.
+- **Background Work** and **Day**: what the agent went and found out while
+  you weren't looking, and what your days were made of. See
+  [Background work](#background-work) and [Timeline](#timeline).
+- **Calorie**: what OVOA noted about food, with a tracking level. See
+  [docs/food.md](../docs/food.md).
+- **Settings**: the account and plan, name, assistant name and personality,
+  voice, Google, Siri, memory controls, background work, timeline, password,
+  and sign out. **Danger zone** has **Approve for me**, Always listen and
+  delete account.
 
 ### Approve for me
 
@@ -84,7 +108,7 @@ Fall detection is not a medical device.
 
 ## Voice
 
-The Assistant tab is voice only: no message list, no text box. Tap the orb
+Talk is voice only: no message list, no text box. Tap the orb
 to turn listening on. It stays on, and comes back on when you return to the
 tab or reopen the app, until you tap the orb again.
 
@@ -122,7 +146,7 @@ assistant, including TV and other people talking. With it, only what follows
 
 Expo Go and the web have neither recogniser, so there talking is typing.
 Listening lives in `AssistantProvider` (`app/src/lib/assistant.tsx`), above
-the tabs; the Assistant tab only draws it.
+the screens; Talk only draws it.
 
 ### Always listen (Danger zone)
 
@@ -138,7 +162,7 @@ Off by default, saved on the phone, and it asks for confirmation. When on:
   the rest of the sentence. A bare "stop" or "hold on" just silences it.
   Expect about 1–2 s before it reacts.
 - If a reply creates an approval card while you're on another tab, the app
-  switches to the Assistant tab to show it.
+  switches to Talk to show it.
 
 The Deepgram key lives only on the Worker (`DEEPGRAM_API_KEY` secret). It is
 used for OVOA's voice only (text to speech). Without it, `/voice/speak` returns
@@ -146,9 +170,9 @@ used for OVOA's voice only (text to speech). Without it, `/voice/speak` returns
 
 ## Google connection
 
-Right after sign-up, users see **Connect your Google account**, with a
-**Skip for now** option. They can also connect later in **Settings → Google
-accounts**.
+Google is connected from **Settings → Google accounts** (it's no longer a
+first-open step). Everyone reconnects once after the v1 move: the new
+`TOKEN_ENC_KEY` can't read the old tokens, so they weren't copied.
 
 - **More than one account:** a user can connect several (work, personal, …).
   Each has an optional **tag** they type in Settings — or that the assistant
@@ -199,7 +223,7 @@ except Apple Health.
 | Messages | | open a text with recipients and message filled in |
 | Mail | | open an email with recipients, subject, and body filled in |
 | Phone | | start a call |
-| Shortcuts | | run a shortcut by name; add one the assistant wrote (see [Shortcuts the assistant writes](#shortcuts-the-assistant-writes)) |
+| Shortcuts | | run a shortcut by name (assistant-written shortcuts are off in v1, see [Shortcuts the assistant writes](#shortcuts-the-assistant-writes)) |
 | Apple Health | steps, heart rate, resting heart rate, sleep, active energy, workouts (development build only) | |
 
 Examples: "What's Sarah's number?", "Add sarah@acme.com as Sarah's email",
@@ -235,7 +259,10 @@ sleep this week?".
 (`POST /siri` with the key) → Speak Text. Then "Hey Siri, Ask OVOA" talks to
 the assistant hands-free.
 
-- `/siri` takes `{ message }` and returns the reply as plain text.
+- `/siri` takes `{ message }` and returns the reply as plain text. It's a
+  turn like `/chat`, so it needs Base and consent; making the key is free.
+  The key's URL is `PUBLIC_URL`, so shortcuts made before the v1 move point at
+  the old address and need setting up again before the forwarder goes.
 - Through Siri, the assistant can answer, use Google, and prepare phone changes
   (add a contact, event, or reminder; start a text, email, or call). You
   approve those in the app. Siri can't look things up on the phone.
@@ -248,6 +275,13 @@ the assistant hands-free.
   shortcut) would need Swift code in a development build.
 
 ## Shortcuts the assistant writes
+
+**Off in v1.** `SHORTCUT_SIGNING_URL` stays unset, so the shortcut tools aren't
+offered and the model says writing shortcuts is coming in a future update.
+The only shortcut OVOA provides is the one people build themselves to send
+texts automatically (Settings → Texts); Siri "Ask OVOA" and running the
+user's own shortcuts by name (`phone_shortcut_run`) still work. What follows
+is how it works once signing is set up.
 
 The assistant can write its own iPhone shortcuts and run shortcuts by name.
 Examples: "Make me a shortcut that starts a 4-minute tea timer", "Build a
@@ -417,7 +451,17 @@ turn is answered plainly: "Sorry, I can't reach the AI right now." Set in
   plus its vars and price; the top of `api/src/llm.ts` says how.
 
 Dev tools (development accounts) can change which engine goes first without a
-deploy. Prices are in `api/src/pricing.ts`.
+deploy (its picker offers only `glm` and `gemini`). Prices are in
+`api/src/pricing.ts`.
+
+OVOA's voice is Deepgram Aura-2 (`TTS_ENGINE` `deepgram-aura-2`, the key is
+`DEEPGRAM_API_KEY`), or the phone's own voice (`device`). Before someone agrees
+to AI, voice samples, fillers and the tour use the phone's voice or stay silent.
+
+Gone in v1: DeepSeek, Cloudflare Workers AI (its chat models, the Whisper
+transcriber and its three voices, and the `AI` binding), Deepgram's speech to
+text, and Ask Claude (`/claude`, `ANTHROPIC_API_KEY`). A copied
+`server_settings` row that still names a removed engine or voice is ignored.
 
 **To add the Gemini key:** double-click `jarvis/set-gemini-key.cmd` and paste
 the key when asked.
@@ -432,49 +476,90 @@ npm run db:migrate
 npm run deploy
 ```
 
-`api/wrangler.jsonc` pins the ovoa.ai account (`account_id`), so every remote
-wrangler command run from `jarvis/api` (deploys, `secret put`, `d1 ... --remote`)
-lands there or fails. Run them with that account's login: the profile in
-`XDG_CONFIG_HOME` above. The forwarder at the old address deploys from
-`jarvis/api` too, with the old account's profile:
+Always migrate **before** deploying, then check the live server
+(`curl https://api.ovoa.ai/` answers `{"ok":true,...}`), and deploy the server
+before pushing an app build that depends on it. Pushing `main` starts a
+Codemagic → TestFlight build only when `jarvis/app` or `codemagic.yaml`
+changed, and each one uses about 25 minutes of the month's allowance.
+
+**The account.** `api/wrangler.jsonc` pins the ovoa.ai account (`account_id`
+`e58b0ec5305410f9d3cd70f461f39cb6`), so every remote wrangler command run from
+`jarvis/api` (deploys, `secret put`, `d1 ... --remote`) lands there or fails.
+Run them with that account's login: the profile in `XDG_CONFIG_HOME` above
+(the global wrangler login is a different one). The database is `jarvis-db`
+(`26ebdc31-740f-4191-905d-77a5edb97799`), served at `api.ovoa.ai` (a custom
+domain on the ovoa.ai zone) with `workers_dev` kept on. The forwarder at the
+old address deploys from `jarvis/api` too, with the old account's profile:
 `XDG_CONFIG_HOME=C:/Users/thoma/.wrangler-edgeformmedia npx wrangler deploy -c ../forwarder/wrangler.jsonc`.
+Delete the forwarder and the old D1 after 2026-10-14, once testers are on a
+v1 build and Siri shortcuts have been set up again.
+
+**Secrets** (each piped into `npx wrangler secret put NAME` through stdin, never
+typed on the line): `GEMINI_API_KEY`, `GLM_API_KEY`, `DEEPGRAM_API_KEY`,
+`GOOGLE_CLIENT_SECRET`, `TOKEN_ENC_KEY` (standard base64 of 32 random bytes),
+`DEBUG_KEY` and `RESEND_API_KEY` (the codes from no-reply@ovoa.ai); optionally
+`GOOGLE_SIGNIN_CLIENT_IDS`. Not `MEMBERSHIP_API_KEY`: it turns plans on, and
+they stay off until the user sets it. The closing comment of `wrangler.jsonc`
+keeps this list.
+
+**Moving the data** from the old account (once, at go-live) is
+`api/scripts/move-db.mjs`: its header is the runbook, in order (the new Worker
+up in maintenance with `--var MAINTENANCE:on`, the forwarder in place of the
+old Worker, the copy with its row counts, then the new Worker out of
+maintenance), with a way back. `node scripts/move-db.mjs --dry-run` prints
+every command without running any.
 
 Schema changes: add a file to `api/migrations/`, then run
 `npm run db:migrate`.
 
-`npm test` runs the unit tests (local-time and scheduling arithmetic, which is
-where the silent bugs live). `npm run smoke` runs the API end to end against a
-local worker:
+`npm run typecheck`, then `npm test` runs the unit tests (local-time and
+scheduling arithmetic, which is where the silent bugs live, plus the gates:
+no model call outside `llm.ts`, no Deepgram speech to text, every table
+classified for retention). `npm run smoke` runs the API end to end against a
+local worker. Run one suite at a time on a fresh local database: stop the
+worker, delete `.wrangler/state`, `npm run db:migrate:local`, then:
 
 ```powershell
 npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest --var EMAIL_CODES_TO_LOG:1
 npm run smoke
 ```
 
+Model calls don't work locally; check those against the live server with a
+throwaway account (proven with `POST /debug/verify`), then `DELETE /me`.
+
 The Worker has cron triggers (`api/wrangler.jsonc`): every two minutes for the
-agent's due work and its outbox, and 04:13 UTC for retention and log trimming.
+agent's due work and its outbox, and 04:13 UTC for the nightly run (day
+summaries, then the 14-day purge; `docs/retention.md`).
 `npm run deploy` registers them.
 
 | Method | Path | |
 |---|---|---|
-| POST | /auth/signup, /auth/login | `{ email, password, name? }` → `{ token, user }` |
+| POST | /auth/signup, /auth/login | `{ email, password, name? }` → `{ token, user }`. A new app sign-up must then prove its address (`/me/email/*`) |
 | POST | /auth/email/code | `{ email }` → emails a 6-digit code from no-reply@ovoa.ai (ovoa.ai's sign-in; `src/emailauth.ts`) |
 | POST | /auth/email/verify | `{ email, code }` → `{ token, user }` for an existing account, else `{ ticket, email, name }` |
 | POST | /auth/email/signup | `{ ticket, name, password }` → `{ token, user }` |
 | POST | /auth/google | `{ idToken }` (checked with Google) → same as /auth/email/verify |
 | POST | /auth/logout | |
-| GET / PATCH / DELETE | /me | profile + settings (incl. `stepGoal`, `fallDetection`) |
+| GET / PATCH / DELETE | /me | profile + settings (incl. `stepGoal`, `fallDetection`), `plan`, `emailVerified`, `aiConsent`, `devTools` |
 | POST | /me/password | `{ currentPassword, newPassword }` |
+| POST | /me/email/code | emails this account a code to prove its address (60 s between two, 5 an hour; `src/verify.ts`) |
+| POST | /me/email/verify | `{ code }` → proves the address, and a new account can use everything |
+| POST / DELETE | /me/consent | POST `{ version }` agrees to AI (the consent screen); DELETE takes it back (`src/consent.ts`) |
+| POST | /me/plan/refresh | asks ovoa.ai for the plan again, after checkout |
 | GET / DELETE | /chat/messages | history / clear |
 | POST | /chat | `{ message, timeZone?, phone? }` → `{ messages }` or `{ paused }` (see iPhone apps) |
 | POST | /chat/resume | `{ turnId, results }` → same as /chat |
+| POST | /voice/speak | `{ text, voice? }` → MP3 in the Deepgram voice (204 when the phone's own voice speaks) |
+| POST | /voice/transcribe, /voice/token | **410** "Update OVOA from TestFlight": speech is recognised on the phone now; old builds still ask |
 | POST | /siri | `{ message }` → reply as plain text (Siri key) |
 | POST / DELETE | /siri/key | create or revoke the Siri key |
 | GET / DELETE | /memories, /memories/:id | |
+| GET | /food | the Calorie screen: today, the last 14 days, most eaten, protein average (`src/food.ts`) |
+| GET / PUT | /food/settings | the tracking level and target; PUT `{ installed?, level?, kcal?, protein? }` |
+| PATCH / DELETE | /food/log/:id | fix an entry `{ grams?, kcal?, fraction? }` / remove it |
 | GET / PUT | /steps | PUT `{ days: [{ day: "YYYY-MM-DD", steps }] }` |
 | GET / POST / DELETE | /contacts, /contacts/:id | POST `{ name, phone }` (max 5) |
 | GET / POST | /safety-events | POST `{ kind: "fall"\|"sos", status: "ok"\|"alerted", latitude?, longitude? }` |
-
 | POST | /google/connect | `{ returnUrl, accountId? }` → `{ url }` to open; `accountId` reconnects that account |
 | GET | /google/callback | Google redirect target (public) |
 | GET | /google/status | default account's details plus `accounts` |
@@ -490,14 +575,27 @@ agent's due work and its outbox, and 04:13 UTC for retention and log trimming.
 | POST / DELETE | /agent/notes/read, /agent/notes/:id | mark read / dismiss |
 | GET | /agent/runs | the audit log, plus today's run count |
 | POST / DELETE | /push/token | register or forget this phone's Expo push token |
-| POST | /context/blocks | `{ startedAt, endedAt, source, transcript? , note? }` — the transcript is read and dropped |
+| POST | /context/blocks | `{ startedAt, endedAt, source, transcript? , note? }` — the transcript is summarised and kept as the recording's words until deleted |
 | GET | /context/days/:date, /context/weeks/:date | a day, or the week it falls in |
 | GET | /context/commitments | what you said you'd do and haven't |
 | PATCH | /context/commitments/:id | `{ status }` — settling one cancels its reminder |
 | DELETE | /context/blocks/:id, /context/blocks?since= | "forget that" / "forget the last hour" |
 
-All routes except signup, login, the Google callback, and shortcut downloads need
-`Authorization: Bearer <token>`.
+The table is the main routes, not all of them (notes, routines, to-dos,
+money, people, places, made apps and the rest are in their own files in
+`api/src`). All routes except `GET /`, `/auth/*` (apart from logout), the
+Google callback, shortcut downloads and `POST /logs` need
+`Authorization: Bearer <token>`, and `/debug/*` needs the `DEBUG_KEY`
+(`/debug/verify` marks a test account's address proven, `/debug/plan` pins a
+tier while plans are off).
+
+Which plan each route needs is `ROUTE_TIERS` in `api/src/plans.ts`: every
+route that never calls a model is free, and a route it doesn't list needs
+Base. Refusals carry `error` and a `message` to show: **402** `needs_plan`,
+**429** `allowance` (with `resetsAt`), **403** `needs_consent` (hasn't agreed
+to AI), and **403** `needs_verification` (a new account that hasn't typed its
+code can reach only `GET /me`, logout, `DELETE /me` and `/me/email/*`). Ask
+Claude (`/claude`) was removed in v1.
 
 ## Running the app
 

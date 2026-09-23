@@ -1,12 +1,41 @@
 # OVOA feature plan
 
-Spec only — nothing here is built yet. Server = `jarvis/api` (Cloudflare Worker + D1). App = `jarvis/app` (Expo).
+Written 2026-09-21 as a spec; everything in it was built that week, so the code is the truth now and this file is
+kept for the design reasoning. Server = `jarvis/api` (Cloudflare Worker + D1). App = `jarvis/app` (Expo).
 Existing pieces reused: `clip.buzz()` (modules/ute-ble), agent cron jobs (`api/src/agent.ts`),
 commitments (`api/src/context.ts`), wake-word matching (`api/src/ambient.ts`), HealthKit (`app/src/lib/health.ts`).
 
-> ⚠️ Legal flag: features marked **[AL]** depend on always-listening, which was ruled out on 2026-09-20.
-> Build them behind `settings.captureEverything` (dev / own account only) until that decision is revisited.
-> The band-button "save last 60 s" (F27) is the shippable alternative.
+## Where this stands after the v1 release (2026-09-23)
+
+`docs/release-v1-prompt.md` and its decisions win where this plan disagrees. What changed:
+
+- **Retention is 14 days** for everything except one summary per day and what the person entered or set up
+  (`docs/retention.md`, enforced by `api/src/retention.ts` in the nightly cron). That replaces F13's
+  `purgeOld(settings.retentionDays)`: there is no retention setting any more (`context_retain_days` is ignored and
+  the "Forget summaries after" picker is gone). Places with a name are kept, Home and Work included, and unnamed
+  ones go once nobody has visited them for 14 days, instead of "recurring places forever"; people facts, memories
+  and objects stay only when the person told OVOA them; routine streaks survive their 14-day event history on the
+  routine row.
+- **No always-listening.** The hard rule is no room audio to any server, ever: nothing leaves the phone until
+  OVOA's name is heard, and then only the words. So the features marked **[AL]** below don't ship as written:
+  F13 "store everything", F14 learning names from overheard talk, F15 catching favors from overheard talk, and
+  F22's `transcript_mentions` evidence. Names, people and favors (F14–F16) come only from what people say to
+  OVOA and recordings they make on purpose (`api/src/people.ts`). The server-side `capture_everything` flag
+  stays refused for every account outside `DEV_EMAILS`.
+- **Always listen** runs only on the phone's own ear (`modules/name-ear`, on-device recognition), and only on
+  iPhones that can recognise on their own; the old fallback that streamed the room to Deepgram is gone, and so is
+  every speech-to-text call on the server. Apple's speech servers are used only for things the person starts.
+- **F27 "save last 60 s"** became `save_moment` (`api/src/extras.ts`): it keeps the last minute of words OVOA
+  already had (the transcript of what was said to it), not a buffer of the room.
+- **Meds (F6)** come from the Apple Reminders list "Medications" (or Google Tasks if picked). Apple Health
+  Medications can't be the source: it has names but no schedule times.
+- **Plans:** everything that calls a model needs Base (`docs/paywall/SPEC.md`): the agent (F4), setup (F5), the
+  morning brief (F18), triage and follow-ups (F23–F25), workout summaries (F12, a plain sentence on free), the day
+  summaries. Lists, reminders, notes, health and places are free.
+- **Setup (F5)** runs the first time someone has Base, after consent and the voice picker, and asks about goals:
+  each goal gets a made app, and an eating goal turns on Calorie (`docs/food.md`).
+- **Food** (`docs/food.md`: food memory for Base and the Calorie add-on) was added in v1.
+- The band is the **OVOA Band** wherever people see it; "ES100" is the supplier's name, left in code and here.
 
 ## Standalone rule — every feature works on its own
 
@@ -17,14 +46,14 @@ Each feature declares what it **needs** (hard) and what **improves** it (optiona
 | F1 Buzz | band | — | falls back to phone notification |
 | F4 Agent commands | app | — | — |
 | F5 Onboarding | app | — | — |
-| F6 Meds | Apple Reminders/Health **or** Google | band | phone notification instead of buzz |
+| F6 Meds | Apple Reminders ("Medications") **or** Google Tasks | band | phone notification instead of buzz |
 | F6 Daily routines | app (OVOA timer) | band | phone notification |
 | F7 Notes | app | location | time reminders only |
 | F8 To-do list | app | Google, Reminders | built from notes, routines, favors |
 | F9 Feed | app | everything | shows whatever ran |
 | F10 Location | Always location | — | off |
-| F11–F12 HR / workouts | Health HR source (watch) | location | off; manual "log workout" by voice |
-| F13–F15 [AL] | ambient (test only) | — | F27 button capture instead |
+| F11–F12 HR / workouts | the Band or a Health HR source (watch) | location | off; manual "log workout" by voice |
+| F13–F15 [AL] | not shipped (no room audio to any server) | — | what's said to OVOA and recordings made on purpose; F27 `save_moment` |
 | F18 Morning brief | app | Google, Health, weather | reads routines + todos |
 | F22 Oddities | routines | location, HR | asks "did you do X?" at window end |
 
@@ -89,7 +118,7 @@ Each feature declares what it **needs** (hard) and what **improves** it (optiona
 ### F6. Routines, medications, reminders
 **Two sources of truth:**
 - **Medications → Apple or Google owns the schedule.** OVOA reads it, mirrors it, and buzzes — it never becomes the only copy.
-  - iOS: Apple Health Medications (HealthKit medication read access, iOS 26+ — verify availability) → fallback Apple Reminders list "Medications" (EventKit, already permitted).
+  - iOS: the Apple Reminders list "Medications" (EventKit, already permitted). Apple Health Medications was the first idea, but the library gives names and no schedule times, so it can't drive reminders.
   - Google: Google Tasks list "Medications" or a recurring Google Calendar event.
   - `syncMedSchedule(userId)` — on app open + every 6 h: read source → upsert `routines(kind="med", external_source, external_id)`. Edits happen in Apple/Google; OVOA re-syncs.
   - Onboarding (F5) creates the meds **in** the chosen source (Reminders / Tasks), not only in OVOA.
@@ -149,7 +178,7 @@ Each feature declares what it **needs** (hard) and what **improves** it (optiona
 - Tools `location_timeline(date)`, `place_list`, `place_rename`.
 
 ### F11. Heart rate ingest
-Requires a device writing HR to Apple Health (Apple Watch etc.) — unless the ES100 has an optical sensor: its firmware claims the factory heart-rate and SpO2 tests (isSupportHeartRateTest), so Dev tools → Clip — heart rate probes it (2026-09-21).
+Requires a device writing HR to Apple Health (Apple Watch etc.) or the OVOA Band, which turned out to have a heart-rate sensor (the 2026-09-21 probe): while it's linked, the phone asks it for a reading every five minutes, every minute once heart rate is up (`app/src/lib/heart.ts`).
 **Table** `hr_samples(user_id, ts, bpm)`.
 **App** `enableHrBackgroundDelivery()` (HealthKit observer query, set plugin `background: true`) → `uploadHr(samplesSince(lastTs))`.
 **Server** `restingBaseline(userId) = median(bpm, last 7 days, while at home & still)`.
@@ -171,13 +200,16 @@ if open && median(last 10 min) < baseline+10 → closeSession()
 - Tools `workout_list(range)`, `workout_summary(id)`.
 
 ### F13. Memory blocks — store everything [AL]
+> Not shipped as written (see the top). Built as the transcripts and the timeline: only what's said to OVOA and
+> recordings made on purpose are kept, titled, and deleted at 14 days apart from each day's summary.
+
 **Tables** `raw_captures(id, user_id, ts, text, source, place_id)`, `blocks(id, user_id, level[5m|1h|day|week|month], start, summary, topics[], people[], places[], capture_count)`.
 **Server**
 - Every capture (ambient, clip, chat) → `storeCapture()` when `captureEverything` is on.
 - Cron 5 min: `buildBlock("5m")` from raw → LLM summary + tags.
 - Cron hourly/daily/weekly/monthly: `buildBlock(level)` from children blocks (never from raw).
 - `searchMemory(q)` — search 5m blocks first, widen to parents; return block + raw lines.
-- `purgeOld(days = settings.retentionDays)` nightly.
+- ~~`purgeOld(days = settings.retentionDays)` nightly.~~ Superseded: one 14-day rule for everything, no setting (`docs/retention.md`, `retention.ts`).
 - Upgrade `context_day/week/search` to read `blocks`.
 
 ---
@@ -185,11 +217,15 @@ if open && median(last 10 min) < baseline+10 → closeSession()
 ## Phase 3 — Social memory
 
 ### F14. Name & nickname detection [AL]
+> Not from overheard talk (see the top): only from what's said to OVOA and recordings made on purpose.
+
 - `profile.nicknames` from F5; `learnNickname()` — when an unknown address term precedes a user reply ≥2 times → ask "Should I answer to 'T'?".
 - `mentionsUser(text) → {hit, span}` via fuzzy match (reuse `editDistance` from ambient.ts).
 - Hit + request pattern → hand to F15.
 
 ### F15. Favors people ask you [AL]
+> Not from overheard talk (see the top): only from what's said to OVOA and recordings made on purpose.
+
 **Uses** commitments table; add `who, due_at, confidence, status`.
 - `extractFavor(transcriptWindow) → {who, what, due, confidence}` (LLM, 60 s window around the mention).
 - `confidence ≥0.8` → save + feed card; `0.5–0.8` → ask to confirm; else drop.
@@ -226,7 +262,7 @@ if open && median(last 10 min) < baseline+10 → closeSession()
 **Table** `expectations(id, user_id, what, window_start, window_end, days[], evidence_rule, learned)`.
 - Seeded from routines; `learnExpectations()` nightly — any event (visit, workout, routine done) occurring ≥80% of days over 14 days in a similar window → new learned expectation.
 - `checkExpectations()` every 15 min: window passed & no evidence → `oddity` → ask ("Did you walk the dog yet?") → feed card if confirmed missed.
-- Evidence rules: `visit(place)`, `left(home)`, `walk(hr/motion)`, `routine_done(id)`, `transcript_mentions(...)` [AL, supporting only].
+- Evidence rules: `visit(place)`, `left(home)`, `walk(hr/motion)`, `routine_done(id)`, `transcript_mentions(...)` [AL, supporting only; not shipped].
 
 ---
 
@@ -238,7 +274,7 @@ if open && median(last 10 min) < baseline+10 → closeSession()
 | F24 | Follow-up nudges | `findUnanswered(sentDays=3)` → ask "Nudge Sarah?" → draft |
 | F25 | Bills & subscriptions | `scanBills()` Gmail search receipts/invoices → `routine` 2 days before due |
 | F26 | Health coaching | `dailyReadiness(sleep, restingHr, workouts)` → one line in brief |
-| F27 | Save last 60 s | clip long-press → `captureClip(60s)` → `storeCapture(source:"manual")` — shippable memory without [AL] |
+| F27 | Save last 60 s | built as the `save_moment` tool: the last minute of words OVOA already had becomes a kept note. No buffer of the room |
 | F28 | Weekly report card | Sunday cron `weeklyReport()` → feed card + push |
 | F29 | On this day | `blocksOnThisDay(date - 1y/1m)` → feed card |
 | F30 | Shared reminders | tool `remind_other(contact, text, when)` → text via `phone_message_compose` |
