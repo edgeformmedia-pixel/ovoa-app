@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { routePath } from "hono/route";
+import { isModelRefused } from "./llm";
 import type { Env, Vars } from "./types";
 
 // What the server knows about itself. See migrations/0029_observability.sql for
@@ -180,7 +181,10 @@ export function observe(): MiddlewareHandler<{ Bindings: Env; Variables: Vars }>
     const status = c.res.status;
     const route = labelFor(c);
     const userId = c.get("userId") as string | undefined;
-    const failed = !!c.error || status >= 500;
+    // A refusal (no plan, the day's spend used up, no consent) reaches
+    // app.onError on routes that don't catch it, which sets c.error, but it's
+    // an answer, not a fault: no failure line, no error row. Slow, it's a stall.
+    const failed = (!!c.error && !isModelRefused(c.error)) || status >= 500;
     if (failed || ms >= SLOW_MS || !QUIET_ROUTES.has(route)) {
       say("req", { rid: requestId, m: c.req.method, route, status, ms, user: userId?.slice(0, 8) });
     }
@@ -194,8 +198,8 @@ export function observe(): MiddlewareHandler<{ Bindings: Env; Variables: Vars }>
         ms,
         requestId,
         userId: userId ?? null,
-        message: c.error ? c.error.message : failed ? `${status} with no error attached` : `slow: ${ms} ms`,
-        stack: c.error?.stack,
+        message: failed ? (c.error?.message ?? `${status} with no error attached`) : `slow: ${ms} ms`,
+        stack: failed ? c.error?.stack : undefined,
       }),
     );
   };

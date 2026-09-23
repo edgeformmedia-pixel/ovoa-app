@@ -16,12 +16,13 @@ import { colors } from "../../lib/theme";
 
 export default function TabsLayout() {
   const { token, user } = useAuth();
-  // Routines, alarms, places and the spoken fillers are the assistant's side of
-  // the app, which is Base's: on the free plan they aren't started at all.
-  // (Since v1 their routes are free on the server, because they call no model,
-  // so starting them for free phones would be a product call, not a server
-  // one. The fillers are OVOA's voice, which stays Base, and until someone has
-  // agreed to AI they're the phone's own voice, not Deepgram's: lib/voice.ts.)
+  // Routines and alarms run on every plan: they call no model (their routes are
+  // free on the server since v1, decision 5), and a medication reminder or an
+  // alarm set before a downgrade has to keep going off, offline too. Places,
+  // the spoken fillers and Calorie's sync are the assistant's side, which is
+  // Base's: the location timeline only feeds Base's timeline, and the fillers
+  // are OVOA's voice (until someone has agreed to AI, the phone's own, not
+  // Deepgram's: lib/voice.ts).
   const { free } = usePlan();
   const assistant = token && !free ? token : null;
 
@@ -33,12 +34,12 @@ export default function TabsLayout() {
   useEffect(() => (token ? startDeviceReports(token) : undefined), [token]);
   useEffect(() => void registerBackgroundPush(), []);
   // Routines and medications: mirror Reminders, schedule the next two days on the phone.
-  useEffect(() => (assistant ? startRoutineSync(assistant) : undefined), [assistant]);
+  useEffect(() => (token ? startRoutineSync(token) : undefined), [token]);
   // Heart rate from the band every few minutes, and from Health; places, when the timeline is on.
   useEffect(() => (token ? startHeartRate(token) : undefined), [token]);
   useEffect(() => (assistant ? startLocationTimeline(assistant) : undefined), [assistant]);
   // Tonight's alarms: kept awake for, and set to go off here even with no network.
-  useEffect(() => (assistant ? startAlarmSync(assistant, user?.name ?? "") : undefined), [assistant, user?.name]);
+  useEffect(() => (token ? startAlarmSync(token, user?.name ?? "") : undefined), [token, user?.name]);
   // "One second while I get that": voiced once, kept on the phone, played instantly.
   useEffect(() => {
     if (!assistant) return;

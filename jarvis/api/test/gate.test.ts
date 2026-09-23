@@ -57,6 +57,10 @@ const ENGINE = new Set(["llm.ts", "gemini.ts"]);
 
 const MODEL_HOSTS = ["api.z.ai", "open.bigmodel.cn", "generativelanguage.googleapis.com", "api.deepseek.com", "api.anthropic.com"];
 const MODEL_SDKS = ["@anthropic-ai/sdk", "openai", "@google/genai", "@google/generative-ai"];
+// What a sender is built from: with the providers' base URLs and the URL
+// builder, a file could reach a model without ever naming its host. Exported
+// for test/engines.test.ts, and used nowhere else.
+const BUILDING_BLOCKS = ["OPENAI_PROVIDERS", "chatCompletionsUrl", "hostFlavor", "thinkingFields"];
 
 const files = sources();
 eq("found the source", files.length > 20 && files.includes("llm.ts") && files.includes("plans.ts"), true);
@@ -71,6 +75,8 @@ for (const file of files) {
   for (const sdk of MODEL_SDKS) if (new RegExp(`from\\s+["']${sdk.replace(/[/.]/g, "\\$&")}["']`).test(text)) outside.push(`${file} imports ${sdk}`);
   // Workers AI went in the v1 release; a call to it would be a model the gate never saw.
   if (/\bAI\.run\(/.test(text)) outside.push(`${file} calls Workers AI (env.AI.run)`);
+  const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  for (const name of BUILDING_BLOCKS) if (new RegExp(`\\b${name}\\b`).test(code)) outside.push(`${file} uses llm.ts's ${name}`);
 }
 eq("no model is reached from outside the engine module", outside, []);
 
@@ -79,7 +85,12 @@ const llm = readFileSync(join(SRC, "llm.ts"), "utf8");
 const LOW_LEVEL = ["geminiRound", "geminiToolLoop", "openAiCall", "openAiRound", "openAiGenerate", "openAiToolLoop", "fetchWithDeadline", "sseData"];
 eq(
   "llm.ts exports none of its low-level senders",
-  LOW_LEVEL.filter((name) => new RegExp(`export\\s+(async\\s+)?function\\*?\\s+${name}\\b`).test(llm)),
+  LOW_LEVEL.filter(
+    (name) =>
+      new RegExp(`export\\s+(async\\s+)?function\\*?\\s+${name}\\b`).test(llm) ||
+      new RegExp(`export\\s+(const|let|var)\\s+${name}\\b`).test(llm) ||
+      new RegExp(`export\\s*(type\\s*)?\\{[^}]*\\b${name}\\b[^}]*\\}`).test(llm),
+  ),
   [],
 );
 // And each door asks the gate before it does any of the things that lead to a send.

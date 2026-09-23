@@ -147,7 +147,10 @@ export async function searchWeb(
     }
   }
   const fresh = await searchFresh(env, userId, engine, query, today);
-  if (cache && key) {
+  // A DuckDuckGo stand-in for a Gemini answer (this person's lookup was
+  // refused, or Gemini failed) isn't kept: the key isn't per person, and it
+  // would answer everyone's next half hour of the same question.
+  if (cache && key && !(engine !== "duckduckgo" && fresh.via === "duckduckgo")) {
     const put = cache
       .put(key, new Response(JSON.stringify(fresh), { headers: { "content-type": "application/json", "cache-control": `max-age=${SEARCH_CACHE_S}` } }))
       .catch((err) => console.error("web: cache write failed", err));
