@@ -10,6 +10,12 @@ import type { Env, Vars } from "./types";
 // Transcripts: everything said, titled every five minutes, every hour, every
 // day. See migrations/0022_captures.sql.
 //
+// Kept 14 days (retention.ts, docs/retention.md), except a recording made on
+// purpose (source 'recording'): its words stay until the user deletes them. A
+// day's title row turns into the day's summary once the nightly writer has done
+// it (daysummary.ts, summarised_at), and outlives the rest; the titler below
+// leaves a summarised day alone.
+//
 // Storing is cheap and happens as each line arrives; titling is the expensive
 // part and happens on the cron, once a block is over, a few blocks at a time.
 // A line that turns up late makes its block out of date, and the block, its
@@ -181,12 +187,14 @@ async function fileInTimeline(
 
 const SOURCE_LABEL: Record<string, string> = { mic: "They said", assistant: "OVOA said", recording: "Recorded", background: "Overheard" };
 
+/** Writes a title. Never over a day's summary (daysummary.ts), which covers more than the words. */
 async function upsert(db: D1Database, userId: string, grain: string, bucket: string, start: number, t: { title: string | null; summary: string | null }, sources: string, covers: number) {
   await db
     .prepare(
       `INSERT INTO transcript_titles (user_id, grain, bucket, start, title, summary, sources, covers, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, grain, bucket) DO UPDATE SET title = excluded.title, summary = excluded.summary,
-         sources = excluded.sources, covers = excluded.covers, updated_at = excluded.updated_at`,
+         sources = excluded.sources, covers = excluded.covers, updated_at = excluded.updated_at
+       WHERE transcript_titles.summarised_at IS NULL`,
     )
     .bind(userId, grain, bucket, start, t.title, t.summary, sources, covers, Date.now())
     .run();
@@ -292,9 +300,11 @@ export async function titleTranscripts(env: Env) {
   for (const { userId, day, timeZone } of days.values()) {
     const [from, to] = dayRange(day, timeZone);
     const existing = await db
-      .prepare("SELECT updated_at FROM transcript_titles WHERE user_id = ? AND grain = 'day' AND bucket = ?")
+      .prepare("SELECT updated_at, summarised_at FROM transcript_titles WHERE user_id = ? AND grain = 'day' AND bucket = ?")
       .bind(userId, day)
-      .first<{ updated_at: number }>();
+      .first<{ updated_at: number; summarised_at: number | null }>();
+    // The day's summary is written; a late line doesn't get a model call to be thrown away.
+    if (existing?.summarised_at) continue;
     // Today is still being lived: its summary is rewritten now and then, not after every block.
     if (existing && now < to && now - existing.updated_at < DAY_REFRESH_MS) continue;
     const { results: hoursOfDay } = await db
@@ -462,7 +472,7 @@ const TOOLS: ToolSpec[] = [
   {
     name: "transcript_day",
     description:
-      "What was said on a day, hour by hour, with a title for every five minutes. For 'what did I talk about this morning', 'what happened today'. Covers the last 14 days.",
+      "What was said on a day, hour by hour, with a title for every five minutes. For 'what did I talk about this morning', 'what happened today'. Covers the last 14 days; before that, only the day's summary and recordings made on purpose.",
     parameters: { type: "object", properties: { date: { type: "string", description: "YYYY-MM-DD; leave out for today." } } },
   },
   {
@@ -480,7 +490,7 @@ const TOOLS: ToolSpec[] = [
   },
   {
     name: "transcript_search",
-    description: "Finds lines anyone said that contain some words, across the last 14 days.",
+    description: "Finds lines anyone said that contain some words, across the last 14 days and every recording they made on purpose.",
     parameters: { type: "object", properties: { q: { type: "string" } }, required: ["q"] },
   },
 ];
@@ -502,7 +512,12 @@ export function transcriptAssistant(env: Env, userId: string, timeZone: string) 
   const callTool: CallTool = async (name, args) => {
     if (name === "transcript_day") {
       const d = await transcriptDay(db, userId, dayOf(args.date), timeZone);
-      if (!d.hours.length) return { date: d.date, nothing: "No transcript for that day." };
+      if (!d.hours.length) {
+        // Past 14 days the words are gone and the day is its summary (daysummary.ts).
+        return d.title || d.summary
+          ? { date: d.date, title: d.title, summary: d.summary, note: "Only the day's summary is kept after 14 days." }
+          : { date: d.date, nothing: "No transcript for that day." };
+      }
       return {
         date: d.date,
         title: d.title,
@@ -534,6 +549,6 @@ export function transcriptAssistant(env: Env, userId: string, timeZone: string) 
     tools: TOOLS,
     callTool,
     prompt:
-      "You keep a transcript of what was said, titled every five minutes, every hour and every day, for 14 days. Read it with transcript_day, transcript_between and transcript_search when they ask what was said or what happened. Lines marked Overheard were background.",
+      "You keep a transcript of what was said, titled every five minutes, every hour and every day, for 14 days; after that a day keeps only its summary, and recordings they made on purpose keep their words. Read it with transcript_day, transcript_between and transcript_search when they ask what was said or what happened. Lines marked Overheard were background.",
   };
 }

@@ -22,7 +22,7 @@ cron (*/2)  ──▶  tick()  ──┬─▶ runDueJobs()  ─▶ autonomousTu
                            │                          │
                            │                          └─▶ pending_actions (proposals)
                            └─▶ drainNotes()  ─▶ Expo push  ─▶  the phone
-cron (4:13) ──▶  maintenance()  ─▶ retention, log trimming
+cron (4:13) ──▶  purgeExpired() ─▶ the 14-day purge (retention.ts, docs/retention.md)
 ```
 
 - `agent_jobs` — standing work with a due time.

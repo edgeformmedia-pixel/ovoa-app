@@ -18,3 +18,26 @@ const ABOUT_THEM =
 export function mightBeAboutThem(said: string) {
   return ABOUT_THEM.test(said.toLowerCase().replace(/[‘’]/g, "'"));
 }
+
+// Which memories are kept (docs/retention.md). A memory the background pass
+// learned from a conversation is deleted after 14 days; one the person
+// explicitly told OVOA to remember ("remember that I'm vegan", "don't forget my
+// sister is Sarah") is theirs, and stays. The model marks each new memory, but
+// a mark is only believed when the message really was an instruction to
+// remember (index.ts updateMemories), so a model that marks everything can't
+// keep everything.
+//
+// An instruction, not the word: "do you remember what I said?" and "I can't
+// remember where I put it" are not asking for anything to be kept.
+
+/** "remember…", "don't forget…", "keep in mind…" at the start of a sentence or after "please", "and", "OVOA"… */
+const REMEMBER_THIS =
+  /(?:^|[.!?;:,]\s*|\b(?:please|pls|also|and|so|oh|ok|okay|hey|just|ovoa)[,!]?\s+)(?:remember|don't forget|do not forget|never forget|keep in mind|make a note|note that|note down)\b(?!\s+(?:what|where|when|who|whom|how|why|if|whether)\b)/;
+/** "can you remember that…", "would you keep in mind my…" */
+const WILL_YOU_REMEMBER =
+  /\b(?:can|could|will|would) you (?:please )?(?:remember|keep in mind|note)\s+(?:that|this|my|i|i'm|im|i've|ive|we|we're|our|me)\b/;
+
+export function askedToRemember(said: string) {
+  const s = said.toLowerCase().replace(/[‘’]/g, "'").trim();
+  return REMEMBER_THIS.test(s) || WILL_YOU_REMEMBER.test(s);
+}

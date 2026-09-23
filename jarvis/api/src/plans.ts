@@ -62,9 +62,10 @@ import type { Env, Vars } from "./types";
 //                   extras: inbox triage, follow-ups, bills      BASE (model); meeting prep
 //                           (extras.ts)                           and the weekly report have none
 //                   money reminders (money.ts)                   no model: runs for everyone
-//   13 4 nightly    maintenance, retention, pruning              no model
-//                   learn places, expectations                   no model
+//   13 4 nightly    learn places, expectations                   no model
 //                   relearn Google accounts (google/routing.ts)  BASE (model)
+//                   day summaries (daysummary.ts)                BASE (model)
+//                   the 14-day purge (retention.ts)              no model: runs for everyone
 // And one request-time model call on a free route: a detected workout's
 // one-line summary (heart.ts) is written by a model only for base and pro;
 // free gets the plain sentence the code already had as its fallback.

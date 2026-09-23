@@ -243,7 +243,7 @@ async function weeklyReport(env: Env, userId: string, timeZone: string) {
 
 // ---------- F29 On this day ----------
 
-/** Day titles from a week, a month and a year ago, for the feed. Day titles are kept after the words expire. */
+/** Day titles from a week, a month and a year ago, for the feed: each day's kept summary (daysummary.ts), which outlives the 14 days. */
 export async function onThisDay(db: D1Database, userId: string, timeZone: string) {
   const today = buckets(Date.now(), timeZone).day;
   const ago = [

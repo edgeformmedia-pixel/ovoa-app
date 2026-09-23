@@ -14,8 +14,10 @@ import type { Env, Vars } from "./types";
 // Two sources: the band, which the phone asks for a reading every few minutes
 // while it's linked, and Apple Health, where a watch writes. Either is enough.
 // With neither, workouts can still be logged by voice.
-
-export const HR_RETAIN_DAYS = 30;
+//
+// Samples are deleted after 14 days by the nightly purge (retention.ts), and so
+// are the workouts found in them; one logged by voice (source 'manual') stays.
+// A resting baseline needs a week of them (baselineFor).
 /** Resting heart rate when there's too little data to work one out. */
 export const DEFAULT_BASELINE = 65;
 /** A session opens this far above resting... */

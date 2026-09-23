@@ -222,7 +222,7 @@ export async function completeTodo(db: D1Database, userId: string, id: string) {
     .first<{ text: string; source: string; source_id: string | null }>();
   if (!row) return null;
   if (row.source_id && row.source === "commitment") {
-    await db.prepare("UPDATE context_commitments SET status = 'done' WHERE id = ? AND user_id = ?").bind(row.source_id, userId).run();
+    await db.prepare("UPDATE context_commitments SET status = 'done', settled_at = ? WHERE id = ? AND user_id = ?").bind(Date.now(), row.source_id, userId).run();
   } else if (row.source_id && row.source === "note") {
     await db.prepare("UPDATE notes SET done = 1 WHERE id = ? AND user_id = ?").bind(row.source_id, userId).run();
   }

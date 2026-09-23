@@ -744,6 +744,126 @@ check "puts them back to what the site (here: no key) says" "$(curl -s "${P[@]}"
 curl -s -o /dev/null -X DELETE "${P[@]}" "$API/me"
 
 echo
+echo "── 14 days: what's kept, what goes ────────────────"
+# retention.ts and daysummary.ts, docs/retention.md. Most of what the purge
+# deletes can't be made on a local worker (it takes a model: memories,
+# transcript blocks, promises), so rows 20 days old and 2 days old are written
+# straight into the local database with wrangler, and the nightly parts are run
+# through the debug key. Needs the worker to be `wrangler dev --local` from this
+# folder, sharing its .wrangler/state; SKIP_D1=1 skips the section.
+if [ "${SKIP_D1:-}" = "1" ]; then
+  echo "skipped (SKIP_D1=1)"
+else
+  ROOT=$(cd "$(dirname "$0")/.." && pwd)
+  d1() { (cd "$ROOT" && npx wrangler d1 execute jarvis-db --local --json "$@" 2>/dev/null); }
+  KEEP=$(curl -s -X POST "$API/auth/signup" -H 'content-type: application/json' \
+    -d "{\"email\":\"keep$(date +%s)@example.com\",\"password\":\"password123\",\"name\":\"Keep\"}" | j "d['token']")
+  ready "$KEEP"
+  K=(-H "authorization: Bearer $KEEP" -H 'content-type: application/json')
+  KID=$(curl -s "${K[@]}" "$API/me" | j "d['user']['id']")
+  curl -s -o /dev/null -X PATCH "${K[@]}" "$API/me" -d '{"contextEnabled":true,"timeZone":"America/New_York"}'
+  SEED="$ROOT/.wrangler/retention-seed.sql"
+  # Prints the seed, and on its first line the two local days the checks ask
+  # about and how many of the routine's events are inside the 14 days.
+  node - "$KID" > "$SEED" <<'JS'
+const [id] = process.argv.slice(2);
+const tz = "America/New_York";
+const now = Date.now(), DAY = 86_400_000, OLD = now - 20 * DAY, NEW = now - 2 * DAY;
+const dayOf = (ms) => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(ms));
+const addDays = (day, n) => new Date(Date.parse(`${day}T12:00:00Z`) + n * DAY).toISOString().slice(0, 10);
+const offset = (ms) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - ms;
+};
+const atLocal = (day, minutes) => { const w = Date.parse(`${day}T00:00:00Z`) + minutes * 60_000; return w - offset(w - offset(w + 43_200_000)); };
+const today = dayOf(now), oldDay = dayOf(OLD), yesterday = addDays(today, -1);
+const due = Array.from({ length: 20 }, (_, i) => atLocal(addDays(today, -(i + 1)), 540));
+const q = (v) => (v === null ? "NULL" : typeof v === "number" ? String(v) : `'${String(v).replace(/'/g, "''")}'`);
+const row = (table, cols, values) => `INSERT INTO ${table} (${cols}) VALUES (${values.map(q).join(", ")});`;
+const out = [`-- ${oldDay} ${yesterday} ${due.filter((t) => t >= now - 14 * DAY).length}`];
+out.push(row("messages", "id, user_id, role, content, created_at", ["k_m_old", id, "user", "old words", OLD]));
+out.push(row("messages", "id, user_id, role, content, created_at", ["k_m_new", id, "user", "new words", NEW]));
+for (const [mid, text, source, at] of [["k_mem_asked", "Is vegan.", "asked", OLD], ["k_mem_old", "Likes jazz.", "learned", OLD], ["k_mem_new", "Has a dog.", "learned", NEW]]) {
+  out.push(row("memories", "id, user_id, content, source, created_at", [mid, id, text, source, at]));
+}
+for (const [bid, title, category] of [["k_b_recorded", "Violin lesson", "work"], ["k_b_transcript", "Zebra crossing", "transcript"], ["k_b_promise", "Plumber call", "transcript"]]) {
+  out.push(row("context_blocks", "id, user_id, started_at, ended_at, source, title, summary, category, created_at", [bid, id, OLD, OLD, "voice", title, "x", category, OLD]));
+}
+out.push(row("context_commitments", "id, user_id, block_id, text, status, created_at, due_at", ["k_c_future", id, "k_b_promise", "call the plumber", "open", OLD, now + 5 * DAY]));
+out.push(row("context_commitments", "id, user_id, block_id, text, status, created_at, due_at", ["k_c_done", id, "k_b_recorded", "send the deck", "done", OLD, null]));
+out.push(row("raw_captures", "id, user_id, ts, text, source", ["k_r_recording", id, OLD, "the violin words", "recording"]));
+out.push(row("raw_captures", "id, user_id, ts, text, source", ["k_r_mic", id, OLD, "said to OVOA", "mic"]));
+out.push(row("transcript_titles", "user_id, grain, bucket, start, title, summary, updated_at, summarised_at", [id, "day", oldDay, OLD, "Violin and plumbers", "Had a violin lesson.", OLD, OLD]));
+out.push(row("transcript_titles", "user_id, grain, bucket, start, title, updated_at", [id, "5m", "k_5m", OLD, "t", OLD]));
+out.push(row("objects", "id, user_id, name, location_text, lat, lng, ts", ["k_o_told", id, "passport", "in the safe", null, null, OLD]));
+out.push(row("objects", "id, user_id, name, location_text, lat, lng, ts", ["k_o_car", id, "car", "parked", 1, 2, OLD]));
+out.push(row("places", "id, user_id, name, kind, lat, lng, created_at", ["k_p_home", id, "Home", "home", 0, 0, OLD]));
+out.push(row("places", "id, user_id, name, kind, lat, lng, created_at", ["k_p_unnamed", id, null, "other", 0, 0, OLD]));
+// No next_due_at: the cron leaves it alone. Done every day for 20 days.
+out.push(row("routines", "id, user_id, kind, title, times, created_at, updated_at", ["k_rt", id, "habit", "Stretch", "[540]", OLD, OLD]));
+due.forEach((t, i) => out.push(row("routine_events", "id, routine_id, user_id, due_at, status, created_at", [`k_ev${i}`, "k_rt", id, t, "done", OLD])));
+out.push(row("usage_daily", "user_id, day, kind, last_at", [id, new Date(now - 20 * DAY).toISOString().slice(0, 10), "turn", 0]));
+out.push(row("usage_daily", "user_id, day, kind, last_at", [id, new Date(now - 40 * DAY).toISOString().slice(0, 10), "turn", 0]));
+out.push(`INSERT OR IGNORE INTO profile (user_id, updated_at) VALUES (${q(id)}, ${now});`, `UPDATE profile SET food_detail = 'normal' WHERE user_id = ${q(id)};`);
+out.push(row("food_log", "id, user_id, day, ts, name, key, kcal, source, created_at", ["k_f_old", id, oldDay, OLD, "Toast", "toast", 200, "model", OLD]));
+const lunch = atLocal(yesterday, 12 * 60);
+out.push(row("food_log", "id, user_id, day, ts, name, key, kcal, source, created_at", ["k_f_yesterday", id, yesterday, lunch, "Pasta", "pasta", 650, "model", lunch]));
+console.log(out.join("\n"));
+JS
+  read -r _ OLD_DAY YESTERDAY RECENT_EVENTS < "$SEED"
+  check "old and new rows written" "$(d1 --file "$SEED" | j "all(r['success'] for r in d)")" "True"
+  STREAK=$(curl -s "${K[@]}" "$API/routines" | j "d['routines'][0]['streak']")
+  check "20 days in a row, from 20 days of events" "$STREAK" "20"
+
+  SUMS=$(curl -s -m 120 -X POST "${D[@]}" "$API/debug/agent/tick?what=summaries")
+  check "the day summaries run first" "$(echo "$SUMS" | j "'written' in d")" "True"
+  check "a day with only food needs no model, and is written" "$(echo "$SUMS" | j "d['written'] >= 1")" "True"
+  PURGE=$(curl -s -m 120 -X POST "${D[@]}" "$API/debug/agent/tick?what=retention")
+  check "the purge runs, and nothing in it fails" "$(echo "$PURGE" | j "d.get('failed', 0)")" "0"
+  # From a file: npx on Windows goes through cmd.exe, which cuts a --command at its first line break.
+  cat > "$SEED" <<SQL
+SELECT
+  (SELECT group_concat(id) FROM (SELECT id FROM messages WHERE id LIKE 'k_m_%' ORDER BY id)) AS messages,
+  (SELECT group_concat(id) FROM (SELECT id FROM context_blocks WHERE id LIKE 'k_b_%' ORDER BY id)) AS blocks,
+  (SELECT group_concat(id) FROM (SELECT id FROM context_commitments WHERE id LIKE 'k_c_%' ORDER BY id)) AS promises,
+  (SELECT group_concat(id) FROM (SELECT id FROM raw_captures WHERE id LIKE 'k_r_%' ORDER BY id)) AS lines,
+  (SELECT group_concat(grain) FROM (SELECT grain FROM transcript_titles WHERE user_id = '$KID' AND bucket IN ('$OLD_DAY', 'k_5m') ORDER BY grain)) AS titles,
+  (SELECT group_concat(id) FROM (SELECT id FROM objects WHERE id LIKE 'k_o_%' ORDER BY id)) AS objects,
+  (SELECT group_concat(id) FROM (SELECT id FROM places WHERE id LIKE 'k_p_%' ORDER BY id)) AS places,
+  (SELECT COUNT(*) FROM routine_events WHERE routine_id = 'k_rt') AS events,
+  (SELECT COUNT(*) FROM usage_daily WHERE user_id = '$KID') AS usage,
+  (SELECT group_concat(id) FROM (SELECT id FROM food_log WHERE id LIKE 'k_f_%' ORDER BY id)) AS food,
+  (SELECT COUNT(*) FROM context_search WHERE context_search MATCH 'zebra') AS zebra,
+  (SELECT COUNT(*) FROM context_search WHERE context_search MATCH 'violin') AS violin;
+SQL
+  LEFT=$(d1 --file "$SEED")
+  left() { echo "$LEFT" | j "d[0]['results'][0]['$1']"; }
+  check "messages: the old one goes" "$(left messages)" "k_m_new"
+  check "timeline: what they recorded stays, the titler's goes, one holding a promise stays" "$(left blocks)" "k_b_promise,k_b_recorded"
+  check "promises: one still to come stays, one settled long ago goes" "$(left promises)" "k_c_future"
+  check "words: a recording's stay, the rest go" "$(left lines)" "k_r_recording"
+  check "titles: the day's summary stays" "$(left titles)" "day"
+  check "things: what they told OVOA stays, the parked car goes" "$(left objects)" "k_o_told"
+  check "places: Home stays, an unnamed one nobody visits goes" "$(left places)" "k_p_home"
+  check "routine events: only the last 14 days" "$(left events)" "$RECENT_EVENTS"
+  check "usage: counts are kept 35 days" "$(left usage)" "1"
+  check "food: 14 days" "$(left food)" "k_f_yesterday"
+  check "the search index lets go of what went" "$(left zebra)" "0"
+  check "and still finds what stayed" "$(left violin)" "1"
+  check "the streak survives its events" "$(curl -s "${K[@]}" "$API/routines" | j "d['routines'][0]['streak']")" "$STREAK"
+  check "memories: the one they asked for, and the recent one" "$(curl -s "${K[@]}" "$API/memories" | j "','.join(m['content'] for m in d['memories'])")" "Is vegan.,Has a dog."
+  OLDCTX=$(curl -s "${K[@]}" "$API/context/days/$OLD_DAY?timeZone=America/New_York")
+  check "an old day is titled by its summary" "$(echo "$OLDCTX" | j "d['title']")" "Violin and plumbers"
+  check "with what they recorded still there" "$(echo "$OLDCTX" | j "len(d['blocks'])")" "2"
+  YCTX=$(curl -s "${K[@]}" "$API/context/days/$YESTERDAY?timeZone=America/New_York")
+  check "yesterday's summary has the day's food, with the number" "$(echo "$YCTX" | j "d['summary']")" "Ate 650 kcal: Pasta."
+  check "a second purge finds nothing more" "$(curl -s -m 120 -X POST "${D[@]}" "$API/debug/agent/tick?what=retention" | j "sorted(k for k in d if k != 'ms')")" "[]"
+  rm -f "$SEED"
+  curl -s -o /dev/null -X DELETE "${K[@]}" "$API/me"
+fi
+
+echo
 echo "───────────────────────────────────────────────────"
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ] || exit 1

@@ -378,16 +378,17 @@ week". The assistant reaches it through `context_day`, `context_week`,
 transcripts, which is what stops it falling over after a week of real use.
 
 Capture is explicit only, and there is no branch in the code that makes it
-otherwise. A saved recording is turned into words on the phone, the words go
-to the server to be summarised and are dropped there, and what is kept is a
-title and two sentences. The audio stays on the phone. Ambient capture was ruled out on
+otherwise. A saved recording is turned into words on the phone, and the words
+go to the server to be summarised; the recording's words and its title and two
+sentences are kept until the user deletes them. The audio stays on the phone. Ambient capture was ruled out on
 legal grounds (all-party consent, BIPA), not deferred.
 
 Promises are pulled out while the words are still around, with the words
 attached, and their due date is resolved at the same time — so a dated promise
 can schedule its own reminder. See [docs/agent.md](../docs/agent.md).
 
-`contextRetainDays` (2 weeks by default) is enforced nightly.
+Everything else is deleted after 14 days, apart from one summary per day and
+what the user entered or set up: see [docs/retention.md](../docs/retention.md).
 
 ## How memory works
 
@@ -396,7 +397,8 @@ can schedule its own reminder. See [docs/agent.md](../docs/agent.md).
   (first person, "remember…", "forget…"; see `api/src/remember.ts`), a model
   reads the exchange and adds or
   removes short facts in `memories`. Those facts go into the system prompt.
-  Users can view and delete them in Settings, or turn memory off.
+  Users can view and delete them in Settings, or turn memory off. A fact is
+  kept only when they asked OVOA to remember it; the rest go after 14 days.
 
 ## AI models
 

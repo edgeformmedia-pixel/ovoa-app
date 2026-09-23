@@ -9,7 +9,9 @@
 -- Verbatim transcripts are deliberately NOT here. They stay in the phone's own
 -- store and are dropped after two weeks. What syncs is the summary written from
 -- them, which is what the assistant actually reads and is small enough to keep
--- for good.
+-- for good. (Later: the words reached the server too, 0022_captures.sql. Since
+-- the v1 release a block the user made stays, one the transcript titler filed
+-- goes at 14 days, and a day is kept as its summary: src/retention.ts.)
 
 CREATE TABLE context_blocks (
   id          TEXT PRIMARY KEY,
@@ -89,5 +91,6 @@ END;
 
 -- Off until asked for, per user.
 ALTER TABLE settings ADD COLUMN context_enabled INTEGER NOT NULL DEFAULT 0;
--- How long the phone keeps the words. 0 means keep them.
+-- How long the phone keeps the words. 0 means keep them. Ignored since the v1
+-- release: everything follows the same 14 days (src/retention.ts).
 ALTER TABLE settings ADD COLUMN context_retain_days INTEGER NOT NULL DEFAULT 14;

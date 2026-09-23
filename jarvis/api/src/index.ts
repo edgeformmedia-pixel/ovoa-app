@@ -18,7 +18,6 @@ import {
   describeSchedule,
   isAgentTool,
   cancelNudges,
-  maintenance,
   MIN_INTERVAL_MINUTES,
   drainNotes,
   runDueJobs,
@@ -46,8 +45,7 @@ import {
   type OnText,
   type Turn,
 } from "./llm";
-import { labelFor, noteEngines, noteTick, observe, pruneStatements, recordError, say } from "./obs";
-import { KEEP_MS as DEVICE_LOG_KEEP_MS } from "./logs";
+import { labelFor, noteEngines, noteTick, observe, recordError, say } from "./obs";
 import { describeToolCall, kindForTool, logAction, toolSucceeded } from "./actionlog";
 import { dropRepeats, sentenceStream } from "./sentences";
 import { isPhoneTool, type PhoneCaps } from "./phone";
@@ -65,20 +63,22 @@ import { fireDueNotes, isNoteTool, notes, notesAssistant } from "./notes";
 import { eveningTick, isTodoTool, todos, todosAssistant } from "./todos";
 import { feed } from "./feed";
 import { isLocationTool, location, locationAssistant, locationNightly } from "./location";
-import { heart, heartAssistant, HR_RETAIN_DAYS, isHeartTool } from "./heart";
+import { heart, heartAssistant, isHeartTool } from "./heart";
 import { isPeopleTool, people, peopleAssistant } from "./people";
 import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "./rhythm";
 import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
 import { appAssistant, appFor, describeScreen, isAppTool, myApps, type MadeApp } from "./myapps";
-import { isTranscriptTool, storeLine, titleTranscripts, TRANSCRIPT_RETAIN_DAYS, transcriptAssistant, transcripts } from "./transcripts";
+import { isTranscriptTool, storeLine, titleTranscripts, transcriptAssistant, transcripts } from "./transcripts";
+import { writeDaySummaries } from "./daysummary";
+import { COUNTS_RETAIN_DAYS, purgeExpired, RETAIN_DAYS } from "./retention";
 import { isWebTool, webAssistant } from "./web";
 import { capVerdict, monthKey, overCapMessage, warnMessage } from "./cap";
 import { isMoneyTool, moneyAssistant, moneyRoutes, moneyTick } from "./money";
 import { foodAssistant, foodRoutes, foodTurn, isFoodTool, logFood, LOWER_THAN_USUAL_NOTE } from "./food";
 import { MORE_TOOLS, SPOKEN_CORE, toolbelt, TYPED_CORE, type ToolGuide } from "./toolbelt";
-import { mightBeAboutThem } from "./remember";
+import { askedToRemember, mightBeAboutThem } from "./remember";
 import { allowed, clientIp, limitByUser, tooMany } from "./limits";
 import { withMaintenance } from "./maintenance";
 import {
@@ -89,7 +89,6 @@ import {
   deliverCode,
   issueCode,
   issueTicket,
-  pruneEmailAuth,
   spendTicket,
   unsendCode,
   verifyGoogleIdToken,
@@ -116,7 +115,6 @@ import { globalSettings, setServerSetting, settingsFor, type ServerSettings, typ
 import {
   dayOf,
   llmRow,
-  pruneUsage,
   recordUsage,
   replyCounts,
   searchRow,
@@ -246,7 +244,6 @@ type Settings = {
   auto_approve: number;
   time_zone: string | null;
   context_enabled: number;
-  context_retain_days: number;
   agent_enabled: number;
   agent_autonomy: string;
   quiet_start: number;
@@ -409,7 +406,7 @@ async function publicUser(env: Env, userId: string) {
 }
 
 const SETTINGS_QUERY = `SELECT assistant_name, personality, memory_enabled, step_goal, fall_detection, auto_approve, time_zone,
-              context_enabled, context_retain_days, agent_enabled, agent_autonomy, quiet_start, quiet_end, agent_daily_runs,
+              context_enabled, agent_enabled, agent_autonomy, quiet_start, quiet_end, agent_daily_runs,
               capture_everything
          FROM settings WHERE user_id = ?`;
 
@@ -437,7 +434,9 @@ function formatSettings(s: Settings) {
     fallDetection: !!s.fall_detection,
     autoApprove: !!s.auto_approve,
     contextEnabled: !!s.context_enabled,
-    contextRetainDays: s.context_retain_days,
+    // The "Forget summaries after" picker is gone (docs/retention.md): everything
+    // follows the same 14 days now. Still sent, for builds that show it.
+    contextRetainDays: RETAIN_DAYS,
     agentEnabled: !!s.agent_enabled,
     agentAutonomy: s.agent_autonomy,
     quietStart: s.quiet_start,
@@ -819,6 +818,7 @@ const updateMeSchema = z.object({
   fallDetection: z.boolean().optional(),
   autoApprove: z.boolean().optional(),
   contextEnabled: z.boolean().optional(),
+  /** Ignored: sent by builds from before 14-day retention (retention.ts), which had a picker for it. */
   contextRetainDays: z.number().int().min(0).max(3650).optional(),
   agentEnabled: z.boolean().optional(),
   agentAutonomy: z.enum(["off", "suggest", "act"]).optional(),
@@ -839,8 +839,7 @@ const updateMeSchema = z.object({
 authed.patch("/me", async (c) => {
   const parsed = updateMeSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Invalid settings" }, 400);
-  const { name, assistantName, personality, memoryEnabled, stepGoal, fallDetection, autoApprove, contextEnabled, contextRetainDays } =
-    parsed.data;
+  const { name, assistantName, personality, memoryEnabled, stepGoal, fallDetection, autoApprove, contextEnabled } = parsed.data;
   const { agentEnabled, agentAutonomy, quietStart, quietEnd, agentDailyRuns } = parsed.data;
   // Written before anything reads it below, so a job seeded in this same
   // request is scheduled against the right zone.
@@ -866,7 +865,6 @@ authed.patch("/me", async (c) => {
            fall_detection = COALESCE(?, fall_detection),
            auto_approve   = COALESCE(?, auto_approve),
            context_enabled = COALESCE(?, context_enabled),
-           context_retain_days = COALESCE(?, context_retain_days),
            agent_enabled  = COALESCE(?, agent_enabled),
            agent_autonomy = COALESCE(?, agent_autonomy),
            quiet_start    = COALESCE(?, quiet_start),
@@ -885,7 +883,6 @@ authed.patch("/me", async (c) => {
         fallDetection === undefined ? null : Number(fallDetection),
         autoApprove === undefined ? null : Number(autoApprove),
         contextEnabled === undefined ? null : Number(contextEnabled),
-        contextRetainDays ?? null,
         agentEnabled === undefined ? null : Number(agentEnabled),
         agentAutonomy ?? null,
         quietStart ?? null,
@@ -1947,23 +1944,30 @@ authed.delete("/siri/key", async (c) => {
 async function listMemories(db: D1Database, userId: string) {
   const { results } = await db
     .prepare(
-      `SELECT id, content, created_at FROM (
-         SELECT id, content, created_at FROM memories WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
+      `SELECT id, content, source, created_at FROM (
+         SELECT id, content, source, created_at FROM memories WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
        ) ORDER BY created_at ASC`,
     )
     .bind(userId, MAX_MEMORIES)
-    .all<{ id: string; content: string; created_at: number }>();
+    .all<{ id: string; content: string; source: MemorySource; created_at: number }>();
   return results;
 }
 
 /** Every memory, oldest first, for the compaction pass. */
 async function listAllMemories(db: D1Database, userId: string) {
   const { results } = await db
-    .prepare("SELECT id, content FROM memories WHERE user_id = ? ORDER BY created_at ASC LIMIT 500")
+    .prepare("SELECT id, content, source FROM memories WHERE user_id = ? ORDER BY created_at ASC LIMIT 500")
     .bind(userId)
-    .all<{ id: string; content: string }>();
+    .all<{ id: string; content: string; source: MemorySource }>();
   return results;
 }
+
+/**
+ * 'asked': they told OVOA to remember it, and it's kept. 'learned': picked up
+ * from a conversation by the pass below, and deleted after 14 days
+ * (retention.ts, docs/retention.md).
+ */
+type MemorySource = "asked" | "learned";
 
 /** How many memories a person has in all, for deciding whether to compact. */
 async function countMemories(db: D1Database, userId: string) {
@@ -1974,16 +1978,32 @@ async function countMemories(db: D1Database, userId: string) {
 const memoryUpdateSchema = {
   type: "object",
   properties: {
-    add: { type: "array", items: { type: "string" } },
+    add: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          text: { type: "string" },
+          asked: { type: "boolean", description: "True only when they explicitly asked you to remember it, or it replaces or merges a memory marked asked." },
+        },
+        required: ["text", "asked"],
+      },
+    },
     removeIds: { type: "array", items: { type: "string" } },
   },
   required: ["add", "removeIds"],
 };
 
+/** One memory to add. A bare string (the shape before sources) is a learned one. */
+const newMemory = z.union([
+  z.string().trim().min(1).max(300).transform((text) => ({ text, asked: false })),
+  z.object({ text: z.string().trim().min(1).max(300), asked: z.boolean().optional().default(false) }),
+]);
+
 async function updateMemories(
   env: Env,
   userId: string,
-  existing: { id: string; content: string }[],
+  existing: { id: string; content: string; source: MemorySource }[],
   userText: string,
   reply: string,
 ) {
@@ -1993,6 +2013,7 @@ async function updateMemories(
   const total = await countMemories(env.DB, userId);
   const over = total > MAX_MEMORIES;
   const all = over ? await listAllMemories(env.DB, userId) : existing;
+  const asked = askedToRemember(userText);
   const raw = await generateText(env, {
     model: env.MEMORY_MODEL,
     json: { schema: memoryUpdateSchema },
@@ -2007,8 +2028,9 @@ async function updateMemories(
       `Each new memory is one short third-person sentence, under ${MEMORY_CHARS} characters. Do not duplicate existing memories.`,
       "If a new fact contradicts or updates an existing memory, put the old memory's id in removeIds and add the corrected fact.",
       over
-        ? `There are ${total} memories and the limit is ${MAX_MEMORIES}. Bring the list under the limit: merge memories that overlap into one (put every merged id in removeIds and add the combined sentence), and remove the ones that have lapsed or matter least. Keep names, relationships, and standing preferences.`
+        ? `There are ${total} memories and the limit is ${MAX_MEMORIES}. Bring the list under the limit: merge memories that overlap into one (put every merged id in removeIds and add the combined sentence), and remove the ones that have lapsed or matter least. Keep names, relationships, and standing preferences, and keep every memory marked asked unless it's replaced by a corrected or merged one.`
         : "",
+      "Mark a new memory asked: true only when their latest message explicitly asks you to remember it ('remember that…', 'don't forget…'), or when it replaces or merges a memory marked asked. Otherwise asked: false.",
       "If nothing is worth remembering, return empty arrays.",
     ]
       .filter(Boolean)
@@ -2017,7 +2039,7 @@ async function updateMemories(
       {
         role: "user",
         text: JSON.stringify({
-          existingMemories: all.map(({ id, content }) => ({ id, content })),
+          existingMemories: all.map(({ id, content, source }) => ({ id, content, ...(source === "asked" && { asked: true }) })),
           latestExchange: { user: userText, assistant: reply },
         }),
       },
@@ -2026,19 +2048,23 @@ async function updateMemories(
 
   const parsed = z
     .object({
-      add: z.array(z.string().trim().min(1).max(300)).max(over ? 30 : 10),
+      add: z.array(newMemory).max(over ? 30 : 10),
       removeIds: z.array(z.string()).max(over ? 80 : 20),
     })
     .parse(JSON.parse(raw));
 
+  // The model's mark is believed only when the message was an instruction to
+  // remember (remember.ts askedToRemember) or an asked memory is being replaced
+  // or merged, so marking everything can't keep everything.
+  const replacesAsked = parsed.removeIds.some((id) => all.some((m) => m.id === id && m.source === "asked"));
   const db = env.DB;
   const now = Date.now();
   const stmts = [
     ...parsed.removeIds.map((id) => db.prepare("DELETE FROM memories WHERE id = ? AND user_id = ?").bind(id, userId)),
-    ...parsed.add.map((content, i) =>
+    ...parsed.add.map((m, i) =>
       db
-        .prepare("INSERT INTO memories (id, user_id, content, created_at) VALUES (?, ?, ?, ?)")
-        .bind(crypto.randomUUID(), userId, content, now + i),
+        .prepare("INSERT INTO memories (id, user_id, content, source, created_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(crypto.randomUUID(), userId, m.text, m.asked && (asked || replacesAsked) ? "asked" : "learned", now + i),
     ),
   ];
   if (stmts.length) await db.batch(stmts);
@@ -2068,7 +2094,11 @@ const blockSchema = z.object({
   startedAt: z.number().int().positive(),
   endedAt: z.number().int().positive(),
   source: z.enum(["voice", "chat", "calendar", "location", "health"]),
-  /** Read to write the summary, then dropped. Never stored. */
+  /**
+   * The recording's words: read to write the summary, and kept as the
+   * recording's transcript (raw_captures, source 'recording'), which, being
+   * recorded on purpose, outlives the 14 days until they delete it (retention.ts).
+   */
   transcript: z.string().trim().max(20_000).optional(),
   note: z.string().trim().max(2000).optional(),
   timeZone: z.string().optional(),
@@ -2139,29 +2169,43 @@ authed.patch("/context/commitments/:id", async (c) => {
   const status = z.enum(["open", "done", "dropped"]).safeParse(body?.status);
   if (!status.success) return c.json({ error: "Bad status" }, 400);
   const id = c.req.param("id");
-  await c.env.DB.prepare("UPDATE context_commitments SET status = ? WHERE id = ? AND user_id = ?")
-    .bind(status.data, id, c.var.userId)
+  // settled_at: kept 14 days from being settled (retention.ts); reopened, it's open again.
+  await c.env.DB.prepare("UPDATE context_commitments SET status = ?, settled_at = ? WHERE id = ? AND user_id = ?")
+    .bind(status.data, status.data === "open" ? null : Date.now(), id, c.var.userId)
     .run();
   // Settled: nothing left to chase, so the reminder goes too.
   if (status.data !== "open") await cancelNudges(c.env, c.var.userId, id);
   return c.json({ ok: true });
 });
 
-/** "Forget that." Takes the block and anything pulled out of it. */
+/**
+ * "Forget that." Takes the block and anything pulled out of it, and a
+ * recording's words with it: those are kept until deleted (retention.ts), so
+ * this is where they go.
+ */
 authed.delete("/context/blocks/:id", async (c) => {
-  await c.env.DB.prepare("DELETE FROM context_blocks WHERE id = ? AND user_id = ?")
+  const db = c.env.DB;
+  const gone = await db
+    .prepare("DELETE FROM context_blocks WHERE id = ? AND user_id = ? RETURNING started_at, ended_at")
     .bind(c.req.param("id"), c.var.userId)
-    .run();
+    .first<{ started_at: number; ended_at: number }>();
+  if (gone) {
+    await db
+      .prepare("DELETE FROM raw_captures WHERE user_id = ? AND source = 'recording' AND ts >= ? AND ts <= ?")
+      .bind(c.var.userId, gone.started_at, gone.ended_at)
+      .run();
+  }
   return c.json({ ok: true });
 });
 
-/** "Forget the last hour." Everything recorded since a moment. */
+/** "Forget the last hour." Everything recorded since a moment, and the words said since then. */
 authed.delete("/context/blocks", async (c) => {
   const since = Number(c.req.query("since"));
   if (!Number.isFinite(since) || since <= 0) return c.json({ error: "since is required" }, 400);
-  const { meta } = await c.env.DB.prepare("DELETE FROM context_blocks WHERE user_id = ? AND started_at >= ?")
-    .bind(c.var.userId, since)
-    .run();
+  const [{ meta }] = await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM context_blocks WHERE user_id = ? AND started_at >= ?").bind(c.var.userId, since),
+    c.env.DB.prepare("DELETE FROM raw_captures WHERE user_id = ? AND ts >= ?").bind(c.var.userId, since),
+  ]);
   return c.json({ ok: true, forgot: meta.changes ?? 0 });
 });
 
@@ -2376,8 +2420,11 @@ app.post("/debug/agent/tick", async (c) => {
   if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
   const started = Date.now();
   const which = c.req.query("what");
-  if (which === "maintenance") return c.json({ purgedBlocks: await maintenance(c.env), ms: Date.now() - started });
+  // The nightly cron's three parts, one at a time: learning, the day summaries,
+  // and the purge ("maintenance" was the old name for the purge's part).
   if (which === "nightly") return c.json({ ...(await nightly(c.env)), ms: Date.now() - started });
+  if (which === "summaries") return c.json({ ...(await writeDaySummaries(c.env)), ms: Date.now() - started });
+  if (which === "retention" || which === "maintenance") return c.json({ ...(await purgeExpired(c.env)), ms: Date.now() - started });
   if (which === "alarms") return c.json({ ...(await nagTick(c.env)), ms: Date.now() - started });
   if (which === "extras") return c.json({ ...(await extrasTick(c.env)), ms: Date.now() - started });
   if (which === "money") return c.json({ ...(await moneyTick(c.env)), ms: Date.now() - started });
@@ -2566,7 +2613,8 @@ app.put("/debug/engines", async (c) => {
  */
 app.get("/debug/usage", async (c) => {
   if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
-  const days = Math.min(Math.max(Number(c.req.query("days") ?? 7) || 7, 1), 90);
+  // usage_daily keeps 35 days (retention.ts COUNTS_RETAIN_DAYS).
+  const days = Math.min(Math.max(Number(c.req.query("days") ?? 7) || 7, 1), COUNTS_RETAIN_DAYS);
   const from = dayOf(Date.now() - (days - 1) * 86_400_000);
   const people = await usageByPerson(c.env.DB, from);
   const microUsd = people.reduce((n, p) => n + p.total.microUsd, 0);
@@ -2709,30 +2757,14 @@ authed.route("/", voice);
 app.route("/", authed);
 
 /**
- * Once a night, alongside the agent's own maintenance: learn places, and hold
- * each kind of personal data to its retention promise.
+ * Once a night, the learning part: places, what usually happens, and what each
+ * Google account is for. The day summaries and the purge are parts of their
+ * own after it (runTick), so one failing doesn't take the others down.
  */
 async function nightly(env: Env) {
-  const now = Date.now();
   const places = await locationNightly(env);
   const expectations = await learnAllExpectations(env).catch((err) => (console.error("rhythm: learning failed", err), 0));
   const accounts = await relearnAccounts(env).catch((err) => (console.error("routing: relearning failed", err), 0));
-  await env.DB.batch([
-    ...pruneStatements(env.DB, now),
-    pruneUsage(env.DB, now),
-    // Also pruned on a 1-in-50 roll inside a phone upload (logs.ts). That roll
-    // never comes up on the days the phone has stopped uploading, which are the
-    // days the table grows fastest, so the nightly job owns it too.
-    env.DB.prepare("DELETE FROM device_logs WHERE received_at < ?").bind(now - DEVICE_LOG_KEEP_MS),
-    env.DB.prepare("DELETE FROM hr_samples WHERE ts < ?").bind(now - HR_RETAIN_DAYS * 86_400_000),
-    env.DB.prepare("DELETE FROM raw_captures WHERE ts < ?").bind(now - TRANSCRIPT_RETAIN_DAYS * 86_400_000),
-    // Day titles are kept after the words expire: they're what "on this day" reads.
-    env.DB.prepare("DELETE FROM transcript_titles WHERE start < ? AND grain != 'day'").bind(now - TRANSCRIPT_RETAIN_DAYS * 86_400_000),
-    env.DB.prepare("DELETE FROM action_log WHERE ts < ?").bind(now - 365 * 86_400_000),
-    env.DB.prepare("DELETE FROM command_queue WHERE created_at < ?").bind(now - 30 * 86_400_000),
-    env.DB.prepare("DELETE FROM daily_marks WHERE at < ?").bind(now - 30 * 86_400_000),
-    ...pruneEmailAuth(env.DB, now),
-  ]);
   return { places, expectations, accounts };
 }
 
@@ -2827,8 +2859,12 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
 
   const nightlyRun = cron.startsWith("13 4");
   if (nightlyRun) {
-    await part("agent", tick(env, cron));
+    // Learning first (places need the visits the purge takes), then one summary
+    // per day that has something in it (daysummary.ts), then the 14-day purge
+    // (retention.ts), which only runs once the summaries have had their chance.
     await part("nightly", nightly(env));
+    await part("summaries", writeDaySummaries(env));
+    await part("retention", purgeExpired(env));
   } else {
     // Sequential on purpose: a Worker has one CPU, and two concurrent waitUntils
     // only interleave. The clock-sensitive ones go first, though — the agent's
@@ -2868,8 +2904,9 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
 
 /**
  * Cron. Every few minutes the agent looks for work that has come due and pushes
- * whatever it decided to say; once a night it tidies up and enforces the
- * retention window the user set. The schedule is in wrangler.jsonc.
+ * whatever it decided to say; once a night it learns, keeps a summary of each
+ * day, and deletes what's past its 14 days (docs/retention.md). The schedule is
+ * in wrangler.jsonc.
  *
  * Both handlers sit behind the MAINTENANCE switch (maintenance.ts), which
  * answers every request 503 and skips every tick while data is being moved.

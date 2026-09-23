@@ -11,7 +11,8 @@ import { llmCostMicro, sttCostMicro, ttsCostMicro, type TokenPrice, usd } from "
 //   2. Writing a row never fails the request it describes. A turn that was
 //      answered but not counted is a gap in a report; a turn that failed
 //      because the counter was busy is a person left waiting.
-//   3. Bounded. Ninety days, pruned nightly.
+//   3. Bounded. 35 days, pruned nightly (retention.ts): it holds counts, not
+//      what anyone said, and a month's cap needs the whole month.
 //
 // The dollar figure on each row is an estimate at list price (pricing.ts),
 // worked out when the row is written so the report needs no price history.
@@ -303,7 +304,5 @@ function describe(d: DayTotals) {
   };
 }
 
-/** Nightly. Ninety days is enough to compare three billing months. */
-export function pruneUsage(db: D1Database, now: number) {
-  return db.prepare("DELETE FROM usage_daily WHERE day < ?").bind(dayOf(now - 90 * 86_400_000));
-}
+// Rows older than 35 days go in the nightly purge (retention.ts): long enough
+// for a month's cap, which reads from the 1st.
