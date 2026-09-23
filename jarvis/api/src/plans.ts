@@ -202,7 +202,9 @@ type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 
 /**
  * Asks the site. Null means it couldn't say (down, slow, changed): the caller
- * keeps what it had. A 404 is an answer: no such member, so free.
+ * keeps what it had. Only a parsed answer counts: the site says "free" with a
+ * 200 for someone who never paid, so a 404 is a missing or unpublished route
+ * (ovoa.ai without the membership code), not a verdict on the person.
  */
 export async function fetchMembership(env: Pick<Env, "MEMBERSHIP_API_KEY" | "MEMBERSHIP_URL">, email: string, fetcher: Fetcher = fetch): Promise<Membership | null> {
   const url = `${env.MEMBERSHIP_URL || DEFAULT_MEMBERSHIP_URL}?email=${encodeURIComponent(email)}`;
@@ -211,7 +213,6 @@ export async function fetchMembership(env: Pick<Env, "MEMBERSHIP_API_KEY" | "MEM
       headers: { authorization: `Bearer ${env.MEMBERSHIP_API_KEY}`, accept: "application/json" },
       signal: AbortSignal.timeout(4000),
     });
-    if (res.status === 404) return { tier: "free", status: "none", trialEndsAt: null, renewsAt: null };
     if (!res.ok) {
       say("plan", { outcome: "site error", status: res.status });
       return null;

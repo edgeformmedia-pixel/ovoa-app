@@ -142,7 +142,7 @@ const env0 = { MEMBERSHIP_API_KEY: "k", MEMBERSHIP_URL: "https://test.example/ap
   eq("asked at the configured URL, email encoded", s.calls[0].url, "https://test.example/api/public/membership?email=A%2Bb%40example.com");
   eq("with the key as a bearer", s.calls[0].auth, "Bearer k");
 }
-eq("404: no such member, free", (await fetchMembership(env0, "a@example.com", site(() => new Response("", { status: 404 })).fetcher))?.tier, "free");
+eq("404: the route isn't there (site not published), so no answer", await fetchMembership(env0, "a@example.com", site(() => new Response("<!DOCTYPE html>", { status: 404 })).fetcher), null);
 eq("500: couldn't say", await fetchMembership(env0, "a@example.com", site(() => new Response("", { status: 500 })).fetcher), null);
 eq("unreachable: couldn't say", await fetchMembership(env0, "a@example.com", site(() => Promise.reject(new Error("down"))).fetcher), null);
 eq("nonsense: couldn't say", await fetchMembership(env0, "a@example.com", site(() => json({ hello: 1 })).fetcher), null);
