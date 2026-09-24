@@ -12,7 +12,7 @@ import { Tour } from "../components/Tour";
 import { AgentProvider } from "../lib/agent";
 import { AssistantProvider } from "../lib/assistant";
 import { AuthProvider, useAuth } from "../lib/auth";
-import { useFirstOpen } from "../lib/firstOpen";
+import { consentLaterKey, useFirstOpen } from "../lib/firstOpen";
 import { PlanProvider, usePlan } from "../lib/plan";
 // For its side effect: the background push task has to be defined before anything mounts.
 import "../lib/background";
@@ -101,7 +101,7 @@ function RootStack() {
   //      before anything goes to an AI company. Once: "Not now" goes on to the
   //      app with AI locked, and they come back to it from there.
   const paid = !free;
-  const consentStep = !!user && !codeStep && !permissionsStep && paid && needsConsent && first.consentLater !== user.id;
+  const consentStep = !!user && !codeStep && !permissionsStep && paid && needsConsent && first.consentLater !== consentLaterKey(user.id);
   //   4. With Base and consent: the setup conversation, the first time they
   //      have Base (paid or a Band's days), never at sign-up for a free account.
   //      Without consent it waits until they agree. Older servers don't send

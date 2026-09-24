@@ -30,7 +30,7 @@ const ASKS: Ask[] = [
     icon: "heart-outline",
     tone: "coral",
     title: "Health",
-    why: "Your steps, heart rate and sleep, for your day and your trends. Only the numbers you allow.",
+    why: "Your steps, heart rate and sleep for your day and your trends, and your OVOA Band's heart rate saved to Health. Only the numbers you allow.",
     run: () => healthPermission(),
   },
   {

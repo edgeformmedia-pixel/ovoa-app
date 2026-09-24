@@ -1,3 +1,4 @@
+import { asksForAction, changesSomething, CLAIM_NUDGE, claimsDone, doesSomething } from "./claims";
 import { generate as geminiGenerate, grounded as geminiGrounded, quickThinking, type Turn } from "./gemini";
 
 // The reply engines: which model answers, in what order, and what each call
@@ -392,12 +393,32 @@ export type DeferredCall = { id: string; name: string; args: Record<string, unkn
  * don't have it, and take their engine's model of the moment.
  */
 export type LoopState =
-  | { engine: "gemini"; model?: string; round: number; contents: any[]; slots: { id: string; part: number }[] }
-  | { engine: OpenAiEngine; model?: string; round: number; messages: any[]; slots: { id: string; index: number }[] };
+  | { engine: "gemini"; model?: string; round: number; contents: any[]; slots: { id: string; part: number }[]; claim?: ClaimInRepair }
+  | { engine: OpenAiEngine; model?: string; round: number; messages: any[]; slots: { id: string; index: number }[]; claim?: ClaimInRepair };
+
+/**
+ * A claim's repair (repairClaim) under way in a tool loop: the reply it is
+ * making true, and whether a tool has changed something yet. A paused one
+ * rides in its LoopState, so the resumed turn finishes the repair: its tools
+ * run as any turn's, its outcome says how the repair went, and a last round
+ * that writes nothing (as the nudge asked) ends with this reply rather than
+ * failing the turn after its action was already queued.
+ */
+export type ClaimInRepair = { reply: string; repaired?: true };
+
+/**
+ * What became of a reply that said something was done when no tool had run
+ * (chatWithTools `repairClaims`, claims.ts): "repaired" when the extra round
+ * ran a tool that changed something, "unrepaired" when it didn't (no tool,
+ * only lookups, only failed ones, or the round itself failed) and the claim
+ * stands as it was said, "pending" when it paused on a phone lookup before
+ * changing anything, and the resumed turn's outcome says which.
+ */
+export type ClaimRepair = "repaired" | "unrepaired" | "pending";
 
 export type ChatOutcome =
-  | { kind: "reply"; text: string; engine: Engine }
-  | { kind: "paused"; state: LoopState; calls: DeferredCall[]; engine: Engine };
+  | { kind: "reply"; text: string; engine: Engine; claim?: ClaimRepair }
+  | { kind: "paused"; state: LoopState; calls: DeferredCall[]; engine: Engine; claim?: ClaimRepair };
 
 /**
  * Receives the reply as it's written. Returning false stops the model early
@@ -438,14 +459,31 @@ type ToolLoopOptions = {
    * a caller that learns midway that the turn isn't wanted.
    */
   signal?: AbortSignal;
+  /**
+   * A person's own turn: when the turn ran no tool, the request asked for
+   * something to be done and the reply says it was ("Noted — milk and eggs."),
+   * the engine that answered is told that nothing happened and to call the
+   * tool now, and gets up to REPAIR_ROUNDS to do it (claims.ts has the why).
+   * Its tools run through callTool like any others, so the phone's actions
+   * still wait for approval; nothing it writes is passed to onText, since the
+   * claim was heard already; and the reply stays the one that was given. The
+   * outcome's `claim` says how it went. Passed for a person's own turns, not
+   * for agent jobs. A resumed turn isn't checked again (it ran the phone's
+   * lookup); one whose repair paused on the phone finishes that repair
+   * (LoopState.claim).
+   */
+  repairClaims?: boolean;
 };
 
 /**
  * What the tool loops run with: the caller's options, plus onOutput, which
  * chatWithTools uses to see an engine start its answer (a word, or the first
- * piece of a tool call) for the spoken first-word deadline.
+ * piece of a tool call) for the spoken first-word deadline, and repair for a
+ * claim's repair (repairClaim): the loop ends once a round's tools have run,
+ * without going back to the model for words, since what the person was told
+ * is said (repairEnds has when).
  */
-type LoopRun = ToolLoopOptions & { onOutput?: () => void };
+type LoopRun = ToolLoopOptions & { onOutput?: () => void; repair?: boolean };
 
 export type Engine = "gemini" | OpenAiEngine;
 
@@ -1021,9 +1059,15 @@ export async function chatWithTools(
     // turn failing; before that, with nothing left to carry it on, the AI is
     // out of reach (AiUnreachable, which /chat/resume answers plainly).
     let committed = false;
-    const callTool: CallTool = (name, args) => {
+    // A claim's repair that paused on the phone (repairClaim) is finished by
+    // this turn: what its tools change says how it went (claimOutcome).
+    const claim = state.claim;
+    const tally = repairTally();
+    const callTool: CallTool = async (name, args) => {
       committed = true;
-      return opts.callTool(name, args);
+      const result = await safeCall(opts.callTool, name, args);
+      tally.note(name, result);
+      return result;
     };
     const onText: OnText | undefined = opts.onText
       ? (delta) => {
@@ -1032,6 +1076,7 @@ export async function chatWithTools(
         }
       : undefined;
     const run: LoopRun = { ...opts, callTool, onText };
+    const finish = (outcome: ChatOutcome) => (claim ? claimOutcome(outcome, claim, tally, opts, true) : outcome);
     const failures: string[] = [];
     const tried: Engine[] = [];
     /** One engine's go at carrying the turn on: its outcome, or the error to move on with. */
@@ -1067,7 +1112,7 @@ export async function chatWithTools(
       let err: unknown = null;
       if (!cooling) {
         const got = await attempt("gemini", state.model ?? opts.model, () => geminiToolLoop(env, run, state));
-        if ("outcome" in got) return got.outcome;
+        if ("outcome" in got) return finish(got.outcome);
         err = got.err;
       }
       // Out of quota halfway through: finish the turn on an OpenAI-style
@@ -1080,9 +1125,9 @@ export async function chatWithTools(
       }
       const messages = geminiToOpenAi(opts.system, state.contents);
       const got = await attempt(next, modelFor(env, next, opts.model), () =>
-        openAiToolLoop(env, next, run, { engine: next, round: state.round, messages, slots: [] }),
+        openAiToolLoop(env, next, run, { engine: next, round: state.round, messages, slots: [], ...(claim && { claim }) }),
       );
-      if ("outcome" in got) return got.outcome;
+      if ("outcome" in got) return finish(got.outcome);
       throw unreachable(got.err, failures, tried);
     }
     const paused = state as Extract<LoopState, { engine: OpenAiEngine }>;
@@ -1092,7 +1137,7 @@ export async function chatWithTools(
     let err: unknown = new Error(`That turn was paused on ${paused.engine}, which can't carry it on now, and no other engine is ready.`);
     if (own) {
       const got = await attempt(own, paused.model ?? modelFor(env, own, opts.model), () => openAiToolLoop(env, own, run, paused));
-      if ("outcome" in got) return got.outcome;
+      if ("outcome" in got) return finish(got.outcome);
       err = got.err;
     }
     // Its engine is gone (DeepSeek, retired with v1; a key removed since) or
@@ -1111,13 +1156,17 @@ export async function chatWithTools(
     const got = await attempt(next, modelFor(env, next, opts.model), () =>
       openAiToolLoop(env, next, run, { ...paused, engine: next, model: undefined, messages }),
     );
-    if ("outcome" in got) return got.outcome;
+    if ("outcome" in got) return finish(got.outcome);
     throw unreachable(got.err, failures, tried);
   }
 
   let committed = false;
+  // Whether a tool did something this turn (claims.ts doesSomething): a reply
+  // saying something was done in a turn where none did is repairClaims' case.
+  let acted = false;
   const tracked: CallTool = (name, args) => {
     committed = true;
+    if (doesSomething(name)) acted = true;
     return opts.callTool(name, args);
   };
   const onText: OnText | undefined = opts.onText
@@ -1147,15 +1196,15 @@ export async function chatWithTools(
             if (abandonSilentEngine(s)) abort.abort(new Error(`Timed out after ${voiceFirstMs / 1000} s with no first word from ${nameOf(engine)}`));
           }, voiceFirstMs)
         : null;
+    let outcome: ChatOutcome | null = null;
     try {
       const onOutput = () => {
         heard = true;
       };
       const run: LoopRun = { ...opts, callTool: tracked, onText, signal: abort.signal, onOutput };
-      const outcome = engine === "gemini" ? await geminiToolLoop(env, run) : await openAiToolLoop(env, engine, run);
+      outcome = engine === "gemini" ? await geminiToolLoop(env, run) : await openAiToolLoop(env, engine, run);
       answered(engine);
       opts.onAttempt?.({ engine, model, outcome: outcome.kind === "paused" ? "paused" : "ok", ms: Date.now() - at });
-      return outcome;
     } catch (err) {
       // Called off by the caller: not the engine's failure, and nothing else is wanted.
       if (opts.signal?.aborted) throw opts.signal.reason ?? err;
@@ -1176,8 +1225,145 @@ export async function chatWithTools(
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", follow);
     }
+    // After the engine's own deadlines are cleared: the reply is given, and this is a round of its own.
+    if (outcome) {
+      if (!opts.repairClaims || acted || !claimedNotDone(opts.turns, outcome)) return outcome;
+      // The claim's last sentence goes out now. sentences.ts lets a sentence go
+      // only once something follows its full stop, and nothing would until the
+      // turn ended: "Noted — milk and eggs." sat silent through the whole repair
+      // (a round and its tool, 1-2 s on Workers AI, 4-6 s typed on Z.ai), and
+      // "Reminder set for Friday at 9:00 am — submit the report." was heard to
+      // its dash, then nothing (2026-09-23). A line break ends it, as before a
+      // round's tool calls.
+      onText?.("\n");
+      return repairClaim(env, engine, opts, outcome.text);
+    }
   }
   throw new Error("No engines");
+}
+
+/** A reply saying something was done, to a request that asked for it (claims.ts). The caller knows no tool did it. */
+function claimedNotDone(turns: Turn[], outcome: ChatOutcome): outcome is Extract<ChatOutcome, { kind: "reply" }> {
+  const request = [...turns].reverse().find((t) => t.role === "user")?.text ?? "";
+  return outcome.kind === "reply" && asksForAction(request) && claimsDone(outcome.text);
+}
+
+/**
+ * The most rounds a claim's repair takes: more_tools for the tool the claim
+ * needs (a spoken turn carries few, toolbelt.ts), the lookup it needs an id
+ * from (alarm_cancel's from alarm_list), then the tool itself.
+ */
+const REPAIR_ROUNDS = 3;
+
+/**
+ * Whether a claim's repair ends after a round that called `tools`, its
+ * `rounds`th: once one of them changed something (claims.ts changesSomething),
+ * or at REPAIR_ROUNDS. A round that only looked something up or sent for tools
+ * goes on to the one that uses what it brought. It used to end there, so a
+ * repair that fetched alarm_list or more_tools was logged as repaired, or could
+ * never be, while nothing changed (review, 2026-09-23).
+ */
+const repairEnds = (tools: string[], rounds: number) => tools.some(changesSomething) || rounds >= REPAIR_ROUNDS;
+
+/** What a claim's repair has run: tools that changed something, ones that failed, ones that only looked up (claims.ts). */
+function repairTally() {
+  const changed: string[] = [];
+  const failed: string[] = [];
+  const read: string[] = [];
+  return {
+    changed,
+    read,
+    note(tool: string, result: unknown) {
+      if (!doesSomething(tool)) return;
+      if (!changesSomething(tool)) read.push(tool);
+      else if (result && typeof result === "object" && "error" in result) failed.push(tool);
+      else changed.push(tool);
+    },
+    /** Why nothing changed, for ovoa.claim_unrepaired. */
+    why: () => (failed.length ? `tool_failed failed=${failed.join(",")}` : read.length ? `lookup_only read=${read.join(",")}` : "no_tool"),
+  };
+}
+
+type RepairTally = ReturnType<typeof repairTally>;
+
+/** A line about a claim's repair: ovoa.claim_repaired, ovoa.claim_unrepaired or ovoa.claim_repair_paused. */
+const logClaim = (event: string, engine: Engine, opts: ToolLoopOptions, detail: string) =>
+  console.log(`ovoa.${event} engine=${engine} purpose=${opts.usage.purpose} user=${opts.usage.userId?.slice(0, 8) ?? "-"} ${detail}`);
+
+/**
+ * How a claim's repair stands after `outcome`, logged as it settles:
+ * ovoa.claim_repaired when a tool first changes something, ovoa.claim_unrepaired
+ * when the repair ends without one, ovoa.claim_repair_paused while it waits on
+ * the phone with nothing changed yet. A paused one carries the claim on in its
+ * state. The reply is the claim, which was heard; a resumed turn's is what it
+ * streamed, or the claim when it wrote nothing (the tool loops).
+ */
+function claimOutcome(outcome: ChatOutcome, claim: ClaimInRepair, tally: RepairTally, opts: ToolLoopOptions, resumed: boolean): ChatOutcome {
+  const repaired = !!claim.repaired || tally.changed.length > 0;
+  const log = (event: string, detail: string) => logClaim(event, outcome.engine, opts, `${detail}${resumed ? " resumed=1" : ""}`);
+  if (!claim.repaired && tally.changed.length) log("claim_repaired", `tools=${tally.changed.join(",")}${outcome.kind === "paused" ? " paused=1" : ""}`);
+  if (outcome.kind === "paused") {
+    if (!repaired) log("claim_repair_paused", `read=${tally.read.join(",") || "-"}`);
+    const state = { ...outcome.state, claim: { reply: claim.reply, ...(repaired && { repaired: true as const }) } };
+    return { ...outcome, state, claim: repaired ? "repaired" : "pending" };
+  }
+  if (!repaired) log("claim_unrepaired", `why=${tally.why()}`);
+  return { ...outcome, text: resumed ? outcome.text : claim.reply, claim: repaired ? "repaired" : "unrepaired" };
+}
+
+/**
+ * repairClaims: more rounds on the engine that answered, with its reply and
+ * CLAIM_NUDGE after it, so the tool the reply spoke for is called now. Nothing
+ * it writes is streamed (the claim already was), and the reply stays the one
+ * given. It ends once a round's tools have changed something (repairEnds). A
+ * lookup it defers to the phone pauses the turn as any would, and the turn
+ * finishes the repair when the phone answers (ClaimInRepair).
+ *
+ * The round is built from the turn and the reply, not from the loop's own
+ * messages: a turn that ran no tool had one round, or rounds that only sent for
+ * more tools (more_tools), and those are in `tools` now, which grows in place.
+ * It never fails the turn: the reply was given, and a round that fails leaves
+ * it standing, like one that calls no tool or only tools that fail. Each way is
+ * logged (claimOutcome), and the outcome's `claim` says which, for the turn's
+ * meta.
+ */
+async function repairClaim(env: LlmEnv, engine: Engine, opts: ToolLoopOptions, reply: string): Promise<ChatOutcome> {
+  const tally = repairTally();
+  const callTool: CallTool = async (name, args) => {
+    const result = await safeCall(opts.callTool, name, args);
+    tally.note(name, result);
+    return result;
+  };
+  // Streamed to nobody rather than not streamed, so its tool calls are read by
+  // the same parser as every other round of a person's turn.
+  const run: LoopRun = { ...opts, callTool, onText: () => {}, onOutput: undefined, repair: true };
+  const claim: ClaimInRepair = { reply };
+  try {
+    const outcome =
+      engine === "gemini"
+        ? await geminiToolLoop(env, run, {
+            engine,
+            model: opts.model,
+            round: 1,
+            contents: [...geminiTurns(opts.turns), { role: "model", parts: [{ text: reply }] }, { role: "user", parts: [{ text: CLAIM_NUDGE }] }],
+            slots: [],
+            claim,
+          })
+        : await openAiToolLoop(env, engine, run, {
+            engine,
+            model: modelFor(env, engine, opts.model),
+            round: 1,
+            messages: [...openAiTurns(opts.system, opts.turns), { role: "assistant", content: reply }, { role: "user", content: CLAIM_NUDGE }],
+            slots: [],
+            claim,
+          });
+    return claimOutcome(outcome, claim, tally, opts, false);
+  } catch (err) {
+    if (opts.signal?.aborted) throw opts.signal.reason ?? err;
+    // No round that failed follows one that changed something: the repair ends there.
+    logClaim("claim_unrepaired", engine, opts, `why=${classifyEngineError(err)}`);
+    return { kind: "reply", text: reply, engine, claim: "unrepaired" };
+  }
 }
 
 // ---------- Web search ----------
@@ -1392,13 +1578,17 @@ async function geminiRound(
   return { content: { role: "model", parts }, usage };
 }
 
+/** A conversation as Gemini's contents. */
+const geminiTurns = (turns: Turn[]): any[] => turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] }));
+
 async function geminiToolLoop(env: LlmEnv, opts: LoopRun, paused?: Extract<LoopState, { engine: "gemini" }>): Promise<ChatOutcome> {
   const { system, turns, tools, callTool, voice, onText, onOutput, signal } = opts;
   // A resumed turn carries on with the model it paused on (LoopState.model).
   const model = paused?.model ?? opts.model;
-  const contents: any[] = paused?.contents ?? turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] }));
+  const contents: any[] = paused?.contents ?? geminiTurns(turns);
+  const first = paused?.round ?? 0;
 
-  for (let round = paused?.round ?? 0; round <= MAX_TOOL_ROUNDS; round++) {
+  for (let round = first; round <= MAX_TOOL_ROUNDS; round++) {
     const at = Date.now();
     const { content, usage } = await geminiRound(
       env.GEMINI_API_KEY!,
@@ -1423,6 +1613,8 @@ async function geminiToolLoop(env: LlmEnv, opts: LoopRun, paused?: Extract<LoopS
       .join("");
 
     if (!calls.length) {
+      // A claim's repair, told to write nothing else, may do just that once its tools have run (ClaimInRepair).
+      if (!said && paused?.claim) return { kind: "reply", text: paused.claim.reply, engine: "gemini" };
       if (!said) throw new Error(`Gemini ${model} returned no text`);
       return { kind: "reply", text: said, engine: "gemini" };
     }
@@ -1450,8 +1642,10 @@ async function geminiToolLoop(env: LlmEnv, opts: LoopRun, paused?: Extract<LoopS
     }
     contents.push({ role: "user", parts: responses });
     if (deferred.length) {
-      return { kind: "paused", state: { engine: "gemini", model, round: round + 1, contents, slots }, calls: deferred, engine: "gemini" };
+      const state = { engine: "gemini" as const, model, round: round + 1, contents, slots, ...(paused?.claim && { claim: paused.claim }) };
+      return { kind: "paused", state, calls: deferred, engine: "gemini" };
     }
+    if (opts.repair && repairEnds(calls.map((p) => p.functionCall.name), round + 1 - first)) return { kind: "reply", text: said, engine: "gemini" };
   }
   throw new Error("Too many tool rounds");
 }
@@ -1751,12 +1945,43 @@ function openAiText(out: OpenAiOut) {
   return stripThinking(text);
 }
 
+/**
+ * The offered tool a call meant, when the model wrote more than its name.
+ * Workers AI's GLM once streamed the name "money_afford</arg_value>", the tail
+ * of its own call template glued on (engine-bench against production,
+ * 2026-09-23), and the call went to no tool and failed. A name that isn't
+ * offered becomes the longest offered name it starts with, which covers its
+ * plain identifier part (/^[A-Za-z0-9_]+/) being offered. Anything else is
+ * left as it came, to fail as an unknown tool. Pure.
+ */
+export function toolNameFor(name: string, offered: string[]): string {
+  if (offered.includes(name)) return name;
+  const written = name.trim();
+  let meant = "";
+  for (const o of offered) if (o && written.startsWith(o) && o.length > meant.length) meant = o;
+  return meant || name;
+}
+
+/** A round's tool calls, each named as the offered tool it meant (toolNameFor). A repaired name is logged. */
+function namedAsOffered(engine: OpenAiEngine, body: OpenAiBody, calls: any[]) {
+  const offered: string[] = (body.tools ?? []).map((t) => t.function?.name).filter(Boolean);
+  for (const call of calls) {
+    const name = call.function?.name ?? "";
+    const meant = toolNameFor(name, offered);
+    if (meant === name) continue;
+    console.log(`ovoa.tool_name_repaired engine=${engine} from=${JSON.stringify(name).replace(/\s+/g, "_").slice(0, 120)} to=${meant}`);
+    call.function.name = meant;
+  }
+  return calls;
+}
+
 /** One model turn. Streamed when `onText` is set, with its timing marks; either way returns the whole message. */
 async function openAiRound(env: LlmEnv, engine: OpenAiEngine, model: string, body: OpenAiBody, io: RoundIo): Promise<OpenAiMessage> {
   const { onText, onOutput } = io;
   if (!onText) {
     const out = (await openAiCall(env, engine, model, body, false, io)) as OpenAiOut;
-    const message = { content: openAiText(out), tool_calls: out.choices?.[0]?.message?.tool_calls ?? [], usage: readOpenAiUsage(out.usage) };
+    const calls = namedAsOffered(engine, body, out.choices?.[0]?.message?.tool_calls ?? []);
+    const message = { content: openAiText(out), tool_calls: calls, usage: readOpenAiUsage(out.usage) };
     if (message.content || message.tool_calls.length) onOutput?.();
     return message;
   }
@@ -1798,7 +2023,7 @@ async function openAiRound(env: LlmEnv, engine: OpenAiEngine, model: string, bod
     }
   }
   timing.endMs = mark();
-  return { content: stripThinking(content), tool_calls: calls.filter(Boolean), usage, timing };
+  return { content: stripThinking(content), tool_calls: namedAsOffered(engine, body, calls.filter(Boolean)), usage, timing };
 }
 
 async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, model: string, opts: Options): Promise<string> {
@@ -1813,10 +2038,7 @@ async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, model: string, 
     engine,
     model,
     {
-      messages: [
-        { role: "system", content: systemText },
-        ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
-      ],
+      messages: openAiTurns(systemText, turns),
       max_tokens: 2048,
       ...thinkingFields(model, thinkingLevelFor(env, engine, !!fast), thinkingFlavorOf(env, engine)),
     },
@@ -1834,6 +2056,12 @@ async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, model: string, 
   return text;
 }
 
+/** The system prompt and a conversation as OpenAI-style messages. */
+const openAiTurns = (system: string, turns: Turn[]): any[] => [
+  { role: "system", content: system },
+  ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
+];
+
 async function openAiToolLoop(
   env: LlmEnv,
   engine: OpenAiEngine,
@@ -1841,17 +2069,15 @@ async function openAiToolLoop(
   paused?: Extract<LoopState, { engine: OpenAiEngine }>,
 ): Promise<ChatOutcome> {
   const { system, turns, tools, callTool, voice, onText, onOutput, signal } = opts;
-  const messages: any[] = paused?.messages ?? [
-    { role: "system", content: system },
-    ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
-  ];
+  const messages: any[] = paused?.messages ?? openAiTurns(system, turns);
   // A resumed turn carries on with the model it paused on (LoopState.model).
   const model = paused?.model ?? modelFor(env, engine, opts.model);
   // Spoken turns ask for as little thinking as the host allows: none on Workers
   // AI's GLM, "low" on Z.ai's, which can't go lower. See thinkingFields.
   const thinking = thinkingFields(model, thinkingLevelFor(env, engine, !!voice), thinkingFlavorOf(env, engine));
   const io: RoundIo = { onText, onOutput, signal, affinity: opts.usage.userId };
-  for (let round = paused?.round ?? 0; round <= MAX_TOOL_ROUNDS; round++) {
+  const first = paused?.round ?? 0;
+  for (let round = first; round <= MAX_TOOL_ROUNDS; round++) {
     // Built each round rather than once: a spoken turn starts with a handful of
     // tools and sends for more mid-turn (toolbelt.ts), and those have to be in
     // front of the model on the step after it asked for them. Gemini's loop
@@ -1874,6 +2100,8 @@ async function openAiToolLoop(
 
     const calls = message.tool_calls;
     if (!calls.length) {
+      // A claim's repair, told to write nothing else, may do just that once its tools have run (ClaimInRepair).
+      if (!message.content && paused?.claim) return { kind: "reply", text: paused.claim.reply, engine };
       if (!message.content) throw new Error(`${nameOf(engine)} returned no text`);
       return { kind: "reply", text: message.content, engine };
     }
@@ -1908,8 +2136,9 @@ async function openAiToolLoop(
       messages.push({ role: "tool", tool_call_id: call.id, content });
     }
     if (deferred.length) {
-      return { kind: "paused", state: { engine, model, round: round + 1, messages, slots }, calls: deferred, engine };
+      return { kind: "paused", state: { engine, model, round: round + 1, messages, slots, ...(paused?.claim && { claim: paused.claim }) }, calls: deferred, engine };
     }
+    if (opts.repair && repairEnds(calls.map((c: any) => c.function?.name), round + 1 - first)) return { kind: "reply", text: message.content, engine };
   }
   throw new Error("Too many tool rounds");
 }

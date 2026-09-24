@@ -3,13 +3,17 @@
 // parts a pure function can't show: what is actually sent (the thinking field,
 // the prompt-cache header), how a stream is read (reasoning timed, never
 // spoken), when a round's preface is voiced, which model a paused turn comes
-// back on, the spoken first-word deadline (Workers AI's, never Z.ai's), a call
-// called off, and the last engine never being put out of reach. What a refusal
-// for good does to the cooldowns is in llmCooldown.test.ts, on a fresh isolate.
+// back on, a tool name with junk after it, a reply that claims what no tool
+// did (repairClaims), the spoken first-word deadline (Workers AI's, never
+// Z.ai's), a call called off, and the last engine never being put out of
+// reach. What a refusal for good does to the cooldowns is in
+// llmCooldown.test.ts, on a fresh isolate. Which requests and replies count as
+// a claim is in claims.test.ts.
 //
 // The cooldowns are per isolate, so the order of the sections matters: each
 // says what it leaves cooling.
 
+import { CLAIM_NUDGE } from "../src/claims";
 import { sentenceStream } from "../src/sentences";
 import {
   chatWithTools,
@@ -18,9 +22,11 @@ import {
   generateText,
   isAiUnreachable,
   isCooling,
+  toolNameFor,
   type EngineAttempt,
   type LlmEnv,
   type LlmUsage,
+  type ToolSpec,
 } from "../src/llm";
 
 let fails = 0;
@@ -192,6 +198,399 @@ const base = { model: "gemini-3.5-flash-lite", system: "You are OVOA.", tools: [
   eq("and says so in the engine table", attempts.map((a) => `${a.engine} ${a.model} ${a.outcome}`).join(","), "workers @cf/zai-org/glm-5.3-flash ok");
   const tool = calls[1].inputs.messages.find((m: any) => m.role === "tool");
   eq("with the phone's answer in its place", tool?.content, '{"contacts":[{"name":"Danya"}]}');
+}
+
+// ---------- A tool name with junk after it goes to the tool it meant ----------
+
+const spec = (name: string): ToolSpec => ({ name, description: name, parameters: { type: "object" } });
+
+{
+  // Leaves nothing cooling. Workers AI's GLM streamed "money_afford</arg_value>" in production (2026-09-23).
+  eq("an offered name is kept", toolNameFor("money_afford", ["money_afford"]), "money_afford");
+  eq("junk after the name is dropped", toolNameFor("money_afford</arg_value>", ["money_status", "money_afford"]), "money_afford");
+  eq("the longest offered name it starts with", toolNameFor("money_afford_now", ["money", "money_afford"]), "money_afford");
+  eq("space around it too", toolNameFor(" alarm_set\n", ["alarm_set"]), "alarm_set");
+  eq("a name that starts with no offered one is left alone", toolNameFor("wire_money", ["money_afford"]), "wire_money");
+  eq("nothing offered, nothing changed", toolNameFor("alarm_set>", []), "alarm_set>");
+
+  const { ai, calls } = fakeAi([
+    () => sse([toolCall("money_afford</arg_value>", { amount: 60 }), counts(100, 0, 9)]),
+    () => sse([say("Yes, with room to spare."), counts(200, 100, 6)]),
+  ]);
+  const ran: string[] = [];
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    tools: [...base.tools, spec("money_status"), spec("money_afford")],
+    turns: [{ role: "user", text: "Can I afford a sixty dollar dinner this week?" }],
+    callTool: async (name) => {
+      ran.push(name);
+      return { verdict: "fine" };
+    },
+    usage,
+    voice: true,
+    onText: () => {},
+  });
+  eq("the call reaches the tool it meant", ran.join(","), "money_afford");
+  const sentBack = calls[1].inputs.messages.find((m: any) => m.tool_calls)?.tool_calls[0].function.name;
+  eq("and goes back to the model under that name", sentBack, "money_afford");
+  eq("the turn answers", outcome.kind === "reply" && outcome.text, "Yes, with room to spare.");
+}
+
+// ---------- A reply that claims what no tool did gets one more round ----------
+
+{
+  // Leaves nothing cooling. The spoken bench turn, 2026-09-23: "Noted — milk and eggs." and no tool.
+  const { ai, calls } = fakeAi([
+    () => sse([say("Noted — milk and eggs."), counts(6_700, 5_000, 6)]),
+    () => sse([toolCall("note_add", { text: "milk and eggs" }), counts(6_720, 6_700, 8)]),
+  ]);
+  const heard: string[] = [];
+  const ran: string[] = [];
+  const usages: LlmUsage[] = [];
+  const attempts: EngineAttempt[] = [];
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    tools: [...base.tools, spec("note_add")],
+    turns: [{ role: "user", text: "[It is now Wednesday, September 23, 2026 at 7:37 PM.]\n\nAdd milk and eggs to my notes." }],
+    callTool: async (name) => {
+      ran.push(name);
+      return { saved: true };
+    },
+    usage,
+    onUsage: (u) => usages.push(u),
+    onAttempt: (a) => attempts.push(a),
+    voice: true,
+    onText: (d) => void heard.push(d),
+    repairClaims: true,
+  });
+  eq("the claimed tool runs", ran.join(","), "note_add");
+  eq("the reply is the one that was given", outcome.kind === "reply" && outcome.text, "Noted — milk and eggs.");
+  eq("and the outcome says it was repaired", outcome.claim, "repaired");
+  eq("the claim's sentence is ended, and nothing from the repair round is heard", heard.join(""), "Noted — milk and eggs.\n");
+  eq("one extra round, not two", calls.length, 2);
+  // The array the loop went on to add the call and its result to: system, the turn, then what the repair round was sent.
+  const [, , gave, nudge] = calls[1].inputs.messages;
+  eq("the repair round has the reply it gave", JSON.stringify(gave), JSON.stringify({ role: "assistant", content: "Noted — milk and eggs." }));
+  eq("then the nudge", `${nudge.role}: ${nudge.content === CLAIM_NUDGE}`, "user: true");
+  eq("with the turn's tools", calls[1].inputs.tools?.map((t: any) => t.function.name).join(","), "web_search,note_add");
+  eq("on the same model and the person's prompt cache", `${calls[1].model} ${calls[1].options.extraHeaders?.["x-session-affinity"]}`, "@cf/zai-org/glm-5.3-flash ovoa-u1");
+  eq("its tokens are counted with the turn's", usages.length, 2);
+  eq("and the engine table has one answer", attempts.map((a) => `${a.engine}:${a.outcome}`).join(","), "workers:ok");
+}
+
+{
+  // Leaves nothing cooling. The typed bench turn: a reminder claimed, and the repair round only talks.
+  const { ai, calls } = fakeAi([
+    () => sse([say("Reminder set for Friday at 9:00 am — submit the report."), counts(100, 0, 9)]),
+    () => sse([say("Sorry about that."), counts(120, 100, 4)]),
+  ]);
+  const heard: string[] = [];
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    turns: [{ role: "user", text: "Remind me to submit the report on Friday at 9am." }],
+    callTool: async () => ({}),
+    usage: { userId: "u1", purpose: "chat" },
+    onText: (d) => void heard.push(d),
+    repairClaims: true,
+  });
+  eq("a repair round that calls no tool leaves the reply", outcome.kind === "reply" && outcome.text, "Reminder set for Friday at 9:00 am — submit the report.");
+  eq("and says it stands unrepaired", outcome.claim, "unrepaired");
+  eq("its words aren't heard either", heard.join(""), "Reminder set for Friday at 9:00 am — submit the report.\n");
+  eq("still only one extra round", calls.length, 2);
+}
+
+{
+  // Leaves nothing cooling: a repair round that fails is no engine's failure to rest.
+  const { ai } = fakeAi([() => sse([say("Done — 6:30 alarm set for tomorrow morning."), counts(100, 0, 9)])]);
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    turns: [{ role: "user", text: "Set an alarm for 6:30 tomorrow." }],
+    callTool: async () => ({}),
+    usage,
+    onText: () => {},
+    repairClaims: true,
+  });
+  eq("a repair round that fails still gives the reply", outcome.kind === "reply" && `${outcome.text} (${outcome.claim})`, "Done — 6:30 alarm set for tomorrow morning. (unrepaired)");
+  eq("and rests nothing", isCooling("workers"), false);
+}
+
+{
+  // A tool the repair round calls that fails doesn't make the claim true.
+  const { ai } = fakeAi([
+    () => sse([say("Done — 6:30 alarm set for tomorrow morning."), counts(100, 0, 9)]),
+    () => sse([toolCall("alarm_set", { time: "06:30" }), counts(120, 100, 5)]),
+  ]);
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    tools: [...base.tools, spec("alarm_set")],
+    turns: [{ role: "user", text: "Set an alarm for 6:30 tomorrow." }],
+    callTool: async () => ({ error: "No band connected" }),
+    usage,
+    onText: () => {},
+    repairClaims: true,
+  });
+  eq("a repair whose tool failed is unrepaired", outcome.claim, "unrepaired");
+}
+
+{
+  // Sending for tools does nothing by itself: a turn whose only call was more_tools is still repaired.
+  const tools = [...base.tools, spec("more_tools")];
+  const { ai, calls } = fakeAi([
+    () => sse([toolCall("more_tools", { need: "send an email" }), counts(100, 0, 5)]),
+    () => sse([say("Sent — told Ty you're running late."), counts(200, 100, 8)]),
+    () => sse([toolCall("gmail_send", { to: "Ty" }), counts(220, 200, 6)]),
+  ]);
+  const ran: string[] = [];
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    tools,
+    turns: [{ role: "user", text: "Email Ty that I'm running late." }],
+    callTool: async (name) => {
+      ran.push(name);
+      if (name === "more_tools") tools.push(spec("gmail_send"));
+      return { ok: true };
+    },
+    usage,
+    onText: () => {},
+    repairClaims: true,
+  });
+  eq("more_tools then a claim: the repair sends the email", `${ran.join(",")} ${outcome.claim}`, "more_tools,gmail_send repaired");
+  eq("with the tools more_tools brought", calls[2].inputs.tools.some((t: any) => t.function.name === "gmail_send"), true);
+}
+
+{
+  // Leaves nothing cooling. The claim is heard before the repair round goes out, not
+  // once the turn ends: sentences.ts holds a last sentence until something follows it.
+  const events: string[] = [];
+  const spoken = sentenceStream((s) => events.push(`said: ${s}`), undefined, { firstClause: true });
+  const { ai } = fakeAi([
+    () => sse([say("Reminder set for Friday at 9:00 am — submit the report."), counts(100, 0, 9)]),
+    () => {
+      events.push("repair round asked");
+      return sse([toolCall("reminder_set", { when: "Friday 09:00", text: "submit the report" }), counts(120, 100, 6)]);
+    },
+  ]);
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    tools: [...base.tools, spec("reminder_set")],
+    turns: [{ role: "user", text: "Remind me to submit the report on Friday at 9am." }],
+    callTool: async (name) => {
+      events.push(`ran: ${name}`);
+      return { ok: true };
+    },
+    usage,
+    voice: true,
+    onText: (d) => spoken.push(d),
+    repairClaims: true,
+  });
+  spoken.end();
+  eq(
+    "the whole claim is voiced before the repair round is asked",
+    events,
+    ["said: Reminder set for Friday at 9:00 am —", "said: submit the report.", "repair round asked", "ran: reminder_set"],
+  );
+  eq("and kept as it was said", spoken.text(), "Reminder set for Friday at 9:00 am — submit the report.");
+  eq("repaired", outcome.claim, "repaired");
+}
+
+{
+  // Leaves nothing cooling. A spoken turn carries few tools: the repair sends for the one
+  // the claim needs, and calls it in the next round.
+  const tools = [...base.tools, spec("more_tools")];
+  const { ai, calls } = fakeAi([
+    () => sse([say("Added eggs to your shopping list."), counts(100, 0, 7)]),
+    () => sse([toolCall("more_tools", { need: "add to a list" }), counts(120, 100, 5)]),
+    () => sse([toolCall("todo_add", { text: "eggs", list: "shopping" }), counts(140, 120, 6)]),
+  ]);
+  const ran: string[] = [];
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    tools,
+    turns: [{ role: "user", text: "Add eggs to my shopping list." }],
+    callTool: async (name) => {
+      ran.push(name);
+      if (name === "more_tools") tools.push(spec("todo_add"));
+      return { ok: true };
+    },
+    usage,
+    voice: true,
+    onText: () => {},
+    repairClaims: true,
+  });
+  eq("a repair that sends for its tool goes on to call it", `${ran.join(",")} ${outcome.claim}`, "more_tools,todo_add repaired");
+  eq("in the round after", calls.length, 3);
+}
+
+{
+  // Leaves nothing cooling. The bench's "Cancel my seven o'clock alarm." looked up the
+  // alarm's id first, every run (2026-09-23): a lookup isn't the repair, the call after it is.
+  const { ai, calls } = fakeAi([
+    () => sse([say("Done — your 7 AM alarm is off."), counts(100, 0, 8)]),
+    () => sse([toolCall("alarm_list", {}), counts(120, 100, 4)]),
+    () => sse([toolCall("alarm_cancel", { id: "a7" }), counts(140, 120, 5)]),
+  ]);
+  const ran: string[] = [];
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    tools: [...base.tools, spec("alarm_list"), spec("alarm_cancel")],
+    turns: [{ role: "user", text: "Cancel my seven o'clock alarm." }],
+    callTool: async (name) => {
+      ran.push(name);
+      return name === "alarm_list" ? { alarms: [{ id: "a7", time: "07:00" }] } : { ok: true };
+    },
+    usage,
+    onText: () => {},
+    repairClaims: true,
+  });
+  eq("a lookup, then the call that uses it", `${ran.join(",")} ${outcome.claim}`, "alarm_list,alarm_cancel repaired");
+  eq("which the alarm's id reaches", calls[2].inputs.messages.some((m: any) => m.role === "tool" && m.content.includes("a7")), true);
+}
+
+{
+  // Leaves nothing cooling. A repair that only looked something up changed nothing.
+  const { ai } = fakeAi([
+    () => sse([say("Done — your 7 AM alarm is off."), counts(100, 0, 8)]),
+    () => sse([toolCall("alarm_list", {}), counts(120, 100, 4)]),
+    () => sse([say("It's off."), counts(140, 120, 3)]),
+  ]);
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    tools: [...base.tools, spec("alarm_list"), spec("alarm_cancel")],
+    turns: [{ role: "user", text: "Cancel my seven o'clock alarm." }],
+    callTool: async () => ({ alarms: [] }),
+    usage,
+    onText: () => {},
+    repairClaims: true,
+  });
+  eq("a repair that only looked up is unrepaired", outcome.kind === "reply" && `${outcome.text} (${outcome.claim})`, "Done — your 7 AM alarm is off. (unrepaired)");
+}
+
+{
+  // Leaves nothing cooling. Lookups don't go on for ever: three rounds, then the claim stands.
+  const lookup = () => sse([toolCall("alarm_list", {}), counts(120, 100, 4)]);
+  const { ai, calls } = fakeAi([() => sse([say("Done — your 7 AM alarm is off."), counts(100, 0, 8)]), lookup, lookup, lookup, () => sse([toolCall("alarm_cancel", { id: "a7" })])]);
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    tools: [...base.tools, spec("alarm_list"), spec("alarm_cancel")],
+    turns: [{ role: "user", text: "Cancel my seven o'clock alarm." }],
+    callTool: async () => ({ alarms: [] }),
+    usage,
+    onText: () => {},
+    repairClaims: true,
+  });
+  eq("a repair stops after three rounds of lookups", `${calls.length} ${outcome.claim}`, "4 unrepaired");
+}
+
+{
+  // Leaves nothing cooling. A repair round that needs the phone pauses the turn, as any
+  // round would, and the resumed turn finishes the repair.
+  const pausedRepair = async (resumed: (() => ReadableStream<Uint8Array>)[]) => {
+    const { ai, calls } = fakeAi([
+      () => sse([say("Texting Danya now."), counts(100, 0, 5)]),
+      () => sse([toolCall("phone_contacts_search", { query: "Danya" }, "call_7"), counts(120, 100, 6)]),
+      ...resumed,
+    ]);
+    const ran: string[] = [];
+    const turn = {
+      ...base,
+      tools: [...base.tools, spec("phone_contacts_search"), spec("phone_message_compose")],
+      turns: [{ role: "user" as const, text: "Text Danya I'm on my way" }],
+      callTool: async (name: string) => {
+        ran.push(name);
+        return name === "phone_contacts_search" ? DEFER : { status: "waiting_for_user_approval" };
+      },
+      usage: { userId: "u1", purpose: "chat" },
+      onText: () => {},
+      repairClaims: true,
+    };
+    const first = await chatWithTools({ AI: ai }, turn);
+    // Stored as JSON between the two requests (index.ts paused_turns).
+    const state = first.kind === "paused" ? JSON.parse(JSON.stringify(first.state)) : null;
+    const id = first.kind === "paused" ? first.calls[0].id : "";
+    const heard: string[] = [];
+    const done = await chatWithTools(
+      { AI: ai },
+      { ...turn, onText: (d) => void heard.push(d), resume: { state, results: { [id]: { contacts: [{ name: "Danya", phone: "+1 555 010 0100" }] } } } },
+    );
+    return { first, state, done, ran: ran.join(","), heard: heard.join(""), requests: calls.length };
+  };
+  const compose = () => sse([toolCall("phone_message_compose", { to: "+1 555 010 0100", body: "I'm on my way" }, "call_8"), counts(140, 120, 9)]);
+
+  // As the nudge asked: nothing more to say once the text is waiting to be sent.
+  const quiet = await pausedRepair([compose, () => sse([counts(160, 140, 0)])]);
+  eq("a repair round's phone lookup pauses the turn", `${quiet.first.kind} ${quiet.first.claim}`, "paused pending");
+  eq("the pause carries the nudge on", quiet.state?.messages.some((m: any) => m.content === CLAIM_NUDGE), true);
+  eq("and the claim it is making true", quiet.state?.claim, { reply: "Texting Danya now." });
+  eq("the resumed turn sends the text", quiet.ran, "phone_contacts_search,phone_message_compose");
+  eq("a last round with no words ends on the claim, not an error", quiet.done.kind === "reply" && quiet.done.text, "Texting Danya now.");
+  eq("and the repair is done", `${quiet.done.claim} ${quiet.requests}`, "repaired 4");
+
+  const said = await pausedRepair([compose, () => sse([say("Tap Approve to send it."), counts(160, 140, 6)])]);
+  eq("words after the tool are the resumed turn's reply", said.done.kind === "reply" && `${said.done.text} / ${said.heard} (${said.done.claim})`, "Tap Approve to send it. / Tap Approve to send it. (repaired)");
+
+  const none = await pausedRepair([() => sse([say("I couldn't find Danya in your contacts."), counts(140, 120, 8)])]);
+  eq("a resumed repair that changes nothing is unrepaired", `${none.ran} ${none.done.claim}`, "phone_contacts_search unrepaired");
+}
+
+{
+  // No repair round: a tool ran, the reply claims nothing, or the caller didn't ask.
+  const run = async (first: ReturnType<typeof sse>[], text: string, repairClaims: boolean) => {
+    const { ai, calls } = fakeAi(first.map((s) => () => s));
+    const outcome = await chatWithTools({ AI: ai }, {
+      ...base,
+      tools: [...base.tools, spec("alarm_list")],
+      turns: [{ role: "user", text }],
+      callTool: async () => ({ alarms: [] }),
+      usage,
+      onText: () => {},
+      repairClaims,
+    });
+    return `${calls.length} ${outcome.claim}`;
+  };
+  eq("a question answered", await run([sse([say("It's 7:37."), counts(10, 0, 3)])], "What time is it?", true), "1 undefined");
+  eq(
+    "a question back",
+    await run([sse([say("Four this afternoon has already passed — did you mean 4 PM tomorrow?"), counts(10, 0, 9)])], "Remind me to call Mom at four this afternoon.", true),
+    "1 undefined",
+  );
+  eq(
+    "a turn that ran a tool, whatever it says",
+    await run([sse([toolCall("alarm_list", {}), counts(10, 0, 3)]), sse([say("Done — alarm set for 6:30."), counts(20, 10, 6)])], "Set an alarm for 6:30 tomorrow.", true),
+    "2 undefined",
+  );
+  eq("repairClaims not asked for", await run([sse([say("Noted — milk and eggs."), counts(10, 0, 5)])], "Add milk and eggs to my notes.", false), "1 undefined");
+}
+
+{
+  // Leaves nothing cooling. The same on Gemini, whose round is rebuilt as contents.
+  const bodies: any[] = [];
+  const answers = [
+    [{ candidates: [{ content: { role: "model", parts: [{ text: "Done — 6:30 alarm set." }] } }], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 6 } }],
+    [{ candidates: [{ content: { role: "model", parts: [{ functionCall: { name: "alarm_set", args: { time: "06:30" } } }] } }], usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 5 } }],
+  ];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return new Response(sse(answers.shift() ?? []), { status: 200 });
+  }) as typeof fetch;
+  const ran: string[] = [];
+  const outcome = await chatWithTools({ GEMINI_API_KEY: "g" }, {
+    ...base,
+    tools: [...base.tools, spec("alarm_set")],
+    turns: [{ role: "user", text: "Set an alarm for 6:30 tomorrow." }],
+    callTool: async (name) => {
+      ran.push(name);
+      return { ok: true };
+    },
+    usage: { userId: "u1", purpose: "chat" },
+    onText: () => {},
+    repairClaims: true,
+  });
+  eq("on Gemini: the claimed tool runs", `${ran.join(",")} ${outcome.engine} ${outcome.claim}`, "alarm_set gemini repaired");
+  const contents = bodies[1]?.contents ?? [];
+  eq("after its reply and the nudge", `${contents.at(-2)?.role}: ${contents.at(-2)?.parts[0].text} / ${contents.at(-1)?.parts[0].text === CLAIM_NUDGE}`, "model: Done — 6:30 alarm set. / true");
+  eq("two requests in all", bodies.length, 2);
+  globalThis.fetch = realFetch;
 }
 
 // ---------- A call called off ----------

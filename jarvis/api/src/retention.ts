@@ -4,6 +4,7 @@ import { validTimeZone } from "./google/assistant";
 import { KEEP_MS as DEVICE_LOG_KEEP_MS } from "./logs";
 import { recordError } from "./obs";
 import { settleStreak } from "./routines";
+import { sweepStaleSetup } from "./setup/turn";
 import type { Env } from "./types";
 
 // Retention (the v1 release, 2026-09-23). docs/retention.md is the table, in
@@ -191,10 +192,12 @@ export const RULES: Rule[] = [
   at("updated_at", "expectations"),
   at("checked_at", "commute_checks"),
   at("ts", "hr_samples"),
-  // A local date; the UTC date of the cutoff is within a day of it either way.
+  // Local dates; the UTC date of the cutoff is within a day of them either way.
   { name: "step_days", table: "step_days", where: "day < ?", args: (c) => [c.cutoffDay] },
-  // Detected from heart rate. The ones they logged by voice are 'manual'.
-  { name: "workouts.detected", table: "workouts", where: "source = 'detected' AND start_at < ?", args: (c) => [c.cutoff] },
+  // Apple Health's day numbers (healthdays.ts), kept only for accounts that agreed to AI.
+  { name: "health_days", table: "health_days", where: "day < ?", args: (c) => [c.cutoffDay] },
+  // Found in heart rate, or recorded by a watch (healthdays.ts). The ones they logged by voice are 'manual'.
+  { name: "workouts.detected", table: "workouts", where: "source IN ('detected', 'health') AND start_at < ?", args: (c) => [c.cutoff] },
   at("created_at", "safety_events"),
   // After routines.ts settleStreak has folded them into each routine's streak.
   at("due_at", "routine_events"),
@@ -239,6 +242,7 @@ export const TABLES = {
   messages: "delete",
   memories: "mixed",
   step_days: "delete",
+  health_days: "delete",
   emergency_contacts: "keep",
   safety_events: "delete",
   google_accounts: "keep",
@@ -447,6 +451,9 @@ export async function purgeExpired(env: Env, now = Date.now(), budgetMs = BUDGET
     // People with the rest of what was learned from conversations.
     if (rule.name === "name_candidates") await step("people", () => trimPeople(db, c));
   }
+  // A setup conversation nobody came back to (setup/state.ts): it can hold an
+  // emergency number and medication names. The profile row itself stays.
+  await step("profile.setup_state", () => sweepStaleSetup(db, c.cutoff));
   // A handful of rows at most, each with its own expiry.
   await step("email_auth", async () => (await db.batch(pruneEmailAuth(db, c.now))).reduce((n, r) => n + (r.meta.changes ?? 0), 0));
   await step("signin", async () => (await db.batch(pruneSignin(db, c.now))).reduce((n, r) => n + (r.meta.changes ?? 0), 0));

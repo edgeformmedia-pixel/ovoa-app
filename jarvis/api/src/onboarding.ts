@@ -7,6 +7,9 @@ import { AI_UNREACHABLE, generateText, isAiUnreachable, isModelRefused } from ".
 import { designApp, saveApp } from "./myapps";
 import { refusedResponse } from "./plans";
 import { createRoutine, parseClock, routinesChanged, type NewRoutine } from "./routines";
+// A cycle (setup/objectives.ts stores through saveProfile here), safe because
+// neither side uses the other before a request comes in.
+import { finishSetup, restartSetup, setupViewFor } from "./setup/turn";
 import { clockFromMinutes } from "./time";
 import type { Env, Vars } from "./types";
 
@@ -26,6 +29,13 @@ import type { Env, Vars } from "./types";
 // designs one of their own apps (myapps.ts designApp, the same as Apps → Create)
 // and it's kept for them; an eating goal turns on the Calorie add-on and its
 // tracking level instead (food.ts), which the phone adds to its menu.
+//
+// Since 2026-09-23 setup is a conversation the model leads (src/setup/, POST
+// /onboarding/turn in index.ts): no fixed questions, a list of objectives it
+// covers in its own words. The ten questions below stay only for builds up to
+// 67, which still ask them (GET /onboarding, /answer, /skip). /finish and
+// /restart serve both: they keep their old answers and add the new setup's
+// view, `setup`.
 
 export type Step = "name" | "nicknames" | "wake_sleep" | "work" | "meds" | "pets" | "gym" | "goals" | "routines" | "emergency";
 export const STEPS: Step[] = ["name", "nicknames", "wake_sleep", "work", "meds", "pets", "gym", "goals", "routines", "emergency"];
@@ -601,16 +611,31 @@ onboarding.post("/onboarding/skip", async (c) => {
   return c.json({ understood: null, next: await advance(c.env, c.var.userId, parsed.data.step) });
 });
 
-/** "Finish later": onboarding stops asking, and can be started again from Settings. */
+/** The AI-led setup where it stands, with no model call: what the setup screen opens on. */
+onboarding.get("/onboarding/state", async (c) => c.json({ setup: await setupViewFor(c.env, c.var.userId) }));
+
+/**
+ * Setup stops asking, and can be picked up again from Settings. `reason`:
+ * 'later' (the Later button, and builds up to 67, which send no body) or
+ * 'stopped' (they said to stop). What was said so far is stored, as a turn
+ * that finished setup would.
+ */
 onboarding.post("/onboarding/finish", async (c) => {
-  await saveProfile(c.env.DB, c.var.userId, { step: null, onboardedAt: Date.now() });
-  return c.json({ done: true });
+  const parsed = z.object({ reason: z.enum(["later", "stopped"]).optional() }).safeParse((await c.req.json().catch(() => null)) ?? {});
+  if (!parsed.success) return c.json({ error: "reason must be later or stopped" }, 400);
+  const setup = await finishSetup(c.env, c.executionCtx, c.var.userId, parsed.data.reason ?? "later");
+  return c.json({ done: true, setup });
 });
 
-/** From Settings: go through it again. Nothing already set up is removed. */
+/**
+ * From Settings: go through it again. Nothing already set up is removed. The
+ * old questions start again at the first (builds up to 67 read the step), and
+ * the AI-led setup starts over with what's stored filled in as "from before".
+ */
 onboarding.post("/onboarding/restart", async (c) => {
   await saveProfile(c.env.DB, c.var.userId, { step: STEPS[0], onboardedAt: null });
-  return c.json(await onboardingNext(c.env, c.var.userId));
+  const setup = await restartSetup(c.env, c.var.userId);
+  return c.json({ ...(await onboardingNext(c.env, c.var.userId)), setup });
 });
 
 onboarding.get("/profile", async (c) => c.json({ profile: await getProfile(c.env.DB, c.var.userId) }));

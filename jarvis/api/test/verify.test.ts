@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
-import { AI_CONSENT_VERSION, aiConsentFor, consentRoutes, forgetConsent, requireConsent } from "../src/consent";
+import { AI_CONSENT_LATEST, AI_CONSENT_VERSION, aiConsentFor, consentRoutes, forgetConsent, requireConsent } from "../src/consent";
 import type { Env, Vars } from "../src/types";
 import { emailVerifyRoutes, forgetVerified, mustVerifyNow, needsVerification, openWhileUnverified, requireVerified } from "../src/verify";
 
@@ -206,8 +206,8 @@ eq("new where no code could go: not held either", mustVerifyNow({ must_verify: 2
   eq("is written down", column("ai", "ai_consent_at") !== null, true);
   eq("and a turn goes through at once", (await call(BARE, "ai", "POST", "/chat", { message: "hi" })).status, 200);
   eq("and the voice", (await call(BARE, "ai", "POST", "/voice/speak", { text: "Hello" })).status, 200);
-  const newer = await call(BARE, "ai", "POST", "/me/consent", { version: AI_CONSENT_VERSION + 5 });
-  eq("a version past the server's is kept as the server's", (newer.json.aiConsent as { version: number }).version, AI_CONSENT_VERSION);
+  const newer = await call(BARE, "ai", "POST", "/me/consent", { version: AI_CONSENT_LATEST + 5 });
+  eq("a version past the server's is kept as the newest it knows", (newer.json.aiConsent as { version: number }).version, AI_CONSENT_LATEST);
   const back = await call(BARE, "ai", "DELETE", "/me/consent");
   eq("taking it back", (back.json.aiConsent as { given: boolean }).given, false);
   eq("stops turns at once on this isolate", (await call(BARE, "ai", "POST", "/chat", { message: "hi" })).status, 403);

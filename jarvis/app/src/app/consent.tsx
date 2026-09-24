@@ -34,7 +34,10 @@ const PARTS: Part[] = [
     icon: "chatbubbles-outline",
     tone: "violet",
     title: "Replies",
-    body: "What you say, and the data needed to answer it (health numbers, your calendar, emails you ask about), goes to Z.ai (GLM) to write replies, and to Google Gemini when GLM is down or for web searches.",
+    // Spoken replies and setup are written on Cloudflare first, typed ones on
+    // Z.ai first, with Gemini and the other GLM behind them (api/src/llm.ts,
+    // 2026-09-23): the same model, run by two companies.
+    body: "What you say, and the data needed to answer it (health numbers, your calendar, emails you ask about), goes to Cloudflare (Workers AI) and Z.ai, which both run GLM, the model that writes OVOA's replies, and to Google Gemini when one of them is down or for web searches.",
   },
   {
     icon: "volume-high-outline",
@@ -56,6 +59,8 @@ export default function Consent() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const agreed = !!user.aiConsent?.given;
+  /** Agreed to an older wording: asked again because where things go changed, not for the first time. */
+  const agreedBefore = !agreed && user.aiConsent?.version != null;
   const agreedOn = user.aiConsent?.at ? new Date(user.aiConsent.at).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }) : null;
 
   /**
@@ -119,7 +124,9 @@ export default function Consent() {
         <Text style={styles.lead}>
           {agreed
             ? `You agreed${agreedOn ? ` on ${agreedOn}` : ""}. This is where what you say goes.`
-            : "OVOA uses AI companies to answer you. Nothing goes to them until you agree. Here's what goes where."}
+            : agreedBefore
+              ? "Where things go has changed since you agreed: Cloudflare now writes spoken replies too. Nothing more goes to an AI company until you agree again."
+              : "OVOA uses AI companies to answer you. Nothing goes to them until you agree. Here's what goes where."}
         </Text>
         {PARTS.map((p) => (
           <View key={p.title} style={styles.row}>

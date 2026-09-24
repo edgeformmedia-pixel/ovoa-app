@@ -24,6 +24,11 @@ import type { ToolSpec } from "./llm";
  * used by a handful of them. This is the handful, wider than the spoken core
  * because a screen invites editing and looking back: the rest is a more_tools
  * away, and a request that plainly names one (see preload) gets it at once.
+ *
+ * Health isn't here (2026-09-23): the health_summary tool carries the heart
+ * guide with it (carriedGuides), a kilobyte on every typed turn, and "how did
+ * I sleep" names it anyway (SYNONYMS). phone_health_summary left with the
+ * lookup itself: the server has the numbers now (phone.ts).
  */
 export const TYPED_CORE = new Set([
   // The phone's own apps.
@@ -38,7 +43,6 @@ export const TYPED_CORE = new Set([
   "phone_email_compose",
   "phone_call",
   "phone_location",
-  "phone_health_summary",
   // Alarms and the server's own reminders.
   "alarm_set",
   "alarm_cancel",
@@ -123,13 +127,23 @@ const SYNONYMS: Record<string, string[]> = {
   task: ["todo", "tasks", "reminder"],
   tasks: ["todo", "reminder"],
   habit: ["routine"],
-  // Apple Health (phone_health_summary), which a spoken turn doesn't carry: without
-  // these, "how did I sleep" paid a more_tools round and then a phone pause.
+  // The Band's and Apple Health's numbers (health_summary, heart.ts), which
+  // neither core carries: without these, "how did I sleep" paid a more_tools
+  // round. It's answered from the server now, so a locked phone doesn't matter
+  // (2026-09-23).
   workout: ["exercise", "training", "health"],
   sleep: ["health"],
   slept: ["health"],
   heart: ["health"],
+  pulse: ["health", "heart"],
+  bpm: ["health", "heart"],
+  resting: ["health"],
+  hrv: ["health"],
+  oxygen: ["health"],
+  weight: ["health"],
+  weigh: ["health"],
   steps: ["health"],
+  walked: ["health"],
   spent: ["money", "spend"],
   paid: ["money", "paycheck"],
   bill: ["money", "bills"],

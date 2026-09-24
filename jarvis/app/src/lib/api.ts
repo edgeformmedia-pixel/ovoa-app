@@ -278,18 +278,181 @@ export type EngineStatus = {
   mine?: ServerSettings;
 };
 
-export type OnboardingStep = { done: false; step: string; index: number; total: number; question: string };
-/**
- * An answer, read. `addons`: add-ons setup turned on for them (Calorie, for an
- * eating goal), for the phone to add to its menu. `apps`: apps it made for
- * their goals, so the phone reads its list of apps again.
- */
-export type OnboardingAnswer = { understood: string | null; next: OnboardingNext; addons?: string[]; apps?: string[] };
-export type OnboardingNext = OnboardingStep | { done: true };
+// ---------- Setup (api/src/setup/, 2026-09-23) ----------
+//
+// Setup is a conversation the model leads: it covers a list of things in its
+// own words and in its own order, and the server keeps what it learned. The
+// phone gets where it is (SetupView) and nothing to count down with.
+
+/** What setup finds out, in the server's order (api/src/setup/objectives.ts OBJECTIVE_IDS). */
+export type SetupObjectiveId =
+  | "name"
+  | "day"
+  | "goals"
+  | "emergency_contact"
+  | "daily"
+  | "work"
+  | "workouts"
+  | "nicknames"
+  | "leaving"
+  | "focus"
+  | "about";
+/** How it ended: covered, they said stop, Later, or the most answers a setup takes. */
+export type SetupHow = "complete" | "stopped" | "later" | "budget";
+
+/** Where setup is (api/src/setup/state.ts viewOf): GET /onboarding/state, and every setup turn. */
+export type SetupView = {
+  /** Over (finished, put off, or done before): the app moves on. */
+  done: boolean;
+  /** Nothing said yet: pick a voice, then start. Otherwise pick up where it was. */
+  fresh: boolean;
+  /** 'restart': gone through again from Settings, with what's stored filled in as fromBefore. */
+  mode: "first" | "restart";
+  /** Their answers so far (a Skip counts). */
+  turns: number;
+  /** What OVOA's last reply asked about. */
+  asking: SetupObjectiveId[];
+  /** Every one, in order. `shown`: its value in a few words; 'low' is one the model is still checking. */
+  objectives: {
+    id: SetupObjectiveId;
+    label: string;
+    priority: "required" | "ask" | "optional";
+    status: "open" | "partial" | "low" | "filled" | "declined";
+    resolved: boolean;
+    shown?: string;
+    fromBefore?: boolean;
+  }[];
+  /** Add-ons it turned on, for the phone's menu: "calorie" for an eating goal. */
+  addons: string[];
+  /** An app made for each goal, in the background: 'making' until it's there. */
+  apps: { goal: string; status: "making" | "made" | "failed" | "full"; name?: string; id?: string }[];
+  /** `open`: the required ones still open when it ended. */
+  finished?: { at: number; how: SetupHow; open: SetupObjectiveId[] };
+};
+
+/** One setup turn, as its stream's done line gives it (api/src/index.ts POST /onboarding/turn). */
+export type SetupTurnResult = {
+  /** What OVOA said, already streamed a sentence at a time. */
+  reply: string;
+  setup: SetupView;
+  meta: {
+    ms: number;
+    turn: number;
+    engine?: string;
+    firstSentenceMs?: number | null;
+    /** The reply's update was read; false means the next turn asks the model for it again. */
+    parsed: boolean;
+    /** The objectives that update filled in. */
+    fillIds?: string[];
+    usage?: { microUsd: number };
+    tried?: string;
+    /** The same turnId came twice: the reply the server already gave, with no second model call. */
+    replayed?: boolean;
+    /** No AI engine answered: the reply says so, and nothing was kept. */
+    unreachable?: boolean;
+  };
+};
+
 export type Message = { id: string; role: "user" | "assistant"; content: string; created_at: number };
 export type Memory = { id: string; content: string; created_at: number };
 
 export type StepDay = { day: string; steps: number };
+
+// ---------- Health (api/src/healthdays.ts) ----------
+//
+// Heart rate lives in hr_samples (POST /hr), steps in step_days (PUT /steps);
+// everything else Apple Health knows about a day goes up as a HealthDayIn, one
+// per local day, overwritten by the phone. Times are ms since the epoch.
+
+/** A night, as health.ts sleepNight works it out. */
+export type SleepNight = {
+  /** Minutes asleep: every source's asleep time, overlaps counted once. */
+  asleepMin: number;
+  /** Minutes in bed, kept apart: an iPhone's Sleep schedule records only this, and it isn't sleep. */
+  inBedMin?: number;
+  /** Bedtime and wake time: the first start and last end of the asleep time (of in bed when there's none). */
+  start: number;
+  end: number;
+  /** Stage minutes, from the one source that records stages. */
+  stages?: { core?: number; deep?: number; rem?: number; awake?: number };
+  /** "Apple Watch", "iPhone", an app's name. Never a device's own name, which is its owner's. */
+  source: string;
+};
+
+/** A day's Apple Health numbers, as the phone sends them (PUT /health/days). Heart rate and steps travel separately. */
+export type HealthDayIn = {
+  day: string;
+  activeKcal?: number;
+  exerciseMin?: number;
+  standHours?: number;
+  /** Apple's own resting heart rate (a watch works it out). */
+  restingHr?: number;
+  hrvMs?: number;
+  spo2Pct?: number;
+  respRate?: number;
+  weightKg?: number;
+  sleep?: SleepNight;
+  /** What wrote the day's numbers, as sourceLabel says them. */
+  sources?: { heart?: string[]; sleep?: string[]; steps?: string[] };
+};
+
+/**
+ * A workout from Apple Health; the server keeps it in workouts as
+ * 'hk:<userId>:<uuid>', source 'health' (two accounts on one phone read the same Health).
+ */
+export type HealthWorkoutIn = {
+  uuid: string;
+  /** HealthKit's name for it: "running", "traditionalStrengthTraining". */
+  type: string;
+  start: number;
+  end: number;
+  kcal?: number;
+  distanceM?: number;
+  source: string;
+};
+
+/** Where resting heart rate came from: Apple's own figure, the Band overnight, or the Band's lowest readings. */
+export type RestingFrom = "apple" | "band_night" | "band_low";
+
+/** GET /health/days: a day as the server has it, the phone's numbers and the heart rate it keeps merged. */
+export type HealthDay = {
+  day: string;
+  steps: number | null;
+  restingBpm: number | null;
+  restingFrom: RestingFrom | null;
+  heartLow: number | null;
+  heartAvg: number | null;
+  heartHigh: number | null;
+  activeKcal: number | null;
+  exerciseMin: number | null;
+  standHours: number | null;
+  hrvMs: number | null;
+  spo2Pct: number | null;
+  respRate: number | null;
+  weightKg: number | null;
+  sleep: SleepNight | null;
+  workouts: { type: string; start: number; minutes: number; avgBpm?: number; from: string }[];
+  updatedAt: number | null;
+};
+
+/** GET /hr/day: one day of heart rate from the Band and Apple Health. */
+export type HeartDay = {
+  day: string;
+  latest: { ts: number; bpm: number; source: "band" | "health"; agoMin: number } | null;
+  restingBpm: number | null;
+  restingFrom: RestingFrom | null;
+  low: number | null;
+  avg: number | null;
+  high: number | null;
+  count: number;
+  /** Minutes at resting + 25 or more. */
+  raisedMin: number;
+  /** 5-minute medians, oldest first; in each five minutes, the source with more readings there (the watch's on a tie). */
+  points: { ts: number; bpm: number }[];
+  /** Readings from each source that day. */
+  sources: { band: number; health: number };
+};
+
 export type Contact = { id: string; name: string; phone: string };
 export type SafetyEvent = {
   id: string;
@@ -747,11 +910,11 @@ export async function request<T>(path: string, token: string | null, init: Reque
   return body as T;
 }
 
-type StreamLine =
+type StreamLine<R> =
   | { type: "sentence"; text: string }
   | { type: "voice"; on: boolean; engine?: string }
   | { type: "audio"; seq: number; text: string; mp3?: string; error?: string }
-  | ({ type: "done" } & ChatResponse)
+  | ({ type: "done" } & R)
   | { type: "error"; error: string };
 
 /**
@@ -793,16 +956,18 @@ export function dropReply(abort: AbortController, why: DropReason) {
 /**
  * A chat turn with the reply streamed: `onSentence` gets each sentence as soon as
  * the server has it (so it can be spoken while the rest is written), then this
- * resolves with the same response a plain request would.
+ * resolves with the same response a plain request would. `R` is that response:
+ * a chat turn's, or a setup turn's (SetupTurnResult), which come down the same
+ * stream (api/src/index.ts streamTurn).
  */
-async function streamedTurn(
+async function streamedTurn<R extends { meta?: unknown } = ChatResponse>(
   path: string,
   token: string,
   body: Record<string, unknown>,
   onSentence: (sentence: string) => void,
   signal?: AbortSignal,
   speech?: ServerSpeech,
-): Promise<ChatResponse> {
+): Promise<R> {
   const locked = lockedOnPhone("POST", path);
   if (locked) throw locked;
   if (speech) body = { ...body, speak: { voice: speech.voice } };
@@ -841,8 +1006,8 @@ async function streamedTurn(
     // A server without streaming answers plain JSON. The timing lines of a turn
     // are never folded into a repeat (devlog.ts NEVER_COLLAPSED says why).
     if (!res.headers.get("content-type")?.includes("ndjson") || !res.body) {
-      const json = (await res.json()) as ChatResponse;
-      devlog("res", `${res.status} POST ${path} · ${Date.now() - started} ms (not streamed)`, json, { collapse: false });
+      const json = (await res.json()) as R;
+      devlog("res", `${res.status} POST ${path} · ${Date.now() - started} ms (not streamed)`, json.meta ?? json, { collapse: false });
       return json;
     }
     const reader = res.body.getReader();
@@ -850,10 +1015,10 @@ async function streamedTurn(
     let buffer = "";
     let sentences = 0;
     let voiced = 0;
-    let final: ChatResponse | null = null;
+    let final: R | null = null;
     const handle = (line: string) => {
       if (!line.trim()) return;
-      const msg = JSON.parse(line) as StreamLine;
+      const msg = JSON.parse(line) as StreamLine<R>;
       if (msg.type === "sentence") {
         // The timing is the point of this line; the sentence is the reply itself,
         // and it used to ride up to device_logs with it whenever trace was on.
@@ -870,7 +1035,7 @@ async function streamedTurn(
         throw new ApiError(msg.error, 500);
       } else {
         const { type: _, ...rest } = msg;
-        final = rest as ChatResponse;
+        final = rest as unknown as R;
       }
     };
     while (true) {
@@ -887,7 +1052,8 @@ async function streamedTurn(
     }
     handle(buffer);
     if (!final) throw new Error("The reply was cut off");
-    const done = final as ChatResponse;
+    const done = final as R;
+    // The meta, not the reply, here and above: a setup turn's view holds what they told it (a contact's number).
     devlog("res", `200 POST ${path} · ${Date.now() - started} ms, ${sentences} sentences streamed`, done.meta ?? done, { collapse: false });
     return done;
   } catch (err) {
@@ -1107,6 +1273,21 @@ export const api = {
     request<{ stored: number }>("/hr", token, { method: "POST", body: JSON.stringify({ source, samples }) }),
   heartToday: (token: string) =>
     request<{ baseline: number; latest: { ts: number; bpm: number } | null; count: number }>("/hr/today", token),
+  /** Today, or `day` (YYYY-MM-DD, in their time zone). */
+  heartDay: (token: string, day?: string) => request<HeartDay>(`/hr/day${day ? `?day=${day}` : ""}`, token),
+  /**
+   * Apple Health's day numbers and workouts for `from`..`to`. Workouts from
+   * Health that start in that range and aren't in `workouts` are gone from
+   * Health, and the server drops them too. Without AI consent nothing is kept
+   * (they only serve the assistant): the answer says so.
+   */
+  putHealthDays: (token: string, body: { from: string; to: string; days: HealthDayIn[]; workouts: HealthWorkoutIn[] }) =>
+    request<{ stored: number; workouts?: number; skipped?: "no_ai_consent" }>("/health/days", token, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  /** The last `days` days, up to 14 (what the server keeps). */
+  healthDays: (token: string, days = 7) => request<{ days: HealthDay[] }>(`/health/days?days=${days}`, token),
 
   // ---------- Transcripts ----------
 
@@ -1127,18 +1308,34 @@ export const api = {
   todosSynced: (token: string, items: { id: string; externalId: string }[]) =>
     request("/todos/synced", token, { method: "POST", body: JSON.stringify({ items }) }),
 
-  // ---------- Onboarding ----------
+  // ---------- Setup ----------
 
-  onboarding: (token: string) => request<OnboardingNext>("/onboarding", token),
-  onboardingAnswer: (token: string, step: string, text: string) =>
-    request<OnboardingAnswer>("/onboarding/answer", token, {
+  /** Where setup is, with no model call. */
+  setupState: (token: string) => request<{ setup: SetupView }>("/onboarding/state", token),
+  /**
+   * One turn of setup, streamed like a spoken Talk turn (the same sentence,
+   * voice and audio lines): 'start' and 'resume' have OVOA speak first,
+   * 'answer' carries their words, 'skip' is the Skip button. `turnId` (8-64
+   * characters) is sent again by Try again: a turn the server already finished
+   * comes back as it was, with no second model call. The zone goes with every
+   * turn: setup can be a new account's first request, and a reminder made in it
+   * is scheduled in this zone.
+   */
+  setupTurn: (
+    token: string,
+    body: { turnId: string; action: "start" | "resume" | "answer" | "skip"; text?: string; typed?: boolean },
+    onSentence: (sentence: string) => void,
+    signal?: AbortSignal,
+    speech?: ServerSpeech,
+  ) => streamedTurn<SetupTurnResult>("/onboarding/turn", token, { ...body, timeZone: timeZone() }, onSentence, signal, speech),
+  /** Later: setup is put off, what was said so far is kept, and Settings offers to finish it. */
+  onboardingFinish: (token: string, reason?: "later" | "stopped") =>
+    request<{ done: true; setup?: SetupView }>("/onboarding/finish", token, {
       method: "POST",
-      body: JSON.stringify({ step, text }),
+      body: JSON.stringify(reason ? { reason } : {}),
     }),
-  onboardingSkip: (token: string, step: string) =>
-    request<{ understood: null; next: OnboardingNext }>("/onboarding/skip", token, { method: "POST", body: JSON.stringify({ step }) }),
-  onboardingFinish: (token: string) => request("/onboarding/finish", token, { method: "POST" }),
-  onboardingRestart: (token: string) => request<OnboardingNext>("/onboarding/restart", token, { method: "POST" }),
+  /** Settings → go through setup again: it starts from what's stored, and the app shows setup once /me says so. */
+  onboardingRestart: (token: string) => request<{ setup?: SetupView }>("/onboarding/restart", token, { method: "POST" }),
 
   // Apps people make (Apps → Create; api/src/myapps.ts).
   myApps: (token: string) => request<{ apps: MyApp[] }>("/apps", token),

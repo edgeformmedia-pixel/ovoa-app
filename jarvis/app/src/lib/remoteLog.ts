@@ -109,6 +109,15 @@ const MILESTONES: RegExp[] = [
   /^picked up \d+ log lines/,
   // One row per recording turned into words on the phone (onDeviceTranscribe.ts).
   /^on-device transcript after/,
+  // Apple Health's read status (healthSync.ts): written when what it says
+  // changes and once a launch, plus once per locked or not-asked spell. Without
+  // it only the warn lines went up, and device_logs couldn't tell a locked
+  // iPhone from no Watch data (2026-09-23). A few rows per phone a day.
+  /^health sync: /,
+  // The AI-led setup (app/onboarding.tsx): one row per turn (engine, first
+  // sentence ms, what it asks next) and one when it ends; ids and numbers only
+  // (2026-09-23).
+  /^setup: /,
 ];
 /** perf lines are the turn breakdowns (turnTimer.ts): one row per spoken turn. */
 const MILESTONE_KINDS = new Set<LogEntry["kind"]>(["perf"]);

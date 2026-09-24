@@ -103,6 +103,7 @@ export const ROUTE_TIERS: RouteRule[] = [
   // Logging food is a chat turn (base); the Calorie screen only reads and fixes it.
   { method: "*", path: /^\/food(\/settings|\/log\/[^/]+)?$/, tier: "free", why: "the Calorie screen: reading, fixing and its settings, no model" },
   { method: "*", path: /^\/(hr|hr\/today|workouts)(\/.*)?$/, tier: "free", why: "health: heart rate and workouts" },
+  { method: "*", path: /^\/health\/days$/, tier: "free", why: "health: the day's numbers from Apple Health, no model" },
   { method: "*", path: /^\/(steps|contacts|safety-events)(\/[^/]+)?$/, tier: "free", why: "health and safety" },
   { method: "GET", path: /^\/feed$/, tier: "free", why: "the day spine, built from rows, no model" },
   { method: "GET", path: /^\/profile$/, tier: "free", why: "reading your own profile" },

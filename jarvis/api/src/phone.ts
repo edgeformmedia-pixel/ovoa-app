@@ -32,7 +32,7 @@ type PhoneTool = ToolSpec & {
   required: string[];
   /** For actions: the first line of the approval card. Lookups have none. */
   title?: (a: Args) => string;
-  /** Needs a capability the app has to report (e.g. a development build for Health). */
+  /** Needs a capability the app has to report (e.g. location permission). */
   capability?: string;
   /** At least one of these must be set (edits with nothing to change are rejected). */
   anyOf?: string[];
@@ -247,15 +247,11 @@ const lookupTools: PhoneTool[] = [
     fields: { includeCompleted: "bool" },
     required: [],
   }),
-  tool({
-    name: "phone_health_summary",
-    description:
-      "Read Apple Health for the last few days: steps, heart rate (average, resting), sleep, active energy, and workouts.",
-    props: { days: int("How many days back, 1 to 14. Default 7.") },
-    fields: { days: "int" },
-    required: [],
-    capability: "health",
-  }),
+  // Apple Health isn't a lookup any more (2026-09-23). Asked with the phone
+  // locked, HealthKit refused ("Protected health data is inaccessible", /chat/
+  // resume at 2026-09-21 23:31:51), and it was never where the Band's heart
+  // rate is. health_summary (heart.ts) answers from the server instead. Build
+  // 67 still handles phone_health_summary; nothing offers it now.
   tool({
     name: "phone_location",
     description:
@@ -402,14 +398,6 @@ export function phonePrompt(caps: PhoneCaps, { voice = false, carries = () => tr
       : byName
         ? "To text or call someone, pass their name as you heard it straight to phone_message_compose or phone_call: the phone finds them in Contacts. Search with phone_contacts_search only when they ask about a contact (a number, an email, a birthday). Look an event or reminder up with phone_calendar_events or phone_reminders_list before changing it."
         : "Look things up with phone_contacts_search, phone_calendar_events, and phone_reminders_list before changing them or when you need a number or email. Pass phone numbers to phone_message_compose and phone_call when you have them.",
-    !caps.capabilities.includes("health")
-      ? "Apple Health isn't available in this version of the app. If asked about heart rate, sleep, or workouts, say it needs the installed OVOA app (a development build), not Expo Go."
-      : !carries("phone_health_summary")
-        ? ""
-        : voice
-          ? // The care section already says the medical line; out loud every sentence is prefill.
-            "Use phone_health_summary for questions about heart rate, sleep, workouts, or other Apple Health data."
-          : "Use phone_health_summary for questions about heart rate, sleep, workouts, or other Apple Health data. You are not a medical professional.",
     caps.lookups
       ? "Names the user says out loud are transcribed by sound, so they may be misspelled (\"Ty Eckard\" for \"Tigh Eckart\"). phone_contacts_search also returns contacts whose names sound alike, marked with a note; if one fits, treat it as the person they meant and use the contact's real spelling. If a search finds nobody, try again with just the first name or just the last name before saying you couldn't find them."
       : "",

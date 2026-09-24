@@ -17,8 +17,17 @@ import { useSyncExternalStore } from "react";
 // from GET /me every time the user is read; a needs_consent answer from the
 // server sets it too.
 
-/** The wording of app/consent.tsx. Bump it with the server's AI_CONSENT_VERSION when that screen changes. */
-export const CONSENT_VERSION = 1;
+/**
+ * The wording of app/consent.tsx. Bump it with the server's AI_CONSENT_VERSION
+ * when that screen changes. 2 (2026-09-23): it names Cloudflare (Workers AI),
+ * where spoken replies and setup are now written first, so everyone who agreed
+ * to 1 is asked once more. It ships with the server's 2. POST /me/consent
+ * keeps the lower of the two, so against a server still on 1 an agreement here
+ * is stored as 1 and asked for again once the server moves; and a server on 2
+ * leaves a build that shows 1 unable to agree at all (its needs_consent
+ * sentence says to update from TestFlight).
+ */
+export const CONSENT_VERSION = 2;
 
 /** What GET /me says (api/src/consent.ts consentView). Missing from servers from before consent. */
 export type AiConsent = { given: boolean; version: number | null; at: number | null; current: number };

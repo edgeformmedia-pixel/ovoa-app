@@ -81,8 +81,8 @@
       [
         "@kingstinct/react-native-healthkit",
         {
-          "NSHealthShareUsageDescription": "OVOA reads your steps, heart rate, sleep, and workouts to answer your questions about them.",
-          "NSHealthUpdateUsageDescription": "OVOA does not write to Apple Health. iOS requires this message because the Health library OVOA uses can save data.",
+          "NSHealthShareUsageDescription": "OVOA reads your steps, heart rate, sleep, activity, blood oxygen, breathing rate, weight and workouts to show them in Activity and answer your questions about them.",
+          "NSHealthUpdateUsageDescription": "OVOA saves the heart rate your OVOA Band measures to Apple Health, so it sits with the rest of your health data.",
           "background": true
         }
       ],

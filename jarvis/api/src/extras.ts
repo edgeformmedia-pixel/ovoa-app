@@ -175,6 +175,12 @@ async function scanBills(env: Env, userId: string, timeZone: string) {
 
 // ---------- F26 Readiness ----------
 
+/** Hours asleep in a health_days row's sleep_json, to a tenth. Time in bed isn't sleep, so it's never used. */
+function hoursAsleep(sleepJson: string | null | undefined) {
+  const min = sleepJson ? Number((JSON.parse(sleepJson) as { asleepMin?: number }).asleepMin) : 0;
+  return min > 0 ? Math.round(min / 6) / 10 : null;
+}
+
 /**
  * One line on how ready they are for today: last night's resting heart rate
  * against their usual, sleep, and yesterday's training. Null without data.
@@ -183,15 +189,31 @@ export async function readiness(env: Env, userId: string, timeZone: string) {
   const db = env.DB;
   const today = buckets(Date.now(), timeZone).day;
   const [from] = dayRange(today, timeZone);
-  const [baseline, night, sleep, trained] = await Promise.all([
+  const [baseline, night, synced, device, trained] = await Promise.all([
     baselineFor(db, userId, timeZone),
     db.prepare("SELECT bpm FROM hr_samples WHERE user_id = ? AND ts >= ? AND ts < ?").bind(userId, from, from + 6 * 3_600_000).all<{ bpm: number }>(),
-    db.prepare("SELECT sleep_hours FROM device_state WHERE user_id = ?").bind(userId).first<{ sleep_hours: number | null }>(),
+    // The newest day the phone synced. Today's row holds the night that ended this morning (healthdays.ts).
+    db
+      .prepare("SELECT day, sleep_json FROM health_days WHERE user_id = ? AND day <= ? ORDER BY day DESC LIMIT 1")
+      .bind(userId, today)
+      .first<{ day: string; sleep_json: string | null }>(),
+    db.prepare("SELECT sleep_hours, updated_at FROM device_state WHERE user_id = ?").bind(userId).first<{ sleep_hours: number | null; updated_at: number }>(),
     db
       .prepare("SELECT SUM(end_at - start_at) AS ms FROM workouts WHERE user_id = ? AND start_at >= ? AND start_at < ?")
       .bind(userId, from - 86_400_000, from)
       .first<{ ms: number | null }>(),
   ]);
+  // A phone that syncs Health days (healthSync.ts, with AI consent) is the only
+  // word on last night: today's row, and no sleep line without one or when it
+  // has no time asleep. device_state.sleep_hours is kept until a new value
+  // comes (capabilities.ts) and its updated_at moves with the five-minute
+  // heartbeat (app lib/device.ts), so trusting it whenever the phone "reported
+  // today" read the night before last as last night in a brief that fired
+  // before the phone was unlocked (review, 2026-09-23). Phones with no synced
+  // day kept (build 67, no AI consent) have only that value: it's skipped
+  // when the phone hasn't reported since midnight, and can still be a night
+  // old when it has.
+  const sleepHours = synced ? (synced.day === today ? hoursAsleep(synced.sleep_json) : null) : device && device.updated_at >= from ? device.sleep_hours : null;
   const parts: string[] = [];
   let score = 0;
   if (night.results.length >= 5) {
@@ -201,9 +223,9 @@ export async function readiness(env: Env, userId: string, timeZone: string) {
     parts.push(diff >= 5 ? `resting heart rate is up ${diff} on your usual` : diff <= -3 ? "resting heart rate is nicely low" : "resting heart rate is normal");
     score += diff >= 5 ? -2 : diff <= -3 ? 1 : 0;
   }
-  if (sleep?.sleep_hours) {
-    parts.push(`${sleep.sleep_hours} hours of sleep`);
-    score += sleep.sleep_hours < 6 ? -2 : sleep.sleep_hours >= 7.5 ? 1 : 0;
+  if (sleepHours) {
+    parts.push(`${sleepHours} hours of sleep`);
+    score += sleepHours < 6 ? -2 : sleepHours >= 7.5 ? 1 : 0;
   }
   const trainedMin = Math.round((trained?.ms ?? 0) / 60_000);
   if (trainedMin >= 45) {

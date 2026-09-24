@@ -85,6 +85,56 @@ fitness.post("/contacts", async (c) => {
   return c.json({ contact }, 201);
 });
 
+/**
+ * An emergency contact heard in setup (setup/objectives.ts), where a phone
+ * number arrives by voice and can be said twice, corrected, or sent again by a
+ * second turn racing the first. The number is checked as POST /contacts checks
+ * it, then stored as digits (with its +) so the same number said two ways is
+ * one contact: an existing row with the same digits is returned rather than
+ * added again, under the name given now (a misheard "Danya" corrected to
+ * "Tanya" is the same number, and the Safety tab should say Tanya, 2026-09-23
+ * review). `replace`: the contact this setup already added, updated in place
+ * when they correct its number, rather than a second one added beside it.
+ * The same MAX_CONTACTS as the Safety tab.
+ */
+export async function addEmergencyContact(
+  db: D1Database,
+  userId: string,
+  contact: { name: string; phone: string },
+  { replace }: { replace?: string } = {},
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const parsed = contactSchema.safeParse(contact);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid contact" };
+  const phone = parsed.data.phone.replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
+  const digits = phone.replace("+", "");
+  if (digits.length < 7 || digits.length > 15) return { ok: false, error: "Enter a valid phone number" };
+  const { results } = await db
+    .prepare("SELECT id, name, phone FROM emergency_contacts WHERE user_id = ?")
+    .bind(userId)
+    .all<{ id: string; name: string; phone: string }>();
+  const same = results.find((r) => r.phone.replace(/\D/g, "") === digits);
+  if (same) {
+    if (same.name !== parsed.data.name) {
+      await db.prepare("UPDATE emergency_contacts SET name = ? WHERE id = ? AND user_id = ?").bind(parsed.data.name, same.id, userId).run();
+    }
+    return { ok: true, id: same.id };
+  }
+  if (replace && results.some((r) => r.id === replace)) {
+    await db
+      .prepare("UPDATE emergency_contacts SET name = ?, phone = ? WHERE id = ? AND user_id = ?")
+      .bind(parsed.data.name, phone, replace, userId)
+      .run();
+    return { ok: true, id: replace };
+  }
+  if (results.length >= MAX_CONTACTS) return { ok: false, error: `You can add up to ${MAX_CONTACTS} contacts` };
+  const id = crypto.randomUUID();
+  await db
+    .prepare("INSERT INTO emergency_contacts (id, user_id, name, phone, created_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(id, userId, parsed.data.name, phone, Date.now())
+    .run();
+  return { ok: true, id };
+}
+
 fitness.delete("/contacts/:id", async (c) => {
   await c.env.DB
     .prepare("DELETE FROM emergency_contacts WHERE id = ? AND user_id = ?")

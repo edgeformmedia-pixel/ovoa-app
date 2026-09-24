@@ -253,8 +253,19 @@ run(
   U, new Date(OLD).toISOString().slice(0, 10), OLD, U, new Date(NEW).toISOString().slice(0, 10), NEW,
 );
 run(
+  "INSERT INTO health_days (user_id, day, updated_at) VALUES (?, ?, ?), (?, ?, ?)",
+  U, new Date(OLD).toISOString().slice(0, 10), OLD, U, new Date(NEW).toISOString().slice(0, 10), NEW,
+);
+run(
   "INSERT INTO workouts (id, user_id, start_at, end_at, kind, source, created_at) VALUES ('w_detected', ?, ?, ?, 'run', 'detected', ?), ('w_manual', ?, ?, ?, 'run', 'manual', ?)",
   U, OLD, OLD, OLD, U, OLD, OLD, OLD,
+);
+// A watch's run, from Apple Health (healthdays.ts).
+run("INSERT INTO workouts (id, user_id, start_at, end_at, kind, source, created_at) VALUES ('w_health', ?, ?, ?, 'running', 'health', ?)", U, OLD, OLD, OLD);
+// A setup started 20 days ago and never come back to (setup/state.ts), on the profile it had filled in.
+run(
+  "INSERT INTO profile (user_id, wake_time, setup_state, setup_rev, setup_apps, updated_at) VALUES (?, 420, ?, 3, '{}', ?)",
+  U, JSON.stringify({ v: 1, updatedAt: OLD, transcript: [{ role: "user", text: "my sister's number is 555 0100", at: OLD }] }), OLD,
 );
 run("INSERT INTO food_log (id, user_id, day, ts, name, key, kcal, source, created_at) VALUES ('f_old', ?, 'd', ?, 'x', 'x', 1, 'model', ?), ('f_new', ?, 'd', ?, 'x', 'x', 1, 'model', ?)", U, OLD, OLD, U, NEW, NEW);
 run("INSERT INTO food_catalog (user_id, key, name, kcal_100g, category, source, used_at) VALUES (?, 'old', 'x', 1, 'mixed', 'model', ?), (?, 'new', 'x', 1, 'mixed', 'model', ?)", U, OLD, U, NEW);
@@ -378,7 +389,9 @@ eq("one a note is waiting at stays", has("places", "pl_unnamed_note"), true);
 eq("old heart rate goes", count("SELECT COUNT(*) AS n FROM hr_samples WHERE ts = ?", OLD), 0);
 eq("new heart rate stays", count("SELECT COUNT(*) AS n FROM hr_samples WHERE ts = ?", NEW), 1);
 eq("old step days go, new stay", count("SELECT COUNT(*) AS n FROM step_days"), 1);
+eq("old health days go, new stay", count("SELECT COUNT(*) AS n FROM health_days"), 1);
 eq("a detected workout goes", has("workouts", "w_detected"), false);
+eq("a watch's workout goes", has("workouts", "w_health"), false);
 eq("one they logged stays", has("workouts", "w_manual"), true);
 eq("old food goes", has("food_log", "f_old"), false);
 eq("new food stays", has("food_log", "f_new"), true);
@@ -406,8 +419,22 @@ eq("a live one stays", has("sessions", "s_live", "token_hash"), true);
 eq("an expired email code goes", count("SELECT COUNT(*) AS n FROM email_codes"), 0);
 eq("the account and settings stay", count("SELECT COUNT(*) AS n FROM users") + count("SELECT COUNT(*) AS n FROM settings"), 2);
 
+// The setup nobody came back to.
+const setupRow = () =>
+  sqlite.prepare("SELECT wake_time, setup_state, setup_rev, setup_apps FROM profile WHERE user_id = ?").get(U) as {
+    wake_time: number;
+    setup_state: string | null;
+    setup_rev: number;
+    setup_apps: string | null;
+  };
+eq("a setup left 14 days goes, conversation and all", [setupRow().setup_state, setupRow().setup_apps], [null, null]);
+eq("its rev moves, so a turn still in flight can't write it back", setupRow().setup_rev, 4);
+eq("what it set up stays", setupRow().wake_time, 420);
+run("UPDATE profile SET setup_state = ? WHERE user_id = ?", JSON.stringify({ v: 1, updatedAt: NEW }), U);
+
 const again = await purgeExpired(env, now);
 eq("a second run deletes nothing more", Object.keys(again).filter((k) => k !== "routines.settled").join(), "");
+eq("a setup under way stays", setupRow().setup_state !== null, true);
 
 // ---------- The day summary, and reading it back ----------
 
@@ -425,7 +452,7 @@ eq("with the timeline and what they said", !!input?.includes('10:00 AM Vet call:
   // Food and nothing else: written without a model, with the day's number for someone who tracks.
   const day = addDays(today, -3);
   const at = atLocalTime(day, 12 * 60, TZ);
-  run("INSERT INTO profile (user_id, food_detail, updated_at) VALUES (?, 'normal', ?)", U, now);
+  run("UPDATE profile SET food_detail = 'normal', updated_at = ? WHERE user_id = ?", now, U);
   run(
     "INSERT INTO food_log (id, user_id, day, ts, name, key, kcal, protein_g, source, created_at) VALUES ('f_day', ?, ?, ?, 'Burrito', 'burrito', 900, 40, 'model', ?)",
     U, day, at, at,

@@ -4,7 +4,7 @@
 // 2026-09-23), and a line naming a tool the turn doesn't carry sent the model
 // to more_tools first.
 
-import { phonePrompt, type PhoneCaps } from "../src/phone";
+import { phonePrompt, phoneToolSpecs, type PhoneCaps } from "../src/phone";
 
 let fails = 0;
 function eq(label: string, got: unknown, want: unknown) {
@@ -15,7 +15,7 @@ function eq(label: string, got: unknown, want: unknown) {
 
 const guarded: PhoneCaps = { lookups: true, capabilities: ["location", "health"], autoSendTexts: true, recipientGuard: true };
 const build67: PhoneCaps = { lookups: true, capabilities: ["location", "health"], autoSendTexts: true };
-// What a spoken turn carries (toolbelt.ts SPOKEN_CORE): no Health, no location.
+// What a spoken turn carries (toolbelt.ts SPOKEN_CORE): no location.
 const spokenCore = (tool: string) => ["phone_message_compose", "phone_call", "phone_contacts_search", "phone_calendar_events", "phone_reminders_list"].includes(tool);
 
 const NAME_STRAIGHT = "straight to phone_message_compose or phone_call";
@@ -48,13 +48,23 @@ eq("'say it as sent' and 'pass the name straight' never meet", saysSentAndByName
 
 // ---------- Only tools the turn has ----------
 
-eq("Health isn't named when it isn't carried", spoken.includes("phone_health_summary"), false);
-const sleepy = phonePrompt(guarded, { voice: true, carries: (t) => spokenCore(t) || t === "phone_health_summary" });
-eq("but is once a request brings it in", sleepy.includes("phone_health_summary"), true);
-eq("out loud without the second medical line (the care section has it)", sleepy.includes("not a medical professional"), false);
-eq("typed keeps it", phonePrompt(guarded).includes("not a medical professional"), true);
 eq("out loud, where they are comes with the message", spoken.includes("square brackets") && !spoken.includes("phone_location gives"), true);
 eq("typed looks it up", phonePrompt(guarded).includes("phone_location gives their current position"), true);
+
+// ---------- Health is the server's now (2026-09-23) ----------
+
+// With the phone locked HealthKit refused, and the Band's heart rate was never
+// in it: health_summary (heart.ts) answers from the server instead.
+eq("build 67 reports Health, but isn't offered the phone lookup", phoneToolSpecs(build67).some((t) => t.name === "phone_health_summary"), false);
+eq("nor a guarded build", phoneToolSpecs(guarded).some((t) => t.name === "phone_health_summary"), false);
+eq("location is still offered where the build has it", phoneToolSpecs(guarded).some((t) => t.name === "phone_location"), true);
+const everyPrompt = [true, false].flatMap((voice) =>
+  [guarded, build67, { ...guarded, capabilities: [] }, { ...guarded, lookups: false, capabilities: [] }].map((caps) => phonePrompt(caps, { voice })),
+);
+eq("no prompt names the phone's Health lookup", everyPrompt.some((p) => p.includes("phone_health_summary")), false);
+// Web and Expo Go were told Health "needs the installed OVOA app", though the
+// server has the Band's readings for them too.
+eq("and none says Health needs another build", everyPrompt.some((p) => p.includes("Apple Health") || p.includes("development build")), false);
 
 console.log(fails ? `\n${fails} FAILED` : "\nall passed");
 process.exit(fails ? 1 : 0);

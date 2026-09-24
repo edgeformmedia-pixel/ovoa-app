@@ -102,7 +102,7 @@ export const ADDONS: Addon[] = [
     tone: "coral",
     href: "/activity" as Href,
     preinstalled: true,
-    keywords: "health steps heart rate bpm sleep fitness",
+    keywords: "health steps heart rate bpm sleep fitness pulse resting hrv oxygen weight",
   },
   {
     id: "record",

@@ -4,6 +4,14 @@
 #     npx wrangler dev --local --port 8787 --var DEBUG_KEY:localtest --var EMAIL_CODES_TO_LOG:1
 #     npm run smoke
 #
+# A worker on another port, with its own state folder (so it can run beside
+# someone else's), needs the same folder here for the section that writes
+# straight into its database, and the migrations applied to it first:
+#
+#     npx wrangler d1 migrations apply jarvis-db --local --persist-to .wrangler/w2
+#     npx wrangler dev --local --port 8797 --persist-to .wrangler/w2 --var DEBUG_KEY:localtest --var EMAIL_CODES_TO_LOG:1
+#     API=http://127.0.0.1:8797 PERSIST_TO=.wrangler/w2 npm run smoke
+#
 # EMAIL_CODES_TO_LOG marks the worker as local: with no Resend key, sign-up
 # codes go to its log, and /debug/email/code hands the test a live one. It is
 # never set on a deployed Worker (production has DEBUG_KEY too, so that can't
@@ -39,11 +47,12 @@ check() { # check <label> <got> <want>
 curl -s -m 3 "$API/" | grep -q jarvis-api || { echo "No worker on $API — start wrangler dev first."; exit 1; }
 
 # Proves a test account's address and agrees to AI, the two things the app's
-# first open does (verify.ts, consent.ts), so the sections below can use it.
+# first open does (verify.ts, consent.ts), so the sections below can use it. It
+# agrees to the wording the server wants now ($CV, read from /me at sign-up).
 ready() { # ready <token>
   local id; id=$(curl -s -H "authorization: Bearer $1" "$API/me" | j "d['user']['id']")
   curl -s -o /dev/null -X POST -H "x-debug-key: $DEBUG_KEY" -H 'content-type: application/json' "$API/debug/verify" -d "{\"userId\":\"$id\"}"
-  curl -s -o /dev/null -X POST -H "authorization: Bearer $1" -H 'content-type: application/json' "$API/me/consent" -d '{"version":1}'
+  curl -s -o /dev/null -X POST -H "authorization: Bearer $1" -H 'content-type: application/json' "$API/me/consent" -d "{\"version\":$CV}"
 }
 
 echo "── signup ─────────────────────────────────────────"
@@ -65,9 +74,12 @@ ME=$(curl -s "${A[@]}" "$API/me")
 check "/me works before the code" "$(echo "$ME" | j "d['user']['emailVerified']")" "False"
 check "and says nothing else will" "$(echo "$ME" | j "d['user']['mustVerify']")" "True"
 check "nor has it agreed to AI" "$(echo "$ME" | j "d['user']['aiConsent']['given']")" "False"
+# The wording that names Cloudflare (Workers AI), 2026-09-23.
+CV=$(echo "$ME" | j "d['user']['aiConsent']['current']")
+check "the server wants the second wording" "$CV" "2"
 check "anything else is 403" "$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" "$API/agent/jobs")" "403"
 check "keyed on needs_verification" "$(curl -s "${A[@]}" "$API/routines" | j "d['error']")" "needs_verification"
-check "agreeing to AI waits for the code too" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/me/consent" -d '{"version":1}')" "403"
+check "agreeing to AI waits for the code too" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/me/consent" -d "{\"version\":$CV}")" "403"
 AGAIN=$(curl -s -X POST "${A[@]}" "$API/me/email/code")
 check "another code straight away waits" "$(echo "$AGAIN" | j "0 < d['retryAfter'] <= 60")" "True"
 check "a live code needs the debug key" \
@@ -108,13 +120,17 @@ check "keyed on needs_consent" "$(curl -s -X POST "${A[@]}" "$API/chat" -d '{"me
 check "OVOA's voice too" "$(curl -s -X POST "${A[@]}" "$API/voice/speak" -d '{"text":"Hello there"}' | j "d['error']")" "needs_consent"
 check "and a model route that isn't a turn" "$(curl -s -X POST "${A[@]}" "$API/apps/design" -d '{"description":"A grocery helper for my list"}' | j "d['error']")" "needs_consent"
 check "Siri hears it as a sentence" "$(curl -s -X POST "${A[@]}" "$API/siri" -d '{"message":"hello"}' | head -c 20)" "Before I can answer,"
-AGREED=$(curl -s -X POST "${A[@]}" "$API/me/consent" -d '{"version":1}')
+check "a setup turn is 403" "$(curl -s -X POST "${A[@]}" "$API/onboarding/turn" -d '{"turnId":"smoke-consent-1","action":"start","stream":true}' | j "d['error']")" "needs_consent"
+check "an app still showing the first wording can agree until the bump" \
+  "$(curl -s -X POST "${A[@]}" "$API/me/consent" -d '{"version":1}' | j "(d['aiConsent']['given'], d['aiConsent']['version'])")" "(True, 1)"
+curl -s -o /dev/null -X DELETE "${A[@]}" "$API/me/consent"
+AGREED=$(curl -s -X POST "${A[@]}" "$API/me/consent" -d "{\"version\":$CV}")
 check "agreeing" "$(echo "$AGREED" | j "d['aiConsent']['given']")" "True"
 check "/me says so" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['aiConsent']['given']")" "True"
 check "a turn gets past it (and finds no engine here)" "$(curl -s -X POST "${A[@]}" "$API/chat" -d '{"message":"hello"}' | j "d.get('error')!='needs_consent'")" "True"
 check "taking it back" "$(curl -s -X DELETE "${A[@]}" "$API/me/consent" | j "d['aiConsent']['given']")" "False"
 check "stops turns again" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/chat" -d '{"message":"hello"}')" "403"
-curl -s -o /dev/null -X POST "${A[@]}" "$API/me/consent" -d '{"version":1}'
+curl -s -o /dev/null -X POST "${A[@]}" "$API/me/consent" -d "{\"version\":$CV}"
 
 echo
 echo "── defaults: everything off ───────────────────────"
@@ -316,6 +332,43 @@ check "finish later"           "$(curl -s -X POST "${A[@]}" "$API/onboarding/fin
 check "the other account is untouched" "$(curl -s -H "authorization: Bearer $OTHER" "$API/me" | j "d['user']['onboarded']")" "False"
 
 echo
+echo "── the AI-led setup ───────────────────────────────"
+# setup/ and POST /onboarding/turn (2026-09-23): no fixed questions, a list of
+# objectives the model covers in its own words. The conversation needs a model,
+# which a local worker hasn't got, so this is everything around it. The old
+# questions above stay while build 67 does.
+ST=$(curl -s "${A[@]}" "$API/onboarding/state")
+check "set up already, so the state says done" "$(echo "$ST" | j "d['setup']['done']")" "True"
+check "four things it must cover" "$(echo "$ST" | j "[o['id'] for o in d['setup']['objectives'] if o['priority']=='required']")" "['name', 'day', 'goals', 'emergency_contact']"
+check "medications are asked about, not required" "$(echo "$ST" | j "[o['priority'] for o in d['setup']['objectives'] if o['id']=='daily'][0]")" "ask"
+check "eleven in all" "$(echo "$ST" | j "len(d['setup']['objectives'])")" "11"
+check "an emergency contact from the Safety tab" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/contacts" -d '{"name":"Dana","phone":"+1 555 010 0199"}')" "201"
+RS=$(curl -s -X POST "${A[@]}" "$API/onboarding/restart")
+check "going through it again: the old questions start over" "$(echo "$RS" | j "d['step']")" "name"
+check "and the AI-led setup with them" "$(echo "$RS" | j "(d['setup']['done'], d['setup']['mode'], d['setup']['fresh'])")" "(False, 'restart', True)"
+check "what's stored is filled in from before" \
+  "$(echo "$RS" | j "[(o['status'], o.get('fromBefore')) for o in d['setup']['objectives'] if o['id']=='emergency_contact'][0]")" "('filled', True)"
+check "the account's name too" "$(echo "$RS" | j "[(o['shown'], o.get('fromBefore')) for o in d['setup']['objectives'] if o['id']=='name'][0]")" "('Smoke', True)"
+check "no longer onboarded" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['onboarded']")" "False"
+check "an answer needs its words" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/onboarding/turn" -d '{"turnId":"smoke-turn-0","action":"answer"}')" "400"
+check "and every turn an id" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/onboarding/turn" -d '{"action":"start"}')" "400"
+# No engine here: the turn says so in one plain sentence, streamed so the phone
+# speaks it, and saves nothing (setup/turn.ts).
+TURN=$(curl -s -m 60 -X POST "${A[@]}" "$API/onboarding/turn" -d '{"turnId":"smoke-turn-1","action":"start","stream":true,"timeZone":"America/New_York"}')
+check "no engine: one plain sentence, then done" \
+  "$(echo "$TURN" | python -c "import sys,json;ls=[json.loads(l) for l in sys.stdin if l.strip()];print([l['type'] for l in ls], \"can't reach the AI\" in ls[0].get('text',''))" 2>/dev/null)" "['sentence', 'done'] True"
+check "the done line says where setup stands" \
+  "$(echo "$TURN" | python -c "import sys,json;d=[json.loads(l) for l in sys.stdin if l.strip()][-1];print(d['setup']['done'], d['meta']['unreachable'], d['reply'][:5])" 2>/dev/null)" "False True Sorry"
+check "and nothing was said, as far as setup knows" "$(curl -s "${A[@]}" "$API/onboarding/state" | j "(d['setup']['turns'], d['setup']['fresh'])")" "(0, True)"
+check "not streamed, the same" "$(curl -s -m 60 -X POST "${A[@]}" "$API/onboarding/turn" -d '{"turnId":"smoke-turn-2","action":"answer","text":"Call me Sam"}' | j "(d['meta']['unreachable'], d['setup']['turns'])")" "(True, 0)"
+check "a bad reason to stop is refused" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/onboarding/finish" -d '{"reason":"bored"}')" "400"
+FIN=$(curl -s -X POST "${A[@]}" "$API/onboarding/finish" -d '{"reason":"later"}')
+check "later: done, and how" "$(echo "$FIN" | j "(d['done'], d['setup']['done'], d['setup']['finished']['how'])")" "(True, True, 'later')"
+check "and what it still had to cover" "$(echo "$FIN" | j "d['setup']['finished']['open']")" "['day', 'goals']"
+check "/me says onboarded" "$(curl -s "${A[@]}" "$API/me" | j "d['user']['onboarded']")" "True"
+check "a turn after that asks nothing" "$(curl -s -m 60 -X POST "${A[@]}" "$API/onboarding/turn" -d '{"turnId":"smoke-turn-3","action":"resume"}' | j "(d['reply'], d['setup']['done'])")" "('', True)"
+
+echo
 echo "── notes ──────────────────────────────────────────"
 check "a note is kept" "$(curl -s -X POST "${A[@]}" "$API/notes" -d '{"text":"Wi-Fi password is on the fridge","tags":["house"]}' -o /dev/null -w '%{http_code}')" "201"
 curl -s -o /dev/null -X POST "${A[@]}" "$API/notes" -d '{"text":"Buy a gift for Jake","tags":["todo"]}'
@@ -402,6 +455,23 @@ check "standing still, cardio"            "$(echo "$WK" | j "d['workouts'][0]['k
 check "average heart rate"                "$(echo "$WK" | j "d['workouts'][0]['avg_hr']")" "140"
 check "found once, not twice"             "$(curl -s -X POST "${A[@]}" "$API/hr" -d "$HR" >/dev/null; sleep 2; curl -s "${A[@]}" "$API/workouts" | j "len(d['workouts'])")" "1"
 check "impossible readings refused" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${A[@]}" "$API/hr" -d '{"source":"band","samples":[{"ts":1,"bpm":900}]}')" "400"
+
+echo
+echo "── a day of health ────────────────────────────────"
+# healthdays.ts: the Band's heart rate for a day, and Apple Health's numbers as
+# the phone sends them (kept only for accounts that agreed to AI).
+HDAY=$(node -e "process.stdout.write(new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(new Date($NOW-3*86400000)))")
+HR12=$(node -e "const t=Date.parse('${HDAY}T16:00:00Z');const s=[];for(let i=0;i<12;i++)s.push({ts:t+i*300000,bpm:60+i});process.stdout.write(JSON.stringify({source:'band',samples:s}))")
+check "twelve band readings" "$(curl -s -X POST "${A[@]}" "$API/hr" -d "$HR12" | j "d['stored']")" "12"
+HD=$(curl -s "${A[@]}" "$API/hr/day?day=$HDAY")
+check "that day's heart rate counts them" "$(echo "$HD" | j "d['count']")" "12"
+check "the latest is the band's" "$(echo "$HD" | j "d['latest']['source']")" "band"
+check "a day that isn't one is refused" "$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" "$API/hr/day?day=2026-13-45")" "400"
+HTODAY=$(node -e "process.stdout.write(new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(new Date($NOW)))")
+check "Apple Health's day stored" "$(curl -s -X PUT "${A[@]}" "$API/health/days" -d "{\"from\":\"$HTODAY\",\"to\":\"$HTODAY\",\"days\":[{\"day\":\"$HTODAY\",\"activeKcal\":300}],\"workouts\":[]}" | j "d['stored']")" "1"
+curl -s -o /dev/null -X PUT "${A[@]}" "$API/health/days" -d "{\"from\":\"$HTODAY\",\"to\":\"$HTODAY\",\"days\":[{\"day\":\"$HTODAY\",\"activeKcal\":420}],\"workouts\":[]}"
+check "sent again: the second wins" "$(curl -s "${A[@]}" "$API/health/days?days=1" | j "d['days'][0]['activeKcal']")" "420"
+check "not someone else's" "$(curl -s -H "authorization: Bearer $OTHER" "$API/health/days?days=1" | j "[x.get('activeKcal') for x in d['days']]")" "[None]"
 
 echo
 echo "── transcripts ────────────────────────────────────"
@@ -702,11 +772,16 @@ check "free: and its token the same" "$(code -X POST "${P[@]}" "$API/voice/token
 check "free: the brief is 402" "$(code "${P[@]}" "$API/brief")" "402"
 check "free: designing an app is 402" "$(code -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")" "402"
 check "free: the setup conversation is 402" "$(code -X POST "${P[@]}" "$API/onboarding/answer" -d '{"step":"name","text":"Sam"}')" "402"
+check "free: a setup turn is 402" "$(code -X POST "${P[@]}" "$API/onboarding/turn" -d '{"turnId":"smoke-free-1","action":"start"}')" "402"
+check "free: streamed too, before anything streams" "$(code -X POST "${P[@]}" "$API/onboarding/turn" -d '{"turnId":"smoke-free-2","action":"start","stream":true}')" "402"
 check "free: background work needs base" "$(curl -s -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"x","instruction":"y","kind":"once"}' | j "d['needs']")" "base"
 check "free: heart rate is 200" \
   "$(code -X POST "${P[@]}" "$API/hr" -d "{\"source\":\"band\",\"samples\":[{\"ts\":$(($(date +%s)*1000)),\"bpm\":61}]}")" "200"
 check "free: today's heart rate is 200" "$(code "${P[@]}" "$API/hr/today")" "200"
 check "free: steps are 200" "$(code "${P[@]}" "$API/steps")" "200"
+check "free: a day of heart rate is 200" "$(code "${P[@]}" "$API/hr/day")" "200"
+check "free: Apple Health's days are 200" "$(code "${P[@]}" "$API/health/days")" "200"
+check "free: sending them is 200" "$(code -X PUT "${P[@]}" "$API/health/days" -d "{\"from\":\"$HTODAY\",\"to\":\"$HTODAY\",\"days\":[{\"day\":\"$HTODAY\"}]}")" "200"
 check "free: a typed note is 201" "$(code -X POST "${P[@]}" "$API/notes" -d '{"text":"Wi-Fi password is on the fridge"}')" "201"
 check "free: a note the phone transcribed is 201" \
   "$(code -X POST "${P[@]}" "$API/notes" -d '{"text":"Call the dentist about the crown","source":"on_device"}')" "201"
@@ -760,6 +835,10 @@ check "the gate stops a model route that isn't a reply: 429" "$(code -X POST "${
 check "keyed on error" "$(echo "$REFUSED" | j "d['error']")" "allowance"
 check "before any engine is tried (not 'can't reach the AI')" "$(echo "$REFUSED" | j "d['message'].startswith(\"I've used up today's allowance\") and 'pick up again at' in d['message']")" "True"
 check "the setup conversation too" "$(code -X POST "${P[@]}" "$API/onboarding/answer" -d '{"step":"name","text":"Sam"}')" "429"
+# A streamed answer is a 200 before any model is asked: the route asks the gate first.
+check "and a setup turn, streamed, before anything streams" "$(code -X POST "${P[@]}" "$API/onboarding/turn" -d '{"turnId":"smoke-spent-1","action":"start","stream":true}')" "429"
+check "with the sentence to show" \
+  "$(curl -s -X POST "${P[@]}" "$API/onboarding/turn" -d '{"turnId":"smoke-spent-2","action":"start","stream":true}' | j "(d['error'], d['message'].startswith(\"I've used up today's allowance\"))")" "('allowance', True)"
 check "free routes don't care" "$(code "${P[@]}" "$API/routines")" "200"
 
 check "made pro" "$(setplan '"pro"')" "200"
@@ -832,7 +911,7 @@ if [ "${SKIP_D1:-}" = "1" ]; then
   echo "skipped (SKIP_D1=1)"
 else
   ROOT=$(cd "$(dirname "$0")/.." && pwd)
-  d1() { (cd "$ROOT" && npx wrangler d1 execute jarvis-db --local --json "$@" 2>/dev/null); }
+  d1() { (cd "$ROOT" && npx wrangler d1 execute jarvis-db --local ${PERSIST_TO:+--persist-to "$PERSIST_TO"} --json "$@" 2>/dev/null); }
   KEEP=$(curl -s -X POST "$API/auth/signup" -H 'content-type: application/json' \
     -d "{\"email\":\"keep$(date +%s)@example.com\",\"password\":\"password123\",\"name\":\"Keep\"}" | j "d['token']")
   ready "$KEEP"
@@ -883,6 +962,9 @@ due.forEach((t, i) => out.push(row("routine_events", "id, routine_id, user_id, d
 out.push(row("usage_daily", "user_id, day, kind, last_at", [id, new Date(now - 20 * DAY).toISOString().slice(0, 10), "turn", 0]));
 out.push(row("usage_daily", "user_id, day, kind, last_at", [id, new Date(now - 40 * DAY).toISOString().slice(0, 10), "turn", 0]));
 out.push(`INSERT OR IGNORE INTO profile (user_id, updated_at) VALUES (${q(id)}, ${now});`, `UPDATE profile SET food_detail = 'normal' WHERE user_id = ${q(id)};`);
+// A setup started 20 days ago and never come back to, and Apple Health's days from then and yesterday.
+out.push(`UPDATE profile SET setup_state = ${q(JSON.stringify({ v: 1, updatedAt: OLD }))} WHERE user_id = ${q(id)};`);
+for (const day of [oldDay, yesterday]) out.push(row("health_days", "user_id, day, active_kcal, updated_at", [id, day, 300, now]));
 out.push(row("food_log", "id, user_id, day, ts, name, key, kcal, source, created_at", ["k_f_old", id, oldDay, OLD, "Toast", "toast", 200, "model", OLD]));
 const lunch = atLocal(yesterday, 12 * 60);
 out.push(row("food_log", "id, user_id, day, ts, name, key, kcal, source, created_at", ["k_f_yesterday", id, yesterday, lunch, "Pasta", "pasta", 650, "model", lunch]));
@@ -911,6 +993,8 @@ SELECT
   (SELECT COUNT(*) FROM routine_events WHERE routine_id = 'k_rt') AS events,
   (SELECT COUNT(*) FROM usage_daily WHERE user_id = '$KID') AS usage,
   (SELECT group_concat(id) FROM (SELECT id FROM food_log WHERE id LIKE 'k_f_%' ORDER BY id)) AS food,
+  (SELECT group_concat(day) FROM health_days WHERE user_id = '$KID') AS health,
+  (SELECT setup_state IS NULL FROM profile WHERE user_id = '$KID') AS setup,
   (SELECT COUNT(*) FROM context_search WHERE context_search MATCH 'zebra') AS zebra,
   (SELECT COUNT(*) FROM context_search WHERE context_search MATCH 'violin') AS violin;
 SQL
@@ -926,6 +1010,8 @@ SQL
   check "routine events: only the last 14 days" "$(left events)" "$RECENT_EVENTS"
   check "usage: counts are kept 35 days" "$(left usage)" "1"
   check "food: 14 days" "$(left food)" "k_f_yesterday"
+  check "Apple Health's days: 14 days" "$(left health)" "$YESTERDAY"
+  check "a setup nobody came back to goes" "$(left setup)" "1"
   check "the search index lets go of what went" "$(left zebra)" "0"
   check "and still finds what stayed" "$(left violin)" "1"
   check "the streak survives its events" "$(curl -s "${K[@]}" "$API/routines" | j "d['routines'][0]['streak']")" "$STREAK"

@@ -108,6 +108,9 @@ eq("the Calorie screen is free (no model)", tierForRoute("GET", "/food"), "free"
 eq("fixing a food entry is free", tierForRoute("PATCH", "/food/log/f1"), "free");
 eq("and so is Calorie's level", tierForRoute("PUT", "/food/settings"), "free");
 eq("heart rate is free", tierForRoute("POST", "/hr"), "free");
+eq("a day of heart rate is free", tierForRoute("GET", "/hr/day"), "free");
+eq("sending Apple Health's days is free", tierForRoute("PUT", "/health/days"), "free");
+eq("and reading them back", tierForRoute("GET", "/health/days"), "free");
 eq("workouts are free", tierForRoute("GET", "/workouts"), "free");
 eq("steps are free", tierForRoute("PUT", "/steps"), "free");
 eq("emergency contacts are free", tierForRoute("POST", "/contacts"), "free");

@@ -18,7 +18,11 @@ export type Capabilities = {
   google: boolean;
   /** Apple Health is readable on the phone. */
   health: boolean;
-  /** Something writes heart rate to Health (a watch). The ES100 has no heart-rate sensor. */
+  /**
+   * Something besides OVOA writes heart rate to Health (a watch), so its
+   * readings reach the server. The Band measures heart rate too (verified
+   * 2026-09-21, build 51); its readings come straight from the phone.
+   */
   watchHr: boolean;
   locationAlways: boolean;
   /** Dev-only capture of everything, for the [AL] experiments. Never on for anyone else. */

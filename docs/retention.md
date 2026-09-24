@@ -67,7 +67,10 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 | users | keep | the account | |
 | sessions | expires | deleted once past `expires_at` | |
 | settings | keep | `context_retain_days` is ignored now (see below) | |
-| profile | keep | set up by the user; includes the food target and tracking level | |
+| profile | keep | set up by the user; includes the food target and tracking level | the AI-led setup's own columns (migration 0047), below |
+| profile.setup_state | delete | the setup conversation's state (`setup/state.ts`): what each objective holds, the last lines said. The lines are cleared when setup finishes; the whole value goes 14 d after its own `updatedAt` (`sweepStaleSetup`, a step of its own), since someone who starts and never comes back would otherwise keep an emergency number and medication names there | what setup stored (profile fields, routines, contacts, memories, apps) is in their own rows and stays |
+| profile.setup_rev | keep | a counter the setup's saves compare and swap on; the sweep moves it on, so a turn still in flight can't write the old state back | |
+| profile.setup_apps | delete | the apps being made for their goals (status and app id, no conversation); cleared with `setup_state` by the sweep, and on restart | the apps themselves are `user_apps` rows and stay |
 | emergency_contacts | keep | entered by the user | |
 | push_tokens | keep | the phone's registration | dropped by push.ts when Expo says the app is gone |
 | device_state | keep | one row per user, overwritten | |
@@ -108,7 +111,8 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 | commute_checks | delete | 14 d after `checked_at` | |
 | hr_samples | delete | 14 d after `ts` (was 30) | |
 | step_days | delete | `day` (local date) older than 14 days | |
-| workouts | mixed | `source = 'manual'` (logged by voice) kept; `detected` 14 d after `start_at` | |
+| health_days | delete | `day` (local date) older than 14 days: Apple Health's sleep, resting heart rate, HRV, active energy, exercise, stand, blood oxygen, breathing and weight, kept only for accounts that agreed to AI | |
+| workouts | mixed | `source = 'manual'` (logged by voice) kept; `detected` (found in heart rate) and `health` (recorded by a watch, from Apple Health) 14 d after `start_at` | |
 | safety_events | delete | 14 d after `created_at` | |
 | shortcuts | delete | written by the AI (signing is off): 14 d after `created_at` | |
 | money_settings, money_accounts, money_income, money_paychecks, money_spend, money_plans | keep | the money picture the user gave | |
@@ -153,7 +157,7 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 
 ## Genuinely unclear rows (defaulted to delete)
 
-- Workouts detected from heart rate (manual ones are kept).
+- Workouts detected from heart rate, and those a watch recorded (manual ones are kept).
 - Fall and SOS events (`safety_events`).
 - Bills and bill reminders found in mail (`money_bills` source `mail`, and their notes). A mail bill stays
   while its mail is current (14 days past the last due date the mail gave); found again next month, it is

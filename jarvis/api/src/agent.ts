@@ -4,6 +4,8 @@ import { agentBuzz, agentBuzzTool } from "./buzz";
 import { agentCommandsLastHour, enqueueCommand } from "./commands";
 import { contextAssistant, isContextTool } from "./context";
 import { googleAssistant, validTimeZone } from "./google/assistant";
+import { healthSummaryFor } from "./healthdays";
+import { healthSummaryTool } from "./heart";
 import { chatWithTools, isModelRefused, type CallTool, type ToolSpec } from "./llm";
 import { push } from "./push";
 import {
@@ -390,7 +392,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     agentBuzzTool,
     {
       name: "agent_run_command",
-      description: `Asks the phone to do something only the phone can: add or complete an Apple Reminder, look at or add to the phone's own calendar, read Apple Health. Write it as the user would say it ("add 'call the vet' to my reminders for 9am tomorrow"). It runs the next time the phone is reachable — maybe now, maybe when they next open the app — and can't send messages or delete anything. At most ${AGENT_COMMANDS_PER_HOUR} an hour.`,
+      description: `Asks the phone to do something only the phone can: add or complete an Apple Reminder, look at or add to the phone's own calendar. Write it as the user would say it ("add 'call the vet' to my reminders for 9am tomorrow"). It runs the next time the phone is reachable — maybe now, maybe when they next open the app — and can't send messages or delete anything. At most ${AGENT_COMMANDS_PER_HOUR} an hour.`,
       parameters: {
         type: "object",
         properties: {
@@ -531,13 +533,20 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     timeline.prompt,
     google.prompt,
     web.prompt,
+    // The chat has this in its care section; a note about their heart rate needs it as much.
+    "Their heart rate, sleep and activity are in health_summary; the phone isn't needed for them. You are not a medical professional: don't diagnose from them.",
   ]
     .filter(Boolean)
     .join("\n");
 
   // Outbound communication and deletion are removed rather than discouraged.
   const googleTools = google.tools.filter((t) => !FORBIDDEN_ALONE.has(t.name));
-  const tools = [...agentTools, ...timeline.tools, ...googleTools, ...web.tools];
+  // Their heart rate, sleep and activity, from the server's copy of the Band's
+  // readings and Apple Health, so it works with the phone locked in a pocket.
+  // Asking the phone for Health instead (agent_run_command) queued a turn that
+  // HealthKit refuses while locked (2026-09-23). Only the summary: the workout
+  // tools record what someone says a workout was, and nobody's talking.
+  const tools = [...agentTools, ...timeline.tools, ...googleTools, ...web.tools, healthSummaryTool];
   const used: string[] = [];
 
   const callTool: CallTool = (name, args) => {
@@ -550,6 +559,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     if (name.startsWith("agent_")) return agentCall(name, args);
     if (isContextTool(name)) return timeline.callTool(name, args);
     if (isWebTool(name)) return web.callTool(name, args);
+    if (name === healthSummaryTool.name) return healthSummaryFor(db, userId, timeZone, args);
     return google.callTool(name, args);
   };
 

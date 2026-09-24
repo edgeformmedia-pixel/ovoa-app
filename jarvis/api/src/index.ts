@@ -61,11 +61,13 @@ import { capabilities, deviceStateSchema, saveDeviceState } from "./capabilities
 import { commands, enqueueCommand, FORBIDDEN_FOR_COMMANDS } from "./commands";
 import { escalate, fireDueRoutines, isRoutineTool, routines, routinesAssistant } from "./routines";
 import { getProfile, isProfileTool, onboarding, profileAssistant, profilePrompt } from "./onboarding";
+import { setupTurn, setupTurnSchema, type SetupTurnResult } from "./setup/turn";
 import { fireDueNotes, isNoteTool, notes, notesAssistant } from "./notes";
 import { eveningTick, isTodoTool, todos, todosAssistant } from "./todos";
 import { feed } from "./feed";
 import { isLocationTool, lastKnownPlace, location, locationAssistant, locationNightly } from "./location";
 import { heart, heartAssistant, isHeartTool } from "./heart";
+import { healthDays } from "./healthdays";
 import { isPeopleTool, people, peopleAssistant } from "./people";
 import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "./rhythm";
 import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
@@ -123,7 +125,7 @@ import {
   type Engine,
   type EnginePrefs,
   type LlmUsage,
-  type ModelRefused,
+  ModelRefused,
 } from "./llm";
 import { glmPriceFrom, usd } from "./pricing";
 import { globalSettings, setServerSetting, settingsFor, type ServerSettings, type SettingKey } from "./settings";
@@ -146,6 +148,7 @@ import {
   isDevEmail,
   isTier,
   loadPlan,
+  modelGate,
   modelGateFor,
   planFor,
   planView,
@@ -1596,7 +1599,7 @@ async function runTurn(
     ["transcripts", guided(guides.transcripts)],
     ["command", fromAgent
       ? [
-          "This request was not typed by the user. Your own background agent queued it for the phone to run, because it needs something only the phone has (Reminders, the phone's calendar, Health).",
+          "This request was not typed by the user. Your own background agent queued it for the phone to run, because it needs something only the phone has (Reminders, the phone's calendar).",
           "Do what it asks with the tools you have and reply in one short line saying what you did. Nobody is waiting to answer a question, so don't ask one.",
           "You cannot send messages, email, make calls or delete anything in this turn; those tools are not available. If the request needs one, say it needs the user.",
         ].join(" ")
@@ -1742,6 +1745,12 @@ async function runTurn(
     resume,
     voice,
     onText,
+    // A person's own turn, typed or spoken, whose reply says something was done
+    // when no tool did it gets a round to do it (claims.ts: engine-bench caught
+    // "Noted — milk and eggs." with nothing saved, 2026-09-23). Not the agent's
+    // queued commands: their one-line report goes back to the command queue,
+    // not to someone who'd believe it.
+    repairClaims: !fromAgent,
   });
   // Written down whether the turn worked or not. A turn where every engine
   // failed is the one this table exists for, and recording only after a
@@ -1811,6 +1820,9 @@ async function runTurn(
     // Only when something is being skipped: a slow turn usually means a faster
     // engine is in cooldown, and from the phone there's no other way to see it.
     ...(cooling.length && { cooling }),
+    // Only when the reply claimed an action no tool took (repairClaims above):
+    // "repaired", "unrepaired", or "pending" on a paused turn, whose resume says which.
+    ...(outcome.claim && { claim: outcome.claim }),
   };
   say("turn", {
     rid: requestId,
@@ -1838,6 +1850,7 @@ async function runTurn(
     firstTool: firstRound?.firstToolMs,
     roundEnd: firstRound?.endMs,
     reasoningChars: firstRound?.reasoningChars || undefined,
+    claim: outcome.claim,
   });
   if (toolTimings.length) say("tools", { rid: requestId, ran: toolTimings.map((t) => `${t.name}:${t.ms}`).join(",") });
 
@@ -1897,13 +1910,6 @@ function turnResponse(result: TurnResult) {
 type Ignored = { ignored: true };
 
 /**
- * Runs a turn and answers with newline-delimited JSON as it goes:
- *   {"type":"sentence","text":"..."}  each sentence of the reply, as soon as it's written
- *   {"type":"done", ...the usual /chat response}
- *   {"type":"error","error":"..."}
- * so the phone can start speaking the first sentence while the rest is written.
- */
-/**
  * How long a streamed turn may produce nothing before the server writes it
  * down. Under the phone's own 60 s abort (app/src/lib/api.ts REQUEST_TIMEOUT_MS)
  * on purpose, so the stall is recorded here while the reason is still known,
@@ -1911,11 +1917,20 @@ type Ignored = { ignored: true };
  */
 const STALL_MS = 45_000;
 
-function streamTurn(
+/**
+ * Runs a turn and answers with newline-delimited JSON as it goes:
+ *   {"type":"sentence","text":"..."}  each sentence of the reply, as soon as it's written
+ *   {"type":"done", ...done(result)}   the usual response: /chat's (chatDone) or a setup turn's
+ *   {"type":"error","error":"..."}
+ * so the phone can start speaking the first sentence while the rest is written.
+ */
+function streamTurn<R>(
   c: Context<{ Bindings: Env; Variables: Vars }>,
-  run: (onSentence: (s: string) => void) => Promise<TurnResult | Ignored>,
+  run: (onSentence: (s: string) => void) => Promise<R>,
   /** Voice the reply here, in this voice, and stream the audio too (voice.ts speechStream). */
-  speak?: VoiceId,
+  speak: VoiceId | undefined,
+  /** The done line's body, from what `run` gave back. */
+  done: (result: R) => object,
 ) {
   // Which engine speaks for this person. "device" means the phone does, so no
   // audio is sent and the phone is told which engine to use instead.
@@ -1979,12 +1994,21 @@ function streamTurn(
           voicer?.say(text);
         });
         // Every piece of audio before "done": the phone stops reading at "done".
-        // Every piece of audio before "done": the phone stops reading at "done".
         // (voiceText already wrote each piece's usage as it was voiced.)
         if (voicer) await voicer.end();
-        await send("ignored" in result ? { type: "done", ...IGNORED } : { type: "done", ...turnResponse(result) });
+        await send({ type: "done", ...done(result) });
       } catch (err) {
         voicer?.stop();
+        // Refused by the gate once the answer had begun: a setup turn whose
+        // day's spend ran out, or whose consent was taken back, after the
+        // route's own check (a person's /chat turn answers its refusals itself,
+        // refusedReply). The rule working, not a fault: said in the sentence a
+        // 402/403/429 would have carried, and not recorded as an error.
+        if (isModelRefused(err)) {
+          say("plan", { outcome: "turn refused", why: err.reason });
+          await send({ type: "error", error: await refusalSentence(c, err) });
+          return;
+        }
         // This catch is why no 5xx ever reached the phone: the Response went out
         // as a 200 before any of this ran, so app.onError never sees it. The
         // record has to be written here or it is written nowhere.
@@ -2033,6 +2057,9 @@ function streamTurn(
 
 const IGNORED = { messages: [], pendingActions: [], ignored: true };
 
+/** A /chat turn's answer: the usual response, or IGNORED for an overheard line that wasn't for OVOA. */
+const chatDone = (result: TurnResult | Ignored) => ("ignored" in result ? IGNORED : turnResponse(result));
+
 authed.post("/chat", async (c) => {
   const parsed = chatSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Message is required" }, 400);
@@ -2044,10 +2071,10 @@ authed.post("/chat", async (c) => {
       c,
       (onSentence) => chatTurn(c.env, c.executionCtx, c.var.userId, data, tier, onSentence, rid),
       data.voice ? data.speak?.voice : undefined,
+      chatDone,
     );
   }
-  const result = await chatTurn(c.env, c.executionCtx, c.var.userId, data, tier, undefined, rid);
-  return c.json("ignored" in result ? IGNORED : turnResponse(result));
+  return c.json(chatDone(await chatTurn(c.env, c.executionCtx, c.var.userId, data, tier, undefined, rid)));
 });
 
 async function chatTurn(
@@ -2216,6 +2243,15 @@ function refusedReply(err: ModelRefused, tier: Tier, timeZone: string, onSentenc
   return plainReply(refusalMessage(err.reason, tier, Date.now(), timeZone), onSentence);
 }
 
+/** The same sentence, for a streamed turn that has no time zone of its own: the day's reset in the one stored for them. */
+async function refusalSentence(c: Context<{ Bindings: Env; Variables: Vars }>, err: ModelRefused) {
+  const row = await c.env.DB.prepare("SELECT time_zone FROM settings WHERE user_id = ?")
+    .bind(c.var.userId)
+    .first<{ time_zone: string | null }>()
+    .catch(() => null);
+  return refusalMessage(err.reason, c.var.plan?.tier ?? "base", Date.now(), validTimeZone(row?.time_zone));
+}
+
 /**
  * A reply that no model wrote: one sentence, streamed like any other so the
  * phone speaks it, saved nowhere (there was no conversation).
@@ -2287,8 +2323,37 @@ authed.post("/chat/resume", async (c) => {
       if (!isAiUnreachable(err)) throw err;
       return unreachableReply(c.env, c.executionCtx, err, "/chat/resume", { requestId: c.var.requestId, userId, started }, onSentence);
     });
-  if (parsed.data.stream) return streamTurn(c, run, caps.voice ? parsed.data.speak?.voice : undefined);
+  if (parsed.data.stream) return streamTurn(c, run, caps.voice ? parsed.data.speak?.voice : undefined, turnResponse);
   return c.json(turnResponse(await run()));
+});
+
+// ---------- Setup ----------
+
+/** A setup turn's answer: what OVOA said, where setup stands (setup/state.ts SetupView), and the turn's timings. */
+const setupDone = (r: SetupTurnResult) => ({ reply: r.reply, setup: r.view, meta: r.meta });
+
+/**
+ * One turn of the AI-led setup (setup/turn.ts), streamed the way a spoken
+ * /chat turn is: each sentence as it's written, voiced here when `speak` is
+ * sent, then {reply, setup, meta}. The gate is asked before anything streams:
+ * a streamed answer is a 200 before any model is asked, so a spent day found
+ * inside it could only be an error line, not the 429 the app already handles,
+ * and it would be voiced by Deepgram on the way. A free plan never gets here
+ * (requirePlan), nor anyone who hasn't agreed to AI (requireConsent). No turn
+ * row: setup doesn't use the day's replies (the user's call, 2026-09-23), and
+ * setupTurn writes its own engine attempts.
+ */
+authed.post("/onboarding/turn", async (c) => {
+  const parsed = setupTurnSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, 400);
+  const d = parsed.data;
+  const userId = c.var.userId;
+  const refusal = await modelGate(c.env, { userId, purpose: "onboarding" });
+  if (refusal) return refusedResponse(c, new ModelRefused(refusal, "onboarding"));
+  const run = (onSentence?: (s: string) => void) => setupTurn(c.env, c.executionCtx, userId, d, onSentence, c.var.requestId);
+  if (d.stream) return streamTurn(c, run, d.speak?.voice, setupDone);
+  // A refusal that races past the check above is answered by app.onError (refusedResponse).
+  return c.json(setupDone(await run()));
 });
 
 // ---------- Siri ----------
@@ -3177,6 +3242,7 @@ authed.route("/", foodRoutes);
 authed.route("/", feed);
 authed.route("/", location);
 authed.route("/", heart);
+authed.route("/", healthDays);
 authed.route("/", transcripts);
 authed.route("/", people);
 authed.route("/", alarms);

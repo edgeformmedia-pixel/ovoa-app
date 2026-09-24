@@ -17,7 +17,8 @@ import { LockedLine } from "../../components/Plan";
 import { SiriSetup } from "../../components/SiriSetup";
 import { VoicePicker } from "../../components/VoicePicker";
 import { Btn, GroupLabel, Screen, Toggle, TopBar } from "../../components/ui";
-import { api, type Autonomy, type Memory } from "../../lib/api";
+import { api, type Autonomy, type Memory, type SetupView } from "../../lib/api";
+import { setupAgain } from "../../lib/setupScreen";
 import { disableTimeline, enableTimeline, timelinePref } from "../../lib/location";
 import { useAgent } from "../../lib/agent";
 import { useAssistant } from "../../lib/assistant";
@@ -38,6 +39,7 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [memoriesOpen, setMemoriesOpen] = useState(false);
+  const [setup, setSetup] = useState<SetupView | null>(null);
   const [autoSendTexts, setAutoSendTexts] = useState(false);
   const { listenMode, setListenMode, micSource, setMicSource, alwaysListen, setAlwaysListen } = useAssistant();
   const { pushProblem } = useAgent();
@@ -86,6 +88,15 @@ export default function Settings() {
     if (free) return;
     api.memories(token).then((r) => setMemories(r.memories)).catch(() => setMemories([]));
   }, [token, free]);
+
+  // How setup ended, for Your day's button: one they stopped is finished, not
+  // gone through again. No model call; before consent it isn't asked (the
+  // phone stops every /onboarding request then, lib/api.ts lockedOnPhone).
+  useEffect(() => {
+    if (free || needsConsent) return;
+    api.setupState(token).then((r) => setSetup(r.setup)).catch(logFail("settings: api.setupState"));
+  }, [token, free, needsConsent]);
+  const again = setupAgain(setup);
 
   if (!user) return null; // signing out
 
@@ -350,12 +361,9 @@ export default function Settings() {
       <Section title="Your day">
         <LocationTimeline />
         <Button label="Transcripts — everything said" onPress={() => router.push("/transcripts" as Href)} />
-        <About>
-          Wake and bed times, work hours, medications and routines. Going through setup again adds to what's there; it
-          doesn't remove anything.
-        </About>
+        <About>{again.about}</About>
         <Button
-          label="Go through setup again"
+          label={again.label}
           onPress={async () => {
             try {
               await api.onboardingRestart(token);

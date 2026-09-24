@@ -6,8 +6,11 @@
 // the model either gives up or guesses, and both are worse than the slow prompt
 // we started with. So these check the words a person would really say.
 
-import { namedTools, pickTools, SPOKEN_CORE, toolbelt, TYPED_CORE } from "../src/toolbelt";
+import { heartAssistant } from "../src/heart";
 import type { ToolSpec } from "../src/llm";
+import { phoneToolSpecs, type PhoneCaps } from "../src/phone";
+import { namedTools, pickTools, SPOKEN_CORE, toolbelt, TYPED_CORE } from "../src/toolbelt";
+import type { Env } from "../src/types";
 
 let fails = 0;
 function eq(label: string, got: unknown, want: unknown) {
@@ -132,12 +135,42 @@ eq("a request that names nothing preloads nothing", toolbelt(typedAll, TYPED_COR
 
 // ---------- Spoken detours (2026-09-23) ----------
 
-// Apple Health isn't in the spoken core: "how did I sleep" used to pay a
-// more_tools round before the phone was even asked.
-const withHealth = [...named, t("phone_health_summary", "Apple Health for the last few days: steps, heart rate, sleep, workouts.")];
-eq("'how did I sleep' names Apple Health", has(namedTools(withHealth, "how did I sleep last night"), "phone_health_summary"), true);
-eq("'what's my heart rate' too", has(namedTools(withHealth, "what's my heart rate been"), "phone_health_summary"), true);
-eq("and 'how many steps today'", has(namedTools(withHealth, "how many steps today"), "phone_health_summary"), true);
+// Health is answered from the server (health_summary, heart.ts), and it's in
+// neither core: its guide would ride on every turn. The words of the request
+// bring it, so "how did I sleep" pays no more_tools round.
+const withHealth = [...named, t("health_summary", "Their health numbers from the OVOA Band and Apple Health.")];
+for (const asked of [
+  "how did I sleep last night",
+  "what's my resting heart rate this week",
+  "what's my pulse",
+  "how much do I weigh",
+  "what's my heart rate been",
+  "how many steps today",
+  "how far have I walked",
+  "what was my hrv",
+  "what's my blood oxygen",
+]) {
+  eq(`'${asked}' names health_summary`, has(namedTools(withHealth, asked), "health_summary"), true);
+}
+eq("'text mom I'm late' doesn't", has(namedTools(withHealth, "text mom I'm late"), "health_summary"), false);
+eq("neither core carries it", TYPED_CORE.has("health_summary") || SPOKEN_CORE.has("health_summary"), false);
+eq("the typed core has no phone Health lookup", TYPED_CORE.has("phone_health_summary"), false);
+const heartGuide = { tools: withHealth.filter((x) => x.name === "health_summary" || x.name.startsWith("workout_")), prompt: "HEART GUIDE" };
+const asleep = toolbelt(withHealth, SPOKEN_CORE, [heartGuide]);
+eq("a spoken turn doesn't carry the heart guide", asleep.carriedGuides.includes(heartGuide), false);
+eq("until 'how did I sleep' preloads the tool", asleep.preload("how did I sleep last night").includes("health_summary"), true);
+eq("and its guide with it", asleep.carriedGuides.includes(heartGuide), true);
+
+// The real catalogue: what a build that reports Health is offered, and the
+// server's heart tools. Build 67 still says it has Health; the phone lookup
+// isn't offered to it any more, so nothing competes with the server's answer.
+const build67: PhoneCaps = { lookups: true, capabilities: ["location", "health"], autoSendTexts: true };
+const real = [...phoneToolSpecs(build67), ...heartAssistant({} as Env, "u", "UTC").tools];
+eq("the server's heart tools include health_summary", has(real, "health_summary"), true);
+eq("and no phone Health lookup is offered", has(real, "phone_health_summary"), false);
+for (const asked of ["how did I sleep last night", "what's my pulse", "how many steps today"]) {
+  eq(`against it, '${asked}' still names health_summary`, has(namedTools(real, asked), "health_summary"), true);
+}
 
 // Ties go to the tools whose instructions the prompt already has: a tool that
 // needs an id from a list the model hasn't read is the worst of three equals.

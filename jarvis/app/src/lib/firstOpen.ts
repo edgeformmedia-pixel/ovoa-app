@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
+import { CONSENT_VERSION } from "./consent";
 import { logFail } from "./devlog";
 import { onSignOut } from "./signOut";
 import { storage } from "./storage";
@@ -16,8 +17,9 @@ import { storage } from "./storage";
 //     it's done, so quitting the app half-way doesn't skip it;
 //   - who said "Not now" to the code screen: only an account from before codes,
 //     which the server doesn't hold (a new one can't skip it);
-//   - who said "Not now" to the consent screen: AI then shows "Agree to use AI",
-//     and setup waits until they do.
+//   - who said "Not now" to the consent screen, and to which wording: AI then
+//     shows "Agree to use AI", and setup waits until they do. A new wording
+//     (lib/consent.ts CONSENT_VERSION) is put in front of them once more.
 // All of it goes when someone signs out: the next person gets their own.
 
 const PERMISSIONS_KEY = "ovoa.firstOpen.permissions";
@@ -31,7 +33,7 @@ type State = {
   permissions: boolean;
   /** The user id that put the code off. */
   codeLater: string | null;
-  /** The user id that put consent off. */
+  /** Who put consent off, and which wording (consentLaterKey). */
   consentLater: string | null;
 };
 
@@ -53,6 +55,13 @@ function load() {
   return loading;
 }
 
+/**
+ * What consentLater holds for this person and the wording shown now. Keyed by
+ * the user id alone, "Not now" to version 1 also hid version 2, which names
+ * Cloudflare (2026-09-23).
+ */
+export const consentLaterKey = (userId: string) => `${userId}:${CONSENT_VERSION}`;
+
 const keep = (key: string, value: string | null) =>
   (value === null ? storage.remove(key) : storage.set(key, value)).catch(logFail(`firstOpen: saving ${key}`));
 
@@ -73,8 +82,8 @@ export const firstOpen = {
   },
   /** They chose "Not now" on the consent screen: it isn't put in front of them again by itself. */
   consentLater: (userId: string) => {
-    set({ consentLater: userId });
-    void keep(CONSENT_LATER_KEY, userId);
+    set({ consentLater: consentLaterKey(userId) });
+    void keep(CONSENT_LATER_KEY, consentLaterKey(userId));
   },
 };
 

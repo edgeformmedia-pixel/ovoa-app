@@ -5,7 +5,7 @@ import { AppState, Platform } from "react-native";
 import { api, serverOut } from "./api";
 import * as clip from "./clip";
 import { devlog } from "./devlog";
-import { healthAvailable, todayHealth } from "./health";
+import { healthStatus, onHealthStatus } from "./healthSync";
 
 // Telling the server what this phone has.
 //
@@ -31,30 +31,45 @@ async function locationLevel(): Promise<"none" | "when_in_use" | "always"> {
   }
 }
 
-let sleepRead = { at: 0, hours: undefined as number | undefined };
-
-/** Read from Health at most once an hour: the heartbeat is every five minutes, and sleep doesn't change that fast. */
-async function lastNightSleep() {
-  if (!healthAvailable) return undefined;
-  if (Date.now() - sleepRead.at > 3_600_000) {
-    sleepRead = { at: Date.now(), hours: (await todayHealth().catch(() => null))?.sleepHours ?? undefined };
-  }
-  return sleepRead.hours;
+/**
+ * What Apple Health comes to, from the last sync (healthSync.ts): readable,
+ * something besides OVOA writing heart rate to it (a watch), and last night's
+ * sleep. "health" was "the app isn't Expo Go" until 2026-09-23, so the server
+ * was told every installed phone could read Health, whether or not reading was
+ * allowed or anything was there.
+ */
+function healthFacts() {
+  const s = healthStatus();
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  // For the morning's readiness line, for accounts whose days don't reach the
+  // server (no AI consent: extras.ts readiness reads health_days first). The
+  // server keeps the last value sent (capabilities.ts COALESCE) and the
+  // five-minute heartbeat makes it look fresh, so an old night must be
+  // overwritten, not left out: 0 when the last sync found no night or ran
+  // before midnight, which readiness skips (review, 2026-09-23). Left out only
+  // when Health can't be read at all.
+  const fresh = s.lastSyncAt !== null && s.lastSyncAt >= midnight.getTime();
+  const sleepHours = s.reads !== "ok" ? undefined : fresh && s.lastNightSleepMin ? Math.round(s.lastNightSleepMin / 6) / 10 : 0;
+  return { health: s.reads === "ok", watchHr: s.heartSources.length > 0, sleepHours };
 }
+
+/** The Health facts last reported, so a sync that changes none of them doesn't send a report. */
+let reportedHealth = "";
 
 export async function reportDeviceState(token: string) {
   try {
     const notifications = (await Notifications.getPermissionsAsync().catch(() => null))?.status;
+    const health = healthFacts();
     await api.reportDevice(token, {
       bandLinked: clip.isLinked(),
       notifications: notifications === "granted" || notifications === "denied" ? notifications : "undetermined",
-      health: healthAvailable,
       location: await locationLevel(),
       buzzOption: clip.getBuzzOption(),
       build,
-      // Last night's sleep, for the morning's readiness line. Only the phone can read it.
-      sleepHours: await lastNightSleep(),
+      ...health,
     });
+    reportedHealth = JSON.stringify(health);
   } catch (err) {
     // Down for maintenance or no connection: api.ts said so once for the whole
     // outage, and the heartbeat is itself the retry that finds out it's over.
@@ -72,6 +87,10 @@ export function startDeviceReports(token: string) {
   const app = AppState.addEventListener("change", (s) => {
     if (s === "active") void reportDeviceState(token);
   });
+  // Health's facts are known only after a sync, which is usually after launch's report.
+  const offHealth = onHealthStatus(() => {
+    if (JSON.stringify(healthFacts()) !== reportedHealth) void reportDeviceState(token);
+  });
   // Only while linked: the heartbeat exists to keep "the band is there" fresh.
   const beat = setInterval(() => {
     if (clip.isLinked()) void reportDeviceState(token);
@@ -79,6 +98,7 @@ export function startDeviceReports(token: string) {
   return () => {
     offLink();
     app.remove();
+    offHealth();
     clearInterval(beat);
   };
 }

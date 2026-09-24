@@ -212,6 +212,8 @@ async function runTurn(token, turn, voice) {
     toolsRan: (first.done?.meta?.tools ?? []).map((t) => t.name),
     paused: (first.done?.paused?.calls ?? []).map((c) => c.name),
     reply: first.done?.messages?.at(-1)?.content?.slice(0, 160) ?? null,
+    // Only when the reply claimed an action no tool took (llm.ts repairClaims): repaired, unrepaired or pending.
+    claim: first.done?.meta?.claim ?? null,
   };
   // The phone answers the lookup and the turn carries on: the same reply, measured whole.
   if (first.done?.paused) {
@@ -227,6 +229,7 @@ async function runTurn(token, turn, voice) {
     record.microUsd += second.done?.meta?.usage?.microUsd ?? 0;
     record.toolsRan.push(...(second.done?.meta?.tools ?? []).map((t) => t.name));
     record.reply = second.done?.messages?.at(-1)?.content?.slice(0, 160) ?? record.reply;
+    record.claim = second.done?.meta?.claim ?? record.claim;
   }
   const used = new Set([...record.toolsRan, ...record.paused]);
   record.ok = record.error ? false : turn.expect ? turn.expect.some((t) => used.has(t)) : !!record.reply;
@@ -240,7 +243,10 @@ console.error(`account ${user.id} created`);
 const turns = [];
 try {
   await proveAddress(user.id);
-  await json("/me/consent", token, { method: "POST", body: JSON.stringify({ version: 1 }) });
+  // The wording the server wants now (GET /me): a fixed 1 stopped counting when
+  // the consent named Cloudflare (version 2, 2026-09-23), and every turn was refused.
+  const me = await json("/me", token);
+  await json("/me/consent", token, { method: "POST", body: JSON.stringify({ version: me.user.aiConsent.current }) });
   console.error("address proven, AI agreed to");
   if (Object.keys(PREFS).length) {
     settingsRows(user.id, PREFS);
@@ -260,7 +266,7 @@ try {
       }
       turns.push(record);
       console.error(
-        `${voice ? "spoken" : "typed "} ${record.ok ? "ok  " : "FAIL"} ${String(record.firstTokenMs ?? "-").padStart(5)} ms first · ${String(record.ms ?? "-").padStart(6)} ms · ${record.engine ?? "?"} · ${record.calls ?? 0} calls · ${record.tokensIn ?? 0} in ${record.tokensOut ?? 0} out · ${record.text}${record.error ? ` · ${record.error.slice(0, 80)}` : ""}`,
+        `${voice ? "spoken" : "typed "} ${record.ok ? "ok  " : "FAIL"} ${String(record.firstTokenMs ?? "-").padStart(5)} ms first · ${String(record.ms ?? "-").padStart(6)} ms · ${record.engine ?? "?"} · ${record.calls ?? 0} calls · ${record.tokensIn ?? 0} in ${record.tokensOut ?? 0} out · ${record.text}${record.claim ? ` · claim ${record.claim}` : ""}${record.error ? ` · ${record.error.slice(0, 80)}` : ""}`,
       );
       // Under the per-person turn limit (20 a minute), with room for the resume.
       await sleep(1500);
