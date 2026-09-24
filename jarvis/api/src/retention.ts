@@ -46,6 +46,8 @@ export const COUNTS_RETAIN_DAYS = 35;
 /** Finished one-off agent jobs, as before. */
 const DONE_JOB_DAYS = 7;
 const DAY_MS = 86_400_000;
+/** Texts that came in (texting.ts text_inbox): long enough to tell a second delivery of one, no longer. */
+const TEXT_INBOX_DAYS = 2;
 /** Rows per DELETE. Small enough for D1's per-query limits with a trigger firing per row. */
 const CHUNK = 500;
 /** Past this the rest waits for tomorrow night; the rules furthest down go last. */
@@ -215,6 +217,8 @@ export const RULES: Rule[] = [
     key: ["user_id", "day", "kind", "engine", "model"],
   },
   { name: "device_logs", table: "device_logs", where: "received_at < ?", args: (c) => [c.now - DEVICE_LOG_KEEP_MS] },
+  // What was said is in messages; this is only there to tell a text delivered twice.
+  { name: "text_inbox", table: "text_inbox", where: "received_at < ?", args: (c) => [c.now - TEXT_INBOX_DAYS * DAY_MS] },
   at("last_seen", "error_events"),
   at("last_at", "engine_stats"),
   at("last_at", "cron_ticks"),
@@ -224,6 +228,8 @@ export const RULES: Rule[] = [
   { name: "oauth_states", table: "oauth_states", where: "expires_at < ?", args: (c) => [c.now] },
   // The confirmation email's one-tap links (verify.ts): a day, used or not.
   { name: "verify_links", table: "verify_links", where: "expires_at < ?", args: (c) => [c.now] },
+  // The codes that link a number for texting (texting.ts): 15 minutes, used or not (a used one is gone already).
+  { name: "text_link_codes", table: "text_link_codes", where: "expires_at < ?", args: (c) => [c.now] },
   // email_codes and signup_tickets: emailauth.ts pruneEmailAuth, a step of its own (purgeExpired);
   // signin_states and signin_codes: signin.ts pruneSignin, likewise.
 ];
@@ -308,6 +314,9 @@ export const TABLES = {
   signin_codes: "expires",
   food_catalog: "delete",
   food_log: "delete",
+  text_links: "keep",
+  text_link_codes: "expires",
+  text_inbox: "delete",
 } as const satisfies Record<string, "keep" | "delete" | "mixed" | "expires" | "index">;
 
 /** Tables whose purge is a step of its own rather than a rule. */

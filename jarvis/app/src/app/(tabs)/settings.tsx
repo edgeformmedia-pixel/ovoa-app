@@ -16,6 +16,7 @@ import {
 import { AccountSection } from "../../components/AccountSection";
 import { LockedLine } from "../../components/Plan";
 import { SiriSetup } from "../../components/SiriSetup";
+import { TextingSetup } from "../../components/TextingSetup";
 import { VoicePicker } from "../../components/VoicePicker";
 import { Btn, IconTile, Screen, Toggle, TopBar, type IconName, type Tone } from "../../components/ui";
 import { api, type Autonomy, type Memory, type SetupView } from "../../lib/api";
@@ -335,6 +336,8 @@ export default function Settings() {
         </Setting>
         {autoSendTexts && <Button label="Open Shortcuts" onPress={() => Linking.openURL("shortcuts://create-shortcut")} />}
         <SiriSetup token={token} />
+        {/* Its own heading, shown once the server can take texts (components/TextingSetup.tsx). */}
+        <TextingSetup token={token} assistantName={user.settings.assistantName || "OVOA"} />
 
         <Sub>Background work</Sub>
         {!can.agent ? (

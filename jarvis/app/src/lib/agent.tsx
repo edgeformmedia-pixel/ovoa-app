@@ -99,11 +99,17 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     };
   }, [enabled, refresh]);
 
-  // Tapping a notification opens the note it came from.
+  // Tapping a notification opens the note it came from. "approve" is something
+  // asked for by text that runs on this phone (api/src/texting.ts): it waits on
+  // Talk, which picks it up when it opens (lib/assistant.tsx).
   useEffect(() => {
     if (!token) return;
     return onNotificationTapped((data) => {
       devlog("push", "notification tapped", JSON.stringify(data));
+      if (data.type === "approve") {
+        router.push("/chat" as Href);
+        return;
+      }
       refresh();
       router.push("/day" as Href);
     });

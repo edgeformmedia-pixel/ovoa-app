@@ -91,6 +91,20 @@ export type Env = {
   EXPO_GO_SIGNIN?: string;
   /** Comma-separated account emails allowed the dev-only capture-everything flag. */
   DEV_EMAILS?: string;
+  /**
+   * Texting OVOA over iMessage through Sendblue (texting.ts, docs/texting.md).
+   * All four are secrets, put by scripts/sendblue-setup.mjs; until every one is
+   * set, texting is off: the webhook answers 503 and the app's Link button says
+   * it isn't ready. The key pair is Sendblue's API key; SENDBLUE_NUMBER is the
+   * line people text (E.164, "+15551234567"); SENDBLUE_WEBHOOK_SECRET is what
+   * Sendblue sends back in `sb-signing-secret` with every webhook.
+   */
+  SENDBLUE_API_KEY_ID?: string;
+  SENDBLUE_API_SECRET?: string;
+  SENDBLUE_NUMBER?: string;
+  SENDBLUE_WEBHOOK_SECRET?: string;
+  /** Where Sendblue's API is: https://api.sendblue.co unless a local test points it at a fake one. */
+  SENDBLUE_API_BASE?: string;
   /** Rate limits (wrangler.jsonc "ratelimits", limits.ts). Optional: a missing one allows everything. */
   RL_AUTH?: RateLimit;
   RL_TURN?: RateLimit;

@@ -362,6 +362,17 @@ export type SetupTurnResult = {
 };
 
 export type Message = { id: string; role: "user" | "assistant"; content: string; created_at: number };
+
+/**
+ * Texting OVOA over iMessage (api/src/texting.ts). `available`: the server has
+ * its Sendblue keys; `number`: OVOA's number, to text; `linked`: the number
+ * that texts reach this account from, once one is linked.
+ */
+export type TextingState = {
+  available: boolean;
+  number: string | null;
+  linked: { phone: string; linkedAt: number } | null;
+};
 export type Memory = { id: string; content: string; created_at: number };
 
 export type StepDay = { day: string; steps: number };
@@ -1484,6 +1495,15 @@ export const api = {
 
   createSiriKey: (token: string) => request<{ key: string; url: string }>("/siri/key", token, { method: "POST" }),
   deleteSiriKey: (token: string) => request("/siri/key", token, { method: "DELETE" }),
+
+  // ---------- Texting OVOA (api/src/texting.ts) ----------
+
+  /** Whether the server can take texts, OVOA's number, and the number linked to this account. */
+  texting: (token: string) => request<TextingState>("/texting", token),
+  /** A code, and the text with it in, to send to `number` from the number being linked. 503 while texting is off. */
+  textingLink: (token: string) =>
+    request<{ code: string; number: string; body: string; expiresAt: number }>("/texting/link", token, { method: "POST" }),
+  textingUnlink: (token: string) => request<{ ok: true }>("/texting/link", token, { method: "DELETE" }),
 
   // ---------- What it costs ----------
 

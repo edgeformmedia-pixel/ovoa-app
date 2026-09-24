@@ -346,26 +346,34 @@ actions.get("/actions", async (c) => {
   return c.json({ actions: results.map((r) => withPhone({ ...r, args: JSON.parse(r.args) }, auto)) });
 });
 
-actions.post("/actions/:id/approve", async (c) => {
-  const db = c.env.DB;
-  const userId = c.var.userId;
+/**
+ * Carries out one parked action and says how it went, in the message it adds
+ * to the conversation. The app's Approve button comes here, and so does a YES
+ * sent by text (texting.ts). Null when it's gone: approved or cancelled
+ * already, or older than PENDING_TTL_MS.
+ *
+ * `phoneResult`: how the app got on doing a phone action itself (it runs those
+ * on the phone; this only records the outcome). `source`: messages.source for
+ * the message it adds, "text" when the YES came by text.
+ */
+export async function approveAction(
+  env: Env,
+  userId: string,
+  id: string,
+  opts: { timeZone?: string; phoneResult?: { ok?: boolean; detail?: string }; source?: string } = {},
+) {
+  const db = env.DB;
   const row = await db
     .prepare("DELETE FROM pending_actions WHERE id = ? AND user_id = ? RETURNING tool, args, summary, created_at")
-    .bind(c.req.param("id"), userId)
+    .bind(id, userId)
     .first<{ tool: string; args: string; summary: string; created_at: number }>();
-  if (!row || row.created_at < Date.now() - PENDING_TTL_MS) {
-    return c.json({ error: "This request expired. Ask again." }, 404);
-  }
+  if (!row || row.created_at < Date.now() - PENDING_TTL_MS) return null;
 
-  const body = (await c.req.json().catch(() => ({}))) as {
-    timeZone?: string;
-    phoneResult?: { ok?: boolean; detail?: string };
-  };
   let content: string;
   if (isPhoneTool(row.tool)) {
     // The app already made the change on the phone; this just records how it went.
-    const detail = String(body.phoneResult?.detail ?? "").slice(0, 300);
-    content = body.phoneResult?.ok
+    const detail = String(opts.phoneResult?.detail ?? "").slice(0, 300);
+    content = opts.phoneResult?.ok
       ? `Done: ${detail || row.summary.split("\n")[0]}`
       : `That didn't work: ${detail || "unknown error"}`;
   } else {
@@ -376,7 +384,7 @@ actions.post("/actions/:id/approve", async (c) => {
       content = `I couldn't do that: ${found.error}`;
     } else {
       try {
-        const ctx = await context(c.env, userId, found.id, validTimeZone(body.timeZone));
+        const ctx = await context(env, userId, found.id, validTimeZone(opts.timeZone));
         await toolsByName.get(row.tool)!.run(ctx, args);
         content = `Done: ${row.summary.split("\n")[0]}`;
       } catch (err) {
@@ -396,9 +404,22 @@ actions.post("/actions/:id/approve", async (c) => {
 
   const message = { id: crypto.randomUUID(), role: "assistant", content, created_at: Date.now() };
   await db
-    .prepare("INSERT INTO messages (id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)")
-    .bind(message.id, userId, message.role, message.content, message.created_at)
+    .prepare("INSERT INTO messages (id, user_id, role, content, created_at, source) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(message.id, userId, message.role, message.content, message.created_at, opts.source ?? null)
     .run();
+  return message;
+}
+
+actions.post("/actions/:id/approve", async (c) => {
+  const body = ((await c.req.json().catch(() => null)) ?? {}) as {
+    timeZone?: string;
+    phoneResult?: { ok?: boolean; detail?: string };
+  };
+  const message = await approveAction(c.env, c.var.userId, c.req.param("id"), {
+    timeZone: body.timeZone,
+    phoneResult: body.phoneResult,
+  });
+  if (!message) return c.json({ error: "This request expired. Ask again." }, 404);
   return c.json({ message });
 });
 

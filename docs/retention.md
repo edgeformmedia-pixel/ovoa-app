@@ -130,6 +130,9 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 | server_settings | keep | the switchboard | |
 | email_codes, signup_tickets | expires | `emailauth.ts pruneEmailAuth`, once past their own expiry | |
 | signin_states, signin_codes | expires | `signin.ts pruneSignin`, once past their own expiry | |
+| text_links | keep | the number someone texts OVOA from (`texting.ts`), linked by them; gone when they unlink it or delete the account | |
+| text_link_codes | expires | the code that links a number, once past `expires_at` (15 min); a used one is deleted when it's used | |
+| text_inbox | delete | **2 d** after `received_at`: every text that came in, kept only to tell a second delivery of the same one. The words are cleared once it's answered (they're in `messages`), and a text from a number nobody linked never keeps any | |
 
 ## What changed from before
 
