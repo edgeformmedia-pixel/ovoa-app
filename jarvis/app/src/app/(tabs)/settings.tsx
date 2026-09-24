@@ -678,7 +678,7 @@ const MIC_SOURCES = [
   {
     source: "band",
     label: "OVOA Band",
-    hint: "The clip records what you say on its own microphone. Click to start, click again when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.",
+    hint: "The band records what you say on its own microphone. Double-click to start (it buzzes and its light stays on while it listens), click once when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.",
   },
 ] as const;
 
@@ -687,7 +687,7 @@ const LISTEN_MODES = [
   {
     mode: "twist",
     label: "Clip click",
-    hint: "Click the OVOA Band's button: it buzzes and listens. Click again to send what you said, or while it answers to cut it off. Works from other apps too, on an iPhone that recognises speech on its own.",
+    hint: "Double-click the OVOA Band's button: it buzzes, its light comes on, and it listens. Click once to send what you said, or while it answers to cut it off. Works from other apps too, on an iPhone that recognises speech on its own.",
   },
 ] as const;
 

@@ -1093,6 +1093,8 @@ export type ClipGesture = "single" | "double" | "stop";
 const gestureListeners = new Set<(g: ClipGesture) => void>();
 /** How long after one press a second still makes it a double click (seen: ~2 s apart on the device). */
 const DOUBLE_CLICK_MS = 2500;
+/** The longest a double click waits for its scraps to be cleaned off the clip before it acts. */
+const DOUBLE_SETTLE_MS = 1500;
 let pendingPress: { sessionId: number; at: number; timer: ReturnType<typeof setTimeout> } | null = null;
 let lastPressAt = 0;
 
@@ -1130,12 +1132,16 @@ function press(kind: "start" | "stop", sessionId: number) {
     const deleteScrap = (id: number) =>
       ute.deleteFile(id, storedTypes.get(id) ?? ute.RecordFileType.Opus).catch(logFail(`clip: delete scrap #${id}`));
     // A second "started" means a new scrap is recording: stop it and delete both.
-    if (kind === "start") void discardButtonRecording(sessionId).then(() => deleteScrap(first.sessionId));
-    else {
-      void deleteScrap(sessionId);
-      if (first.sessionId !== sessionId) void deleteScrap(first.sessionId);
-    }
-    emitGesture("double");
+    const cleanup =
+      kind === "start"
+        ? discardButtonRecording(sessionId).then(() => deleteScrap(first.sessionId))
+        : Promise.all([deleteScrap(sessionId), first.sessionId !== sessionId ? deleteScrap(first.sessionId) : null]);
+    // What the double click does waits for that: with the band's microphone it
+    // starts the app's own recording, and started while the scrap was still
+    // being stopped, the scrap's stop could land on it and end it at once (the
+    // clip takes one command at a time: floods freeze it). The buzz and the
+    // light that follow are commands too. At most DOUBLE_SETTLE_MS, though.
+    void Promise.race([cleanup, new Promise((r) => setTimeout(r, DOUBLE_SETTLE_MS))]).then(() => emitGesture("double"));
     return;
   }
   if (kind === "stop") {
@@ -1274,10 +1280,36 @@ let lightShown: boolean | null = null;
 let lightBusy = false;
 let lightLastAt = 0;
 
+/**
+ * While it should be on, the LED test is sent again this often. Any time the
+ * band is listening its light HAS to be on (the user, 2026-09-24), and nothing
+ * tells the app when the clip lets it go: a factory test that times out, a
+ * recording starting on the clip, a reconnect. One command every few seconds is
+ * nothing like the floods that freeze it.
+ */
+const LIGHT_KEEP_MS = 8000;
+let lightKeeper: ReturnType<typeof setInterval> | null = null;
+
 export function setListeningLight(on: boolean) {
+  if (on !== lightWanted) say(`light: ${on ? "wanted on (listening)" : "wanted off"}`);
   lightWanted = on;
+  if (on && !lightKeeper) {
+    lightKeeper = setInterval(() => {
+      if (!lightWanted || state.phase !== "connected" || lightBusy) return;
+      // Sent again even though it was sent: the clip may have let it go.
+      lightShown = null;
+      lightQuiet = true;
+      void syncLight();
+    }, LIGHT_KEEP_MS);
+  } else if (!on && lightKeeper) {
+    clearInterval(lightKeeper);
+    lightKeeper = null;
+  }
   void syncLight();
 }
+
+/** The keeper's re-sends aren't news: only a change, or a failure, is logged where device_logs sees it. */
+let lightQuiet = false;
 
 async function syncLight() {
   if (lightBusy || lightColors === null) return;
@@ -1294,11 +1326,14 @@ async function syncLight() {
   lightBusy = true;
   const on = lightWanted;
   const colors = lightColors;
+  const quiet = lightQuiet;
+  lightQuiet = false;
   lightLastAt = Date.now();
   try {
     await ute.setLight(on, colors);
     lightShown = on;
-    say(`light: ${on ? (colors ? "green" : "LED test") + " on" : "off"}`);
+    if (quiet) say(`light kept on (${colors ? "green" : "LED test"})`, "trace");
+    else say(`light: ${on ? (colors ? "green" : "LED test") + " on" : "off"}`);
   } catch (err) {
     // No answer: the command may still have worked, like the buzz. Only a refusal switches over.
     if (/didn't answer in time/.test(message(err))) {

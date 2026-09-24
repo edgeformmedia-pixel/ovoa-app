@@ -136,6 +136,9 @@ const MILESTONES: RegExp[] = [
   /^click: /,
   /^double click/,
   /^summoned$/,
+  // The band's listening light, on and off (never the keeper's re-sends every few
+  // seconds, "light kept on"): it HAS to be on whenever the band listens (2026-09-24).
+  /^light: /,
 ];
 /** perf lines are the turn breakdowns (turnTimer.ts): one row per spoken turn. */
 const MILESTONE_KINDS = new Set<LogEntry["kind"]>(["perf"]);
