@@ -669,44 +669,39 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const onClickRef = useRef(onClick);
   onClickRef.current = onClick;
 
-  // The clip's button (2026-09-21): a double click turns Always listen off when it's
-  // on, and otherwise starts a talk turn, like a single click used to. A single
-  // click cuts a reply short or, while listening, sends what's been said; on its
-  // own it does nothing, so a brushed button doesn't start a conversation.
+  // The band's button (2026-09-24). The band reports only the first press of a
+  // double click, never the second (clip.ts "The button"), so every press acts
+  // at once, and a double click does what one press does:
+  //   record  band microphone: the press started the band recording the
+  //           question. It buzzes, its light comes on, and a reply that was
+  //           playing is cut short.
+  //   stop    the press that ended that recording: the question is on its way.
+  //   press   phone microphone: cut a reply short, send what's been said, or
+  //           listen.
+  // Waiting for a double click that never came threw every press away from
+  // 09-21 on; Always listen is turned off in Settings or on Talk now, not by one.
   const onGesture = useCallback(
     (g: clip.ClipGesture) => {
-      if (g === "double") {
-        if (alwaysListenRef.current) {
-          setAlwaysListen(false);
-          clip.buzz(2);
-          devlog("voice", "double click: Always listen off");
-          return;
+      if (g === "record") {
+        if (bandPhaseRef.current === "thinking" || bandPhaseRef.current === "speaking") {
+          bandSpeaker.current?.stop();
+          endTurn("cut short by a click");
         }
-        if (bandOn) {
-          if (bandPhaseRef.current === "thinking" || bandPhaseRef.current === "speaking") bandSpeaker.current?.stop();
-          bandRecording.current = true;
-          setBandPhase("listening");
-          startTurn("band");
-          markTurn("you talk into the clip");
-          clip.buzz(1);
-          clip.startRecording().catch((err) => {
-            bandRecording.current = false;
-            setBandPhase(null);
-            devlog("err", "band mic: couldn't start recording", err instanceof Error ? err.message : String(err));
-            clip.buzz(2);
-          });
-          if (bandTimer.current) clearTimeout(bandTimer.current);
-          bandTimer.current = setTimeout(() => {
-            if (!bandRecording.current) return;
-            devlog("voice", "band mic: stopping after a minute");
-            bandRecording.current = false;
-            setBandPhase("thinking");
-            markStopTalking();
-            clip.stopRecording().catch(() => setBandPhase(null));
-          }, BAND_MAX_MS);
-          return;
-        }
-        onClickRef.current("clip double click");
+        bandRecording.current = true;
+        setBandPhase("listening");
+        startTurn("band");
+        markTurn("you talk into the clip");
+        devlog("voice", "band mic: the band is recording the question");
+        clip.buzz(1);
+        if (bandTimer.current) clearTimeout(bandTimer.current);
+        bandTimer.current = setTimeout(() => {
+          if (!bandRecording.current) return;
+          devlog("voice", "band mic: stopping after a minute");
+          bandRecording.current = false;
+          setBandPhase("thinking");
+          markStopTalking();
+          clip.stopRecording().catch(() => setBandPhase(null));
+        }, BAND_MAX_MS);
         return;
       }
       if (g === "stop") {
@@ -719,10 +714,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         clip.buzz(1);
         return;
       }
-      // Single click: interrupt, or send what the phone mic has heard. On its own
-      // it doesn't start listening: that's the double click, on either microphone
-      // (the user, 2026-09-24: build 71 let a single click listen, and they want
-      // the double click back).
+      // A press, with the phone's microphone.
       if (bandPhaseRef.current === "thinking" || bandPhaseRef.current === "speaking") {
         bandSpeaker.current?.stop();
         setBandPhase(null);
@@ -730,9 +722,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (currentPhase() === "speaking") return conversation.interrupt();
-      if (currentPhase() === "listening" && summonedOpen.current) finishNow();
+      if (currentPhase() === "listening" && summonedOpen.current) return void finishNow();
+      onClickRef.current("clip press");
     },
-    [bandOn, currentPhase, finishNow],
+    [currentPhase, finishNow],
   );
   const onGestureRef = useRef(onGesture);
   onGestureRef.current = onGesture;

@@ -132,9 +132,10 @@ const MILESTONES: RegExp[] = [
   // listening" (2026-09-24) left nothing in device_logs to read. A handful of
   // rows per click, and only when the button is pressed.
   /^clip press/,
-  /^clip: (single click|double click|press)/,
+  /^clip: press/,
   /^click: /,
-  /^double click/,
+  // The band microphone's turn: recording, sent, fetched, answered or not.
+  /^band mic/,
   /^summoned$/,
   // The band's listening light, on and off (never the keeper's re-sends every few
   // seconds, "light kept on"): it HAS to be on whenever the band listens (2026-09-24).

@@ -217,18 +217,24 @@ function ensureStarted() {
     set({
       recording: { sessionId: event.sessionId, startedAt: Date.now(), paused: false, byDevice: event.startedByDevice },
     });
-    // Gestures (single / double click) decide what a press means; see onClipGesture.
-    if (event.startedByDevice && gestureListeners.size) {
+    if (!event.startedByDevice) return;
+    // With the band's microphone the press started the question itself: kept, and
+    // fetched when the next press stops it. Acted on now, not after waiting for a
+    // second press the band never reports (see "The button" below).
+    if (bandMode) {
+      noteInput("Clip button", "started recording");
+      say(`band microphone: keeping #${event.sessionId}`);
+      if (gestureListeners.size) emitGesture("record");
+      return;
+    }
+    // With the phone's: what a press means is decided at once (onClipGesture).
+    if (gestureListeners.size) {
       noteInput("Clip button", "pressed");
       press("start", event.sessionId);
       return;
     }
-    if (event.startedByDevice) {
-      noteInput("Clip button", "started recording");
-      // In band mode that recording IS the question, so it's kept and fetched when it stops.
-      if (pressUsed("record") && !bandMode) discardButtonRecording(event.sessionId);
-      else if (bandMode) say(`band microphone: keeping #${event.sessionId}`);
-    }
+    noteInput("Clip button", "started recording");
+    if (pressUsed("record")) discardButtonRecording(event.sessionId);
   });
 
   ute.addListener("onRecordStop", (event) => {
@@ -237,13 +243,17 @@ function ensureStarted() {
     set({ recording: null });
     if (appStopping) return;
     if (gestureListeners.size) {
-      // The second press of a double click: the clip stopped the scrap it just started.
-      if (pendingPress) {
+      if (bandMode) {
+        // The press that ends the question, the band's own recording or the app's: "send".
+        emitGesture("stop");
+      } else if (startedByApp) {
+        // A press stopped the recording the app started for a talk turn: that's "send".
+        emitGesture("stop");
+      } else {
+        // With the phone's microphone, a press that stopped a scrap the band started.
         press("stop", event.sessionId);
         return;
       }
-      // A press stopped the recording the app started for a talk turn: that's "send".
-      if (startedByApp) emitGesture("stop");
     }
     noteInput("Clip button", "stopped recording");
     // Stopped on the clip itself: bring it over like one the app stopped.
@@ -1077,35 +1087,43 @@ export function onClipButton(listener: ButtonListener) {
 
 const pressUsed = (source: "voiceButton" | "record") => [...buttonListeners].some((l) => l(source) === true);
 
-// --- Gestures: single and double click -------------------------------------
+// --- The button -------------------------------------------------------------
 //
-// The clip starts recording on one press and stops on the next, but on the
-// device the second press of a quick double click shows up either as "recording
-// stopped" or as a fresh "recording started" (the first one having been cut
-// short), and up to ~2 s after the first. So any press from the clip within
-// DOUBLE_CLICK_MS of a first one makes a double click, whichever way it's
-// reported; a press with nothing after it is a single click. Every scrap it
-// recorded is thrown away. A press while the app is recording for a talk turn
-// stops that recording, which is "send" (and the recording is kept: it's the
-// question).
+// The band reports a press only as a recording starting or stopping on it,
+// and it doesn't report a second press that comes within about 1.5 s of the
+// first: it is still starting the recording the first one began. So a double
+// click reaches the app as one press. Every double click in device_logs, from
+// 2026-09-21 (when the app started waiting for one) to 09-24, arrived that way
+// and was thrown away as a lone single click; the band never started listening.
+// Before 09-21 any press started it, which is why double-clicking "worked".
+//
+// So a press acts at once (2026-09-24):
+//   - With the band's microphone (bandMode), the press started a recording on
+//     the band, and that recording IS the question: "record". The next press
+//     stops it: "stop", and the recording comes over and is answered.
+//   - With the phone's microphone, "press": listen, or send what's been said,
+//     or cut a reply short (assistant.tsx decides). The scrap the band started
+//     is thrown away once presses have stopped coming for PRESS_SETTLE_MS; one
+//     that comes before then is the tail of a double click, and does nothing.
+//   - A press while the app is recording on the band for a talk turn stops that
+//     recording, which is "stop" (send), and the recording is kept.
 
-export type ClipGesture = "single" | "double" | "stop";
+export type ClipGesture = "press" | "record" | "stop";
 const gestureListeners = new Set<(g: ClipGesture) => void>();
-/** How long after one press a second still makes it a double click (seen: ~2 s apart on the device). */
-const DOUBLE_CLICK_MS = 2500;
-/** The longest a double click waits for its scraps to be cleaned off the clip before it acts. */
-const DOUBLE_SETTLE_MS = 1500;
-let pendingPress: { sessionId: number; at: number; timer: ReturnType<typeof setTimeout> } | null = null;
+/** Presses this close to the last one are the rest of a double click: they only add a scrap to clean up. */
+const PRESS_SETTLE_MS = 2500;
+/** The scraps the presses of one click started, thrown away once presses stop coming. */
+let pendingScraps: { ids: number[]; timer: ReturnType<typeof setTimeout> } | null = null;
 let lastPressAt = 0;
 
-/** Listening turns single and double clicks into gestures. Returns an unsubscribe. */
+/** Listening turns presses into gestures. Returns an unsubscribe. */
 export function onClipGesture(listener: (g: ClipGesture) => void) {
   gestureListeners.add(listener);
   return () => void gestureListeners.delete(listener);
 }
 
 function emitGesture(g: ClipGesture) {
-  devlog("voice", `clip: ${g === "double" ? "double click" : g === "single" ? "single click" : "press (send)"}`);
+  devlog("voice", `clip: ${g === "press" ? "press" : g === "record" ? "press (the band is recording the question)" : "press (send)"}`);
   gestureListeners.forEach((l) => {
     try {
       l(g);
@@ -1115,50 +1133,38 @@ function emitGesture(g: ClipGesture) {
   });
 }
 
-/** One press from the clip, reported as a recording starting or stopping. */
+/** One press from the band, with the phone's microphone: reported as a recording starting or stopping. */
 function press(kind: "start" | "stop", sessionId: number) {
   const now = Date.now();
   const since = lastPressAt ? now - lastPressAt : null;
   lastPressAt = now;
-  const first = pendingPress;
+  const tail = !!pendingScraps && since !== null && since < PRESS_SETTLE_MS;
   devlog(
     "voice",
-    `clip press: ${kind} #${sessionId}, ${since === null ? "first press" : `${since} ms since the last`}, ` +
-      (first ? `pending #${first.sessionId} (${now - first.at} ms ago) → double click` : "nothing pending → waiting for a second"),
+    `clip press: ${kind} #${sessionId}, ${since === null ? "first press" : `${since} ms since the last`}` +
+      (tail ? " → the rest of a double click, nothing more to do" : " → acting on it"),
   );
-  if (first) {
-    clearTimeout(first.timer);
-    pendingPress = null;
-    const deleteScrap = (id: number) =>
-      ute.deleteFile(id, storedTypes.get(id) ?? ute.RecordFileType.Opus).catch(logFail(`clip: delete scrap #${id}`));
-    // A second "started" means a new scrap is recording: stop it and delete both.
-    const cleanup =
-      kind === "start"
-        ? discardButtonRecording(sessionId).then(() => deleteScrap(first.sessionId))
-        : Promise.all([deleteScrap(sessionId), first.sessionId !== sessionId ? deleteScrap(first.sessionId) : null]);
-    // What the double click does waits for that: with the band's microphone it
-    // starts the app's own recording, and started while the scrap was still
-    // being stopped, the scrap's stop could land on it and end it at once (the
-    // clip takes one command at a time: floods freeze it). The buzz and the
-    // light that follow are commands too. At most DOUBLE_SETTLE_MS, though.
-    void Promise.race([cleanup, new Promise((r) => setTimeout(r, DOUBLE_SETTLE_MS))]).then(() => emitGesture("double"));
-    return;
-  }
-  if (kind === "stop") {
-    // A stop with no press before it (the start went unreported): count it as a first press.
-    devlog("voice", `clip press: stop #${sessionId} with nothing pending, treating it as the first press`);
-  }
-  pendingPress = {
-    sessionId,
-    at: now,
+  // Every scrap is thrown away once presses stop coming; a "stop" ended one already on the list.
+  const ids = [...(pendingScraps?.ids ?? []), ...(kind === "start" ? [sessionId] : [])];
+  if (pendingScraps) clearTimeout(pendingScraps.timer);
+  pendingScraps = {
+    ids,
     timer: setTimeout(() => {
-      pendingPress = null;
-      devlog("voice", `clip press: no second press within ${DOUBLE_CLICK_MS} ms → single click (#${sessionId})`);
-      // Just one press: nothing to keep.
-      if (kind === "start") void discardButtonRecording(sessionId);
-      emitGesture("single");
-    }, DOUBLE_CLICK_MS),
+      const scraps = pendingScraps?.ids ?? [];
+      pendingScraps = null;
+      void throwAwayScraps(scraps);
+    }, PRESS_SETTLE_MS),
   };
+  if (!tail) emitGesture("press");
+}
+
+/** The scraps a click left on the band: the last may still be recording, so it's stopped first. */
+async function throwAwayScraps(ids: number[]) {
+  const recording = state.recording?.byDevice ? state.recording.sessionId : null;
+  for (const id of ids) {
+    if (id === recording) await discardButtonRecording(id);
+    else await ute.deleteFile(id, storedTypes.get(id) ?? ute.RecordFileType.Opus).catch(logFail(`clip: delete scrap #${id}`));
+  }
 }
 
 /** The press only meant "listen to me": stop the recording it started and delete it from the clip. */

@@ -300,7 +300,7 @@ export default function Settings() {
         ) : (
           <Setting
             label="Always listen"
-            about={`The microphone stays on day and night, on every screen and with the app in the background, and answers when you say "${assistantName || "OVOA"}". Your iPhone listens for the name itself: nothing you or anyone else says leaves the phone until the name is heard. While the microphone is on, the band's light stays on. Turn it off here, from the Talk tab, or with a double click on the band.`}
+            about={`The microphone stays on day and night, on every screen and with the app in the background, and answers when you say "${assistantName || "OVOA"}". Your iPhone listens for the name itself: nothing you or anyone else says leaves the phone until the name is heard. While the microphone is on, the band's light stays on. Turn it off here or from the Talk tab.`}
           >
             <Toggle
               value={alwaysListen}
@@ -678,7 +678,7 @@ const MIC_SOURCES = [
   {
     source: "band",
     label: "OVOA Band",
-    hint: "The band records what you say on its own microphone. Double-click to start (it buzzes and its light stays on while it listens), click once when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.",
+    hint: "The band records what you say on its own microphone. Double-click (or press once) to start: it buzzes, and its light stays on while it listens. Press again when you're done: the recording comes over Bluetooth, so the answer takes a few seconds longer. The phone's microphone stays off, and it stops on its own after a minute.",
   },
 ] as const;
 
@@ -687,7 +687,7 @@ const LISTEN_MODES = [
   {
     mode: "twist",
     label: "Clip click",
-    hint: "Double-click the OVOA Band's button: it buzzes, its light comes on, and it listens. Click once to send what you said, or while it answers to cut it off. Works from other apps too, on an iPhone that recognises speech on its own.",
+    hint: "Double-click (or press once) the OVOA Band's button: it buzzes, its light comes on, and it listens. Press again to send what you said, or while it answers to cut it off. Works from other apps too, on an iPhone that recognises speech on its own.",
   },
 ] as const;
 
@@ -752,7 +752,18 @@ const styles = StyleSheet.create({
   group: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
   groupHead: { flexDirection: "row", alignItems: "center", gap: space.s3, paddingVertical: space.s4 },
   groupTitle: { ...type.body, fontWeight: "600", color: colors.ink, flex: 1 },
-  groupBody: { gap: space.s3, paddingBottom: space.s5 },
+  // Indented under the group's title, with a thin line down from its icon: Plan,
+  // Replies left today and Email have icons like the groups' own, and read as
+  // more groups to open (the user, 2026-09-24). The line sits under the icon's
+  // middle (IconTile is 30 wide), and the content lines up with the title.
+  groupBody: {
+    gap: space.s3,
+    paddingBottom: space.s5,
+    marginLeft: 15,
+    paddingLeft: 15 + space.s3 - StyleSheet.hairlineWidth,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: colors.line,
+  },
   sub: { ...type.meta, fontWeight: "600", color: colors.inkMute, marginTop: space.s3 },
   row: { flexDirection: "row", alignItems: "center", gap: space.s3 },
   label: { ...type.body, color: colors.ink },
