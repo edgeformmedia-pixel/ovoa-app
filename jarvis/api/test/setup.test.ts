@@ -136,6 +136,17 @@ eq(
   { fill: { day: { wake: "08:00" } }, unsure: ["day"], decline: [], asking: ["day"], end: "stop" },
 );
 eq("at most three asked about", parseUpdate('{"asking":["name","day","goals","work"]}')?.asking, ["name", "day", "goals"]);
+// Sent as bare lists in production (2026-09-23): read as the list each one keeps.
+eq(
+  "a bare list is the objective's list",
+  parseUpdate('{"fill":{"goals":[{"goal":"Walk more","kind":"move"}],"daily":[{"title":"Metformin","kind":"med","times":["08:00"]}],"about":["Has a dog"],"day":{"wake":"07:00"}}}')?.fill,
+  {
+    goals: { goals: [{ goal: "Walk more", kind: "move" }] },
+    daily: { items: [{ title: "Metformin", kind: "med", times: ["08:00"] }] },
+    about: { facts: ["Has a dog"] },
+    day: { wake: "07:00" },
+  },
+);
 eq("no block, no update", parseUpdate(""), null);
 
 // ---------- The state ----------
@@ -468,6 +479,9 @@ function fakeAi(replies: (string | ReadableStream<Uint8Array>)[]) {
       const reply = replies.shift();
       if (reply === undefined) throw new Error("no more replies");
       if (typeof reply !== "string") return reply;
+      // A call that doesn't stream (the second read of an exchange) gets the
+      // whole answer at once, in Workers AI's chat-completions shape.
+      if (!inputs.stream) return { choices: [{ message: { role: "assistant", content: reply } }], usage: { prompt_tokens: 10, completion_tokens: 5 } };
       return new ReadableStream<Uint8Array>({
         start(c) {
           for (const e of events(reply)) c.enqueue(e);
@@ -718,6 +732,8 @@ await (async () => {
     const { ai, asked } = fakeAi([
       'Do you work set hours?<update>{"fill":{},"asking":["work"],"end":null}</update>',
       'No problem, we can leave that. When do you usually get up?<update>{"fill":{},"asking":["day"]',
+      // The second read of that exchange (turn.ts EXTRACT_SYSTEM), unreadable too.
+      "I couldn't tell.",
       '<update>{"fill":{},"asking":[]}</update>',
       'Up at six, early bird. Any goals you want help with?<update>{"fill":{"day":{"wake":"06:00","bed":"22:00"}},"asking":["goals"]}</update>',
     ]);
@@ -732,12 +748,35 @@ await (async () => {
     eq("and it's marked lost", (await loadSetup(DB, u)).state?.lostUpdate, true);
     const healed = await setupTurn(e, c5, u, { turnId: "turn-day-1", action: "answer", text: "six, and ten at night" });
     await settle();
-    eq("a reply with no words is asked for again, told why", [asked.length, asked[3].messages.at(-1).content.endsWith(NO_WORDS)], [4, true]);
-    eq("the lost update is asked for on the next turn", asked[2].messages.at(-1).content.includes("Your last update didn't come through"), true);
+    eq("an unreadable update gets a second read of the exchange", asked[2].messages[0].content.startsWith("You read one exchange"), true);
+    eq("a reply with no words is asked for again, told why", [asked.length, asked[4].messages.at(-1).content.endsWith(NO_WORDS)], [5, true]);
+    eq("the lost update is asked for on the next turn", asked[3].messages.at(-1).content.includes("Your last update didn't come through"), true);
     eq("and the words of the second try are the reply", [healed.reply, healed.view.objectives.find((o) => o.id === "day")?.status], [
       "Up at six, early bird. Any goals you want help with?",
       "filled",
     ]);
+  }
+  {
+    // A reply that forgot its block: the second read keeps what they said, and the
+    // next turn shows the model its reply with the block (Line.update, 2026-09-23).
+    const u = newUser();
+    const { ai, asked } = fakeAi([
+      "Ana, got it. And her number?",
+      '<update>{"fill":{"emergency_contact":{"name":"Ana","phone":"+1 555 010 5151","relation":"sister"}},"asking":[],"end":null}</update>',
+      'Thanks. When do you usually get up?<update>{"fill":{},"asking":["day"],"end":null}</update>',
+    ]);
+    const e = envWith(ai);
+    const { ctx: c8, settle } = context();
+    const first = await setupTurn(e, c8, u, { turnId: "turn-forgot-1", action: "answer", text: "My sister Ana, 555 010 5151." });
+    await settle();
+    eq("the reply's own block wasn't there", first.meta.parsed, false);
+    eq("but the second read was", first.meta.extracted, true);
+    eq("so the contact is kept", first.view.objectives.find((o) => o.id === "emergency_contact")?.status !== "open", true);
+    eq("and nothing is marked lost", (await loadSetup(DB, u)).state?.lostUpdate ?? false, false);
+    await setupTurn(e, c8, u, { turnId: "turn-forgot-2", action: "answer", text: "yes" });
+    await settle();
+    const history = asked[2].messages.map((m: { content: string }) => m.content).join("\n");
+    eq("the next turn shows the model its reply with the block", history.includes("Ana, got it. And her number?\n<update>"), true);
   }
   {
     // A lost update after a turn that asked for the contact: Skip mustn't decline the contact.
@@ -745,6 +784,7 @@ await (async () => {
     const { ai, asked } = fakeAi([
       'Who should I text if you ever press SOS?<update>{"fill":{},"asking":["emergency_contact"],"end":null}</update>',
       'Do you work set hours?<update>{"fill":{},"asking":["work"]',
+      "Nothing to add.",
       'Sure, moving on. When do you usually get up?<update>{"fill":{},"asking":["day"],"end":null}</update>',
     ]);
     const e = envWith(ai);
@@ -756,7 +796,7 @@ await (async () => {
     await settle();
     eq("and Skip after it declines nothing", [
       skip.view.objectives.find((o) => o.id === "emergency_contact")?.status,
-      asked[2].messages.at(-1).content.endsWith("(They pressed Skip. Move on to something else.)"),
+      asked[3].messages.at(-1).content.endsWith("(They pressed Skip. Move on to something else.)"),
     ], ["open", true]);
   }
   {

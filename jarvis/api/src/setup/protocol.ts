@@ -127,6 +127,23 @@ export type Update = {
 /** Most objectives one update may fill. More is a model listing everything it knows, not what it just heard. */
 const MAX_FILLS = 8;
 
+/**
+ * The key each list-shaped objective keeps its list under. The model often sends
+ * the list itself ("goals": [{…}] rather than "goals": {"goals": [{…}]}): in the
+ * second production probe every block parsed, yet goals stayed open in six of
+ * nine setups and no medication became a reminder, each list refused for its
+ * shape (2026-09-23). A bare list is read as the list it plainly is.
+ */
+const LIST_KEY: Partial<Record<ObjectiveId, string>> = {
+  goals: "goals",
+  daily: "items",
+  about: "facts",
+  leaving: "items",
+  focus: "areas",
+  nicknames: "names",
+};
+const unwrapped = (id: ObjectiveId, value: unknown) => (Array.isArray(value) && LIST_KEY[id] ? { [LIST_KEY[id]!]: value } : value);
+
 /** A list of objective ids; a lone id counts as a list of one. */
 const ids = z
   .preprocess((v) => (typeof v === "string" ? [v] : v), z.array(z.unknown()))
@@ -178,7 +195,7 @@ export function parseUpdate(trailer: string): Update | null {
       })
     : Object.entries(u.fill ?? {});
   for (const [id, value] of entries) {
-    if (isObjectiveId(id) && value !== undefined && value !== null && Object.keys(fill).length < MAX_FILLS) fill[id] = value;
+    if (isObjectiveId(id) && value !== undefined && value !== null && Object.keys(fill).length < MAX_FILLS) fill[id] = unwrapped(id, value);
   }
   return {
     fill,

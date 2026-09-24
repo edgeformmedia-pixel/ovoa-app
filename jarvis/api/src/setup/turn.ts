@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { validTimeZone } from "../google/assistant";
 import { listGoogleAccounts } from "../google/oauth";
-import { AI_UNREACHABLE, chatWithTools, isAiUnreachable, isModelRefused, type EngineAttempt, type LlmUsage } from "../llm";
+import { AI_UNREACHABLE, chatWithTools, generateText, isAiUnreachable, isModelRefused, type EngineAttempt, type LlmUsage } from "../llm";
 import { designApp, saveApp } from "../myapps";
 import { noteEngines, say } from "../obs";
 import { glmPriceFrom } from "../pricing";
@@ -12,8 +12,8 @@ import { llmRow, recordUsage } from "../usage";
 import type { Env } from "../types";
 import { VOICES } from "../voice";
 import { applyEffects, OBJECTIVES, storedValues, type Effect, type Made } from "./objectives";
-import { parseUpdate, replySplitter } from "./protocol";
-import { eventLine, NO_WORDS, SETUP_SYSTEM, stateBlock, transcriptTurns } from "./prompt";
+import { parseUpdate, replySplitter, type Update } from "./protocol";
+import { eventLine, EXTRACT_SYSTEM, NO_WORDS, SETUP_SYSTEM, stateBlock, transcriptTurns } from "./prompt";
 import {
   appendTurn,
   appsView,
@@ -71,8 +71,10 @@ export type SetupMeta = {
   turn: number;
   engine?: string;
   firstSentenceMs?: number | null;
-  /** The reply's update was read. */
+  /** The reply's own update was read. */
   parsed: boolean;
+  /** It wasn't, and the second call read the exchange instead. */
+  extracted?: boolean;
   /** The objectives the update filled in, by id: what the probe (scripts/setup-probe.mjs) counts. */
   fillIds?: string[];
   /** What the turn's model calls cost, as a Talk turn's meta.usage.microUsd. */
@@ -289,7 +291,31 @@ export async function setupTurn(
   const reply = got.splitter.spoken();
   if (!reply) throw new Error("The setup reply had no spoken words, twice");
 
-  const update = parseUpdate(got.splitter.trailer());
+  let update = parseUpdate(got.splitter.trailer());
+  const parsed = !!update;
+  // No readable block (left off, or cut short): a small second call reads the
+  // exchange and writes it, while the reply is still being spoken, so what they
+  // said is kept either way (2026-09-23: 17 of 64 probe turns carried none, and
+  // one reply said "I've got her down as your SOS contact" with nothing saved).
+  if (!update) {
+    const before = usages.length;
+    update = await generateText(env, {
+      model: env.CHAT_MODEL,
+      system: EXTRACT_SYSTEM,
+      turns: [{ role: "user", text: `${block}\n${words}\nOVOA replied: "${reply}"` }],
+      voice: true,
+      usage: { userId, purpose: "onboarding" },
+      prefer: { order: prefs.engine_order, voice: prefs.voice_engine },
+      onAttempt: (a) => attempts.push(a),
+      onUsage: (u) => usages.push(u),
+    })
+      .then(parseUpdate)
+      .catch((err) => {
+        console.error("ovoa.err setup: couldn't read the update from the exchange", err);
+        return null;
+      });
+    ctx.waitUntil(recordUsage(env, usages.slice(before).map((u) => llmRow(userId, u, glmPriceFrom(env)))));
+  }
   await early;
   const saved = await updateSetup(
     db,
@@ -311,6 +337,7 @@ export async function setupTurn(
         s = f.state;
         effects = [...effects, ...f.effects];
       }
+      if (update) s = { ...s, transcript: withUpdate(s.transcript, input.turnId, update) };
       return { state: { ...s, lastTurn: { id: input.turnId, reply } }, out: { effects, how } };
     },
     fresh,
@@ -327,7 +354,8 @@ export async function setupTurn(
     turn: state.turns,
     engine: got.engine,
     firstSentenceMs,
-    parsed: !!update,
+    parsed,
+    extracted: !parsed && !!update,
     fillIds: update ? Object.keys(update.fill) : [],
     usage: { microUsd: usages.reduce((n, u) => n + (llmRow(userId, u, glmPriceFrom(env)).microUsd ?? 0), 0) },
     tried: attempts.map((a) => `${a.engine}:${a.outcome}`).join(","),
@@ -340,13 +368,30 @@ export async function setupTurn(
     ms: meta.ms,
     firstSentence: firstSentenceMs ?? undefined,
     engine: got.engine,
-    parsed: update ? "yes" : "no",
+    parsed: parsed ? "yes" : update ? "extracted" : "no",
     fills: update ? Object.keys(update.fill).join(",") || "none" : undefined,
     asking: update?.asking.join(",") || undefined,
     problems: state.problems.length || undefined,
     finished: how ?? undefined,
   });
   return { reply, view, meta };
+}
+
+/**
+ * The update written onto this turn's OVOA line, compact: the next turn's
+ * transcript shows the model its own replies with their blocks (Line.update).
+ */
+function withUpdate(transcript: SetupState["transcript"], turnId: string, update: Update) {
+  const compact = JSON.stringify({
+    fill: update.fill,
+    ...(update.unsure.length && { unsure: update.unsure }),
+    ...(update.decline.length && { decline: update.decline }),
+    asking: update.asking,
+    end: update.end,
+  }).slice(0, 600);
+  let i = transcript.length - 1;
+  while (i >= 0 && !(transcript[i].role === "ovoa" && transcript[i].turn === turnId)) i--;
+  return i < 0 ? transcript : transcript.map((l, j) => (j === i ? { ...l, update: compact } : l));
 }
 
 /** The view, with no model call: GET /onboarding/state. */

@@ -46,7 +46,13 @@ export type Slot = {
   unsure?: string[];
 };
 /** One side of the conversation. `turn`: the turnId it came from, so a retried request replays rather than runs again. */
-export type Line = { role: "user" | "ovoa"; text: string; at: number; turn?: string };
+/**
+ * `update`: the update block OVOA's reply carried (or the one read from it
+ * afterwards), shown back to the model with the reply. With the spoken words
+ * alone, the model's own earlier replies taught it to leave the block off: 73%
+ * of turns carried one in the first production probe (2026-09-23).
+ */
+export type Line = { role: "user" | "ovoa"; text: string; at: number; turn?: string; update?: string };
 export type FinishHow = "complete" | "stopped" | "later" | "budget";
 
 export type SetupState = {
