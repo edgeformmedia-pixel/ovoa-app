@@ -204,29 +204,47 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
  * `confirm`: the app asking a signed-in account to prove its address (verify.ts),
  * not a sign-in or a sign-up on the site.
  */
-export function codeEmail(input: { to: string; code: string; name: string | null; existing: boolean; confirm?: boolean }): Email {
+export function codeEmail(input: {
+  to: string;
+  code: string;
+  name: string | null;
+  existing: boolean;
+  confirm?: boolean;
+  /** A one-tap confirmation link (verify.ts issueVerifyLink), shown as a button above the code. */
+  link?: string;
+}): Email {
   const first = input.name?.trim().split(/\s+/)[0] ?? null;
   const hello = `Hi${first ? ` ${first}` : ""},`;
-  const why = input.confirm
-    ? "Here's your code to confirm your email for OVOA:"
-    : input.existing
-      ? "Here's your code to sign in to OVOA:"
-      : "Here's your code to create your OVOA account:";
+  const withLink = !!(input.confirm && input.link);
+  const why = withLink
+    ? "Tap the button to confirm your email for OVOA:"
+    : input.confirm
+      ? "Here's your code to confirm your email for OVOA:"
+      : input.existing
+        ? "Here's your code to sign in to OVOA:"
+        : "Here's your code to create your OVOA account:";
   const minutes = CODE_TTL_MS / 60_000;
-  const after = `It works for ${minutes} minutes. If you didn't ask for it, ignore this email: nobody can use your address without the code.`;
+  const after = withLink
+    ? `The button works for a day, the code for ${minutes} minutes. If you didn't ask for this, ignore this email: nobody can use your address without it.`
+    : `It works for ${minutes} minutes. If you didn't ask for it, ignore this email: nobody can use your address without the code.`;
+  const orCode = "Or type this code in the app:";
   const signOff = "Questions? Reply to this email, or write to support@ovoa.ai.";
   const p = (s: string) => `<p style="margin:0 0 16px;font-size:16px;line-height:1.55;color:#060606">${esc(s)}</p>`;
+  const button = withLink
+    ? `<p style="margin:8px 0 24px"><a href="${esc(input.link!)}" style="display:inline-block;background:#060606;color:#ffffff;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:24px">Confirm my email</a></p>
+${p(orCode)}`
+    : "";
   return {
     to: input.to,
-    subject: `${input.code} is your OVOA code`,
-    text: [hello, why, input.code, after, signOff, "OVOA"].join("\n\n"),
+    subject: withLink ? `Confirm your email for OVOA (code ${input.code})` : `${input.code} is your OVOA code`,
+    text: (withLink ? [hello, why, input.link!, orCode, input.code, after, signOff, "OVOA"] : [hello, why, input.code, after, signOff, "OVOA"]).join("\n\n"),
     html: `<!doctype html><html><body style="margin:0;padding:0;background:#edebee">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#edebee;padding:32px 16px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:20px;padding:32px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif"><tr><td>
 <p style="margin:0 0 24px;font-size:14px;font-weight:700;letter-spacing:0.08em;color:#060606">OVOA</p>
 ${p(hello)}
 ${p(why)}
-<p style="margin:8px 0 24px;font-size:34px;font-weight:700;letter-spacing:0.18em;color:#060606;font-family:'SF Mono',Menlo,Consolas,monospace">${esc(input.code)}</p>
+${button}<p style="margin:8px 0 24px;font-size:34px;font-weight:700;letter-spacing:0.18em;color:#060606;font-family:'SF Mono',Menlo,Consolas,monospace">${esc(input.code)}</p>
 ${p(after)}
 ${p(signOff)}
 </td></tr></table>

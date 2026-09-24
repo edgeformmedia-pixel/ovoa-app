@@ -49,10 +49,10 @@ export type NavItem = { label: string; href: Href; icon: IconName; tone: Tone };
 /**
  * The menu (2026-09-23): Talk and Apps at the top, the apps you've added
  * listed under Apps, and Settings, which holds the account too, pinned at the
- * bottom. Nothing else ever joins them. It is the same menu on every plan: on
- * the free plan Talk stays, with a lock, and opens on "That's for Base users"
- * (app/(tabs)/chat.tsx, components/Plan.tsx); the AI add-ons under Apps carry
- * the lock too. Before consent, the same rows say "Agree to use AI".
+ * bottom. Nothing else ever joins them. A new account has nothing under Apps
+ * until it adds something (lib/addons.ts). On the free plan there's no Talk
+ * row at all, only Apps and Settings (the user, 2026-09-24); the AI add-ons
+ * under Apps carry a lock there. Before consent, Talk says "Agree to use AI".
  */
 export const TOP: NavItem[] = [
   { label: "Talk", href: "/chat", icon: "mic", tone: "teal" },
@@ -78,9 +78,12 @@ export function DrawerPanel({
   onGo,
   onClose,
   locked,
+  noTalk,
 }: {
-  /** Set when talking isn't reached (the free plan, or no consent yet): what Talk's lock says (FOR_BASE). */
+  /** Set when talking isn't reached (no consent yet): what Talk's lock says (FOR_BASE). */
   locked?: string;
+  /** The free plan: no Talk row at all. */
+  noTalk?: boolean;
   /** The route showing behind the panel, so its row can be marked. */
   current: string;
   /** Only the values actually to hand; the rest of the rows go without. */
@@ -134,7 +137,7 @@ export function DrawerPanel({
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: space.s4 }}>
-        {TOP.map(row)}
+        {TOP.filter((item) => !(noTalk && item.label === "Talk")).map(row)}
 
         {apps.length > 0 && (
           <View ref={spotRef("Your apps")} collapsable={false}>
@@ -173,7 +176,7 @@ export function DrawerPanel({
 export function AppDrawer({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { can, needsConsent, plan } = usePlan();
+  const { can, needsConsent, plan, free } = usePlan();
   const { token, user } = useSession();
   const devMode = useDevMode();
   const installed = useInstalledAddons();
@@ -222,6 +225,7 @@ export function AppDrawer({ children }: { children: ReactNode }) {
             tails={tails}
             apps={user ? apps : []}
             locked={can.chat ? undefined : lockTag(needsConsent)}
+            noTalk={free}
             onClose={close}
             onGo={go}
           />
@@ -342,7 +346,7 @@ export function DrawerHost({
         >
           {/* Frosted glass: what's behind shows through, blurred, like Control Center. */}
           <View style={styles.glass}>
-            <BlurView intensity={50} tint="light" style={StyleSheet.absoluteFill} />
+            <BlurView intensity={90} tint="systemThinMaterialLight" style={StyleSheet.absoluteFill} />
             <View style={[StyleSheet.absoluteFill, styles.frost]} />
             <View style={{ flex: 1, paddingLeft: OVERHANG }}>{panel(handle.close)}</View>
           </View>
@@ -367,7 +371,8 @@ const styles = StyleSheet.create({
   },
   fill: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
 
-  scrim: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 9, backgroundColor: "rgba(12,14,18,0.22)" },
+  // Light, so what's under the glass is still there to be blurred.
+  scrim: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 9, backgroundColor: "rgba(12,14,18,0.12)" },
 
   panel: {
     position: "absolute",
@@ -379,8 +384,10 @@ const styles = StyleSheet.create({
     ...lift,
   },
   glass: { flex: 1, borderTopRightRadius: 26, borderBottomRightRadius: 26, overflow: "hidden" },
-  // Mostly white, so it's still the paper-white app; the blur is in the last fifth.
-  frost: { backgroundColor: "rgba(255,255,255,0.78)" },
+  // A light wash over the blur, so the screen behind reads as frosted glass rather
+  // than a white panel: at 0.78 the blur barely showed ("make the menu frosted
+  // glass", 2026-09-24). Enough white for the rows to stay readable over anything.
+  frost: { backgroundColor: "rgba(255,255,255,0.32)" },
   panelBody: { flex: 1, paddingHorizontal: space.s4 },
 
   head: { flexDirection: "row", alignItems: "center", paddingHorizontal: space.s3, paddingBottom: space.s5 },

@@ -76,6 +76,7 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 | device_state | keep | one row per user, overwritten | |
 | google_accounts | keep | the connection | |
 | oauth_states | expires | deleted once past `expires_at` | |
+| verify_links | expires | the confirmation email's one-tap links: deleted once past `expires_at` (a day), used or not | |
 | account_profiles | delete | what each Google account is for, learned from mail: 14 d after `learned_at` (relearned nightly for Base users while connected), or at once when its account is disconnected | |
 | messages | delete | 14 d after `created_at` | |
 | memories | mixed | `source`: `asked` (they told OVOA to remember it) kept; `learned` (the background memory pass) 14 d after `created_at` | existing rows are `learned` |

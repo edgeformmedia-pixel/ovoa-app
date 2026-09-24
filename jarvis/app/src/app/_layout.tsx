@@ -95,21 +95,25 @@ function RootStack() {
   //      is asked once and may put it off. Older servers don't send
   //      emailVerified; only an explicit false asks.
   const codeStep = !!user && user.emailVerified === false && (!!user.mustVerify || first.codeLater !== user.id);
-  //   2. The phone's permissions, once, after a sign-up on this phone.
-  const permissionsStep = !!user && !codeStep && (onboarding || first.permissions);
-  //   3. With Base (or while the plan isn't known to be free): agreeing to AI,
+  //   2. The Terms of Service, in full, scrolled to the end (app/terms.tsx), until
+  //      the current wording is agreed. Older servers don't send `terms`; only
+  //      an explicit false asks.
+  const termsStep = !!user && !codeStep && user.terms?.accepted === false;
+  //   3. The phone's permissions, once, after a sign-up on this phone.
+  const permissionsStep = !!user && !codeStep && !termsStep && (onboarding || first.permissions);
+  //   4. With Base (or while the plan isn't known to be free): agreeing to AI,
   //      before anything goes to an AI company. Once: "Not now" goes on to the
   //      app with AI locked, and they come back to it from there.
   const paid = !free;
-  const consentStep = !!user && !codeStep && !permissionsStep && paid && needsConsent && first.consentLater !== consentLaterKey(user.id);
-  //   4. With Base and consent: the setup conversation, the first time they
+  const consentStep = !!user && !codeStep && !termsStep && !permissionsStep && paid && needsConsent && first.consentLater !== consentLaterKey(user.id);
+  //   5. With Base and consent: the setup conversation, the first time they
   //      have Base (paid or a Band's days), never at sign-up for a free account.
   //      Without consent it waits until they agree. Older servers don't send
   //      `onboarded`; only an explicit false shows it.
-  const setupStep = !!user && !codeStep && !permissionsStep && !consentStep && paid && !needsConsent && user.onboarded === false;
-  //   5. The app, with the tour on top the first time (components/Tour.tsx).
+  const setupStep = !!user && !codeStep && !termsStep && !permissionsStep && !consentStep && paid && !needsConsent && user.onboarded === false;
+  //   6. The app, with the tour on top the first time (components/Tour.tsx).
   // Connect Google isn't a step any more: it's in Settings.
-  const signedIn = !!user && !codeStep && !permissionsStep && !consentStep && !setupStep;
+  const signedIn = !!user && !codeStep && !termsStep && !permissionsStep && !consentStep && !setupStep;
 
   // Which state the app is in. A crash report that doesn't say whether anyone
   // was signed in costs a round trip to the phone to find out.
@@ -119,13 +123,15 @@ function RootStack() {
       ? "signed out"
       : codeStep
         ? "code"
-        : permissionsStep
-          ? "permissions"
-          : consentStep
-            ? "consent"
-            : setupStep
-              ? "setup"
-              : "signed in";
+        : termsStep
+          ? "terms"
+          : permissionsStep
+            ? "permissions"
+            : consentStep
+              ? "consent"
+              : setupStep
+                ? "setup"
+                : "signed in";
   useEffect(() => {
     devlog("log", `session: ${where}`);
   }, [where]);
@@ -135,7 +141,7 @@ function RootStack() {
   // the moment it takes rather than flash either at a free account. And what
   // this phone remembers of first open is read before any of it is decided.
   const waitingForPlan =
-    !!user && !codeStep && !permissionsStep && (onboarding || user.onboarded === false || needsConsent) && !ready;
+    !!user && !codeStep && !termsStep && !permissionsStep && (onboarding || user.onboarded === false || needsConsent) && !ready;
 
   if (loading || waitingForPlan || (!!user && !first.loaded)) {
     return (
@@ -149,6 +155,10 @@ function RootStack() {
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.paper } }}>
       <Stack.Protected guard={codeStep}>
         <Stack.Screen name="verify-email" />
+      </Stack.Protected>
+      {/* A step of its own, and read again from Settings → App & help. */}
+      <Stack.Protected guard={termsStep || signedIn}>
+        <Stack.Screen name="terms" options={signedIn ? { presentation: "modal" } : undefined} />
       </Stack.Protected>
       <Stack.Protected guard={permissionsStep}>
         <Stack.Screen name="permissions" />

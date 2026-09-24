@@ -1,9 +1,11 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter, type Href } from "expo-router";
 import { logFail } from "../../lib/devlog";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
+  LayoutAnimation,
   Linking,
   Pressable,
   StyleSheet,
@@ -12,11 +14,10 @@ import {
   View,
 } from "react-native";
 import { AccountSection } from "../../components/AccountSection";
-import { GoogleConnection } from "../../components/GoogleConnection";
 import { LockedLine } from "../../components/Plan";
 import { SiriSetup } from "../../components/SiriSetup";
 import { VoicePicker } from "../../components/VoicePicker";
-import { Btn, GroupLabel, Screen, Toggle, TopBar } from "../../components/ui";
+import { Btn, IconTile, Screen, Toggle, TopBar, type IconName, type Tone } from "../../components/ui";
 import { api, type Autonomy, type Memory, type SetupView } from "../../lib/api";
 import { setupAgain } from "../../lib/setupScreen";
 import { disableTimeline, enableTimeline, timelinePref } from "../../lib/location";
@@ -221,25 +222,22 @@ export default function Settings() {
     );
   };
 
+  // Four groups that open and close (2026-09-24): the page had grown into one
+  // long scroll of everything. Account is open to begin with; the rest wait to
+  // be tapped. Everything the assistant does is under Assistant, what's kept
+  // about you under Privacy & data, and the rest under App & help.
   return (
     <View style={styles.page}>
       <TopBar title="Settings" />
       <Screen keyboardShouldPersistTaps="handled">
-      {/* The account first: plan, name, email, password, and the ways out. */}
-      <AccountSection />
-      {!free && (
-      <>
-      {/* Whether they've agreed to AI, what that covers, and the way to take it back (app/consent.tsx). */}
-      <Section title="AI and your data">
-        <About>
-          {needsConsent
-            ? "You haven't agreed yet, so OVOA doesn't send anything to an AI company, and talking to it is off until you do."
-            : "You've agreed: what you say, and what's needed to answer it, goes to the AI companies that write OVOA's replies and voice them."}
-        </About>
-        <Button label={needsConsent ? "Review and agree" : "What goes where"} onPress={() => router.push("/consent" as Href)} />
-      </Section>
+      <Group title="Account" icon="person-circle-outline" tone="blue" startOpen>
+        {/* Plan, email, name, password, Google accounts, and the ways out. */}
+        <AccountSection google={!free} />
+      </Group>
 
-      <Section title="Assistant">
+      {!free && (
+      <Group title="Assistant" icon="sparkles-outline" tone="violet">
+        <Sub>Name and personality</Sub>
         <Field label="Assistant name" value={assistantName} onChangeText={setAssistantName} />
         <Field
           label="Personality"
@@ -249,13 +247,11 @@ export default function Settings() {
           placeholder="e.g. Dry British wit, keeps answers brief"
         />
         <Button label={saving ? "Saving…" : "Save changes"} onPress={save} disabled={!dirty || saving} />
-      </Section>
 
-      <Section title="Voice">
+        <Sub>Voice</Sub>
         <VoicePicker token={token} />
-      </Section>
 
-      <Section title="How to start talking">
+        <Sub>How to start talking</Sub>
         <View style={styles.segment}>
           {LISTEN_MODES.map((m) => (
             <Pressable
@@ -270,11 +266,11 @@ export default function Settings() {
         <About>
           {listenMode === "wake" && !can.wake
             ? needsConsent
-              ? "Saying its name to start works once you've agreed to AI, under AI and your data above."
+              ? "Saying its name to start works once you've agreed to AI, under Privacy & data."
               : "Saying its name to start is for Base users. For now, tap the orb on Talk and speak."
             : LISTEN_MODES.find((m) => m.mode === listenMode)?.hint}
         </About>
-        <Text style={[styles.label, { marginTop: 18 }]}>Microphone</Text>
+        <Text style={[styles.label, { marginTop: 8 }]}>Microphone</Text>
         <View style={styles.segment}>
           {MIC_SOURCES.map((m) => (
             <Pressable
@@ -287,24 +283,164 @@ export default function Settings() {
           ))}
         </View>
         <About>{MIC_SOURCES.find((m) => m.source === micSource)?.hint}</About>
-      </Section>
+        {!can.wake ? (
+          <LockedLine
+            label="Always listen"
+            what="The microphone stays on day and night, and answers when you say its name."
+          />
+        ) : !phoneEar.available ? (
+          phoneEar.checked && (
+            <View style={{ gap: 2 }}>
+              <Text style={styles.label}>Always listen</Text>
+              <Text style={styles.meta}>
+                Not on this iPhone: it can't recognise speech on its own, and OVOA never sends a room's sound anywhere to listen for its name.
+              </Text>
+            </View>
+          )
+        ) : (
+          <Setting
+            label="Always listen"
+            about={`The microphone stays on day and night, on every screen and with the app in the background, and answers when you say "${assistantName || "OVOA"}". Your iPhone listens for the name itself: nothing you or anyone else says leaves the phone until the name is heard. While the microphone is on, the band's light stays on. Turn it off here, from the Talk tab, or with a double click on the band.`}
+          >
+            <Toggle
+              value={alwaysListen}
+              onValueChange={(on) =>
+                on
+                  ? Alert.alert(
+                      "Always listen?",
+                      `The microphone stays on day and night, even with the app in the background, and hears everyone around you. Your iPhone listens for "${assistantName || "OVOA"}" on its own; nothing is sent until it hears the name. The band's light stays on while it listens.`,
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        { text: "Turn on", style: "destructive", onPress: () => setAlwaysListen(true) },
+                      ],
+                    )
+                  : setAlwaysListen(false)
+              }
+            />
+          </Setting>
+        )}
 
-      <Section title="Google accounts">
-        <GoogleConnection token={token} />
-      </Section>
-
-      <Section title="Siri">
+        <Sub>What it can do for you</Sub>
+        <Setting
+          label="Approve for me"
+          about={`Skip approval cards: ${assistantName || "your assistant"} sends emails, deletes things, and changes your contacts, calendar, and reminders right away. iOS still asks you to tap Send for emails, and for texts unless "Send texts automatically" is on.`}
+        >
+          <Toggle value={user.settings.autoApprove} onValueChange={toggleAutoApprove} />
+        </Setting>
+        <Setting
+          label="Send texts automatically"
+          about={`Hands each text to your "${SEND_TEXT_SHORTCUT}" shortcut instead of opening Messages, so it goes without tapping Send. Your phone switches to Shortcuts for a moment and comes back.`}
+        >
+          <Toggle value={autoSendTexts} onValueChange={toggleAutoSendTexts} />
+        </Setting>
+        {autoSendTexts && <Button label="Open Shortcuts" onPress={() => Linking.openURL("shortcuts://create-shortcut")} />}
         <SiriSetup token={token} />
-      </Section>
 
-      <Section title="Memory">
+        <Sub>Background work</Sub>
+        {!can.agent ? (
+          <LockedLine
+            label={`Let ${assistantName || "OVOA"} work on its own`}
+            what="It checks things between conversations and tells you only when it's worth interrupting you."
+          />
+        ) : (
+          <>
+            <Setting
+              label={`Let ${assistantName || "OVOA"} work on its own`}
+              about="It checks things between conversations — what's actually on today, what you said you'd do — and tells you only when it's worth interrupting you. Everything it does is logged."
+            >
+              <Toggle value={user.settings.agentEnabled} onValueChange={toggleAgent} />
+            </Setting>
+
+            {user.settings.agentEnabled && (
+              <>
+                {!!pushProblem && <Text style={[styles.meta, { color: colors.late }]}>{pushProblem}</Text>}
+
+                <Text style={styles.label}>How far it can go</Text>
+                <View style={styles.segment}>
+                  {AUTONOMY.map((a) => (
+                    <Pressable
+                      key={a.value}
+                      onPress={() => setAutonomy(a.value)}
+                      style={[styles.segmentItem, user.settings.agentAutonomy === a.value && styles.segmentOn]}
+                    >
+                      <Text style={[styles.segmentText, user.settings.agentAutonomy === a.value && styles.segmentTextOn]}>
+                        {a.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <About>
+                  {AUTONOMY.find((a) => a.value === user.settings.agentAutonomy)?.hint} At every level it can't send a message
+                  or email on its own, and can't delete anything. Those always wait for you.
+                </About>
+
+                <Text style={[styles.label, { marginTop: 8 }]}>Don't disturb me between</Text>
+                <View style={styles.row}>
+                  <TextInput
+                    style={[styles.input, { width: 80, textAlign: "center" }]}
+                    value={quiet.start}
+                    onChangeText={(v) => setQuiet((q) => ({ ...q, start: v }))}
+                    onBlur={saveQuiet}
+                    placeholder="22:00"
+                    placeholderTextColor={colors.inkMute}
+                    keyboardType="numbers-and-punctuation"
+                  />
+                  <Text style={styles.meta}>and</Text>
+                  <TextInput
+                    style={[styles.input, { width: 80, textAlign: "center" }]}
+                    value={quiet.end}
+                    onChangeText={(v) => setQuiet((q) => ({ ...q, end: v }))}
+                    onBlur={saveQuiet}
+                    placeholder="07:00"
+                    placeholderTextColor={colors.inkMute}
+                    keyboardType="numbers-and-punctuation"
+                  />
+                </View>
+                <About>
+                  It still works during these hours; it just saves what it found until morning. Something about to be missed
+                  tonight comes through anyway.
+                </About>
+
+                <Button label="What it's set up to do" onPress={() => router.push("/agent")} />
+              </>
+            )}
+          </>
+        )}
+
+        <Sub>Setup</Sub>
+        <About>{again.about}</About>
+        <Button
+          label={again.label}
+          onPress={async () => {
+            try {
+              await api.onboardingRestart(token);
+              setUser({ ...user!, onboarded: false });
+            } catch (err) {
+              Alert.alert("Couldn't start setup", err instanceof Error ? err.message : String(err));
+            }
+          }}
+        />
+      </Group>
+      )}
+
+      {!free && (
+      <Group title="Privacy & data" icon="lock-closed-outline" tone="green">
+        {/* Whether they've agreed to AI, what that covers, and the way to take it back (app/consent.tsx). */}
+        <Sub>AI and your data</Sub>
+        <About>
+          {needsConsent
+            ? "You haven't agreed yet, so OVOA doesn't send anything to an AI company, and talking to it is off until you do."
+            : "You've agreed: what you say, and what's needed to answer it, goes to the AI companies that write OVOA's replies and voice them."}
+        </About>
+        <Button label={needsConsent ? "Review and agree" : "What goes where"} onPress={() => router.push("/consent" as Href)} />
+
+        <Sub>Memory</Sub>
         <Setting
           label="Remember things about me"
           about={`${assistantName || "Your assistant"} learns facts from your chats and forgets them after 14 days, unless you asked it to remember them ("remember that I'm vegan").`}
         >
           <Toggle value={user.settings.memoryEnabled} onValueChange={toggleMemory} />
         </Setting>
-
         {memories === null ? (
           <ActivityIndicator color={colors.now} />
         ) : memories.length === 0 ? (
@@ -330,7 +466,6 @@ export default function Settings() {
               ))}
           </>
         )}
-
         {!!memories?.length && memoriesOpen && (
           <Button
             label="Forget everything"
@@ -343,164 +478,8 @@ export default function Settings() {
             }
           />
         )}
-        <Button
-          label="Clear chat history"
-          danger
-          onPress={() =>
-            confirm("Clear chat history?", "Your conversation will be deleted.", "Clear", () =>
-              api.clearMessages(token),
-            )
-          }
-        />
-      </Section>
 
-      </>
-      )}
-
-      {!free && (
-      <Section title="Your day">
-        <LocationTimeline />
-        <Button label="Transcripts — everything said" onPress={() => router.push("/transcripts" as Href)} />
-        <About>{again.about}</About>
-        <Button
-          label={again.label}
-          onPress={async () => {
-            try {
-              await api.onboardingRestart(token);
-              setUser({ ...user!, onboarded: false });
-            } catch (err) {
-              Alert.alert("Couldn't start setup", err instanceof Error ? err.message : String(err));
-            }
-          }}
-        />
-      </Section>
-
-      )}
-
-      <Section title="Something went wrong">
-        <About>
-          Tell us what happened and the app sends what it was doing at the time. No passwords or sign-in details go
-          with it.
-        </About>
-        <Button label="Report a problem" onPress={() => router.push("/report-bug" as Href)} />
-      </Section>
-
-      <Section title="Developer">
-        <Setting
-          label="Dev mode"
-          about="Shows the developer's screens: Dev tools, the Logs panel on Talk, and the Developer group in the menu. Turn it off to see OVOA the way someone who just downloaded it would. It only changes this phone."
-        >
-          <Toggle value={devMode} onValueChange={(on) => void devModePref.set(on)} />
-        </Setting>
-        {devMode && <Button label="Sensors, inputs & OVOA Band" onPress={() => router.push("/dev-tools")} />}
-      </Section>
-
-      <Section title="Sounds">
-        <Setting
-          label="Sound effects"
-          about="Soft glass chimes when OVOA starts listening, when it's done something, when it needs you and when something goes wrong. The taps you feel stay on either way."
-        >
-          <Toggle value={soundsOn} onValueChange={(on) => void soundsPref.set(on)} />
-        </Setting>
-      </Section>
-
-      <Section title="Getting around">
-        <About>
-          The menu is Talk and Apps, the apps you have added, and Settings at the bottom. The tour walks
-          through it again.
-        </About>
-        <Button label="Show the tour again" onPress={() => void tourPref.replay()} />
-      </Section>
-
-      {!free && (
-      <>
-      <Section title="Texts">
-        <Setting
-          label="Send texts automatically"
-          about={`Hands each text to your "${SEND_TEXT_SHORTCUT}" shortcut instead of opening Messages, so it goes without tapping Send. Your phone switches to Shortcuts for a moment and comes back.`}
-        >
-          <Toggle value={autoSendTexts} onValueChange={toggleAutoSendTexts} />
-        </Setting>
-        {autoSendTexts && (
-          <Button label="Open Shortcuts" onPress={() => Linking.openURL("shortcuts://create-shortcut")} />
-        )}
-      </Section>
-
-      <Section title="Background work">
-        {!can.agent ? (
-          <LockedLine
-            label={`Let ${assistantName || "OVOA"} work on its own`}
-            what="It checks things between conversations and tells you only when it's worth interrupting you."
-          />
-        ) : (
-        <>
-        <Setting
-          label={`Let ${assistantName || "OVOA"} work on its own`}
-          about="It checks things between conversations — what's actually on today, what you said you'd do — and tells you only when it's worth interrupting you. Everything it does is logged."
-        >
-          <Toggle value={user.settings.agentEnabled} onValueChange={toggleAgent} />
-        </Setting>
-
-        {user.settings.agentEnabled && (
-          <>
-            {!!pushProblem && <Text style={[styles.meta, { color: colors.late }]}>{pushProblem}</Text>}
-
-            <Text style={styles.label}>How far it can go</Text>
-            <View style={styles.segment}>
-              {AUTONOMY.map((a) => (
-                <Pressable
-                  key={a.value}
-                  onPress={() => setAutonomy(a.value)}
-                  style={[styles.segmentItem, user.settings.agentAutonomy === a.value && styles.segmentOn]}
-                >
-                  <Text
-                    style={[styles.segmentText, user.settings.agentAutonomy === a.value && styles.segmentTextOn]}
-                  >
-                    {a.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-            <About>
-              {AUTONOMY.find((a) => a.value === user.settings.agentAutonomy)?.hint} At every level it can't send a
-              message or email on its own, and can't delete anything. Those always wait for you.
-            </About>
-
-            <Text style={[styles.label, { marginTop: 8 }]}>Don't disturb me between</Text>
-            <View style={styles.row}>
-              <TextInput
-                style={[styles.input, { width: 80, textAlign: "center" }]}
-                value={quiet.start}
-                onChangeText={(v) => setQuiet((q) => ({ ...q, start: v }))}
-                onBlur={saveQuiet}
-                placeholder="22:00"
-                placeholderTextColor={colors.inkMute}
-                keyboardType="numbers-and-punctuation"
-              />
-              <Text style={styles.meta}>and</Text>
-              <TextInput
-                style={[styles.input, { width: 80, textAlign: "center" }]}
-                value={quiet.end}
-                onChangeText={(v) => setQuiet((q) => ({ ...q, end: v }))}
-                onBlur={saveQuiet}
-                placeholder="07:00"
-                placeholderTextColor={colors.inkMute}
-                keyboardType="numbers-and-punctuation"
-              />
-            </View>
-            <About>
-              It still works during these hours; it just saves what it found until morning. Something about to be missed
-              tonight comes through anyway.
-            </About>
-
-            <Button label="What it's set up to do" onPress={() => router.push("/agent")} />
-          </>
-        )}
-        </>
-        )}
-      </Section>
-
-      <Section title="Timeline">
+        <Sub>Your days</Sub>
         <Setting
           label="Keep a record of my days"
           about={`What you record gets summarised into a day ${assistantName || "OVOA"} can look things up in — "what did I do Tuesday", "did I ever call Sarah back". Only ever what you chose to record: nothing is captured in the background. A recording's words and summary are kept on OVOA's server until you delete them, and the audio stays on this phone. Everything else about your day is deleted after 14 days, apart from a short summary of each day.`}
@@ -508,88 +487,114 @@ export default function Settings() {
           <Toggle value={user.settings.contextEnabled} onValueChange={toggleContext} />
         </Setting>
         {user.settings.contextEnabled && (
-          <>
-            <Button
-              label="Forget the last hour"
-              danger
-              onPress={() =>
-                confirm(
-                  "Forget the last hour?",
-                  "Everything recorded in the last hour is deleted, along with anything pulled out of it.",
-                  "Forget",
-                  async () => {
-                    const { forgot } = await api.forgetSince(token, Date.now() - 3_600_000);
-                    Alert.alert(forgot ? `Forgot ${forgot} ${forgot === 1 ? "moment" : "moments"}` : "Nothing to forget");
-                  },
-                )
-              }
-            />
-          </>
+          <Button
+            label="Forget the last hour"
+            danger
+            onPress={() =>
+              confirm(
+                "Forget the last hour?",
+                "Everything recorded in the last hour is deleted, along with anything pulled out of it.",
+                "Forget",
+                async () => {
+                  const { forgot } = await api.forgetSince(token, Date.now() - 3_600_000);
+                  Alert.alert(forgot ? `Forgot ${forgot} ${forgot === 1 ? "moment" : "moments"}` : "Nothing to forget");
+                },
+              )
+            }
+          />
         )}
-      </Section>
+        <LocationTimeline />
+        <Button label="Transcripts — everything said" onPress={() => router.push("/transcripts" as Href)} />
 
-      </>
+        <Sub>Chat history</Sub>
+        <Button
+          label="Clear chat history"
+          danger
+          onPress={() =>
+            confirm("Clear chat history?", "Your conversation will be deleted.", "Clear", () => api.clearMessages(token))
+          }
+        />
+      </Group>
       )}
 
-      {/* Deleting the account is up in the account section; what is left here is the assistant's. */}
-      {!free && (
-      <Section title="Danger zone">
+      <Group title="App & help" icon="help-buoy-outline" tone="amber">
         <Setting
-          label="Approve for me"
-          about={`Skip approval cards: ${assistantName || "your assistant"} sends emails, deletes things, and changes your contacts, calendar, and reminders right away. iOS still asks you to tap Send for emails, and for texts unless "Send texts automatically" is on.`}
+          label="Sound effects"
+          about="Soft glass chimes when OVOA starts listening, when it's done something, when it needs you and when something goes wrong. The taps you feel stay on either way."
         >
-          <Toggle value={user.settings.autoApprove} onValueChange={toggleAutoApprove} />
+          <Toggle value={soundsOn} onValueChange={(on) => void soundsPref.set(on)} />
         </Setting>
-        {!can.wake ? (
-            <LockedLine
-              label="Always listen"
-              what="The microphone stays on day and night, and answers when you say its name."
-            />
-          ) : !phoneEar.available ? (
-            phoneEar.checked && (
-              <View style={{ gap: 2 }}>
-                <Text style={styles.label}>Always listen</Text>
-                <Text style={styles.meta}>
-                  Not on this iPhone: it can't recognise speech on its own, and OVOA never sends a room's sound anywhere to listen for its name.
-                </Text>
-              </View>
-            )
-          ) : (
-            <Setting
-              label="Always listen"
-              about={`The microphone stays on day and night, on every screen and with the app in the background, and answers when you say "${assistantName || "OVOA"}". Your iPhone listens for the name itself: nothing you or anyone else says leaves the phone until the name is heard. While the microphone is on, the band's light stays on. Turn it off here, from the Talk tab, or with a double click on the band.`}
-            >
-              <Toggle
-                value={alwaysListen}
-                onValueChange={(on) =>
-                  on
-                    ? Alert.alert(
-                        "Always listen?",
-                        `The microphone stays on day and night, even with the app in the background, and hears everyone around you. Your iPhone listens for "${assistantName || "OVOA"}" on its own; nothing is sent until it hears the name. The band's light stays on while it listens.`,
-                        [
-                          { text: "Cancel", style: "cancel" },
-                          { text: "Turn on", style: "destructive", onPress: () => setAlwaysListen(true) },
-                        ],
-                      )
-                    : setAlwaysListen(false)
-                }
-              />
-            </Setting>
-          )}
-      </Section>
-      )}
+
+        <Sub>Getting around</Sub>
+        <About>
+          The menu is Talk and Apps, the apps you have added, and Settings at the bottom. The tour walks through it again.
+        </About>
+        <Button label="Show the tour again" onPress={() => void tourPref.replay()} />
+
+        <Sub>Something went wrong</Sub>
+        <About>
+          Tell us what happened and the app sends what it was doing at the time. No passwords or sign-in details go with it.
+        </About>
+        <Button label="Report a problem" onPress={() => router.push("/report-bug" as Href)} />
+
+        <Sub>Legal</Sub>
+        <Button label="Terms of Service" onPress={() => router.push("/terms" as Href)} />
+
+        <Sub>Developer</Sub>
+        <Setting
+          label="Dev mode"
+          about="Shows the developer's screens: Dev tools, the Logs panel on Talk, and the Developer group in the menu. Turn it off to see OVOA the way someone who just downloaded it would. It only changes this phone."
+        >
+          <Toggle value={devMode} onValueChange={(on) => void devModePref.set(on)} />
+        </Setting>
+        {devMode && <Button label="Sensors, inputs & OVOA Band" onPress={() => router.push("/dev-tools")} />}
+      </Group>
       </Screen>
     </View>
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+/**
+ * A group of settings that opens and closes (2026-09-24): a row with its icon,
+ * and under it, only once tapped, what's in it.
+ */
+function Group({
+  title,
+  icon,
+  tone,
+  startOpen = false,
+  children,
+}: {
+  title: string;
+  icon: IconName;
+  tone: Tone;
+  startOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(startOpen);
   return (
-    <>
-      <GroupLabel>{title}</GroupLabel>
-      <View style={styles.section}>{children}</View>
-    </>
+    <View style={styles.group}>
+      <Pressable
+        style={styles.groupHead}
+        onPress={() => {
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          setOpen((o) => !o);
+        }}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+      >
+        <IconTile name={icon} tone={tone} />
+        <Text style={styles.groupTitle}>{title}</Text>
+        <Ionicons name={open ? "chevron-down" : "chevron-forward"} size={18} color={colors.inkMute} />
+      </Pressable>
+      {open && <View style={styles.groupBody}>{children}</View>}
+    </View>
   );
+}
+
+/** A heading inside a group. */
+function Sub({ children }: { children: ReactNode }) {
+  return <Text style={styles.sub}>{children}</Text>;
 }
 
 /**
@@ -682,7 +687,7 @@ const LISTEN_MODES = [
   {
     mode: "twist",
     label: "Clip click",
-    hint: "Double-click the OVOA Band's button: it buzzes and listens. Press once to send what you said; press once while it answers to cut it off. Works from other apps too, on an iPhone that recognises speech on its own.",
+    hint: "Click the OVOA Band's button: it buzzes and listens. Click again to send what you said, or while it answers to cut it off. Works from other apps too, on an iPhone that recognises speech on its own.",
   },
 ] as const;
 
@@ -743,8 +748,12 @@ function Button({
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.paper },
-  // A group of settings is a run of rows, not a box. Nothing here is a card.
-  section: { gap: space.s3 },
+  // A group is a row that opens: its settings are a run of rows under it, not a box.
+  group: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  groupHead: { flexDirection: "row", alignItems: "center", gap: space.s3, paddingVertical: space.s4 },
+  groupTitle: { ...type.body, fontWeight: "600", color: colors.ink, flex: 1 },
+  groupBody: { gap: space.s3, paddingBottom: space.s5 },
+  sub: { ...type.meta, fontWeight: "600", color: colors.inkMute, marginTop: space.s3 },
   row: { flexDirection: "row", alignItems: "center", gap: space.s3 },
   label: { ...type.body, color: colors.ink },
   meta: { ...type.meta, color: colors.inkMute },

@@ -1170,23 +1170,17 @@ async function discardButtonRecording(sessionId: number) {
 
 // --- Buzz ------------------------------------------------------------------
 
-const BUZZ_OPTION = "ovoa.buzzOption";
-/** 1: "find my device" on/off, 2: factoryVibration, 3: factory motor test. */
+/**
+ * 1: "find my device" on/off, 2: factoryVibration, 3: factory motor test.
+ * Only 3 is felt on the OVOA Band (the user, 2026-09-24: "the only vibration
+ * command that works is 3, motor test"), so every buzz is 3. The other two stay
+ * in the type for the native bridge's sake; nothing picks them any more, and a
+ * phone that had saved 1 or 2 from Dev tools' old picker is on 3 regardless.
+ */
 export type BuzzOption = 1 | 2 | 3;
-let buzzOption: BuzzOption = 1;
-storage
-  .get(BUZZ_OPTION)
-  .then((v) => {
-    if (v === "1" || v === "2" || v === "3") buzzOption = Number(v) as BuzzOption;
-  })
-  .catch(logFail("clip: Number"));
+const BUZZ_OPTION: BuzzOption = 3;
 
-export const getBuzzOption = () => buzzOption;
-
-export function setBuzzOption(option: BuzzOption) {
-  buzzOption = option;
-  storage.set(BUZZ_OPTION, String(option)).catch(logFail("clip: storage.set"));
-}
+export const getBuzzOption = (): BuzzOption => BUZZ_OPTION;
 
 let afterBuzz: ReturnType<typeof setTimeout> | null = null;
 /** When the last buzz started, until a live reading comes: how long it left twist blind goes in the log. */
@@ -1245,7 +1239,7 @@ export function onLinkChange(listener: (linked: boolean) => void) {
 }
 
 /** Vibrates the clip. Never throws: a missing buzz shouldn't break listening. */
-export async function buzz(count = 1, option: BuzzOption = buzzOption) {
+export async function buzz(count = 1, option: BuzzOption = BUZZ_OPTION) {
   if (state.phase !== "connected") return false;
   lastBuzz = Date.now();
   keepMotionThroughBuzz(option, count);

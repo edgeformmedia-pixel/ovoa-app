@@ -795,37 +795,28 @@ function ClipInputs({ state }: { state: clip.ClipState }) {
   );
 }
 
-const BUZZ_OPTIONS: { option: clip.BuzzOption; label: string }[] = [
-  { option: 1, label: "1 · find device" },
-  { option: 2, label: "2 · vibration" },
-  { option: 3, label: "3 · motor test" },
-];
-
-/** Tries each way of making the clip vibrate; the one tapped last is what twist-to-listen uses. */
+/**
+ * One buzz, the way every buzz goes: the clip's motor test (option 3), the only
+ * one felt on the OVOA Band (2026-09-24). The picker and the three-way test
+ * that used to be here are gone with the other two options.
+ */
 function BuzzOptions({ connected }: { connected: boolean }) {
-  const [chosen, setChosen] = useState(clip.getBuzzOption());
   const [result, setResult] = useState<string | null>(null);
   return (
     <>
       <View style={styles.row}>
-        {BUZZ_OPTIONS.map(({ option, label }) => (
-          <Pressable
-            key={option}
-            style={[styles.button, chosen === option && { borderColor: colors.blue, borderWidth: 1 }]}
-            disabled={!connected}
-            onPress={async () => {
-              clip.setBuzzOption(option);
-              setChosen(option);
-              const ok = await clip.buzz(1, option);
-              setResult(`option ${option}: ${ok ? "sent — did it vibrate?" : "failed (see log)"}`);
-            }}
-          >
-            <Text style={styles.buttonText}>{label}</Text>
-          </Pressable>
-        ))}
+        <Pressable
+          style={styles.button}
+          disabled={!connected}
+          onPress={async () => {
+            const ok = await clip.buzz(1);
+            setResult(ok ? "sent — did it vibrate?" : "failed (see log)");
+          }}
+        >
+          <Text style={styles.buttonText}>Buzz the band</Text>
+        </Pressable>
       </View>
-      <Text style={styles.hint}>{result ?? "Tap one; the last one tapped is used when a shake summons the assistant."}</Text>
-      <BuzzTest connected={connected} onChosen={setChosen} />
+      <Text style={styles.hint}>{result ?? "Every buzz is the motor test (option 3): the only one the band makes you feel."}</Text>
     </>
   );
 }
@@ -916,109 +907,6 @@ function ServerBuzz() {
         </Pressable>
       </View>
       {result && <Text style={styles.hint}>{result}</Text>}
-    </>
-  );
-}
-
-/** The clip freezes when commands come too fast, so each option gets this long on its own. */
-const BUZZ_TEST_GAP_S = 30;
-
-type BuzzVerdict = { option: clip.BuzzOption; sent: boolean; felt: boolean };
-
-/**
- * Which buzz actually reaches the wrist. The log can only say whether the clip
- * answered, and option 1 often vibrates without answering while another can answer
- * without vibrating, so the only honest test is to fire each one and ask. Every
- * option waits its turn, so the whole test takes about a minute and a half.
- */
-function BuzzTest({ connected, onChosen }: { connected: boolean; onChosen: (option: clip.BuzzOption) => void }) {
-  const [running, setRunning] = useState(false);
-  const [current, setCurrent] = useState<{ option: clip.BuzzOption; sent: boolean } | null>(null);
-  const [countdown, setCountdown] = useState(0);
-  const [verdicts, setVerdicts] = useState<BuzzVerdict[]>([]);
-  const answer = useRef<((felt: boolean) => void) | null>(null);
-  const cancelled = useRef(false);
-
-  useEffect(() => () => void (cancelled.current = true), []);
-
-  const run = async () => {
-    cancelled.current = false;
-    setRunning(true);
-    setVerdicts([]);
-    const found: BuzzVerdict[] = [];
-    for (const { option } of BUZZ_OPTIONS) {
-      if (found.length) {
-        for (let s = BUZZ_TEST_GAP_S; s > 0 && !cancelled.current; s--) {
-          setCountdown(s);
-          await wait(1000);
-        }
-        setCountdown(0);
-      }
-      if (cancelled.current) break;
-      const sent = await clip.buzz(1, option);
-      setCurrent({ option, sent });
-      const felt = await new Promise<boolean>((resolve) => (answer.current = resolve));
-      answer.current = null;
-      setCurrent(null);
-      found.push({ option, sent, felt });
-      setVerdicts([...found]);
-      devlog("ble", `buzz test: option ${option} ${sent ? "sent" : "failed"}, felt: ${felt ? "yes" : "no"}`);
-    }
-    setRunning(false);
-    // The first one felt wins. A felt one that also answered is better still, since
-    // a timeout costs the command queue its full wait on every buzz.
-    const best = found.find((v) => v.felt && v.sent) ?? found.find((v) => v.felt);
-    if (best) {
-      clip.setBuzzOption(best.option);
-      onChosen(best.option);
-      devlog("ble", `buzz test: using option ${best.option} from now on`);
-    } else if (found.length === BUZZ_OPTIONS.length) {
-      devlog("err", "buzz test: none of the three options was felt");
-    }
-  };
-
-  const stop = () => {
-    cancelled.current = true;
-    answer.current?.(false);
-  };
-
-  const best = verdicts.find((v) => v.felt && v.sent) ?? verdicts.find((v) => v.felt);
-  return (
-    <>
-      <View style={styles.row}>
-        <Pressable style={styles.button} disabled={!connected && !running} onPress={running ? stop : run}>
-          <Text style={styles.buttonText}>{running ? "Stop buzz test" : "Run buzz test (≈90 s)"}</Text>
-        </Pressable>
-      </View>
-      {!!countdown && <Text style={styles.hint}>Next buzz in {countdown} s — keep the clip on your wrist.</Text>}
-      {current && (
-        <>
-          <Text style={styles.hint}>
-            Option {current.option} {current.sent ? "was sent" : "failed to send"}. Did you feel it?
-          </Text>
-          <View style={styles.row}>
-            <Pressable style={styles.button} onPress={() => answer.current?.(true)}>
-              <Text style={styles.buttonText}>Felt it</Text>
-            </Pressable>
-            <Pressable style={styles.button} onPress={() => answer.current?.(false)}>
-              <Text style={styles.buttonText}>Nothing</Text>
-            </Pressable>
-          </View>
-        </>
-      )}
-      {verdicts.map((v) => (
-        <Row
-          key={v.option}
-          label={`option ${v.option}`}
-          value={`${v.sent ? "answered" : "no answer"} · ${v.felt ? "felt" : "not felt"}`}
-          good={v.felt}
-        />
-      ))}
-      {!running && verdicts.length === BUZZ_OPTIONS.length && (
-        <Text style={styles.hint}>
-          {best ? `Option ${best.option} is now used for every buzz.` : "None of them was felt. Check the clip is on and charged."}
-        </Text>
-      )}
     </>
   );
 }

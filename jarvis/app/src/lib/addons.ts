@@ -57,7 +57,11 @@ export type Addon = {
   usage: AddonUsage;
   /** Why it uses what it does, when it uses any. */
   usageWhy?: string;
-  /** Installed on a phone that never chose. */
+  /**
+   * Installed on a phone that never chose. Only the developer screens now: a
+   * new account starts with Talk, Apps and Settings and nothing under Your
+   * apps, and adds what it wants from Apps (the user, 2026-09-24).
+   */
   preinstalled?: boolean;
   /** Only listed while dev mode is on (lib/devMode.ts). */
   dev?: boolean;
@@ -77,7 +81,6 @@ export const ADDONS: Addon[] = [
     tone: "amber",
     href: "/brief" as Href,
     needs: "assistant",
-    preinstalled: true,
     keywords: "morning summary today news",
   },
   {
@@ -89,7 +92,6 @@ export const ADDONS: Addon[] = [
     icon: "time-outline",
     tone: "violet",
     href: "/day" as Href,
-    preinstalled: true,
     keywords: "timeline schedule calendar tasks todo list journal",
   },
   {
@@ -101,7 +103,6 @@ export const ADDONS: Addon[] = [
     icon: "pulse",
     tone: "coral",
     href: "/activity" as Href,
-    preinstalled: true,
     keywords: "health steps heart rate bpm sleep fitness pulse resting hrv oxygen weight",
   },
   {
@@ -113,7 +114,6 @@ export const ADDONS: Addon[] = [
     icon: "radio-button-on",
     tone: "blue",
     href: "/record",
-    preinstalled: true,
     keywords: "notes voice memo audio band clip es100",
   },
   {

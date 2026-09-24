@@ -8,10 +8,9 @@ import { colors } from "../../lib/theme";
 // and everything else is an app you added (lib/addons.ts). Activity, which used
 // to be here, is one of those now, at /activity.
 //
-// The free plan lands on its first free screen instead of the locked Talk: its
-// day, the spine of today's notes with health under it (the Day app, which is
-// components/FreeToday.tsx on the free plan). The menu is the same for everyone
-// (components/Drawer.tsx); Talk is there with a lock.
+// The free plan has no Talk in its menu, only Apps and Settings (2026-09-24),
+// so it lands on Apps. Day is still where a plan that hasn't answered in time
+// goes: it works on every plan.
 
 /** How long the first open waits on the plan before going to Day, which works on every plan. */
 const PLAN_WAIT_MS = 3000;
@@ -35,5 +34,6 @@ export default function Home() {
       </View>
     );
   }
-  return <Redirect href={(ready && !free ? "/chat" : "/day") as Href} />;
+  // Free: Apps, which with Settings is all its menu has (components/Drawer.tsx).
+  return <Redirect href={(ready && !free ? "/chat" : ready ? "/apps" : "/day") as Href} />;
 }

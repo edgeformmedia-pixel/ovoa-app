@@ -222,6 +222,8 @@ export const RULES: Rule[] = [
   // ---- Things with their own expiry ----
   { name: "sessions", table: "sessions", where: "expires_at < ?", args: (c) => [c.now] },
   { name: "oauth_states", table: "oauth_states", where: "expires_at < ?", args: (c) => [c.now] },
+  // The confirmation email's one-tap links (verify.ts): a day, used or not.
+  { name: "verify_links", table: "verify_links", where: "expires_at < ?", args: (c) => [c.now] },
   // email_codes and signup_tickets: emailauth.ts pruneEmailAuth, a step of its own (purgeExpired);
   // signin_states and signin_codes: signin.ts pruneSignin, likewise.
 ];
@@ -300,6 +302,7 @@ export const TABLES = {
   server_settings: "keep",
   user_apps: "keep",
   email_codes: "expires",
+  verify_links: "expires",
   signup_tickets: "expires",
   signin_states: "expires",
   signin_codes: "expires",

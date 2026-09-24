@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
 import { AI_CONSENT_LATEST, AI_CONSENT_VERSION, aiConsentFor, consentRoutes, forgetConsent, requireConsent } from "../src/consent";
 import type { Env, Vars } from "../src/types";
-import { emailVerifyRoutes, forgetVerified, mustVerifyNow, needsVerification, openWhileUnverified, requireVerified } from "../src/verify";
+import { emailVerifyRoutes, forgetVerified, mustVerifyNow, needsVerification, openWhileUnverified, requireVerified, verifyLinkRoutes } from "../src/verify";
 
 let fails = 0;
 function eq(label: string, got: unknown, want: unknown) {
@@ -46,6 +46,7 @@ sqlite.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE
   password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, name TEXT NOT NULL, created_at INTEGER NOT NULL)`);
 sqlite.exec(readFileSync("migrations/0039_email_codes.sql", "utf8"));
 sqlite.exec(readFileSync("migrations/0041_verify_consent.sql", "utf8"));
+sqlite.exec(readFileSync("migrations/0048_terms_and_verify_links.sql", "utf8"));
 const DB = d1(sqlite);
 
 function addUser(id: string, email: string, { mustVerify = false, verified = false } = {}) {
@@ -73,6 +74,7 @@ app.post("/chat", (c) => c.json({ reply: "hello" }));
 app.post("/voice/speak", (c) => c.json({ ok: true }));
 app.post("/siri", (c) => c.text("hello"));
 app.route("/", emailVerifyRoutes);
+app.route("/", verifyLinkRoutes);
 app.route("/", consentRoutes);
 
 // A fake Resend: every email the routes send lands here, and none leaves the machine.
@@ -84,6 +86,8 @@ globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
 }) as typeof fetch;
 
 const RESEND = { DB, RESEND_API_KEY: "re_test", RESEND_API_BASE: "https://resend.test" } as unknown as Env;
+/** The one-tap link in a confirmation email (verify.ts issueVerifyLink); group 1 is its path. */
+const LINK = /https:\/\/api\.ovoa\.ai(\/verify\?id=[0-9a-f]{64})/;
 const LOCAL = { DB, EMAIL_CODES_TO_LOG: "1" } as unknown as Env;
 const BARE = { DB } as unknown as Env;
 
@@ -133,8 +137,9 @@ eq("new where no code could go: not held either", mustVerifyNow({ must_verify: 2
   eq("with the wait before another", sent.json.resendInSeconds, 60);
   eq("to the account's own address", outbox[0]?.to, ["new@mail.ovoa.ai"]);
   eq("saying what it's for", outbox[0]?.text.includes("confirm your email for OVOA"), true);
-  const code = /(\d{6}) is your OVOA code/.exec(outbox[0]?.subject ?? "")?.[1] ?? "";
-  eq("the subject leads with the code", code.length, 6);
+  const code = /code (\d{6})/.exec(outbox[0]?.subject ?? "")?.[1] ?? "";
+  eq("the subject carries the code", code.length, 6);
+  eq("and a one-tap link to confirm", LINK.test(outbox[0]?.text ?? ""), true);
   const again = await call(RESEND, "new", "POST", "/me/email/code");
   eq("another straight away waits", again.status, 429);
   eq("and says how long", typeof again.json.retryAfter === "number" && (again.json.retryAfter as number) <= 60, true);
@@ -156,9 +161,49 @@ eq("new where no code could go: not held either", mustVerifyNow({ must_verify: 2
   eq("no such account: not held (GET /me answers 401 for it)", await needsVerification({ DB }, "gone"), false);
 }
 
+// ---------- The link in the email ----------
+
+{
+  const linkIn = (i: number) => LINK.exec(outbox[i]?.text ?? "")?.[1] ?? "";
+  addUser("linked", "linked@mail.ovoa.ai", { mustVerify: true });
+  const before = outbox.length;
+  eq("the link's email is sent", (await call(RESEND, "linked", "POST", "/me/email/code")).status, 200);
+  const link = linkIn(before);
+  eq("with the link in it", link.length > 0, true);
+  eq("held until it's used", (await call(RESEND, "linked", "GET", "/routines")).status, 403);
+  const opened = await call(RESEND, "", "GET", link);
+  eq("opening it proves the address, no session needed", [opened.status, opened.text.includes("Your email is confirmed")], [200, true]);
+  eq("written down", column("linked", "email_verified_at") !== null, true);
+  eq("and everything opens up", (await call(RESEND, "linked", "GET", "/routines")).status, 200);
+  const twice = await call(RESEND, "", "GET", link);
+  eq("tapped again, still fine", [twice.status, twice.text.includes("Your email is confirmed")], [200, true]);
+  eq("a made-up link does nothing", (await call(RESEND, "", "GET", `/verify?id=${"0".repeat(64)}`)).status, 410);
+  eq("nor a malformed one", (await call(RESEND, "", "GET", "/verify?id=nope")).status, 410);
+
+  // Sent to an address the account no longer has: it proves nothing.
+  addUser("moved", "moved@mail.ovoa.ai", { mustVerify: true });
+  const at = outbox.length;
+  await call(RESEND, "moved", "POST", "/me/email/code");
+  const old = linkIn(at);
+  sqlite.prepare("UPDATE users SET email = 'elsewhere@mail.ovoa.ai' WHERE id = 'moved'").run();
+  eq("a link to an old address is refused", (await call(RESEND, "", "GET", old)).status, 410);
+  eq("and proves nothing", column("moved", "email_verified_at"), null);
+
+  // A day later it has expired.
+  addUser("late", "late@mail.ovoa.ai", { mustVerify: true });
+  const at2 = outbox.length;
+  await call(RESEND, "late", "POST", "/me/email/code");
+  const stale = linkIn(at2);
+  sqlite.prepare("UPDATE verify_links SET expires_at = 1 WHERE user_id = 'late'").run();
+  const expired = await call(RESEND, "", "GET", stale);
+  eq("an expired link says so", [expired.status, expired.text.includes("expired")], [410, true]);
+  eq("and proves nothing", column("late", "email_verified_at"), null);
+}
+
 // A local worker: no Resend key, EMAIL_CODES_TO_LOG. The code goes to its log, not to anyone.
 {
   addUser("local", "local@mail.ovoa.ai", { mustVerify: true });
+  const mailed = outbox.length;
   const logged: string[] = [];
   const log = console.log;
   console.log = (...args: unknown[]) => void logged.push(args.join(" "));
@@ -168,7 +213,7 @@ eq("new where no code could go: not held either", mustVerifyNow({ must_verify: 2
   const line = logged.find((l) => l.startsWith("ovoa.dev email code"));
   eq("to its own log", !!line, true);
   eq("without the address", line?.includes("local@mail.ovoa.ai"), false);
-  eq("and nothing went to Resend", outbox.length, 1);
+  eq("and nothing went to Resend", outbox.length, mailed);
   const code = /code (\d{6})/.exec(line ?? "")?.[1] ?? "";
   eq("the logged code works", (await call(LOCAL, "local", "POST", "/me/email/verify", { code })).status, 200);
 

@@ -127,6 +127,15 @@ const MILESTONES: RegExp[] = [
   /^not meant for the assistant/,
   /^dropped the reply/,
   /^stopped listening because/,
+  // The band's button: each press as the clip reported it, what the app made of
+  // it, and whether listening started. "I double click and it doesn't start
+  // listening" (2026-09-24) left nothing in device_logs to read. A handful of
+  // rows per click, and only when the button is pressed.
+  /^clip press/,
+  /^clip: (single click|double click|press)/,
+  /^click: /,
+  /^double click/,
+  /^summoned$/,
 ];
 /** perf lines are the turn breakdowns (turnTimer.ts): one row per spoken turn. */
 const MILESTONE_KINDS = new Set<LogEntry["kind"]>(["perf"]);

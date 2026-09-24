@@ -110,8 +110,9 @@ import {
   userForAppleSub,
   verifyAppleIdentityToken,
 } from "./signin";
-import { emailVerifyRoutes, markVerified, mustVerifyNow, requireVerified, sendAccountCode, type VerifyRow } from "./verify";
+import { emailVerifyRoutes, markVerified, mustVerifyNow, requireVerified, sendAccountCode, verifyLinkRoutes, type VerifyRow } from "./verify";
 import { consentRoutes, consentView, requireConsent, type ConsentRow } from "./consent";
+import { termsRoutes, termsView, type TermsRow } from "./terms";
 import { sliceFor } from "./sweep";
 import {
   cleanOrder,
@@ -311,6 +312,8 @@ app.onError(async (err, c) => {
 app.get("/", (c) => c.json({ ok: true, service: "jarvis-api" }));
 
 app.route("/", googlePublic);
+// The link in the confirmation email: no session, the token is the proof (verify.ts).
+app.route("/", verifyLinkRoutes);
 app.route("/", shortcutFiles);
 app.route("/", logs);
 
@@ -401,13 +404,14 @@ async function publicUser(env: Env, userId: string) {
   const db = env.DB;
   const row = await db
     .prepare(
-      `SELECT id, email, name, created_at, email_verified_at, must_verify, ai_consent_at, ai_consent_version
+      `SELECT id, email, name, created_at, email_verified_at, must_verify, ai_consent_at, ai_consent_version,
+              terms_accepted_at, terms_version
          FROM users WHERE id = ?`,
     )
     .bind(userId)
-    .first<{ id: string; email: string; name: string; created_at: number } & VerifyRow & ConsentRow>();
+    .first<{ id: string; email: string; name: string; created_at: number } & VerifyRow & ConsentRow & TermsRow>();
   if (!row) return null;
-  const { email_verified_at, must_verify, ai_consent_at, ai_consent_version, ...user } = row;
+  const { email_verified_at, must_verify, ai_consent_at, ai_consent_version, terms_accepted_at, terms_version, ...user } = row;
   const [settings, profile] = await Promise.all([getSettings(db, userId), getProfile(db, userId)]);
   // onboarded: the app shows the setup conversation until this is true.
   // devTools: a development account (DEV_EMAILS), so Dev tools shows the
@@ -417,7 +421,8 @@ async function publicUser(env: Env, userId: string) {
   // emailVerified: the address has been proven with a code (or on ovoa.ai); the
   // app asks for one while it's false. mustVerify: and nothing but that code
   // works until then (verify.ts). aiConsent: whether they've agreed to AI, and
-  // to which wording of the screen (consent.ts).
+  // to which wording of the screen (consent.ts). terms: the same for the Terms
+  // of Service, which the app shows in full until they're agreed (terms.ts).
   const mine = await settingsFor(env, userId);
   return {
     ...user,
@@ -428,6 +433,7 @@ async function publicUser(env: Env, userId: string) {
     emailVerified: email_verified_at != null,
     mustVerify: mustVerifyNow({ must_verify, email_verified_at }),
     aiConsent: consentView({ ai_consent_at, ai_consent_version }),
+    terms: termsView({ terms_accepted_at, terms_version }),
   };
 }
 
@@ -519,7 +525,7 @@ app.post("/auth/signup", async (c) => {
   // (though unlike those, a proof by someone else still takes it back: insertUser).
   const id =await insertUser(c.env.DB, { email, password, name, verified: false, mustVerify: codesAvailable(c.env) });
   const token = await createSession(c.env.DB, id);
-  const code = await sendAccountCode(c.env, { email, name }).catch((err: unknown) => {
+  const code = await sendAccountCode(c.env, { id, email, name }).catch((err: unknown) => {
     console.error("ovoa.err signup: couldn't send the first code", err);
     return { sent: false as const };
   });
@@ -3243,6 +3249,7 @@ authed.post("/debug/food/log", async (c) => {
 
 authed.route("/", emailVerifyRoutes);
 authed.route("/", consentRoutes);
+authed.route("/", termsRoutes);
 authed.route("/", commands);
 authed.route("/", routines);
 authed.route("/", onboarding);

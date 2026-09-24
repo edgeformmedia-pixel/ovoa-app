@@ -719,7 +719,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         clip.buzz(1);
         return;
       }
-      // Single click: interrupt, or send what the phone mic has heard.
+      // Single click: interrupt, or send what the phone mic has heard, or, with
+      // nothing going on, listen. A quick double click often reaches the app as
+      // one press (the clip doesn't report the second while it's still starting
+      // the first recording), and a lone press used to do nothing at all: "I
+      // double click the button and it doesn't start listening" (2026-09-24).
       if (bandPhaseRef.current === "thinking" || bandPhaseRef.current === "speaking") {
         bandSpeaker.current?.stop();
         setBandPhase(null);
@@ -727,7 +731,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (currentPhase() === "speaking") return conversation.interrupt();
-      if (currentPhase() === "listening" && summonedOpen.current) finishNow();
+      if (currentPhase() === "listening" && summonedOpen.current) return void finishNow();
+      if (bandOn) return;
+      onClickRef.current("clip click");
     },
     [bandOn, currentPhase, finishNow],
   );

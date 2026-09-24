@@ -254,7 +254,15 @@ export type User = {
   mustVerify?: boolean;
   /** Whether they've agreed to AI (lib/consent.ts). Missing from older servers, which never ask. */
   aiConsent?: AiConsent;
+  /**
+   * Whether they've agreed to the Terms of Service, and to which wording
+   * (api/src/terms.ts). The app shows the Terms first until `accepted`
+   * (app/terms.tsx). Missing from older servers, which never ask.
+   */
+  terms?: TermsState;
 };
+
+export type TermsState = { accepted: boolean; version: number | null; at: number | null; current: number };
 
 /** One reply engine as the server sees it right now (api/src/llm.ts engineStatus). */
 export type EngineInfo = {
@@ -1140,6 +1148,9 @@ export const api = {
     request<{ aiConsent: AiConsent }>("/me/consent", token, { method: "POST", body: JSON.stringify({ version }) }),
   /** They took it back, in Settings. AI stops until they agree again. */
   withdrawAi: (token: string) => request<{ aiConsent: AiConsent }>("/me/consent", token, { method: "DELETE" }),
+  /** They scrolled to the end of the Terms and pressed Agree; `version` is the wording shown (lib/terms.ts TERMS_VERSION). */
+  agreeToTerms: (token: string, version: number) =>
+    request<{ terms: TermsState }>("/me/terms", token, { method: "POST", body: JSON.stringify({ version }) }),
 
   messages: (token: string) => request<{ messages: Message[] }>("/chat/messages", token),
   /**

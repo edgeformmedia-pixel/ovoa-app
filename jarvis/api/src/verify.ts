@@ -1,6 +1,7 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { checkCode, codeEmail, codesAvailable, CODE_RESEND_MS, CODE_TTL_MS, deliverCode, issueCode, unmailable, unsendCode } from "./emailauth";
+import { randomHex, sha256 } from "./auth";
 import { allowed, tooMany } from "./limits";
 import { say } from "./obs";
 import type { Env, Vars } from "./types";
@@ -99,20 +100,97 @@ export async function markVerified(env: Pick<Env, "DB">, userId: string, now = D
   clear.add(userId);
 }
 
+// ---------- The link in the email ----------
+//
+// The confirmation email carries a button as well as the code (2026-09-24): a
+// link to api.ovoa.ai/verify?id=<token> that proves the address in one tap.
+// The token is 32 random bytes; only its hash is kept (verify_links, migration
+// 0048). It works once, for LINK_TTL_MS, and only while the account still has
+// the address it was sent to. The code in the same email still works, for a
+// link opened on another device. The app notices either way (it reads GET /me
+// again while its code screen is up).
+
+/** How long the link in a confirmation email works. */
+export const LINK_TTL_MS = 24 * 60 * 60_000;
+
+/** A one-time link for the confirmation email. */
+export async function issueVerifyLink(env: Pick<Env, "DB" | "PUBLIC_URL">, userId: string, email: string, now = Date.now()) {
+  const token = randomHex(32);
+  await env.DB.prepare("INSERT INTO verify_links (token_hash, user_id, email, expires_at, created_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(await sha256(token), userId, email, now + LINK_TTL_MS, now)
+    .run();
+  return `${(env.PUBLIC_URL || "https://api.ovoa.ai").replace(/\/+$/, "")}/verify?id=${token}`;
+}
+
+export type LinkOutcome = "proven" | "already" | "expired" | "unknown";
+
+/** The link was opened: proves the address if the link is live and the account still has it. */
+export async function useVerifyLink(env: Pick<Env, "DB">, token: string, now = Date.now()): Promise<LinkOutcome> {
+  if (!/^[0-9a-f]{64}$/.test(token)) return "unknown";
+  const hash = await sha256(token);
+  const row = await env.DB.prepare(
+    `SELECT l.user_id, l.email, l.expires_at, l.used_at, u.email AS current_email, u.email_verified_at
+       FROM verify_links l JOIN users u ON u.id = l.user_id WHERE l.token_hash = ?`,
+  )
+    .bind(hash)
+    .first<{ user_id: string; email: string; expires_at: number; used_at: number | null; current_email: string; email_verified_at: number | null }>();
+  if (!row || row.current_email.toLowerCase() !== row.email.toLowerCase()) return "unknown";
+  // Tapped twice, or the code got there first: nothing more to do, and nothing wrong.
+  if (row.email_verified_at != null) return "already";
+  if (row.used_at != null || row.expires_at < now) return "expired";
+  await env.DB.prepare("UPDATE verify_links SET used_at = ? WHERE token_hash = ?").bind(now, hash).run();
+  await markVerified(env, row.user_id, now);
+  return "proven";
+}
+
+/** The page the link opens. Plain HTML, the email's look. Pure. */
+export function linkPage(outcome: LinkOutcome) {
+  const ok = outcome === "proven" || outcome === "already";
+  const title = ok ? "Your email is confirmed" : outcome === "expired" ? "That link has expired" : "That link doesn't work";
+  const body = ok
+    ? "You're all set. Go back to OVOA: it carries on by itself."
+    : "Open OVOA and send yourself a new email from the code screen, or from Settings → Account.";
+  const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} · OVOA</title></head>
+<body style="margin:0;padding:0;background:#edebee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+<div style="max-width:520px;margin:48px auto;padding:0 16px"><div style="background:#fff;border-radius:20px;padding:32px 28px">
+<p style="margin:0 0 24px;font-size:14px;font-weight:700;letter-spacing:0.08em;color:#060606">OVOA</p>
+<h1 style="margin:0 0 12px;font-size:24px;color:#060606">${esc(title)}</h1>
+<p style="margin:0 0 24px;font-size:16px;line-height:1.55;color:#060606">${esc(body)}</p>
+<a href="ovoa://" style="display:inline-block;background:#060606;color:#fff;text-decoration:none;font-weight:600;padding:14px 22px;border-radius:22px">Open OVOA</a>
+</div></div></body></html>`;
+}
+
+/** Public: the link from the email. No session, so the token is the whole proof. */
+export const verifyLinkRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
+
+verifyLinkRoutes.get("/verify", async (c) => {
+  const outcome = await useVerifyLink(c.env, c.req.query("id") ?? "");
+  say("verify", { outcome: `link ${outcome}` });
+  c.header("cache-control", "no-store");
+  return c.html(linkPage(outcome), outcome === "proven" || outcome === "already" ? 200 : 410);
+});
+
 /**
- * Sends a code to the account's own address, for the app's code step. Shared
- * by POST /me/email/code and the sign-up itself (index.ts), which sends the
- * first one. `waitSeconds` when it's too soon for another. Nothing for a
- * reserved test address (emailauth.ts reservedAddress), which can't receive it.
+ * Sends a code to the account's own address, for the app's code step, with a
+ * one-tap link beside it (issueVerifyLink). Shared by POST /me/email/code and
+ * the sign-up itself (index.ts), which sends the first one. `waitSeconds` when
+ * it's too soon for another. Nothing for a reserved test address
+ * (emailauth.ts reservedAddress), which can't receive it.
  */
 export async function sendAccountCode(
   env: Env,
-  user: { email: string; name: string | null },
+  user: { id: string; email: string; name: string | null },
 ): Promise<{ sent: true; via: "sent" | "logged" } | { sent: false; waitSeconds?: number }> {
   if (!codesAvailable(env) || unmailable(env, user.email)) return { sent: false };
   const issued = await issueCode(env.DB, user.email);
   if ("waitSeconds" in issued) return { sent: false, waitSeconds: issued.waitSeconds };
-  const email = codeEmail({ to: user.email, code: issued.code, name: user.name, existing: true, confirm: true });
+  // The code alone still does the job if the link can't be made.
+  const link = await issueVerifyLink(env, user.id, user.email).catch((err: unknown) => {
+    console.error("ovoa.err verify: couldn't make the link", err);
+    return undefined;
+  });
+  const email = codeEmail({ to: user.email, code: issued.code, name: user.name, existing: true, confirm: true, link });
   const via = await deliverCode(env, email, issued.code);
   if (via === "failed") {
     // Not sent: void, and not counted against the hour, so they can ask again at once.
@@ -139,7 +217,7 @@ emailVerifyRoutes.post("/me/email/code", async (c) => {
   const user = await accountOf(c.env, c.var.userId);
   if (!user) return c.json({ error: "Not signed in" }, 401);
   if (user.email_verified_at != null) return c.json({ ok: true, emailVerified: true });
-  const out = await sendAccountCode(c.env, user);
+  const out = await sendAccountCode(c.env, { ...user, id: c.var.userId });
   if (out.sent) {
     say("verify", { outcome: `code ${out.via}`, user: c.var.userId });
     return c.json({ ok: true, expiresInMinutes: CODE_TTL_MS / 60_000, resendInSeconds: RESEND_SECONDS });

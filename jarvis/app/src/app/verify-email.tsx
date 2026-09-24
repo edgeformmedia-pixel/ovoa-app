@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api, ApiError } from "../lib/api";
 import { useSession } from "../lib/auth";
@@ -25,6 +25,8 @@ import { colors } from "../lib/theme";
 // proven.
 
 const DIGITS = 6;
+/** How often the screen checks whether the email's link has been tapped. */
+const LOOK_EVERY_MS = 4000;
 
 export default function VerifyEmail() {
   const { token, user, refreshUser, codeSentAt, clear } = useSession();
@@ -75,6 +77,19 @@ export default function VerifyEmail() {
     if (!codeSentAt) void send();
   }, []);
 
+  // The email's Confirm button proves the address in Safari (api/src/verify.ts),
+  // not here: look again every few seconds, and the moment they come back from
+  // Mail, and the next step comes up by itself once GET /me says so.
+  useEffect(() => {
+    const look = () => void refreshUser().catch(() => {});
+    const timer = setInterval(look, LOOK_EVERY_MS);
+    const sub = AppState.addEventListener("change", (s) => s === "active" && look());
+    return () => {
+      clearInterval(timer);
+      sub.remove();
+    };
+  }, [refreshUser]);
+
   const confirm = async (digits: string) => {
     if (busy || digits.length !== DIGITS) return;
     setBusy(true);
@@ -124,7 +139,8 @@ export default function VerifyEmail() {
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.container}>
         <Text style={styles.title}>Check your email</Text>
         <Text style={styles.body}>
-          We sent a 6-digit code to <Text style={styles.email}>{user.email}</Text>. Type it here to finish {isNew ? "making your account" : "confirming your email"}.
+          We sent an email to <Text style={styles.email}>{user.email}</Text>. Tap Confirm my email in it, or type its 6-digit code
+          here, to finish {isNew ? "making your account" : "confirming your email"}.
         </Text>
 
         <TextInput
@@ -156,7 +172,7 @@ export default function VerifyEmail() {
 
         <Pressable style={styles.link} onPress={() => void send()} disabled={sending || wait > 0}>
           <Text style={[styles.linkText, (sending || wait > 0) && { color: colors.inkMute }]}>
-            {sending ? "Sending…" : wait > 0 ? `Send a new code in ${wait} s` : "Send a new code"}
+            {sending ? "Sending…" : wait > 0 ? `Send a new email in ${wait} s` : "Send a new email"}
           </Text>
         </Pressable>
         <Text style={styles.meta}>Nothing yet? Check your junk folder. It comes from no-reply@ovoa.ai.</Text>
