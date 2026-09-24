@@ -6,7 +6,7 @@ import { validTimeZone } from "./google/assistant";
 import type { CallTool, ToolSpec } from "./llm";
 import { addNote } from "./notes";
 import { push } from "./push";
-import { confirmRoutine, nextOccurrence, parseClock } from "./routines";
+import { confirmRoutine, nextOccurrence, parseClock, sameSubject } from "./routines";
 import { buckets, clock, clockFromMinutes } from "./time";
 import type { Env, Vars } from "./types";
 
@@ -136,32 +136,14 @@ export async function stopAlarm(env: Env, userId: string, opts: { id?: string; s
 /** How close in time two reminders about the same thing have to be to be one reminder (sameReminder). */
 const SAME_REMINDER_MS = 20 * 60_000;
 
-/** Words that say nothing about what a reminder is for: "Water check" and "Gym check" are two things. */
-const REMINDER_FILLER = new Set([
-  "check", "reminder", "remind", "time", "today", "tonight", "tomorrow", "morning", "evening", "night",
-  "keep", "going", "have", "your", "you", "about", "this", "that", "with", "from", "done", "make", "sure",
-  "dont", "forget", "yet", "now", "did", "get", "go", "the", "and", "for",
-]);
-
-const reminderWords = (text: string) =>
-  new Set(
-    text
-      .toLowerCase()
-      .replace(/[‘’']/g, "")
-      .split(/[^a-z0-9]+/)
-      .filter((w) => w.length >= 3 && !REMINDER_FILLER.has(w)),
-  );
-
 /**
  * Whether two reminders are the same one: set for within SAME_REMINDER_MS of
- * each other, about the same thing (a word that says what for, in both).
- * "Hey OVOA" on its own was answered by setting the water check at 10 AM a
- * second time, three turns after the first (action_log, 2026-09-24). Pure.
+ * each other, about the same thing (sameSubject). "Hey OVOA" on its own was
+ * answered by setting the water check at 10 AM a second time, three turns
+ * after the first (action_log, 2026-09-24). Pure.
  */
 export function sameReminder(a: { text: string; at: number }, b: { text: string; at: number }) {
-  if (Math.abs(a.at - b.at) > SAME_REMINDER_MS) return false;
-  const words = reminderWords(b.text);
-  return [...reminderWords(a.text)].some((w) => words.has(w));
+  return Math.abs(a.at - b.at) <= SAME_REMINDER_MS && sameSubject(a.text, b.text);
 }
 
 /** A reminder still to come that `text` at `at` would repeat (sameReminder), if there is one. */

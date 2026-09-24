@@ -121,6 +121,10 @@ try {
   // 3. A follow-up to a reply that asked nothing still reaches the model, and a plain one gets a reply.
   const time = await say(token, "OVOA, what time is it?");
   console.log(`  time: ${show(time)}`);
+  // It once answered this with an apology that the routines were never set, and set them again.
+  check("an unrelated question doesn't redo what was set", !time.tools.some((t) => t === "routine_add" || t === "reminder_set"));
+  const routines = await json("/routines", token).catch(() => null);
+  check("two routines, no copies", routines ? routines.routines.length === 2 : true, routines ? routines.routines.map((r) => r.title).join(", ") : "couldn't read them");
   await sleep(1500);
   const more = await say(token, "And what's the date today?", { ambient: true });
   console.log(`  follow-up: ${show(more)}`);
@@ -135,7 +139,11 @@ try {
   console.log(`  again: ${show(again)}`);
   const reminders = await json("/notes", token).catch(() => null);
   const dentist = reminders?.notes?.filter((n) => /dentist/i.test(n.text) && (n.remindAt ?? n.remind_at)) ?? null;
-  check("the dentist reminder is set once", dentist ? dentist.length === 1 : true, dentist ? `${dentist.length} set` : "couldn't read the notes; see the replies above");
+  check(
+    "the dentist reminder is set once",
+    dentist ? dentist.length === 1 : true,
+    dentist ? `${dentist.length} set: ${JSON.stringify(dentist.map((n) => ({ text: n.text, at: n.remindAt ?? n.remind_at, tags: n.tags })))}` : "couldn't read the notes; see the replies above",
+  );
 } finally {
   try {
     await json("/me", token, { method: "DELETE" });

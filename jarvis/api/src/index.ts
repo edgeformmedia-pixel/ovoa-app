@@ -1535,7 +1535,13 @@ async function runTurn(
   const tools = belt.tools;
   // Tools the request names outright ("cancel my alarm") ride along from the
   // start, so the ordinary case never pays a round trip to ask for them.
-  const preloaded = belt.preload(text);
+  // An answer to OVOA's own question ("At 8 p.m.") names nothing; the request it
+  // answers does. "Hold me accountable to the gym" got "What time?", and the
+  // answer paid two more_tools rounds for routine_add (5-16 s, 2026-09-24).
+  const earlier = turns.slice(0, -1);
+  const lastReply = earlier.at(-1)?.role === "model" ? earlier.at(-1)!.text : "";
+  const asked = lastReply.includes("?") ? (earlier.at(-2)?.role === "user" ? earlier.at(-2)!.text : "") : "";
+  const preloaded = belt.preload(asked ? `${asked} ${text}` : text);
   // A resumed turn carries again what more_tools brought in before it paused.
   if (resume?.loaded?.length) belt.restore(resume.loaded);
   // Before anything more_tools brings in: this is the number that was actually
@@ -1557,6 +1563,10 @@ async function runTurn(
       // eggs." and "remind me Friday at 9" with "Done — I'll remind you" without
       // calling a tool (engine-bench against production, 2026-09-23).
       "Nothing is saved, set, added, sent or scheduled unless you call its tool in this reply. Never say \"noted\", \"done\", \"set\" or \"I'll remind you\" for something no tool did: call the tool.",
+      // The rule above was read as "my earlier Done's were never real": "what time is
+      // it?" got an apology and the day's routines added again, and "Hey OVOA" alone
+      // set three more reminders (messages, action_log and followup-probe, 2026-09-24).
+      "That rule is about this reply. What your earlier replies in the conversation said was done, was done then by a tool: don't apologize for it or do it again. Unsure whether something is set? Check with its list tool first.",
       // Out loud the voice section says how to talk, and markdown is never read out (voice.ts speakable).
       ...(voice
         ? []
@@ -1574,6 +1584,8 @@ async function runTurn(
           "If you need one detail, ask just for that.",
           // Text written alongside a tool call is spoken straight away: \"checking now\" instead of silence while a lookup runs.
           "Before a lookup, say four words or fewer (\"Checking your calendar.\") in the same message as the tool call.",
+          // "On it — I'll buzz you twice a day" and then "Done — water checks at 10 AM and 6 PM" (messages, 2026-09-24).
+          "Before a tool that sets or saves something, say nothing, or just \"On it.\": the result is said once, after.",
         ].join(" ")
       : ""],
     ["care", [

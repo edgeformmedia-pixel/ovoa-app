@@ -134,6 +134,46 @@ export type NewRoutine = {
   urgent?: boolean;
 };
 
+/** Words that say nothing about what a reminder or routine is for: "Water check" and "Gym check" are two things. */
+const SUBJECT_FILLER = new Set([
+  "check", "checkin", "reminder", "remind", "routine", "daily", "every", "day", "time", "today", "tonight",
+  "tomorrow", "morning", "evening", "night", "keep", "going", "have", "your", "you", "about", "this", "that",
+  "with", "from", "done", "make", "sure", "dont", "forget", "yet", "now", "did", "get", "the", "and", "for",
+]);
+
+const subjectWords = (text: string) =>
+  new Set(
+    text
+      .toLowerCase()
+      .replace(/[‘’']/g, "")
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 3 && !SUBJECT_FILLER.has(w)),
+  );
+
+/**
+ * Whether two reminders' or routines' words are about the same thing: a word
+ * that says what for, in both ("Water check" and "Gallon of water"; not "Water
+ * check" and "Gym check"). Pure.
+ */
+export function sameSubject(a: string, b: string) {
+  const words = subjectWords(b);
+  return [...subjectWords(a)].some((w) => words.has(w));
+}
+
+/**
+ * The active routine `title` would repeat, if there is one. The day after
+ * "hold me accountable to the gym" was set up, "what time is it?" was answered
+ * with an apology that it never was, and the gym and water routines were
+ * added a second time (followup-probe against production, 2026-09-24).
+ */
+async function existingRoutine(db: D1Database, userId: string, title: string) {
+  const { results } = await db
+    .prepare("SELECT id, title, times, days FROM routines WHERE user_id = ? AND active = 1")
+    .bind(userId)
+    .all<{ id: string; title: string; times: string; days: string }>();
+  return results.find((r) => sameSubject(r.title, title)) ?? null;
+}
+
 export async function createRoutine(db: D1Database, userId: string, r: NewRoutine) {
   const count = await db.prepare("SELECT COUNT(*) AS n FROM routines WHERE user_id = ? AND active = 1").bind(userId).first<{ n: number }>();
   if ((count?.n ?? 0) >= MAX_ROUTINES) throw new Error(`There are already ${MAX_ROUTINES} routines. Remove one first.`);
@@ -829,6 +869,14 @@ export function routinesAssistant(env: Env, userId: string, timeZone: string, op
       if (!title) return { error: "title is required" };
       if (!KINDS.includes(kind)) return { error: `kind must be one of ${KINDS.join(", ")}` };
       if (!times.length) return { error: "times must be HH:MM, 24-hour" };
+      const already = await existingRoutine(db, userId, title);
+      if (already) {
+        return {
+          added: false,
+          already: { id: already.id, title: already.title, when: describeRoutine(already) },
+          note: "That routine is already set up, so nothing was added. Don't add it again: say it's already on, and when.",
+        };
+      }
       try {
         const id = await createRoutine(db, userId, {
           kind,

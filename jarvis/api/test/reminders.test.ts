@@ -4,6 +4,7 @@
 // (action_log, 2026-09-24).
 
 import { sameReminder } from "../src/alarms";
+import { sameSubject } from "../src/routines";
 
 let fails = 0;
 function eq(label: string, got: unknown, want: unknown) {
@@ -27,6 +28,13 @@ eq("the same thing a few minutes apart", sameReminder({ text: "Take the vitamins
 eq("the same thing hours apart is two reminders", sameReminder({ text: "Water check", at: ten }, { text: "Water check", at: ten + 8 * 60 * min }), false);
 eq("two things at the same time", sameReminder({ text: "Water check", at: ten }, { text: "Gym check — have you gone yet today?", at: ten }), false);
 eq("only filler words in common", sameReminder({ text: "Make sure to call Mom", at: ten }, { text: "Make sure the oven is off", at: ten }), false);
+
+// Routines (routines.ts existingRoutine): the gym and water ones were added a
+// second time the next turn (followup-probe against production, 2026-09-24).
+eq("'Gym' and 'Gym check' are one routine", sameSubject("Gym", "Gym check"), true);
+eq("'Water' and 'Gallon of water' are one routine", sameSubject("Water", "Drink a gallon of water"), true);
+eq("'Water' and 'Gym' are two", sameSubject("Water", "Gym"), false);
+eq("'Daily water check' and 'Daily gym check' are two", sameSubject("Daily water check", "Daily gym check"), false);
 
 console.log(fails ? `\n${fails} FAILED` : "\nall passed");
 process.exit(fails ? 1 : 0);
