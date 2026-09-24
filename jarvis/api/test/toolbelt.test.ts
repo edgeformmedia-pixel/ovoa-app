@@ -192,6 +192,19 @@ const stopping = [...named, ...reminding, t("routine_list", "Lists routines.")];
 eq("'OVOA I'm awake' brings alarm_stop", namedTools(stopping, "OVOA I'm awake")[0]?.name, "alarm_stop");
 eq("'I took my pill' brings reminder_done", namedTools(stopping, "I took my pill")[0]?.name, "reminder_done");
 
+// Something every day is a routine: "hold me accountable" was set as one-off
+// reminders for today, twice over (action_log, 2026-09-24).
+const repeating = [...reminding, t("routine_add", "Sets up something that repeats."), t("routine_list", "Lists routines.")];
+for (const said of [
+  "Hey OVOA, I want you to hold me accountable to going to the gym at least one time a day",
+  "Ovo, I want you to hold me accountable to drinking a gallon of water a day",
+  "remind me to stretch every day at seven",
+  "I want a daily water check",
+]) {
+  eq(`"${said}" brings routine_add`, has(namedTools(repeating, said), "routine_add"), true);
+}
+eq("a one-off 'remind me' doesn't", has(namedTools(repeating, "remind me to call Mom at four"), "routine_add"), false);
+
 // A preloaded tool brings its instructions into the prompt, as a carried one's are.
 const spokenAll = [...reminding, t("alarm_set", "Sets an alarm."), t("workout_log", "Logs a workout.")];
 const spokenGuides = [

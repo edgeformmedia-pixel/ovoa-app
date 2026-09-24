@@ -82,18 +82,43 @@ async function main() {
   eq("a follow-up still reaches the model", await isMeantForAssistant(justNow, "u", "How far is it from there?", "OVOA"), true);
 
   // Picking one of the choices it just offered is its own words, in its order,
-  // and an answer: these must reach the model, never be dropped as echo.
+  // and an answer: these must never be dropped as echo. After a question an
+  // answer goes straight through: the gatekeeper said no to one (2026-09-24).
   const choices: [string, string][] = [
     ["Do you mean the Russell Offices or the Russell Hotel?", "The Russell Offices"],
     ["Do you want it at seven in the morning or seven at night?", "Seven at night"],
     ["Want me to set it for tomorrow at three, or Friday at noon?", "Friday at noon"],
     ["Is that the Coles on Main Street or the one in Barton?", "the one in Barton"],
-    ["Is that the Coles on Main Street or the one in Barton?", "The one on Main Street"],
+    // The one that got silence, twice (messages and device_logs, 2026-09-24).
+    [
+      "Love the accountability. One thing: when do you want me to nudge you — a morning reminder to go, or an evening check that you went?",
+      "An evening check at 8 p.m.",
+    ],
+    // The question in the middle of the reply still counts.
+    [
+      "On it — water checks at 10 AM and 6 PM today. Want them to repeat daily? Say the word.",
+      "Yeah make them repeat every day",
+    ],
   ];
   for (const [asked, answer] of choices) {
     const judged = await judgeOverheard(env({ content: asked, ago: 5_000 }), "u", answer, "OVOA");
-    eq(`"${answer}" after "${asked}" reaches the model`, "ask" in judged && judged.followUp, true);
+    eq(`"${answer}" after "${asked}" gets through, no model call`, judged, { now: true });
   }
+  // Five words, four of them the question's in its order: that could be its echo, so the
+  // gatekeeper decides, told that picking a choice is an answer (gatekeeperPrompt).
+  const mainStreet = await judgeOverheard(env({ content: "Is that the Coles on Main Street or the one in Barton?", ago: 5_000 }), "u", "The one on Main Street", "OVOA");
+  eq('"The one on Main Street" reaches the model as a follow-up', "ask" in mainStreet && mainStreet.followUp, true);
+  const askedLong = "Do you want me to nudge you in the morning before work, or check in the evening after you get home?";
+  const echoOfQuestion = "nudge you in the morning before work or check in the evening";
+  eq(
+    "a long line that's mostly the question heard back still goes to the model",
+    "ask" in (await judgeOverheard(env({ content: askedLong, ago: 5_000 }), "u", echoOfQuestion, "OVOA")),
+    true,
+  );
+  eq("after a reply that asked nothing, a follow-up still goes to the model", "ask" in (await judgeOverheard(justNow, "u", "Make them repeat daily", "OVOA")), true);
+  const longAgo = await judgeOverheard(env({ content: askedLong, ago: 10 * 60_000 }), "u", "Make them repeat daily", "OVOA");
+  eq("a question long ago doesn't wave a line through", "ask" in longAgo && !longAgo.followUp, true);
+  eq("unsure right after it spoke is a yes (gatekeeperPrompt)", /last ~45 seconds, answer true/.test(gatekeeperPrompt("OVOA")), true);
   eq("room talk with nobody in conversation: ignored", await isMeantForAssistant(env(null), "u", "yeah I told him already", "OVOA"), false);
 
   // In two steps, for a turn that goes on while the model judges (index.ts runTurn's gate).

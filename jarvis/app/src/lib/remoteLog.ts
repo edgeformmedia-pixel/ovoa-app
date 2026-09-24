@@ -118,6 +118,15 @@ const MILESTONES: RegExp[] = [
   // sentence ms, what it asks next) and one when it ends; ids and numbers only
   // (2026-09-23).
   /^setup: /,
+  // Whatever the person said that got no answer, and why: the gate's drops
+  // (turnGate.ts, the reason only, never the words), the server's "not for
+  // OVOA" (a length only), a reply dropped mid-turn, and listening going off
+  // with the reason. Three answers went unanswered on 2026-09-24, and one reply
+  // was lost when listening stopped, and none of it was in device_logs.
+  /^ignored: /,
+  /^not meant for the assistant/,
+  /^dropped the reply/,
+  /^stopped listening because/,
 ];
 /** perf lines are the turn breakdowns (turnTimer.ts): one row per spoken turn. */
 const MILESTONE_KINDS = new Set<LogEntry["kind"]>(["perf"]);

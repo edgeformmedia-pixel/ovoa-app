@@ -816,6 +816,28 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     end();
   }, [conversation.phase, shouldListen, end]);
 
+  // Why listening went off, for device_logs (remoteLog.ts). On 2026-09-24 it went
+  // off with a question on its way, the reply was never heard, and nothing said
+  // why. The phase is this render's, from before end() below turns it off.
+  const wasListening = useRef(false);
+  useEffect(() => {
+    const was = wasListening.current;
+    wasListening.current = shouldListen;
+    if (!was || shouldListen) return;
+    const why = [
+      !talks && "voice isn't on this plan",
+      held > 0 && "something else has the microphone",
+      tourSeen !== true && "the tour",
+      !alwaysListen && !inForeground && "the app left the screen",
+      !alwaysListen && !enabled && "the orb was turned off",
+      !alwaysListen && tapAsks && "tap to ask",
+      !alwaysListen && !onAssistantTab && "the assistant's tab was left",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    devlog("voice", `stopped listening because ${why || "a setting changed"} (${conversation.phase})`);
+  }, [shouldListen]);
+
   useEffect(() => {
     if (!shouldListen) return;
     start().then((ok) => {

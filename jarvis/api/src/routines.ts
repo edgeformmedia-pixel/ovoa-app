@@ -922,6 +922,7 @@ export function routinesAssistant(env: Env, userId: string, timeZone: string, op
     callTool,
     prompt: [
       "Routines are things at fixed times every day or on certain weekdays — medication, the dog, water. Set them up with routine_add; OVOA reminds them, follows up, and keeps a streak. A one-off reminder is a phone reminder, not a routine.",
+      "'Hold me accountable to…', 'every day', 'daily', 'once a day' is a routine, never reminder_set (that is one time only). If they didn't say when, ask what time, then routine_add with it.",
       "When they say they did it ('took it', 'done', 'walked him'), call routine_confirm.",
       "Medication schedules belong to their Apple Reminders 'Medications' list; OVOA mirrors it. Never tell them OVOA is the only place a medication is kept.",
     ].join("\n"),

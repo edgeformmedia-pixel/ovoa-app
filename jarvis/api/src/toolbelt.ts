@@ -127,6 +127,14 @@ const SYNONYMS: Record<string, string[]> = {
   task: ["todo", "tasks", "reminder"],
   tasks: ["todo", "reminder"],
   habit: ["routine"],
+  // Something that repeats is a routine, which buzzes every day and keeps a streak. A spoken
+  // turn doesn't carry routine_add, so "hold me accountable to going to the gym every day"
+  // was set as one-off reminders for today, twice (action_log, 2026-09-24).
+  daily: ["routine"],
+  everyday: ["routine"],
+  every: ["routine"],
+  accountable: ["routine"],
+  accountability: ["routine"],
   // The Band's and Apple Health's numbers (health_summary, heart.ts), which
   // neither core carries: without these, "how did I sleep" paid a more_tools
   // round. It's answered from the server now, so a locked phone doesn't matter
@@ -176,6 +184,9 @@ const SYNONYMS: Record<string, string[]> = {
   calories: ["food"],
   calorie: ["food"],
 };
+
+/** Words that say a request repeats, so it's a routine (namedTools). */
+const REPEATING = new Set(["daily", "everyday", "every", "accountable", "accountability", "nightly", "weekdays"]);
 
 const STOPWORDS = new Set([
   "a", "an", "the", "to", "for", "of", "my", "me", "i", "and", "or", "in", "on", "at", "is", "it", "that", "this",
@@ -259,6 +270,10 @@ export function namedTools(catalogue: ToolSpec[], request: string, max = 2, pref
     for (const s of SYNONYMS[w] ?? []) (GENERIC.has(s) ? generic : asked).add(s);
   }
   if (!asked.size) return [];
+  // "Remind me to stretch every day" names the reminder tools and the routine ones
+  // equally, and the reminder ones won the tie (their guide is carried): what
+  // repeats is a routine, so the routine tools go first.
+  const repeating = words(request).some((w) => REPEATING.has(w));
   // "notes" names note_add and "remind" names phone_reminder_create: a word of
   // five letters or more that begins the name's word, or that it begins. Five,
   // not four: "time" must not name location_timeline.
@@ -269,7 +284,8 @@ export function namedTools(catalogue: ToolSpec[], request: string, max = 2, pref
         const parts = words(tool.name);
         // A generic word only breaks ties: "cancel my alarm" puts alarm_cancel
         // ahead of alarm_list, and "send" alone names nothing.
-        return { tool, score: parts.filter(names).length + 0.5 * parts.filter((n) => generic.has(n)).length, named: parts.some(names) };
+        const bonus = repeating && parts.includes("routine") ? 1 : 0;
+        return { tool, score: parts.filter(names).length + 0.5 * parts.filter((n) => generic.has(n)).length + bonus, named: parts.some(names) };
       })
       .filter((m) => m.named)
       .sort((a, b) => b.score - a.score || Number(preferred.has(b.tool.name)) - Number(preferred.has(a.tool.name)))

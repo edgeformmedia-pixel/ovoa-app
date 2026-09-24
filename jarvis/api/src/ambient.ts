@@ -150,7 +150,8 @@ export function gatekeeperPrompt(assistantName: string) {
     "addressed = false when the sentence is mostly those words heard back, or a trailing scrap of them (\"There you are. where the dep\" after a reply about where the Department of Defence is).",
     // Its own words said back are sometimes the answer it asked for.
     "But picking one of the choices it just offered is an answer, and true: \"The Russell Offices\" after \"the Russell Offices or the Russell Hotel?\".",
-    "When unsure, answer false: speaking up uninvited is worse than staying quiet.",
+    // A reply they meant for it and got silence for is how the conversation broke (2026-09-24).
+    "When unsure: if the assistant spoke in the last ~45 seconds, answer true (the user answering it is far likelier than someone else talking right then, and silence to a real answer breaks the conversation); otherwise answer false.",
   ].join("\n");
 }
 
@@ -226,7 +227,28 @@ export async function judgeOverheard(env: Env, userId: string | null, text: stri
     console.log("ambient: its own reply heard back (no model call)", text);
     return { now: false };
   }
+  if (inConversation && lastReply && answersItsQuestion(words, lastReply.content)) {
+    console.log("ambient: answers its question (no model call)", text);
+    return { now: true };
+  }
   return { ask: () => askGatekeeper(env, userId, text, assistantName, recent.results, secondsSinceReply), followUp: inConversation };
+}
+
+/**
+ * Whether a line heard just after a reply that asked something is the answer.
+ * OVOA asked "a morning reminder to go, or an evening check that you went?",
+ * the phone sent the answer, and nothing came back: the gatekeeper, told to
+ * say no when unsure, said no (device_logs and messages, 2026-09-24; it
+ * happened again two minutes later). The phone only sends a line without the name inside its short
+ * follow-up window, with its own filler and the reply's echo already taken out
+ * (turnGate.ts), so after a question that line is an answer. Except a long
+ * one that is still mostly the reply, in its order: that is the reply heard
+ * back, and the gatekeeper, told what it said, decides. `words` has had the
+ * filler lines taken out already. Pure.
+ */
+export function answersItsQuestion(words: string[], reply: string) {
+  if (!reply.includes("?")) return false;
+  return words.length < 5 || !soundsLikeItsReply(words, reply);
 }
 
 type Recent = { role: "user" | "assistant"; content: string; created_at: number };

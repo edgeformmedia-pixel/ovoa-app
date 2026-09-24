@@ -133,6 +133,48 @@ export async function stopAlarm(env: Env, userId: string, opts: { id?: string; s
 // ---------- Reminders ----------
 
 /** "Remind me to X at Y": an OVOA reminder, which buzzes the band (not an Apple Reminder). */
+/** How close in time two reminders about the same thing have to be to be one reminder (sameReminder). */
+const SAME_REMINDER_MS = 20 * 60_000;
+
+/** Words that say nothing about what a reminder is for: "Water check" and "Gym check" are two things. */
+const REMINDER_FILLER = new Set([
+  "check", "reminder", "remind", "time", "today", "tonight", "tomorrow", "morning", "evening", "night",
+  "keep", "going", "have", "your", "you", "about", "this", "that", "with", "from", "done", "make", "sure",
+  "dont", "forget", "yet", "now", "did", "get", "go", "the", "and", "for",
+]);
+
+const reminderWords = (text: string) =>
+  new Set(
+    text
+      .toLowerCase()
+      .replace(/[‘’']/g, "")
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 3 && !REMINDER_FILLER.has(w)),
+  );
+
+/**
+ * Whether two reminders are the same one: set for within SAME_REMINDER_MS of
+ * each other, about the same thing (a word that says what for, in both).
+ * "Hey OVOA" on its own was answered by setting the water check at 10 AM a
+ * second time, three turns after the first (action_log, 2026-09-24). Pure.
+ */
+export function sameReminder(a: { text: string; at: number }, b: { text: string; at: number }) {
+  if (Math.abs(a.at - b.at) > SAME_REMINDER_MS) return false;
+  const words = reminderWords(b.text);
+  return [...reminderWords(a.text)].some((w) => words.has(w));
+}
+
+/** A reminder still to come that `text` at `at` would repeat (sameReminder), if there is one. */
+async function existingReminder(db: D1Database, userId: string, text: string, at: number) {
+  const { results } = await db
+    .prepare(
+      `SELECT text, remind_at FROM notes WHERE user_id = ? AND done = 0 AND reminded_at IS NULL AND remind_at BETWEEN ? AND ?`,
+    )
+    .bind(userId, at - SAME_REMINDER_MS, at + SAME_REMINDER_MS)
+    .all<{ text: string; remind_at: number }>();
+  return results.find((r) => sameReminder({ text: r.text, at: r.remind_at }, { text, at })) ?? null;
+}
+
 export async function setReminder(db: D1Database, userId: string, text: string, at: number, urgent: boolean) {
   const id = await addNote(db, userId, { text, tags: ["reminder"], remindAt: at });
   if (urgent) await db.prepare("UPDATE notes SET urgent = 1 WHERE id = ?").bind(id).run();
@@ -387,7 +429,7 @@ const TOOLS: ToolSpec[] = [
   {
     name: "reminder_set",
     description:
-      "'Remind me to X at Y': buzzes the band (or the phone) at that time and shows the words. urgent: keeps buzzing every 30 s until they say it's done — pills, 'make sure I', 'don't let me forget'. Use this unless they name the Reminders app.",
+      "'Remind me to X at Y': buzzes the band (or the phone) once, at that time, and shows the words. urgent: keeps buzzing every 30 s until they say it's done — pills, 'make sure I', 'don't let me forget'. Use this unless they name the Reminders app. One time only: anything every day is routine_add.",
     parameters: {
       type: "object",
       properties: {
@@ -443,6 +485,14 @@ export function alarmAssistant(env: Env, userId: string, timeZone: string, { voi
       const at = resolveDue(String(args.at ?? ""), timeZone);
       if (!text) return { error: "text is required" };
       if (!at || at < Date.now() - 60_000) return { error: "at must be a future local YYYY-MM-DDTHH:MM" };
+      const already = await existingReminder(db, userId, text, at);
+      if (already) {
+        return {
+          set: false,
+          already: `"${already.text}" ${new Date(already.remind_at).toLocaleDateString("en-US", { timeZone, weekday: "long" })} at ${clock(already.remind_at, timeZone)}`,
+          note: "That reminder is already set, so nothing new was added. Don't set it again; say it's already on.",
+        };
+      }
       await setReminder(db, userId, text, at, !!args.urgent);
       await logAction(db, userId, "reminder", `Reminder: ${text.slice(0, 100)}`, "chat");
       return {
@@ -469,7 +519,7 @@ export function alarmAssistant(env: Env, userId: string, timeZone: string, { voi
     tools: TOOLS,
     callTool,
     prompt: voice
-      ? "Alarms and reminders are OVOA's own and buzz the band: 'wake me up at…' is alarm_set; 'remind me to… at…' is reminder_set; 'I'm awake' / 'I'm up' is alarm_stop; 'I took it' / 'I did it' is reminder_done (ask more_tools for them if you don't have them). Use the phone's Reminders only when they name the Reminders app."
-      : "Alarms and reminders are OVOA's own and buzz the band: 'wake me up at…' is alarm_set; 'remind me to… at…' is reminder_set (urgent for pills or 'make sure'); 'I'm awake' is alarm_stop; 'I took it' / 'I did it' is reminder_done. Use the phone's Reminders (phone_reminder_create) only when they name the Reminders app.",
+      ? "Alarms and reminders are OVOA's own and buzz the band: 'wake me up at…' is alarm_set; 'remind me to… at…' is reminder_set, for one time only; anything every day ('hold me accountable to…', 'daily') is routine_add; 'I'm awake' / 'I'm up' is alarm_stop; 'I took it' / 'I did it' is reminder_done (ask more_tools for them if you don't have them). Use the phone's Reminders only when they name the Reminders app."
+      : "Alarms and reminders are OVOA's own and buzz the band: 'wake me up at…' is alarm_set; 'remind me to… at…' is reminder_set (urgent for pills or 'make sure'), for one time only; anything every day ('hold me accountable to…', 'daily') is routine_add; 'I'm awake' is alarm_stop; 'I took it' / 'I did it' is reminder_done. Use the phone's Reminders (phone_reminder_create) only when they name the Reminders app.",
   };
 }

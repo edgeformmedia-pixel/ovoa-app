@@ -22,6 +22,7 @@ import {
   generateText,
   isAiUnreachable,
   isCooling,
+  toolArgsFrom,
   toolNameFor,
   type EngineAttempt,
   type LlmEnv,
@@ -213,6 +214,20 @@ const spec = (name: string): ToolSpec => ({ name, description: name, parameters:
   eq("a name that starts with no offered one is left alone", toolNameFor("wire_money", ["money_afford"]), "wire_money");
   eq("nothing offered, nothing changed", toolNameFor("alarm_set>", []), "alarm_set>");
 
+  // Arguments: every resumed turn after a contacts lookup failed with Workers AI's
+  // 8007 "function.arguments must be valid JSON" (error_events, 2026-09-23).
+  eq("JSON as it should be", toolArgsFrom('{"query":"Ty"}'), { args: { query: "Ty" }, repaired: false });
+  eq("nothing, for a tool that takes nothing", toolArgsFrom(""), { args: {}, repaired: false });
+  eq("an object handed over as one", toolArgsFrom({ query: "Ty" }), { args: { query: "Ty" }, repaired: true });
+  eq("a template's tail glued on", toolArgsFrom('{"query":"Ty"}</arg_value>'), { args: { query: "Ty" }, repaired: true });
+  eq("encoded twice", toolArgsFrom(JSON.stringify('{"query":"Ty"}')), { args: { query: "Ty" }, repaired: true });
+  eq(
+    "GLM's own template",
+    toolArgsFrom("<arg_key>query</arg_key><arg_value>Ty</arg_value><arg_key>limit</arg_key><arg_value>3</arg_value>"),
+    { args: { query: "Ty", limit: 3 }, repaired: true },
+  );
+  eq("junk is nothing", toolArgsFrom("[object Object]"), { args: {}, repaired: true });
+
   const { ai, calls } = fakeAi([
     () => sse([toolCall("money_afford</arg_value>", { amount: 60 }), counts(100, 0, 9)]),
     () => sse([say("Yes, with room to spare."), counts(200, 100, 6)]),
@@ -234,6 +249,36 @@ const spec = (name: string): ToolSpec => ({ name, description: name, parameters:
   const sentBack = calls[1].inputs.messages.find((m: any) => m.tool_calls)?.tool_calls[0].function.name;
   eq("and goes back to the model under that name", sentBack, "money_afford");
   eq("the turn answers", outcome.kind === "reply" && outcome.text, "Yes, with room to spare.");
+}
+
+{
+  // Arguments that weren't JSON go to the tool as meant, and back to the model as JSON.
+  const rawCall = (name: string, args: unknown, id: string) => ({
+    choices: [{ delta: { tool_calls: [{ index: 0, id, type: "function", function: { name, arguments: args } }] } }],
+  });
+  const { ai, calls } = fakeAi([
+    () => sse([rawCall("phone_contacts_search", '{"query":"Ty"}</arg_value>', "c1"), counts(100, 0, 9)]),
+    () => sse([rawCall("alarm_list", "", "c2"), counts(120, 100, 4)]),
+    () => sse([rawCall("todo_list", { day: "today" }, "c3"), counts(140, 120, 4)]),
+    () => sse([say("Ty's number is saved, and your day is clear."), counts(200, 100, 6)]),
+  ]);
+  const got: string[] = [];
+  const outcome = await chatWithTools({ AI: ai }, {
+    ...base,
+    tools: [...base.tools, spec("phone_contacts_search"), spec("alarm_list"), spec("todo_list")],
+    turns: [{ role: "user", text: "Do I have Ty's number, and what's on today?" }],
+    callTool: async (name, args) => {
+      got.push(`${name}:${JSON.stringify(args)}`);
+      return { ok: true };
+    },
+    usage,
+    voice: true,
+    onText: () => {},
+  });
+  eq("each tool gets its arguments as meant", got, ['phone_contacts_search:{"query":"Ty"}', "alarm_list:{}", 'todo_list:{"day":"today"}']);
+  const echoed = calls[3].inputs.messages.filter((m: any) => m.tool_calls).map((m: any) => m.tool_calls[0].function.arguments);
+  eq("and every call goes back to the model as JSON", echoed, ['{"query":"Ty"}', "{}", '{"day":"today"}']);
+  eq("the turn answers", outcome.kind === "reply" && outcome.text, "Ty's number is saved, and your day is clear.");
 }
 
 // ---------- A reply that claims what no tool did gets one more round ----------
@@ -662,20 +707,54 @@ const spec = (name: string): ToolSpec => ({ name, description: name, parameters:
   hosts.restore();
 }
 
-// ---------- Workers AI silent: the spoken turn moves on to GLM ----------
+// ---------- Workers AI silent once: asked again, not handed to GLM ----------
+
+{
+  // Leaves nothing cooling. "On it — I'll buzz you" came 22 s after the question
+  // when one silent Workers AI request sent the turn to Z.ai (2026-09-24).
+  let cancelled = 0;
+  const { ai, calls } = fakeAi([
+    () => new ReadableStream<Uint8Array>({ pull: () => new Promise(() => {}), cancel: () => void cancelled++ }),
+    () => sse([say("Your alarm is at seven."), counts(6_700, 0, 7)]),
+  ]);
+  let glm = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    glm++;
+    return new Response(sse([say("Wrong engine."), counts(10, 0, 2)]), { status: 200 });
+  }) as typeof fetch;
+  const attempts: EngineAttempt[] = [];
+  const outcome = await chatWithTools({ AI: ai, GLM_API_KEY: "k", VOICE_FIRST_CONTENT_MS: "1000" }, {
+    ...base,
+    turns: [{ role: "user", text: "When's my alarm?" }],
+    callTool: async () => ({}),
+    usage,
+    voice: true,
+    onText: () => {},
+    onAttempt: (a) => attempts.push(a),
+  });
+  eq("a second go at Workers AI answers", outcome.kind === "reply" && `${outcome.engine}: ${outcome.text}`, "workers: Your alarm is at seven.");
+  eq("written down as a timeout, then an answer", attempts.map((a) => `${a.engine}:${a.outcome}`).join(","), "workers:timeout,workers:ok");
+  eq("the silent stream is let go of", cancelled, 1);
+  eq("asked twice", calls.length, 2);
+  eq("GLM never asked", glm, 0);
+  eq("and Workers AI isn't cooled down for one silence", isCooling("workers"), false);
+  globalThis.fetch = realFetch;
+}
+
+// ---------- Workers AI silent twice: the spoken turn moves on to GLM ----------
 
 {
   // Leaves Workers AI cooling for 15 s.
-  let cancelled = false;
-  const { ai } = fakeAi([
-    () =>
-      new ReadableStream<Uint8Array>({
-        pull: () => new Promise(() => {}),
-        cancel: () => {
-          cancelled = true;
-        },
-      }),
-  ]);
+  let cancelled = 0;
+  const silent = () =>
+    new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => {}),
+      cancel: () => {
+        cancelled++;
+      },
+    });
+  const { ai } = fakeAi([silent, silent]);
   const bodies: any[] = [];
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -695,9 +774,10 @@ const spec = (name: string): ToolSpec => ({ name, description: name, parameters:
   });
   const ms = Date.now() - at;
   eq("GLM answers instead", outcome.kind === "reply" && `${outcome.engine}: ${outcome.text}`, "glm: Your alarm is at seven.");
-  eq("after the first-word deadline, not the 20 s connect one", ms >= 1000 && ms < 5000, true);
-  eq("the silent engine is written down as a timeout", attempts.map((a) => `${a.engine}:${a.outcome}`).join(","), "workers:timeout,glm:ok");
-  eq("its stream is let go of upstream", cancelled, true);
+  eq("after two first-word deadlines, not the 20 s connect one", ms >= 2000 && ms < 6000, true);
+  eq("both silences are written down as timeouts", attempts.map((a) => `${a.engine}:${a.outcome}`).join(","), "workers:timeout,workers:timeout,glm:ok");
+  eq("both streams are let go of upstream", cancelled, 2);
+  eq("and now Workers AI rests", isCooling("workers"), true);
   eq("Z.ai is asked to stream tool calls (GLM_TOOL_STREAM unset)", bodies[0].tool_stream, true);
   eq("and GLM 5.3 still thinks at its floor there", bodies[0].reasoning_effort, "low");
   globalThis.fetch = realFetch;

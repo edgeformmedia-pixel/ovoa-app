@@ -283,6 +283,24 @@ const cases: { name: string; room?: boolean; talkOver?: boolean; answers?: boole
     want: ["ignored at +3200", "turn at +5000 (heard +4300): What time is it? [addressed]", "ignored at +12000"],
   },
   {
+    // "Hey O Va" was sent on its own as a question, and the answer set three
+    // reminders nobody asked for (messages and action_log, 2026-09-24).
+    name: "the name heard as two words is still only the name",
+    steps: [
+      { named: 0 },
+      { said: "Hey O Va.", at: 800 },
+      { tick: 3000 },
+      { tick: 3200 },
+      { said: "What time is it?", at: 5000 },
+    ],
+    want: ["ignored at +3200", "turn at +5000 (heard +4300): What time is it? [addressed]"],
+  },
+  {
+    name: "the name as two words, then the request in the same breath",
+    steps: [{ named: 0 }, { said: "Hey O Va, what time is it?", at: 1500 }],
+    want: ["turn at +1500 (heard +800): Hey O Va, what time is it? [addressed]"],
+  },
+  {
     name: "the name after the question, in one breath",
     steps: [{ named: 0 }, { said: "What's the weather? OVOA.", at: 1500 }],
     want: ["turn at +1500 (heard +800): What's the weather? OVOA. [addressed]"],

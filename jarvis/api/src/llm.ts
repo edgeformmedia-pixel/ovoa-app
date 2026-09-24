@@ -1012,10 +1012,9 @@ export async function generateText(env: LlmEnv, opts: Options): Promise<string> 
  * that isn't cooling down and wasn't last refused for good. Otherwise waiting
  * is the only way the turn gets an answer.
  *
- * Workers AI left this way rests like any timeout (15 s, coolDown): a queue
- * that held one turn silent for 6 s is likely to hold the next, and the spoken
- * turns meanwhile go straight to GLM instead of each waiting it out first. For
- * typed calls it is only the last resort, so they barely notice.
+ * Workers AI left this way is first asked once more (silentRetry), and only
+ * rests like any timeout (15 s, coolDown) if that goes silent too. For typed
+ * calls it is only the last resort, so they barely notice.
  */
 export function abandonSilentEngine(s: {
   voice: boolean;
@@ -1031,6 +1030,20 @@ export function abandonSilentEngine(s: {
 }): boolean {
   const canTakeOver = s.later.some((e) => !e.cooling && !e.refused);
   return s.voice && s.engine === "workers" && s.index === 0 && canTakeOver && !s.heard && s.elapsedMs >= s.limitMs;
+}
+
+/**
+ * Whether a spoken turn asks Workers AI again, rather than moving on, after it
+ * was left for going silent (abandonSilentEngine): the first time in a turn,
+ * yes, without cooling it down; a second silence, no. Moving on meant GLM on
+ * Z.ai, which took 13.6 s to start and 28 s in all ("On it — I'll buzz you",
+ * 22 s after the question, device_logs 2026-09-24), and resting Workers AI
+ * for 15 s sent every spoken turn after it the same way (27 skipped in one
+ * hour, engine_stats 2026-09-24T02). A silence is mostly one stuck request:
+ * the same hour answered 155 turns. Pure.
+ */
+export function silentRetry(s: { silent: boolean; retrying: boolean }) {
+  return s.silent && !s.retrying;
 }
 
 /**
@@ -1179,7 +1192,10 @@ export async function chatWithTools(
   const failures: string[] = [];
   reportSkipped(env, opts.model, order, opts.onAttempt);
   if (!order.length) throw nothingToTry(env, opts.model, opts.onAttempt);
-  for (const [i, engine] of order.entries()) {
+  // Workers AI went silent once this turn and is being asked again (silentRetry).
+  let retrying = false;
+  for (let i = 0; i < order.length; i++) {
+    const engine = order[i];
     const at = Date.now();
     const model = modelFor(env, engine, opts.model);
     // This engine's own signal: the caller's, and the spoken first-word deadline.
@@ -1187,14 +1203,18 @@ export async function chatWithTools(
     const follow = () => abort.abort(opts.signal?.reason);
     opts.signal?.addEventListener("abort", follow, { once: true });
     let heard = false;
+    let silent = false;
+    const limitMs = retrying ? Math.min(voiceFirstMs, VOICE_RETRY_FIRST_CONTENT_MS) : voiceFirstMs;
     // The engines after it are read when the timer fires: another call may have cooled one down since.
     const timer =
       opts.voice && engine === "workers" && i === 0
         ? setTimeout(() => {
             const later = order.slice(i + 1).map((e) => ({ cooling: isCooling(e), refused: refusedForGood.has(e) }));
-            const s = { voice: true, engine, index: i, later, heard: heard || committed, elapsedMs: Date.now() - at, limitMs: voiceFirstMs };
-            if (abandonSilentEngine(s)) abort.abort(new Error(`Timed out after ${voiceFirstMs / 1000} s with no first word from ${nameOf(engine)}`));
-          }, voiceFirstMs)
+            const s = { voice: true, engine, index: i, later, heard: heard || committed, elapsedMs: Date.now() - at, limitMs };
+            if (!abandonSilentEngine(s)) return;
+            silent = true;
+            abort.abort(new Error(`Timed out after ${limitMs / 1000} s with no first word from ${nameOf(engine)}`));
+          }, limitMs)
         : null;
     let outcome: ChatOutcome | null = null;
     try {
@@ -1215,6 +1235,14 @@ export async function chatWithTools(
         coolDownAfter(env, engine, err);
         throw finalError(err, failures, order);
       }
+      if (silentRetry({ silent, retrying })) {
+        // Not cooled down, and not handed on: see silentRetry.
+        retrying = true;
+        console.log(`ovoa.engine_silent_retry engine=${engine} after_ms=${Date.now() - at}`);
+        i--;
+        continue;
+      }
+      retrying = false;
       if (i === order.length - 1) {
         coolDownAfter(env, engine, err);
         throw unreachable(err, failures, order);
@@ -1401,6 +1429,13 @@ const DEFAULT_IDLE_MS = 25_000;
  * (4.5-6.6 s) sits right at it.
  */
 const DEFAULT_VOICE_FIRST_CONTENT_MS = 6_000;
+/**
+ * The second go at Workers AI after a silence (silentRetry) gets less: its
+ * first event comes in 0.7-1 s and its first word in 2.1-2.9 s (device_logs,
+ * 2026-09-24), so one silent at 4 s is stuck too, and the person has already
+ * waited out the first try.
+ */
+const VOICE_RETRY_FIRST_CONTENT_MS = 4_000;
 
 let connectMs = DEFAULT_CONNECT_MS;
 let idleMs = DEFAULT_IDLE_MS;
@@ -1962,6 +1997,54 @@ export function toolNameFor(name: string, offered: string[]): string {
   return meant || name;
 }
 
+/**
+ * A tool call's arguments as an object, from whatever the host sent. Spoken
+ * turns resuming after a contacts lookup failed with Workers AI's 8007
+ * "Assistant tool call function.arguments must be valid JSON" (twice on
+ * 2026-09-23, error_events, /chat/resume only): the call's arguments went back
+ * to it exactly as they came, and they weren't JSON. Where the parse failed,
+ * the tool itself had been given {} too. So: JSON as it should be; an object handed over as one; the first {...}
+ * in it when a template's tail is glued on (as the name was, toolNameFor);
+ * GLM's own <arg_key>/<arg_value> template; else nothing. `repaired`: it
+ * wasn't plain JSON (an empty string, for a tool that takes nothing, is fine). Pure.
+ */
+export function toolArgsFrom(raw: unknown): { args: Record<string, unknown>; repaired: boolean } {
+  const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+  if (isObject(raw)) return { args: raw, repaired: true };
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (!text) return { args: {}, repaired: raw !== undefined && raw !== null && raw !== "" };
+  const parse = (s: string): unknown => {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return undefined;
+    }
+  };
+  const whole = parse(text);
+  if (isObject(whole)) return { args: whole, repaired: false };
+  // Encoded twice: "{\"query\":\"Ty\"}".
+  if (typeof whole === "string" && isObject(parse(whole))) return { args: parse(whole) as Record<string, unknown>, repaired: true };
+  const open = text.indexOf("{");
+  const close = text.lastIndexOf("}");
+  if (open >= 0 && close > open) {
+    const inner = parse(text.slice(open, close + 1));
+    if (isObject(inner)) return { args: inner, repaired: true };
+  }
+  const pairs = [...text.matchAll(/<arg_key>\s*([\s\S]*?)\s*<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g)];
+  if (pairs.length) {
+    const args: Record<string, unknown> = {};
+    for (const [, key, value] of pairs) {
+      const v = parse(value.trim());
+      args[key] = v === undefined ? value.trim() : v;
+    }
+    return { args, repaired: true };
+  }
+  return { args: {}, repaired: true };
+}
+
+/** A tool call with its arguments written back as the JSON its tool was given (toolArgsFrom). */
+const withArgs = (call: any, args: Record<string, unknown>) => ({ ...call, function: { ...call.function, arguments: JSON.stringify(args) } });
+
 /** A round's tool calls, each named as the offered tool it meant (toolNameFor). A repaired name is logged. */
 function namedAsOffered(engine: OpenAiEngine, body: OpenAiBody, calls: any[]) {
   const offered: string[] = (body.tools ?? []).map((t) => t.function?.name).filter(Boolean);
@@ -2013,7 +2096,8 @@ async function openAiRound(env: LlmEnv, engine: OpenAiEngine, model: string, bod
       const slot = (calls[tc.index ?? 0] ??= { id: "", type: "function", function: { name: "", arguments: "" } });
       if (tc.id) slot.id = tc.id;
       if (tc.function?.name) slot.function.name += tc.function.name;
-      if (tc.function?.arguments) slot.function.arguments += tc.function.arguments;
+      // A host that hands the arguments over as an object: "" + {} was "[object Object]".
+      if (tc.function?.arguments) slot.function.arguments += typeof tc.function.arguments === "string" ? tc.function.arguments : JSON.stringify(tc.function.arguments);
     }
     if (text) timing.firstContentMs ??= mark();
     if (text || delta?.tool_calls?.length) onOutput?.();
@@ -2070,6 +2154,13 @@ async function openAiToolLoop(
 ): Promise<ChatOutcome> {
   const { system, turns, tools, callTool, voice, onText, onOutput, signal } = opts;
   const messages: any[] = paused?.messages ?? openAiTurns(system, turns);
+  // A turn paused before its calls' arguments were cleaned up (toolArgsFrom)
+  // still has them as they came: sent back like that, Workers AI refused it.
+  for (const [i, m] of messages.entries()) {
+    if (m?.role === "assistant" && Array.isArray(m.tool_calls)) {
+      messages[i] = { ...m, tool_calls: m.tool_calls.map((call: any) => withArgs(call, toolArgsFrom(call.function?.arguments).args)) };
+    }
+  }
   // A resumed turn carries on with the model it paused on (LoopState.model).
   const model = paused?.model ?? modelFor(env, engine, opts.model);
   // Spoken turns ask for as little thinking as the host allows: none on Workers
@@ -2106,10 +2197,22 @@ async function openAiToolLoop(
       return { kind: "reply", text: message.content, engine };
     }
 
+    // Each call's arguments as the tool will get them (toolArgsFrom), and sent
+    // back to the model the same way.
+    const parsed = calls.map((call: any) => {
+      const got = toolArgsFrom(call.function?.arguments);
+      if (got.repaired) {
+        const raw = call.function?.arguments;
+        console.log(
+          `ovoa.tool_args_repaired engine=${engine} tool=${call.function?.name} raw=${JSON.stringify(typeof raw === "string" ? raw.slice(0, 120) : raw ?? null)}`,
+        );
+      }
+      return got.args;
+    });
     // Content is never null on an assistant turn (some hosts reject it). The
     // model's reasoning is not sent back: GLM's hosts neither need it nor
     // promise to accept it, and it is never spoken or shown.
-    messages.push({ role: "assistant", content: message.content ?? "", tool_calls: calls });
+    messages.push({ role: "assistant", content: message.content ?? "", tool_calls: calls.map((call: any, i: number) => withArgs(call, parsed[i])) });
     // The words the round wrote before its tool calls ("Checking the weather.")
     // are a sentence of their own. Without a line break here the next round's
     // first word was glued on to them ("…on record.Noted — 30 days", 2026-09-23),
@@ -2119,11 +2222,8 @@ async function openAiToolLoop(
     if (onText && message.content.trim()) onText("\n");
     const slots: { id: string; index: number }[] = [];
     const deferred: DeferredCall[] = [];
-    for (const call of calls) {
-      let args: Record<string, unknown> = {};
-      try {
-        args = JSON.parse(call.function?.arguments || "{}");
-      } catch {}
+    for (const [i, call] of calls.entries()) {
+      const args = parsed[i];
       const result = await safeCall(callTool, call.function?.name, args);
       let content = "";
       if (result === DEFER) {

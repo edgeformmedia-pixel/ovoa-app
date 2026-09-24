@@ -348,7 +348,19 @@ export function nameCount(text: string, name: string) {
 
 /** The words that carry a request: not the name, greetings or stray letters. */
 function contentWords(text: string, name: string) {
-  return wordsOf(text).filter((w) => w.length > 1 && !GREETING.has(w) && !isName(w, name));
+  const words = wordsOf(text);
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    // The name heard as two words, as nameCount counts it: "Hey O Va" was sent
+    // as a question, "va" being a word of its own (2026-09-24).
+    if (!isName(w, name) && i + 1 < words.length && isName(w + words[i + 1], name)) {
+      i++;
+      continue;
+    }
+    if (w.length > 1 && !GREETING.has(w) && !isName(w, name)) out.push(w);
+  }
+  return out;
 }
 
 /** From the sentence with the name onwards ("...so anyway. Hey OVOA, what's the time"), or null. */
