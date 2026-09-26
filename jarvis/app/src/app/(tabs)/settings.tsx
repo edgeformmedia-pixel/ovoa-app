@@ -339,6 +339,10 @@ export default function Settings() {
         {/* Its own heading, shown once the server can take texts (components/TextingSetup.tsx). */}
         <TextingSetup token={token} assistantName={user.settings.assistantName || "OVOA"} />
 
+        {/* Other people's OVOAs (api/src/network.ts): who yours can talk to, and what each may do. */}
+        <Sub>Other people's OVOAs</Sub>
+        <Button label="Connections" onPress={() => router.push("/connections" as Href)} />
+
         <Sub>Background work</Sub>
         {!can.agent ? (
           <LockedLine

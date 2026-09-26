@@ -50,6 +50,8 @@ const DAY_MS = 86_400_000;
 const TEXT_INBOX_DAYS = 2;
 /** A deleted website can be put back for this long (sites.ts DELETED_KEEP_DAYS). */
 const SITE_DELETED_DAYS = 30;
+/** A username given up is held and redirects for this long (sites.ts USERNAME_HELD_DAYS). */
+const USERNAME_HELD_DAYS = 90;
 /** Rows per DELETE. Small enough for D1's per-query limits with a trigger firing per row. */
 const CHUNK = 500;
 /** Past this the rest waits for tomorrow night; the rules furthest down go last. */
@@ -233,6 +235,15 @@ export const RULES: Rule[] = [
   at("created_at", "site_builds"),
   // Visitors' messages were texted and emailed to the owner as they came.
   at("created_at", "site_leads"),
+
+  // ---- Usernames and OVOA to OVOA (usernames.ts, network.ts) ----
+  // A username given up redirects, and is held for its owner, 90 days.
+  { name: "usernames_history", table: "usernames_history", where: "released_at < ?", args: (c) => [c.now - USERNAME_HELD_DAYS * DAY_MS] },
+  // An exchange between two OVOAs and what was said in it, 14 days after it last
+  // moved; its messages and what waited on it go with it (CASCADE). The log looks back as far.
+  at("updated_at", "ovoa_threads"),
+  at("created_at", "ovoa_messages"),
+  at("created_at", "ovoa_approvals"),
   at("last_seen", "error_events"),
   at("last_at", "engine_stats"),
   at("last_at", "cron_ticks"),
@@ -335,6 +346,12 @@ export const TABLES = {
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",
+  usernames_history: "expires",
+  connections: "keep",
+  connection_perms: "keep",
+  ovoa_threads: "delete",
+  ovoa_messages: "delete",
+  ovoa_approvals: "delete",
 } as const satisfies Record<string, "keep" | "delete" | "mixed" | "expires" | "index">;
 
 /** Tables whose purge is a step of its own rather than a rule. */

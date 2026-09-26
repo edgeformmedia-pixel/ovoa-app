@@ -134,6 +134,13 @@ export const ROUTE_TIERS: RouteRule[] = [
   // Websites are built by a model, from a turn (base, and gated at the model
   // call); listing and deleting the ones you have calls none.
   { method: "GET", path: /^\/sites$/, tier: "free", why: "the websites you have (building one is a turn)" },
+  // Your @username (usernames.ts): picking, checking and changing it calls no model.
+  { method: "*", path: /^\/me\/username(\/check)?$/, tier: "free", why: "your username, and whether one is free" },
+  // OVOA to OVOA (network.ts): connecting, permissions, answering what waits for
+  // you and the log call no model; asking another OVOA something is base, like
+  // the assistant that usually does it.
+  { method: "POST", path: /^\/ovoa\/ask$/, tier: "base", why: "asking another OVOA something" },
+  { method: "*", path: /^\/ovoa\/(connect|connections|log|approvals\/[^/]+|connections\/[^/]+(\/answer|\/perms)?)$/, tier: "free", why: "your OVOA connections, their permissions, answering what waits for you, the log" },
 
   // Base: everything that calls a model, or voices a reply. Listed so the table
   // reads whole; the default is base anyway.

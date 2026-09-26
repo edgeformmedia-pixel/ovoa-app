@@ -193,6 +193,14 @@ const SYNONYMS: Record<string, string[]> = {
   leads: ["site", "leads"],
   inquiries: ["site", "leads"],
   inquiry: ["site", "leads"],
+  // Their @username (usernames.ts) and other people's OVOAs (network.ts): "connect
+  // with @maria", "ask Jake's OVOA", "remind Sam", "what did my OVOA tell Maria".
+  handle: ["username"],
+  connect: ["ovoa", "connect"],
+  connection: ["ovoa", "connections"],
+  connections: ["ovoa", "connections"],
+  connected: ["ovoa", "connections"],
+  ovoas: ["ovoa"],
 };
 
 /** Words that say a request repeats, so it's a routine (namedTools). */
