@@ -23,6 +23,7 @@ import {
   tapbackOf,
   tapbackVerdict,
   textChannel,
+  textingFirstSaid,
   textsTick,
   waitingApprovals,
   waitingLine,
@@ -118,6 +119,16 @@ const body = (over: Record<string, unknown> = {}) => ({
   eq("taking one back", tapbackOf("Removed a heart from “ha”")?.kind, "removed");
   eq("an ordinary text isn't one", tapbackOf("I loved the movie"), null);
   eq("a thumbs up on the YES line is the YES", tapbackVerdict({ kind: "liked", quoted: "Reply YES to go ahead, or NO to cancel." }), "yes");
+
+  eq("'stop texting me first' is off", textingFirstSaid("Actually stop texting me first, notifications are fine"), false);
+  eq("'don't text me first anymore' is off", textingFirstSaid("don’t text me first anymore"), false);
+  eq("'no more texting me first' is off", textingFirstSaid("no more texting me first please"), false);
+  eq("'text me first with reminders' is on", textingFirstSaid("text me first with reminders and stuff from now on"), true);
+  eq("'you can text me first' is on", textingFirstSaid("You can text me first."), true);
+  eq("a question is the model's", textingFirstSaid("will you text me first?"), null);
+  eq("'first thing' is a time, not this", textingFirstSaid("text me first thing tomorrow about the dentist"), null);
+  eq("nothing about it is nothing", textingFirstSaid("remind me to call mom"), null);
+  eq("unclear is the model's", textingFirstSaid("I'm not sure you should text me first"), null);
   eq("down is the NO", tapbackVerdict({ kind: "disliked", quoted: "Reply YES to go ahead." }), "no");
   eq("on anything else it's nothing", tapbackVerdict({ kind: "liked", quoted: "Done — 3pm" }), null);
 
@@ -441,7 +452,7 @@ async function main() {
     const ch = textChannel(env, U, "America/New_York", [{ id: "app1", name: "Grocery Helper", about: "Keeps the shopping list" }], null, {
       openApp: (a) => (opened = a),
     });
-    eq("the channel's tools", ch.tools.map((t) => t.name), ["my_apps", "app_open", "app_close"]);
+    eq("the channel's tools", ch.tools.map((t) => t.name), ["my_apps", "app_open", "app_close", "texting_first"]);
     eq("its messages are saved as texts", ch.source, "text");
     eq("the prompt names their apps", ch.prompt.includes('"Grocery Helper"'), true);
     eq("my_apps", await ch.callTool("my_apps", {}), { apps: [{ name: "Grocery Helper", about: "Keeps the shopping list" }], open: null });
@@ -457,7 +468,7 @@ async function main() {
     eq("closed in the conversation", openAppId((await linkOf(DB, U))!), null);
     void link;
 
-    eq("no apps, no app tools", textChannel(env, U, "UTC", [], null, { openApp: () => {} }).tools.length, 0);
+    eq("no apps, no app tools: only texting_first", textChannel(env, U, "UTC", [], null, { openApp: () => {} }).tools.map((t) => t.name), ["texting_first"]);
 
     const waiting = ch.adjust("gmail_send", { status: "waiting_for_user_approval", note: "tap Approve", account: "Used work" }) as Record<string, unknown>;
     eq("an approval card becomes a YES", [waiting.status, waiting.account, String(waiting.note).includes("YES")], ["waiting_for_their_yes", "Used work", true]);
@@ -467,6 +478,20 @@ async function main() {
     eq("anything else is left alone", ch.adjust("note_add", { ok: true }), { ok: true });
     const sym = Symbol("defer");
     eq("a pause is left alone", ch.adjust("phone_contacts_search", sym) === sym, true);
+  }
+
+  // ---------- Texting first, said plainly ----------
+
+  {
+    const seen: number[] = [];
+    const turn = scripted((input) => (seen.push(input.link.proactive), { reply: "Okay.", pendingActions: [] }));
+    await text("actually stop texting me first, notifications are fine", deps(turn.turn));
+    eq("'stop texting me first' switches it off", (await linkOf(DB, U))?.proactive, 0);
+    eq("before the turn, which sees it off", seen.at(-1), 0);
+    await text("ok text me first again please", deps(turn.turn));
+    eq("'text me first again' switches it back on", (await linkOf(DB, U))?.proactive, 1);
+    await text("should you text me first?", deps(turn.turn));
+    eq("a question leaves it to the model", (await linkOf(DB, U))?.proactive, 1);
   }
 
   // ---------- Unlinking ----------

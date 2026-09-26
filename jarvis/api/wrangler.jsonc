@@ -15,7 +15,18 @@
   // workers_dev has to be written out: once there are routes, wrangler turns the
   // workers.dev address off unless told to keep it, and it is the second way in
   // (a check while api.ovoa.ai's certificate is still being issued).
-  "routes": [{ "pattern": "api.ovoa.ai", "custom_domain": true }],
+  //
+  // And every other <name>.ovoa.ai: the websites OVOA builds (src/sites.ts,
+  // docs/sites.md), through a wildcard DNS record (*, proxied, added once in the
+  // dashboard) and this route. A route beats a Custom Domain on the same host,
+  // so each subdomain with a Worker of its own (admin, help, www, and api
+  // itself) has a route with no Worker, which puts it back on its Custom Domain:
+  // scripts/sites-routes.mjs checks and adds them. Run it after adding any
+  // new subdomain to the zone.
+  "routes": [
+    { "pattern": "api.ovoa.ai", "custom_domain": true },
+    { "pattern": "*.ovoa.ai/*", "zone_name": "ovoa.ai" }
+  ],
   "workers_dev": true,
   // Workers Logs: every console line and every invocation, kept 3 days on the
   // free plan and 7 on paid, readable in the dashboard and by `wrangler tail`.
@@ -103,7 +114,11 @@
     // this client's (ovoa-team/google/.env): never deploy it to the workers.dev Worker on its own.
     // Google connections made with the old client (736336639952-…) have to be made again after the
     // switch. TOKEN_ENC_KEY is a secret too.
-    "GOOGLE_CLIENT_ID": "681579233268-eegju2n5qcpg6ja35np11vpl9fic51pf.apps.googleusercontent.com"
+    "GOOGLE_CLIENT_ID": "681579233268-eegju2n5qcpg6ja35np11vpl9fic51pf.apps.googleusercontent.com",
+    // Where the websites OVOA builds live: <name>.SITES_DOMAIN (src/sites.ts). Links
+    // go to the preview (PUBLIC_URL/s/<name>) until the wildcard DNS record answers;
+    // SITES_WILDCARD "on" or "off" decides that instead of looking it up.
+    "SITES_DOMAIN": "ovoa.ai"
     // Optional: "EXPO_GO_SIGNIN": "off" refuses Expo Go as the way back from the app's Google
     // sign-in, leaving only the installed app's ovoa://google-signin (src/signin.ts appReturnUrl).
   },
@@ -125,7 +140,9 @@
     // Voicing, a sentence at a time: per person.
     { "name": "RL_SPEAK", "namespace_id": "1103", "simple": { "limit": 120, "period": 60 } },
     // Log uploads, per address. A phone sends at most one every 3 s.
-    { "name": "RL_LOGS", "namespace_id": "1104", "simple": { "limit": 60, "period": 60 } }
+    { "name": "RL_LOGS", "namespace_id": "1104", "simple": { "limit": 60, "period": 60 } },
+    // A website's contact form (src/sites.ts), per sender's address.
+    { "name": "RL_FORM", "namespace_id": "1105", "simple": { "limit": 5, "period": 60 } }
   ],
   "d1_databases": [
     {

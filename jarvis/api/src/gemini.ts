@@ -27,13 +27,15 @@ type GenerateOptions = {
   fast?: boolean;
   /** Stops the request: llm.ts passes the caller's, so a call called off (the overheard-line check's "no") costs no more. */
   signal?: AbortSignal;
+  /** Room for a long answer (llm.ts Options.maxTokens); the model's own limit otherwise. */
+  maxTokens?: number;
 };
 
 /**
  * One plain call. Returns the text and, beside it, Gemini's own token counts
  * (usageMetadata) so the caller can write down what the call cost.
  */
-export async function generate({ apiKey, model, system, turns, json, fast, signal }: GenerateOptions): Promise<{ text: string; usage: unknown }> {
+export async function generate({ apiKey, model, system, turns, json, fast, signal, maxTokens }: GenerateOptions): Promise<{ text: string; usage: unknown }> {
   const res = await fetch(`${BASE}/${model}:generateContent`, {
     method: "POST",
     signal,
@@ -44,6 +46,7 @@ export async function generate({ apiKey, model, system, turns, json, fast, signa
       generationConfig: {
         ...(json && { responseMimeType: "application/json", responseSchema: json.schema }),
         ...(fast && { thinkingConfig: { thinkingLevel: quickThinking(model) } }),
+        ...(maxTokens && { maxOutputTokens: maxTokens }),
       },
     }),
   });

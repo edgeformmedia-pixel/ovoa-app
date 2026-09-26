@@ -255,6 +255,23 @@ const NO = new Set([
   "do not", "don't send it", "never mind", "nevermind", "nvm", "👎", "❌",
 ]);
 
+/**
+ * "Stop texting me first", "text me first again": the switch for texting first
+ * (reach.ts), said plainly. It's flipped before the turn instead of left to the
+ * model, which answered "Got it, back to notifications only" without calling
+ * texting_first (sites-probe, 2026-09-26); the turn then sees it's done and says
+ * so. A question, or anything less plain, is the model's to act on. "First
+ * thing" is a time, not this. Pure.
+ */
+export function textingFirstSaid(text: string): boolean | null {
+  const t = text.toLowerCase().replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim();
+  if (t.endsWith("?")) return null;
+  const said = /\btext(?:ing)? me first\b(?! thing)/;
+  if (!said.test(t)) return null;
+  if (/\b(?:stop|quit|no more|don't|do not|never|no longer)\b[^.!\n]{0,24}\btext(?:ing)? me first\b(?! thing)/.test(t)) return false;
+  return /\b(?:not|don't|stop|never)\b/.test(t) ? null : true;
+}
+
 /** A reply that is only a yes or only a no; anything more is a request of its own. Pure. */
 export function yesOrNo(text: string): "yes" | "no" | null {
   const t = text
@@ -335,10 +352,17 @@ export type TextLink = {
   app_at: number | null;
   approvals: string | null;
   approvals_at: number | null;
+  /** Until when a YES counts; null: APPROVAL_TTL_MS after approvals_at (migrations/0050). */
+  approvals_until: number | null;
   busy_until: number | null;
+  /** 1: OVOA texts them first (reach.ts). 0: its notes go back to being notifications. */
+  proactive: number;
+  /** The newest unanswered question of OVOA's that was followed up (agent.ts followUpDropped). */
+  followed_up_at: number | null;
 };
 
-const LINK_COLUMNS = "user_id, phone, linked_at, app_id, app_at, approvals, approvals_at, busy_until";
+const LINK_COLUMNS =
+  "user_id, phone, linked_at, app_id, app_at, approvals, approvals_at, approvals_until, busy_until, proactive, followed_up_at";
 
 export const linkByPhone = (db: D1Database, phone: string) =>
   db.prepare(`SELECT ${LINK_COLUMNS} FROM text_links WHERE phone = ?`).bind(phone).first<TextLink>();
@@ -373,7 +397,7 @@ async function redeem(db: D1Database, codes: string[], phone: string, now: numbe
         .prepare(
           `INSERT INTO text_links (user_id, phone, linked_at) VALUES (?, ?, ?)
              ON CONFLICT(user_id) DO UPDATE SET phone = excluded.phone, linked_at = excluded.linked_at,
-               app_id = NULL, app_at = NULL, approvals = NULL, approvals_at = NULL`,
+               app_id = NULL, app_at = NULL, approvals = NULL, approvals_at = NULL, approvals_until = NULL, followed_up_at = NULL`,
         )
         .bind(row.user_id, phone, now),
       db.prepare("DELETE FROM text_link_codes WHERE user_id = ?").bind(row.user_id),
@@ -482,12 +506,17 @@ export function combine(batch: Pick<InboxRow, "content" | "media">[]) {
 
 // ---------- Approvals by text ----------
 
-/** A YES waited for this long, and no longer. */
+/** A YES to what a reply set up waits this long, and no longer. */
 const APPROVAL_TTL_MS = 30 * 60_000;
 
 /** The parked actions a YES would approve now. Pure. */
-export function waitingApprovals(link: Pick<TextLink, "approvals" | "approvals_at">, now: number): string[] {
-  if (!link.approvals || !link.approvals_at || link.approvals_at < now - APPROVAL_TTL_MS) return [];
+export function waitingApprovals(
+  link: Pick<TextLink, "approvals" | "approvals_at"> & { approvals_until?: number | null },
+  now: number,
+): string[] {
+  if (!link.approvals || !link.approvals_at) return [];
+  const until = link.approvals_until ?? link.approvals_at + APPROVAL_TTL_MS;
+  if (until < now) return [];
   try {
     const ids = JSON.parse(link.approvals) as unknown;
     return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string").slice(0, 10) : [];
@@ -496,10 +525,14 @@ export function waitingApprovals(link: Pick<TextLink, "approvals" | "approvals_a
   }
 }
 
-const setApprovals = (db: D1Database, userId: string, ids: string[], now: number) =>
+/**
+ * What a YES approves from now, for `ttl` (half an hour after a reply; a text
+ * OVOA sent first proposing something waits longer, reach.ts). No ids: nothing.
+ */
+export const setApprovals = (db: D1Database, userId: string, ids: string[], now: number, ttl = APPROVAL_TTL_MS) =>
   db
-    .prepare("UPDATE text_links SET approvals = ?, approvals_at = ? WHERE user_id = ?")
-    .bind(ids.length ? JSON.stringify(ids) : null, ids.length ? now : null, userId)
+    .prepare("UPDATE text_links SET approvals = ?, approvals_at = ?, approvals_until = ? WHERE user_id = ?")
+    .bind(ids.length ? JSON.stringify(ids) : null, ids.length ? now : null, ids.length ? now + ttl : null, userId)
     .run();
 
 async function saveMessages(db: D1Database, userId: string, lines: { role: "user" | "assistant"; content: string }[]) {
@@ -633,6 +666,14 @@ async function answer(env: Env, ctx: Waiter, userId: string, batch: InboxRow[], 
     await dropApprovals(db, userId, waiting);
   }
 
+  // Texting first, asked for plainly: switched now, and the turn sees it switched (textingFirstSaid).
+  const first = textingFirstSaid(text);
+  if (first !== null && first !== (link.proactive !== 0)) {
+    await db.prepare("UPDATE text_links SET proactive = ? WHERE user_id = ?").bind(first ? 1 : 0, userId).run();
+    link.proactive = first ? 1 : 0;
+    say("text", { outcome: first ? "texting first on" : "texting first off", user: userId });
+  }
+
   let outcome: TextTurnOutcome;
   const started = Date.now();
   try {
@@ -714,7 +755,7 @@ async function welcome(db: D1Database, userId: string) {
   const me = who?.assistant_name?.trim() || "OVOA";
   return [
     `You're linked${first ? `, ${first}` : ""}! This is ${me}: text me anytime, just like talking to me in the app.`,
-    `I remember what we talk about there, and from here I can set reminders, keep your notes and lists, use your apps and your Google account, and look things up. Save this number as ${me} so it's easy to find.`,
+    `I remember what we talk about there, and from here I can set reminders, keep your notes and lists, use your apps and your Google account, look things up, and build websites for you or your clients. I'll text you first too: your morning brief, reminders, check-ins and anything I find. Save this number as ${me} so it's easy to find.`,
   ];
 }
 
@@ -939,7 +980,18 @@ const APP_CLOSE: ToolSpec = {
   parameters: { type: "object", properties: {}, required: [] },
 };
 
-const CHANNEL_TOOLS = new Set([MY_APPS.name, APP_OPEN.name, APP_CLOSE.name]);
+const TEXTING_FIRST: ToolSpec = {
+  name: "texting_first",
+  description:
+    "Turns your texting them first (the morning brief, reminders, check-ins, what your background work finds, a website that's ready) off or back on. Off, those come as notifications from the OVOA app instead. Only when they ask.",
+  parameters: {
+    type: "object",
+    properties: { on: { type: "boolean", description: "true to text them first, false to stop" } },
+    required: ["on"],
+  },
+};
+
+const CHANNEL_TOOLS = new Set([MY_APPS.name, APP_OPEN.name, APP_CLOSE.name, TEXTING_FIRST.name]);
 
 const near = (a: string, b: string) => {
   const x = a.toLowerCase().trim();
@@ -964,15 +1016,38 @@ const WAITING_IN_APP = {
   note: "It has NOT happened yet: it runs on their iPhone, so it waits in the OVOA app until they open it. Never say it was sent, texted, called or done. Say it's waiting in OVOA, in a few words (\"Your text to Sam is waiting in OVOA.\"); a line telling them to open OVOA is added to your text for you.",
 };
 
+/** What else a text turn should know (index.ts textTurn). */
+export type ChannelOptions = {
+  /** Background work is on: long jobs can be handed to it (agent.ts agent_schedule). */
+  agent?: boolean;
+  /** They get texts from OVOA first (text_links.proactive). */
+  proactive?: boolean;
+};
+
 /**
  * What a text turn adds (index.ts textTurn): how to write for Messages, what
  * can't be done from here, their apps, and results reworded for someone who
  * isn't looking at the app. `apps`: their apps' names; `open`: the one open
  * in the conversation now.
  */
-export function textChannel(env: Env, userId: string, timeZone: string, apps: AppName[], open: MadeApp | null, hooks: ChannelHooks): TurnChannel {
+export function textChannel(
+  env: Env,
+  userId: string,
+  timeZone: string,
+  apps: AppName[],
+  open: MadeApp | null,
+  hooks: ChannelHooks,
+  opts: ChannelOptions = {},
+): TurnChannel {
   let current = open;
   const callTool: CallTool = async (name, args) => {
+    if (name === TEXTING_FIRST.name) {
+      const on = args.on === true || args.on === "true";
+      await env.DB.prepare("UPDATE text_links SET proactive = ? WHERE user_id = ?").bind(on ? 1 : 0, userId).run();
+      return on
+        ? { textingFirst: true, note: "Say in a few words that you'll text them first again." }
+        : { textingFirst: false, note: "Say in a few words that you'll stop texting first: reminders and briefs come as notifications from the app, and they can turn it back on by asking." };
+    }
     if (name === MY_APPS.name) {
       return { apps: apps.map((a) => ({ name: a.name, about: a.about })), open: current?.name ?? null };
     }
@@ -1020,7 +1095,16 @@ export function textChannel(env: Env, userId: string, timeZone: string, apps: Ap
   const prompt = [
     "They're texting you from Messages on their iPhone (iMessage), not using the OVOA app. It's the same conversation as the app, with the same memories, lists, notes, reminders and tools.",
     "Write like a text message: short and plain, no Markdown, headings or asterisks. A blank line starts a new text bubble; use one to three. Links are fine: they can tap them.",
-    "From here you can't reach the iPhone itself: its contacts, calendar, Reminders app or location. Anything that has to run on the iPhone (texting or calling someone, the iPhone's contacts, calendar or Reminders app, a shortcut) waits in the OVOA app until they open it; say that in a few words. Everything else works from here: OVOA's own reminders and alarms (reminder_set, alarm_set), notes, lists, routines, money, food, Google and web search.",
+    // Instinct (2026-09-26): an assistant you text does things; it doesn't describe them.
+    "Act, don't narrate: when what they want is clear, do it now with your tools and say what you did in a few words. Ask only for what you can't reasonably work out yourself, one question at a time. Make the reasonable choice for small details and mention it, rather than asking.",
+    opts.agent
+      ? "Anything that takes more than a quick answer (research, comparing options, a plan, keeping an eye on something) goes to your background work: say you're on it and set it up with agent_schedule (kind once, inMinutes 1, notify always); what it finds is texted to them when it's done. Don't make them wait on a long reply."
+      : "",
+    "Close your loops: when something is left open (you're waiting on them, or there's something to check later), make sure it comes back, with a reminder or a scheduled follow-up, instead of hoping they remember.",
+    opts.proactive === false
+      ? "They turned off your texting them first: reminders, briefs and what your background work finds come as notifications from the app. texting_first turns it back on if they ask."
+      : "You text them first too: their morning brief, reminders, routine check-ins, a website that's ready and what your background work finds come to this conversation, and their replies come back here (\"done\", \"yes\", \"move it to 4\"). If they want fewer texts from you, texting_first turns that off.",
+    "From here you can't reach the iPhone itself: its contacts, calendar, Reminders app or location. Anything that has to run on the iPhone (texting or calling someone, the iPhone's contacts, calendar or Reminders app, a shortcut) waits in the OVOA app until they open it; say that in a few words. Everything else works from here: OVOA's own reminders and alarms (reminder_set, alarm_set), notes, lists, routines, money, food, websites, Google and web search.",
     "Things that need their OK (sending an email, deleting something, inviting people) are approved by text: they reply YES. A line saying so is added to your text for you.",
     apps.length
       ? `Their own apps, made in OVOA: ${apps.map((a) => `"${a.name}"`).join(", ")}. my_apps says what each does; app_open opens one in this conversation, as opening it in the app would, and app_close closes it.`
@@ -1033,7 +1117,7 @@ export function textChannel(env: Env, userId: string, timeZone: string, apps: Ap
   return {
     source: "text",
     prompt,
-    tools: apps.length ? [MY_APPS, APP_OPEN, APP_CLOSE] : [],
+    tools: apps.length ? [MY_APPS, APP_OPEN, APP_CLOSE, TEXTING_FIRST] : [TEXTING_FIRST],
     isTool: (name) => CHANNEL_TOOLS.has(name),
     callTool,
     adjust,
@@ -1107,8 +1191,20 @@ export function textingRoutes(turn: TextTurn) {
     return c.json({
       available: on,
       number: on ? (c.env.SENDBLUE_NUMBER ?? null) : null,
-      linked: link ? { phone: link.phone, linkedAt: link.linked_at } : null,
+      // textingFirst: OVOA texts them first (reach.ts), rather than sending notifications.
+      linked: link ? { phone: link.phone, linkedAt: link.linked_at, textingFirst: link.proactive !== 0 } : null,
     });
+  });
+
+  // Texting first on or off, from the app (the same switch as texting_first by text).
+  routes.put("/texting", async (c) => {
+    const body = (await c.req.json().catch(() => null)) as { textingFirst?: unknown } | null;
+    if (typeof body?.textingFirst !== "boolean") return c.json({ error: "textingFirst must be true or false" }, 400);
+    const { meta } = await c.env.DB.prepare("UPDATE text_links SET proactive = ? WHERE user_id = ?")
+      .bind(body.textingFirst ? 1 : 0, c.var.userId)
+      .run();
+    if (!meta.changes) return c.json({ error: "Link a number first" }, 409);
+    return c.json({ ok: true, textingFirst: body.textingFirst });
   });
 
   routes.post("/texting/link", async (c) => {

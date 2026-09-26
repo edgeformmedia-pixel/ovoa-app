@@ -4,6 +4,7 @@ import { logAction } from "./actionlog";
 import { validTimeZone } from "./google/assistant";
 import type { CallTool, ToolSpec } from "./llm";
 import { push } from "./push";
+import { reach } from "./reach";
 import { addDays, buckets } from "./time";
 import type { Env, Vars } from "./types";
 import { inSlice, type Slice } from "./sweep";
@@ -515,10 +516,11 @@ export async function moneyTick(env: Env, slice?: Slice) {
       .bind(u.user_id, key, now)
       .run();
     if (!claimed.meta.changes) continue;
-    await push(env, u.user_id, {
-      title: p.nextPayDate ? `Tight until ${p.nextPayDate}` : "Money's tight this week",
-      body: headline(p, a).slice(0, 180),
-      data: { type: "money" },
+    const title = p.nextPayDate ? `Tight until ${p.nextPayDate}` : "Money's tight this week";
+    await reach(env, u.user_id, {
+      kind: "money",
+      text: `Heads up, money's tight: ${headline(p, a)}`,
+      push: { title, body: headline(p, a).slice(0, 180), data: { type: "money" } },
     });
     await logAction(db, u.user_id, "money", `Short ${money(a.gapCents, p.currency)} before payday`, "system");
     warned++;

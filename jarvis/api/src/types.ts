@@ -105,11 +105,22 @@ export type Env = {
   SENDBLUE_WEBHOOK_SECRET?: string;
   /** Where Sendblue's API is: https://api.sendblue.co unless a local test points it at a fake one. */
   SENDBLUE_API_BASE?: string;
+  /**
+   * The websites OVOA builds (sites.ts, docs/sites.md) live at <name>.SITES_DOMAIN:
+   * "ovoa.ai" unless set. SITES_WILDCARD says whether that domain's wildcard DNS
+   * record is in place: "on" or "off" decide it; unset, it's looked up (DNS over
+   * HTTPS, cached), and until it answers, links go to the preview address on
+   * this Worker (PUBLIC_URL/s/<name>) instead.
+   */
+  SITES_DOMAIN?: string;
+  SITES_WILDCARD?: string;
   /** Rate limits (wrangler.jsonc "ratelimits", limits.ts). Optional: a missing one allows everything. */
   RL_AUTH?: RateLimit;
   RL_TURN?: RateLimit;
   RL_SPEAK?: RateLimit;
   RL_LOGS?: RateLimit;
+  /** A website's contact form, per sender's address (sites.ts). */
+  RL_FORM?: RateLimit;
 };
 
 /**

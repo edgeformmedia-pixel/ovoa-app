@@ -48,6 +48,8 @@ const DONE_JOB_DAYS = 7;
 const DAY_MS = 86_400_000;
 /** Texts that came in (texting.ts text_inbox): long enough to tell a second delivery of one, no longer. */
 const TEXT_INBOX_DAYS = 2;
+/** A deleted website can be put back for this long (sites.ts DELETED_KEEP_DAYS). */
+const SITE_DELETED_DAYS = 30;
 /** Rows per DELETE. Small enough for D1's per-query limits with a trigger firing per row. */
 const CHUNK = 500;
 /** Past this the rest waits for tomorrow night; the rules furthest down go last. */
@@ -219,6 +221,18 @@ export const RULES: Rule[] = [
   { name: "device_logs", table: "device_logs", where: "received_at < ?", args: (c) => [c.now - DEVICE_LOG_KEEP_MS] },
   // What was said is in messages; this is only there to tell a text delivered twice.
   { name: "text_inbox", table: "text_inbox", where: "received_at < ?", args: (c) => [c.now - TEXT_INBOX_DAYS * DAY_MS] },
+  // Which texts OVOA sent first, for the day's cap (reach.ts): kinds and times, no words.
+  { name: "text_outbox", table: "text_outbox", where: "sent_at < ?", args: (c) => [c.cutoff] },
+
+  // ---- Websites (sites.ts) ----
+  // A site is theirs and stays. One they deleted goes for good after its 30
+  // days (it could be put back until then), and one whose first build never
+  // worked after the usual 14. Its builds and messages go with it (CASCADE).
+  { name: "sites.deleted", table: "sites", where: "deleted_at IS NOT NULL AND deleted_at < ?", args: (c) => [c.now - SITE_DELETED_DAYS * DAY_MS] },
+  { name: "sites.failed", table: "sites", where: "status = 'failed' AND html IS NULL AND updated_at < ?", args: (c) => [c.cutoff] },
+  at("created_at", "site_builds"),
+  // Visitors' messages were texted and emailed to the owner as they came.
+  at("created_at", "site_leads"),
   at("last_seen", "error_events"),
   at("last_at", "engine_stats"),
   at("last_at", "cron_ticks"),
@@ -317,6 +331,10 @@ export const TABLES = {
   text_links: "keep",
   text_link_codes: "expires",
   text_inbox: "delete",
+  text_outbox: "delete",
+  sites: "mixed",
+  site_builds: "delete",
+  site_leads: "delete",
 } as const satisfies Record<string, "keep" | "delete" | "mixed" | "expires" | "index">;
 
 /** Tables whose purge is a step of its own rather than a rule. */

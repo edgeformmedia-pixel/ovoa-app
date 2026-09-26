@@ -128,8 +128,12 @@ export const ROUTE_TIERS: RouteRule[] = [
   { method: "POST", path: /^\/actions\/[^/]+\/approve$/, tier: "free", why: "approving one: it runs as written, no model" },
   { method: "POST", path: /^\/siri\/key$/, tier: "free", why: "making the Siri key (asking through it is base)" },
   // Texting OVOA itself arrives on the webhook (public) and is checked there,
-  // like a turn (index.ts textTurn): these only link and unlink the number.
+  // like a turn (index.ts textTurn): these only link and unlink the number, and
+  // turn texting first on or off.
   { method: "*", path: /^\/texting(\/link)?$/, tier: "free", why: "linking the number you text OVOA from (texting it is base)" },
+  // Websites are built by a model, from a turn (base, and gated at the model
+  // call); listing and deleting the ones you have calls none.
+  { method: "GET", path: /^\/sites$/, tier: "free", why: "the websites you have (building one is a turn)" },
 
   // Base: everything that calls a model, or voices a reply. Listed so the table
   // reads whole; the default is base anyway.

@@ -188,7 +188,8 @@ export function pruneEmailAuth(db: D1Database, now = Date.now()) {
 
 // ---------- The email ----------
 
-export type Email = { to: string; subject: string; text: string; html: string };
+/** `replyTo`: where a reply goes, when not support@ (a website visitor's address, sites.ts). */
+export type Email = { to: string; subject: string; text: string; html: string; replyTo?: string };
 
 const FROM = "OVOA <no-reply@ovoa.ai>";
 const REPLY_TO = "support@ovoa.ai";
@@ -268,7 +269,7 @@ export async function sendEmail(
       body: JSON.stringify({
         from: env.EMAIL_FROM || FROM,
         to: [email.to],
-        reply_to: REPLY_TO,
+        reply_to: email.replyTo ?? REPLY_TO,
         subject: email.subject,
         text: email.text,
         html: email.html,

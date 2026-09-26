@@ -17,7 +17,7 @@ import type { Env, Vars } from "./types";
 // their wrist can reach, so only a runaway ever meets one. If a binding is
 // missing, requests go through: a limit is a guard, not a gate.
 
-type Limiter = keyof Pick<Env, "RL_AUTH" | "RL_TURN" | "RL_SPEAK" | "RL_LOGS">;
+type Limiter = keyof Pick<Env, "RL_AUTH" | "RL_TURN" | "RL_SPEAK" | "RL_LOGS" | "RL_FORM">;
 
 /** Which limiter a signed-in route counts against. Unlisted routes aren't limited. */
 const ROUTE_LIMITS: [RegExp, Limiter, string][] = [

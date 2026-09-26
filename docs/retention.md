@@ -133,6 +133,10 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 | text_links | keep | the number someone texts OVOA from (`texting.ts`), linked by them; gone when they unlink it or delete the account | |
 | text_link_codes | expires | the code that links a number, once past `expires_at` (15 min); a used one is deleted when it's used | |
 | text_inbox | delete | **2 d** after `received_at`: every text that came in, kept only to tell a second delivery of the same one. The words are cleared once it's answered (they're in `messages`), and a text from a number nobody linked never keeps any | |
+| text_outbox | delete | 14 d after `sent_at`: which texts OVOA sent first (`reach.ts`), their kind and whether Sendblue took them, for the day's cap. No words: those are in `messages` | |
+| sites | mixed | the websites someone had OVOA build (`sites.ts`): kept. One they deleted goes **30 d** after `deleted_at` (it can be put back until then); one whose first build never worked (`status = 'failed'`, no page) 14 d after `updated_at`. Its builds and messages go with it | |
+| site_builds | delete | 14 d after `created_at`: each build or change asked for, and how it went | |
+| site_leads | delete | 14 d after `created_at`: what visitors sent through a website's contact form. Each was texted (or pushed) and emailed to the site's owner as it arrived | the owner's email copy is theirs |
 
 ## What changed from before
 

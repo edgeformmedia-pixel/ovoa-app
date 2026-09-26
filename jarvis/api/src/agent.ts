@@ -7,7 +7,8 @@ import { googleAssistant, validTimeZone } from "./google/assistant";
 import { healthSummaryFor } from "./healthdays";
 import { healthSummaryTool } from "./heart";
 import { chatWithTools, isModelRefused, type CallTool, type ToolSpec } from "./llm";
-import { push } from "./push";
+import { reach } from "./reach";
+import { linkOf, textingReady } from "./texting";
 import {
   addDays,
   atLocalTime,
@@ -196,7 +197,7 @@ type NewNote = {
   actionId?: string;
 };
 
-async function writeNote(env: Env, userId: string, note: NewNote, jobId: string | null, runId: string) {
+async function writeNote(env: Env, userId: string, note: NewNote, jobId: string | null, runId: string | null) {
   const id = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO agent_notes (id, user_id, job_id, run_id, kind, title, body, urgency, action_id, created_at)
@@ -218,36 +219,69 @@ async function writeNote(env: Env, userId: string, note: NewNote, jobId: string 
   return id;
 }
 
+type NoteRow = {
+  id: string;
+  user_id: string;
+  title: string;
+  body: string;
+  kind: string;
+  urgency: string;
+  action_id: string | null;
+};
+
 /**
- * Sends the notes that haven't been pushed yet, respecting quiet hours. A note
- * written at 2am is kept and pushed at seven, unless it is urgent — which the
- * agent is told to reserve for something that is actually about to be missed.
+ * One note on its way: texted to someone who texts OVOA, pushed to everyone
+ * else (reach.ts). Claimed first, so two lanes draining at once (the agent's,
+ * and the sites lane telling someone their website is ready) can't both send
+ * it. A note proposing something they can approve ends by asking for a YES.
  */
-export async function drainNotes(env: Env) {
+async function deliverNote(env: Env, note: NoteRow, now: number) {
+  const claim = await env.DB.prepare("UPDATE agent_notes SET pushed_at = ? WHERE id = ? AND pushed_at IS NULL").bind(now, note.id).run();
+  if (!claim.meta.changes) return false;
+  // Low: never pushed or texted; it waits in the app.
+  if (note.urgency === "low") return true;
+  // action_id is a parked action, or a promise the note is about: only the first can be approved.
+  const parked = note.action_id
+    ? await env.DB.prepare("SELECT id FROM pending_actions WHERE id = ? AND user_id = ?").bind(note.action_id, note.user_id).first<{ id: string }>()
+    : null;
+  await reach(env, note.user_id, {
+    kind: `note:${note.kind}`,
+    text: note.body,
+    push: {
+      title: note.title,
+      // A notification is a doorway, not the thing itself.
+      body: note.body.length > 180 ? `${note.body.slice(0, 177)}…` : note.body,
+      urgent: note.urgency === "high",
+      data: { noteId: note.id, kind: note.kind, ...(note.action_id && { actionId: note.action_id }) },
+    },
+    ...(parked && { approvals: [parked.id] }),
+    // The high ones are what they're waiting on (a website they asked for), or about to be missed.
+    asked: note.urgency === "high",
+  });
+  return true;
+}
+
+/**
+ * Sends the notes that haven't gone out yet, respecting quiet hours. A note
+ * written at 2am is kept and sent at seven, unless it is urgent — which the
+ * agent is told to reserve for something that is actually about to be missed.
+ * `userId`: only that person's (the sites lane, right after writing one).
+ */
+export async function drainNotes(env: Env, only: { userId?: string } = {}) {
   const { results } = await env.DB.prepare(
     `SELECT n.id, n.user_id, n.title, n.body, n.kind, n.urgency, n.action_id,
             s.time_zone, s.quiet_start, s.quiet_end
        FROM agent_notes n
        JOIN settings s ON s.user_id = n.user_id
       WHERE n.pushed_at IS NULL AND n.dismissed_at IS NULL AND (n.hold_until IS NULL OR n.hold_until <= ?)
+        ${only.userId ? "AND n.user_id = ?" : ""}
       ORDER BY n.created_at LIMIT ?`,
   )
-    .bind(Date.now(), NOTES_PER_TICK)
-    .all<{
-      id: string;
-      user_id: string;
-      title: string;
-      body: string;
-      kind: string;
-      urgency: string;
-      action_id: string | null;
-      time_zone: string | null;
-      quiet_start: number;
-      quiet_end: number;
-    }>();
+    .bind(Date.now(), ...(only.userId ? [only.userId] : []), NOTES_PER_TICK)
+    .all<NoteRow & { time_zone: string | null; quiet_start: number; quiet_end: number }>();
 
   const now = Date.now();
-  const sent: string[] = [];
+  let sent = 0;
   const held: string[] = [];
   for (const note of results) {
     const timeZone = validTimeZone(note.time_zone);
@@ -255,25 +289,11 @@ export async function drainNotes(env: Env) {
       held.push(note.id);
       continue;
     }
-    if (note.urgency === "low") {
-      // Never pushed; it waits in the app. Marked so the queue doesn't re-read it.
-      sent.push(note.id);
-      continue;
+    try {
+      if (await deliverNote(env, note, now)) sent++;
+    } catch (err) {
+      console.error("agent: a note couldn't be sent", err);
     }
-    await push(env, note.user_id, {
-      title: note.title,
-      // A notification is a doorway, not the thing itself.
-      body: note.body.length > 180 ? `${note.body.slice(0, 177)}…` : note.body,
-      urgent: note.urgency === "high",
-      data: { noteId: note.id, kind: note.kind, ...(note.action_id && { actionId: note.action_id }) },
-    }).catch((err) => console.error("agent: push failed", err));
-    sent.push(note.id);
-  }
-
-  if (sent.length) {
-    await env.DB.prepare(`UPDATE agent_notes SET pushed_at = ? WHERE id IN (${sent.map(() => "?").join(",")})`)
-      .bind(now, ...sent)
-      .run();
   }
   // Held for quiet hours: out of the queue for a while, so they stop taking the
   // places of other people's notes. Looked at again after HOLD_MS.
@@ -282,7 +302,24 @@ export async function drainNotes(env: Env) {
       .bind(now + HOLD_MS, ...held)
       .run();
   }
-  return sent.length;
+  return sent;
+}
+
+/**
+ * Something OVOA itself has to say that no autonomous run wrote: a website
+ * that's ready or couldn't be built, a message from a website's contact form
+ * (sites.ts). Written as a note, so the app's outbox has it too, and sent now
+ * unless it's their quiet hours (then in the morning), the same way as the
+ * agent's own. `waiting`: they asked for this and are waiting on it, so it
+ * goes through quiet hours.
+ */
+export async function tell(
+  env: Env,
+  userId: string,
+  note: { kind: NewNote["kind"]; title: string; body: string; waiting?: boolean },
+) {
+  await writeNote(env, userId, { kind: note.kind, title: note.title, body: note.body, urgency: note.waiting ? "high" : "normal" }, null, null);
+  return drainNotes(env, { userId });
 }
 
 // ---------- The autonomous turn ----------
@@ -292,10 +329,59 @@ type RunOutcome = "spoke" | "quiet" | "acted" | "error" | "skipped";
 type RunInput = {
   userId: string;
   settings: AgentSettings;
-  trigger: "job" | "commitment" | "manual" | "event";
+  /** followup: a question of OVOA's they never answered by text (followUpDropped). */
+  trigger: "job" | "commitment" | "manual" | "event" | "followup";
   job?: JobRow;
   instruction: string;
 };
+
+// ---------- OVOA's own things, for a run with nobody there ----------
+//
+// An autonomous run always had Google, the timeline, the web and their health.
+// It can also read what OVOA keeps for them (notes, the to-do list, routines,
+// alarms and reminders, people, money, their websites and what came in through
+// them), and on Act make the few changes that only ever touch their own things:
+// a note, a to-do, one of OVOA's reminders, a fact about someone. Nothing here
+// reaches another person or deletes anything, so the rule that makes a run
+// safe to leave alone (FORBIDDEN_ALONE, below) still holds.
+//
+// The tools come from index.ts (setOwnTools), like the model gate, so this file
+// doesn't import every module that imports it.
+
+/** What any run may read. */
+export const READ_ALONE = new Set([
+  "note_search",
+  "note_list",
+  "todo_list",
+  "routine_list",
+  "alarm_list",
+  "person_lookup",
+  "money_status",
+  "site_list",
+  "site_leads",
+]);
+/** What a run on Act may also write: their own things, nothing that reaches anyone. */
+export const WRITE_ON_ACT = new Set(["note_add", "todo_add", "reminder_set", "person_remember"]);
+
+export type OwnTools = (env: Env, userId: string, timeZone: string) => { tools: ToolSpec[]; callTool: CallTool }[];
+let ownToolsFrom: OwnTools | null = null;
+export function setOwnTools(tools: OwnTools | null) {
+  ownToolsFrom = tools;
+}
+
+/** The own tools this run may use, and a way to call them. Pure given the families. */
+export function ownToolsFor(families: { tools: ToolSpec[]; callTool: CallTool }[], autonomy: Autonomy) {
+  const byName = new Map<string, CallTool>();
+  const tools: ToolSpec[] = [];
+  for (const family of families) {
+    for (const t of family.tools) {
+      if (byName.has(t.name) || !(READ_ALONE.has(t.name) || (autonomy === "act" && WRITE_ON_ACT.has(t.name)))) continue;
+      byName.set(t.name, family.callTool);
+      tools.push(t);
+    }
+  }
+  return { tools, has: (name: string) => byName.has(name), callTool: ((name, args) => byName.get(name)!(name, args)) as CallTool };
+}
 
 /**
  * One turn with no user in it. Returns what happened, which is written to
@@ -343,6 +429,9 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
 
   const timeline = contextAssistant(env, userId, timeZone, !!settings.context_enabled);
   const web = webAssistant(env, userId, timeZone);
+  const own = ownToolsFor(ownToolsFrom?.(env, userId, timeZone) ?? [], autonomy);
+  // Someone who texts OVOA gets what it says by text (reach.ts), and can answer it there.
+  const texted = textingReady(env) && (await linkOf(db, userId))?.proactive === 1;
 
   // What the agent is allowed to say, and how it says it.
   let spoke: NewNote | null = null;
@@ -507,7 +596,13 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
   const system = [
     `You are ${settings.assistant_name}, ${user?.name ?? "the user"}'s assistant. Personality: ${settings.personality}`,
     `This is not a conversation. ${user?.name ?? "The user"} did not ask you anything and is not reading this. You are running on your own because ${
-      trigger === "job" ? "something you were asked to do came due" : trigger === "commitment" ? "you were checking what they owe" : "they asked you to run it now"
+      trigger === "job"
+        ? "something you were asked to do came due"
+        : trigger === "commitment"
+          ? "you were checking what they owe"
+          : trigger === "followup"
+            ? "a question you texted them went unanswered"
+            : "they asked you to run it now"
     }.`,
     `It is ${new Date().toLocaleString("en-US", { timeZone, dateStyle: "full", timeStyle: "short" })} where they are (${timeZone}).`,
     "",
@@ -517,10 +612,12 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
     "You have looked at this before. Don't send them something you already sent, unless it has actually changed.",
     "",
     autonomy === "act"
-      ? "The user has you on Act: you may create calendar events, tasks and drafts on your own when they clearly follow from what they asked you to do. Anything that would reach another person, or delete something, still waits for their approval and appears as a card in the app."
+      ? "The user has you on Act: do the work, don't just report it. You may create calendar events, tasks and drafts, and add notes, to-dos, OVOA reminders and facts about people, on your own when they clearly follow from what they asked you to do; then say what you did. Anything that would reach another person, or delete something, still waits for their approval."
       : "The user has you on Suggest: look, think, and tell them. Anything that would change something appears as a card for them to approve — set it up and say so, but never say it is done.",
-    "You cannot send email or messages, and you cannot delete anything. Those tools are not available to you here, on purpose. If something needs sending, propose it and let them send it.",
-    "You also cannot ask them a question and wait: there is nobody there. If you genuinely need an answer, say so with agent_say and kind 'question', and stop.",
+    "You cannot send email or messages, and you cannot delete anything. Those tools are not available to you here, on purpose. If something needs sending, write it as a draft (gmail_create_draft) and tell them it's ready: once they answer, you can send it with them there.",
+    texted
+      ? "What you say with agent_say reaches them as a text, in the conversation they have with you, and they can answer it there. Write it as a text: short and plain, no Markdown. When you set up something that waits for their OK, a line asking them to reply YES is added for you. If you need an answer, ask it in that text (kind 'question'): their reply comes back to you as an ordinary conversation."
+      : "You also cannot ask them a question and wait: there is nobody there. If you genuinely need an answer, say so with agent_say and kind 'question', and stop.",
     "",
     known.length ? `What you know about ${user?.name ?? "them"} from talking with them:\n${known.join("\n")}` : "",
     conversation.length
@@ -546,7 +643,9 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
   // Asking the phone for Health instead (agent_run_command) queued a turn that
   // HealthKit refuses while locked (2026-09-23). Only the summary: the workout
   // tools record what someone says a workout was, and nobody's talking.
-  const tools = [...agentTools, ...timeline.tools, ...googleTools, ...web.tools, healthSummaryTool];
+  // OVOA's own lists and records (ownToolsFor): read on every run, and the few
+  // writes that only touch their own things on Act.
+  const tools = [...agentTools, ...timeline.tools, ...googleTools, ...web.tools, healthSummaryTool, ...own.tools];
   const used: string[] = [];
 
   const callTool: CallTool = (name, args) => {
@@ -557,6 +656,7 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
       });
     }
     if (name.startsWith("agent_")) return agentCall(name, args);
+    if (own.has(name)) return own.callTool(name, args);
     if (isContextTool(name)) return timeline.callTool(name, args);
     if (isWebTool(name)) return web.callTool(name, args);
     if (name === healthSummaryTool.name) return healthSummaryFor(db, userId, timeZone, args);
@@ -634,7 +734,9 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
       runId,
       userId,
       job?.id ?? null,
-      trigger,
+      // The table's CHECK (migrations/0011) predates follow-ups: a question that
+      // went unanswered is the "event" that set the run off.
+      trigger === "followup" ? "event" : trigger,
       started,
       Date.now() - started,
       engine || null,
@@ -988,6 +1090,100 @@ export async function runJobNow(env: Env, userId: string, jobId: string) {
     .bind(Date.now(), jobId)
     .run();
   return { outcome: result.outcome, detail: result.detail, note: result.spoke };
+}
+
+// ---------- A question left hanging ----------
+//
+// Instinct's other half: an assistant you text follows up on the threads you
+// drop. When OVOA's text reply asked them something and they never answered,
+// a few hours later one autonomous run looks at it and decides: a short,
+// friendly follow-up if it still matters (a detail it needs to finish what
+// they asked, a choice only they can make), silence if it doesn't. Each
+// question is looked at once, never at night, and only for someone who gets
+// texts first (text_links.proactive).
+
+/** OVOA asked them something by text and they never answered: this long after, it may ask once more. */
+const FOLLOW_UP_AFTER_MS = 3 * 3_600_000;
+/** Past this the question is old news, and it's let go. */
+const FOLLOW_UP_WITHIN_MS = 20 * 3_600_000;
+/** People looked at per tick. */
+const FOLLOW_UPS_PER_TICK = 5;
+/** A reply is saved a millisecond after the text it answers (index.ts runTurn); a text OVOA sent first stands alone. */
+const REPLY_GAP_MS = 5_000;
+
+/** Whether a reply ends on a question worth coming back to: not "anything else?" and the like. Pure. */
+export function worthChasing(reply: string) {
+  const asks = reply
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s.endsWith("?"));
+  // Only when the question ends that way: "did I get the right address?" is a real one.
+  const manners =
+    /\b(anything else( (i can do|for you|today))*|anything more|what else|need anything( else)?|how (else )?can i help( you)?|can i help with anything( else)?|sounds? good|all good|ok(ay)?|right|make sense|does that (work|help)|got it)\s*\?$/i;
+  return asks.some((q) => !manners.test(q));
+}
+
+/** Every two minutes, in the slow lane (index.ts runTick): the questions that went unanswered. */
+export async function followUpDropped(env: Env, now = Date.now()) {
+  if (!textingReady(env)) return 0;
+  const { results } = await env.DB.prepare(
+    `SELECT l.user_id, m.content, m.created_at,
+            p.role AS prev_role, p.source AS prev_source, p.content AS prev_content, p.created_at AS prev_at
+       FROM text_links l
+       JOIN messages m ON m.id = (SELECT x.id FROM messages x WHERE x.user_id = l.user_id ORDER BY x.created_at DESC LIMIT 1)
+       LEFT JOIN messages p ON p.id = (
+         SELECT y.id FROM messages y WHERE y.user_id = l.user_id AND y.created_at < m.created_at ORDER BY y.created_at DESC LIMIT 1)
+      WHERE l.proactive = 1 AND m.role = 'assistant' AND m.source = 'text'
+        AND m.created_at BETWEEN ? AND ? AND COALESCE(l.followed_up_at, 0) < m.created_at
+      LIMIT ?`,
+  )
+    .bind(now - FOLLOW_UP_WITHIN_MS, now - FOLLOW_UP_AFTER_MS, FOLLOW_UPS_PER_TICK)
+    .all<{
+      user_id: string;
+      content: string;
+      created_at: number;
+      prev_role: string | null;
+      prev_source: string | null;
+      prev_content: string | null;
+      prev_at: number | null;
+    }>();
+
+  let asked = 0;
+  for (const r of results) {
+    const settings = await settingsFor(env.DB, r.user_id);
+    if (!settings) continue;
+    // Not at night: looked at again once quiet hours are over, while it's still fresh.
+    if (inQuietHours(now, validTimeZone(settings.time_zone), settings.quiet_start, settings.quiet_end)) continue;
+    // Each question once, whatever comes of it.
+    const claim = await env.DB.prepare("UPDATE text_links SET followed_up_at = ? WHERE user_id = ? AND COALESCE(followed_up_at, 0) < ?")
+      .bind(r.created_at, r.user_id, r.created_at)
+      .run();
+    if (!claim.meta.changes) continue;
+    // Only a reply to their text: a text OVOA sent first (a check-in, a brief) isn't chased.
+    const reply = r.prev_role === "user" && r.prev_source === "text" && r.created_at - (r.prev_at ?? 0) <= REPLY_GAP_MS;
+    if (!reply || !worthChasing(r.content)) continue;
+    // A model run, like any of the agent's: Base, and out of the day's runs.
+    if (await blockedFor(env, r.user_id, "base")) continue;
+    if (!(await claimBudget(env, r.user_id, settings.agent_daily_runs))) continue;
+    const hours = Math.max(1, Math.round((now - r.created_at) / 3_600_000));
+    const result = await autonomousTurn(env, {
+      userId: r.user_id,
+      settings,
+      trigger: "followup",
+      instruction: [
+        `About ${hours} hour${hours === 1 ? "" : "s"} ago you texted them this, and they haven't answered:`,
+        `"${r.content.slice(0, 700)}"`,
+        `It was your reply to their text: "${(r.prev_content ?? "").slice(0, 400)}".`,
+        "If your question still matters (something they wanted done, a detail you need to finish it, a choice only they can make), send one short, friendly follow-up with agent_say, kind question: easy to answer in a word, no guilt, and don't repeat the whole thing.",
+        "If it doesn't matter any more (small talk, they moved on, it answered itself, or it was only a polite offer), stay quiet.",
+      ].join("\n"),
+    });
+    if (result.outcome === "spoke") {
+      asked++;
+      await drainNotes(env, { userId: r.user_id });
+    }
+  }
+  return asked;
 }
 
 /**

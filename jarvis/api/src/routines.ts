@@ -6,6 +6,7 @@ import { capabilities } from "./capabilities";
 import { validTimeZone } from "./google/assistant";
 import type { CallTool, ToolSpec } from "./llm";
 import { push } from "./push";
+import { reach } from "./reach";
 import { addDays, atLocalTime, buckets, clock, clockFromMinutes, inQuietHours, localWeekday } from "./time";
 import type { Env, Vars } from "./types";
 
@@ -400,12 +401,18 @@ export async function escalate(env: Env) {
       // Spoken by the phone if it's awake to do it; the notification goes either way,
       // since a silent push to a suspended app may never arrive.
       await push(env, e.user_id, { silent: true, data: { type: "speak", id: crypto.randomUUID(), text: line } });
-      await push(env, e.user_id, {
-        title: TITLES[e.kind],
-        body: line,
-        urgent: e.kind === "med",
-        data: { type: "routine", routineId: e.id, eventId: e.event_id, dueAt: e.due_at },
-        categoryId: "routine",
+      // The accountability check-in: a text for someone who texts OVOA (reach.ts), where "done"
+      // is routine_confirm and "later" a snooze; the notification with its buttons otherwise.
+      await reach(env, e.user_id, {
+        kind: "routine",
+        text: `${line} Text "done" when you have, or "snooze" for later.`,
+        push: {
+          title: TITLES[e.kind],
+          body: line,
+          urgent: e.kind === "med",
+          data: { type: "routine", routineId: e.id, eventId: e.event_id, dueAt: e.due_at },
+          categoryId: "routine",
+        },
       });
       changed++;
     }

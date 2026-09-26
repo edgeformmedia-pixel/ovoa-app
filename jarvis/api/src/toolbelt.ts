@@ -183,6 +183,16 @@ const SYNONYMS: Record<string, string[]> = {
   meal: ["food"],
   calories: ["food"],
   calorie: ["food"],
+  // Websites (sites.ts): "a website for my client", "change the hours on Tony's site".
+  website: ["site"],
+  websites: ["site"],
+  webpage: ["site"],
+  landing: ["site"],
+  subdomain: ["site"],
+  domain: ["site"],
+  leads: ["site", "leads"],
+  inquiries: ["site", "leads"],
+  inquiry: ["site", "leads"],
 };
 
 /** Words that say a request repeats, so it's a routine (namedTools). */

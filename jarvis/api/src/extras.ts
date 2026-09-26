@@ -9,6 +9,7 @@ import { recordBillFromMail, toCents } from "./money";
 import { addNote } from "./notes";
 import { findPerson } from "./people";
 import { push } from "./push";
+import { reach } from "./reach";
 import { addDays, atLocalTime, buckets, clock, dayRange, localMinutes, localWeekday } from "./time";
 import type { Env } from "./types";
 import { inSlice, type Slice } from "./sweep";
@@ -106,10 +107,15 @@ async function followUps(env: Env, userId: string) {
   }
   for (const m of picks) {
     const who = (m.to ?? "").replace(/<.*>/, "").trim() || "them";
-    await push(env, userId, {
-      title: `No reply from ${who.split(",")[0]}`,
-      body: `"${m.subject ?? "your email"}" is still waiting. Ask OVOA to draft a nudge.`.slice(0, 180),
-      data: { type: "followup", messageId: m.id },
+    const first = who.split(",")[0];
+    await reach(env, userId, {
+      kind: "followup",
+      text: `No reply yet from ${first} to "${m.subject ?? "your email"}". Want me to draft a friendly nudge?`,
+      push: {
+        title: `No reply from ${first}`,
+        body: `"${m.subject ?? "your email"}" is still waiting. Ask OVOA to draft a nudge.`.slice(0, 180),
+        data: { type: "followup", messageId: m.id },
+      },
     });
     await logAction(env.DB, userId, "followup", `No reply yet: ${m.subject ?? ""}`, "system", m.id);
   }
@@ -260,7 +266,7 @@ async function weeklyReport(env: Env, userId: string, timeZone: string) {
   ].filter(Boolean);
   if (!lines.length) return false;
   const body = `This week: ${lines.join(" · ")}.`;
-  await push(env, userId, { title: "Your week", body: body.slice(0, 180), data: { type: "weekly" } });
+  await reach(env, userId, { kind: "weekly", text: body, push: { title: "Your week", body: body.slice(0, 180), data: { type: "weekly" } } });
   await logAction(db, userId, "weekly_report", body, "system");
   return true;
 }
@@ -321,7 +327,11 @@ async function meetingPrep(env: Env, userId: string, timeZone: string) {
       const text = notes.length ? `${e.title} at ${when}. ${notes.join(". ")}.` : `${e.title} at ${when}, with ${others.length} other${others.length === 1 ? "" : "s"}.`;
       await sendBuzz(env, userId, "double", `Meeting soon: ${e.title}`, "system");
       const mins = Math.max(1, Math.round((Date.parse(e.start) - Date.now()) / 60_000));
-      await push(env, userId, { title: `In ${mins} min: ${e.title}`.slice(0, 80), body: text.slice(0, 180), data: { type: "prep" } });
+      await reach(env, userId, {
+        kind: "prep",
+        text: `In ${mins} min: ${text}`,
+        push: { title: `In ${mins} min: ${e.title}`.slice(0, 80), body: text.slice(0, 180), data: { type: "prep" } },
+      });
       if (notes.length) await push(env, userId, { silent: true, data: { type: "speak", id: crypto.randomUUID(), text } });
       await logAction(db, userId, "prep", `Meeting prep: ${e.title}`, "system");
       sent++;

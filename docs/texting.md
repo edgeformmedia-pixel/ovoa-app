@@ -54,6 +54,40 @@ app's Settings doesn't show the section.
   looked up from a text (as for Siri).
 - **Unlink.** In Settings, or by texting just `unlink`.
 
+## Texting first, and doing more on its own (2026-09-26)
+
+Instinct's other half: an assistant you text also texts you, and gets on with things.
+
+- **OVOA texts first** (`reach.ts`). What used to be a notification comes as a text in the same
+  conversation, for anyone linked: the morning brief, the wind-down, the weekly report, meeting prep,
+  "time to go" for a commute, "different day?", unanswered emails worth a nudge, money running tight,
+  tomorrow's list, OVOA's own reminders, the routine check-in ("Did you do Gym? Text done…"), what
+  background work found (agent notes), a website that's ready, and messages from a website's contact
+  form. Each is saved in `messages` as OVOA's, so the reply is read with it: "done" confirms the
+  routine, "yes" approves what it proposed, "move it to 4" moves it. A proposal (a parked action)
+  ends with "Reply YES…", and that YES counts for 12 hours instead of half an hour.
+- **What stays a notification:** alarms and nags (the phone and band do those), the band's buzz,
+  "text Sarah?" (it opens Messages), place-based notes, heart alerts, and anything for someone who
+  isn't linked. Also everything past **12 texts in a day** (`TEXTS_FIRST_PER_DAY`; what they asked for
+  and are waiting on, like a website, doesn't count), and anything Sendblue won't take.
+- **Turning it off:** texting "stop texting me first" (the `texting_first` tool), or `PUT /texting`
+  `{"textingFirst": false}` from the app; `GET /texting` says which. On by default for a linked number
+  (`text_links.proactive`, migration 0050).
+- **Dropped threads** (`agent.ts followUpDropped`, every two minutes): when OVOA's reply to a text
+  asked something and got no answer for 3 hours (up to 20), one autonomous run looks at it and either
+  sends one short follow-up or stays quiet. Only replies to their texts, never a text OVOA sent first;
+  never "anything else?" and the like; never at night; each question once; Base, and out of the
+  day's agent runs.
+- **Acting, not narrating.** The text channel's prompt says: when it's clear, do it and say what was
+  done; ask only what can't be worked out; hand anything long (research, a plan) to background work
+  with `agent_schedule` (once, in a minute, notify always), whose result is texted back; and close
+  loops with a reminder or follow-up rather than hoping they remember.
+- **Background runs do more** (`agent.ts ownToolsFor`): they read notes, the to-do list, routines,
+  alarms, people, money and websites, and on Act also add notes, to-dos, OVOA reminders and facts about
+  people. Sending, deleting and messaging anyone still never happen on their own (`FORBIDDEN_ALONE`);
+  a run drafts, and the send happens in a turn with them there.
+- **Websites** by text: docs/sites.md.
+
 ## Rules
 
 - **Only iMessage.** An SMS sender can be spoofed, and replies go to the real number, so a spoofed text could
@@ -88,4 +122,7 @@ Sendblue posts each text to the webhook, may post the same one twice, and waits 
   the real schema, with a scripted turn: linking, strangers, SMS, groups, duplicates, bursts, order, YES/NO,
   reactions, the cron, apps.
 - `POST /texting/try` (signed in, Base, a linked number): a text answered in the response instead of by text.
-  `scripts/texting-probe.mjs` runs real turns through it against production with a throwaway account.
+  `scripts/texting-probe.mjs` runs real turns through it against production with a throwaway account, and
+  `scripts/sites-probe.mjs` builds and changes a website that way.
+- `reach.test.ts`: texting first (to whom, the day's cap, Sendblue failing, proposals and their YES),
+  the agent's notes by text, and which unanswered questions are followed up.

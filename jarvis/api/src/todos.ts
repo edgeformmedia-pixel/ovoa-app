@@ -7,6 +7,7 @@ import { googleAccessToken, listGoogleAccounts } from "./google/oauth";
 import { toolsByName } from "./google/tools";
 import type { CallTool, ToolSpec } from "./llm";
 import { push } from "./push";
+import { reach } from "./reach";
 import { addDays, atLocalTime, buckets, dayRange } from "./time";
 import type { Env, Vars } from "./types";
 import { inSlice, type Slice } from "./sweep";
@@ -280,10 +281,15 @@ export async function eveningTick(env: Env, slice?: Slice) {
           const list = await buildTodos(env, u.user_id, tomorrow, timeZone);
           await logAction(db, u.user_id, "todo_list", `Built tomorrow's list: ${list.length} things`, "system");
           if (list.length) {
-            await push(env, u.user_id, {
-              title: "Tomorrow's list is ready",
-              body: list.slice(0, 3).map((t) => t.text).join(" · ").slice(0, 180),
-              data: { type: "todos", date: tomorrow },
+            const top = list.slice(0, 5).map((t) => `- ${t.text}`);
+            await reach(env, u.user_id, {
+              kind: "todos",
+              text: `Tomorrow's list is ready:\n${top.join("\n")}${list.length > top.length ? `\n…and ${list.length - top.length} more.` : ""}`,
+              push: {
+                title: "Tomorrow's list is ready",
+                body: list.slice(0, 3).map((t) => t.text).join(" · ").slice(0, 180),
+                data: { type: "todos", date: tomorrow },
+              },
             });
           }
           built++;

@@ -22,13 +22,27 @@ import {
   cancelNudges,
   MIN_INTERVAL_MINUTES,
   drainNotes,
+  followUpDropped,
   runDueJobs,
   runJobNow,
   scheduleNudges,
   seedSystemJobs,
+  setOwnTools,
   tick,
   type AgentSettings,
 } from "./agent";
+import {
+  buildsWaiting,
+  isSiteTool,
+  mendSiteLinks,
+  serveSite,
+  siteLabel,
+  sitePreview,
+  siteRoutes,
+  sitesAssistant,
+  sitesTick,
+  SITES_BUDGET_MS,
+} from "./sites";
 import { contextAssistant, isContextTool, recordBlock, type BlockSource } from "./context";
 import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
@@ -195,6 +209,19 @@ setUsageSink((env, u: LlmUsage) => void recordUsage(env as Env, [llmRow(u.userId
 // when it says no. Once per isolate, like the sink.
 setModelGate(modelGateFor);
 
+// What an autonomous run may use of OVOA's own (agent.ts ownToolsFor keeps the
+// reads, and on Act the few writes that only touch their own things). Handed in
+// from here so agent.ts doesn't import the modules that import it.
+setOwnTools((env, userId, timeZone) => [
+  notesAssistant(env, userId, timeZone),
+  todosAssistant(env, userId, timeZone),
+  routinesAssistant(env, userId, timeZone, { fromAgent: true }),
+  alarmAssistant(env, userId, timeZone),
+  peopleAssistant(env, userId, timeZone),
+  moneyAssistant(env, userId, timeZone),
+  sitesAssistant(env, userId, timeZone),
+]);
+
 /**
  * The runtime settings (server_settings) as the engine choices llm.ts
  * understands. A copied row naming an engine retired before v1 is passed over
@@ -340,6 +367,8 @@ app.route("/", googlePublic);
 app.route("/", verifyLinkRoutes);
 // Texts to OVOA's number, from Sendblue: no session, the webhook secret is the proof (texting.ts).
 app.route("/", textingWebhook(textTurn));
+// A website's preview, public and sandboxed, while its own address isn't answering yet (sites.ts).
+app.route("/", sitePreview);
 app.route("/", shortcutFiles);
 app.route("/", logs);
 
@@ -1481,6 +1510,8 @@ async function runTurn(
   const alarmTools = alarmAssistant(env, userId, timeZone, { voice: !!voice });
   const moneyTools = moneyAssistant(env, userId, timeZone, { voice: !!voice });
   const foodTools = foodAssistant(env, userId, timeZone, { voice: !!voice, level: food.level });
+  // Websites they (or their clients) get at <name>.ovoa.ai (sites.ts).
+  const siteTools = sitesAssistant(env, userId, timeZone);
   // Once a week at most, and only to someone who's there to hear it: not to a
   // line still being judged, since the claim is a write.
   const askLowerThanUsual = !fromAgent && !resume && !gate && (await food.claimLower());
@@ -1562,6 +1593,7 @@ async function runTurn(
     ...alarmTools.tools,
     ...moneyTools.tools,
     ...foodTools.tools,
+    ...siteTools.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -1589,6 +1621,7 @@ async function runTurn(
     alarms: { tools: alarmTools.tools, prompt: alarmTools.prompt },
     money: { tools: moneyTools.tools, prompt: moneyTools.prompt },
     food: { tools: foodTools.tools, prompt: foodTools.prompt },
+    sites: { tools: siteTools.tools, prompt: siteTools.prompt },
     transcripts: {
       tools: transcriptTools.tools,
       prompt: settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : "",
@@ -1680,6 +1713,7 @@ async function runTurn(
     ["alarms", guided(guides.alarms)],
     ["money", guided(guides.money)],
     ["food", guided(guides.food)],
+    ["sites", guided(guides.sites)],
     ["transcripts", guided(guides.transcripts)],
     ["command", fromAgent
       ? [
@@ -1812,6 +1846,8 @@ async function runTurn(
                                     ? moneyTools.callTool
                                   : isFoodTool(name)
                                     ? foodTools.callTool
+                                  : isSiteTool(name)
+                                    ? siteTools.callTool
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name
@@ -1962,8 +1998,9 @@ async function runTurn(
     return { kind: "paused" as const, turnId, calls: outcome.calls, pendingActions, meta };
   }
 
-  // What was streamed (minus repeats) is what the user heard, so that's what's kept.
-  const reply = spoken?.emitted() ? spoken.text() : dropRepeats(outcome.text);
+  // What was streamed (minus repeats) is what the user heard, so that's what's kept. A
+  // website's address, when the reply gives one, is the one that opens (sites.ts mendSiteLinks).
+  const reply = await mendSiteLinks(env, userId, spoken?.emitted() ? spoken.text() : dropRepeats(outcome.text));
   const now = Date.now();
   const userMsg = { id: crypto.randomUUID(), role: "user", content: text, created_at: now };
   const botMsg = { id: crypto.randomUUID(), role: "assistant", content: reply, created_at: now + 1 };
@@ -2537,7 +2574,11 @@ async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId }
     caps: ACTIONS_ONLY,
     app,
     requestId,
-    channel: (hooks) => textChannel(env, userId, timeZone, apps, app, hooks),
+    channel: (hooks) =>
+      textChannel(env, userId, timeZone, apps, app, hooks, {
+        agent: !!settings.agent_enabled && settings.agent_autonomy !== "off",
+        proactive: link.proactive !== 0,
+      }),
   }).catch((err: unknown): TurnResult => {
     if (isModelRefused(err)) return refusedReply(err, plan.tier, timeZone);
     if (!isAiUnreachable(err)) throw err;
@@ -3402,6 +3443,7 @@ authed.route("/", googleAuthed);
 authed.route("/", actions);
 authed.route("/", voice);
 authed.route("/", textingRoutes(textTurn));
+authed.route("/", siteRoutes);
 
 app.route("/", authed);
 
@@ -3531,12 +3573,25 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
       await part("notes", fireDueNotes(env));
       await release(env, "clock", clock);
     } else decided.clockBusy = 1;
+    // The sites lane runs beside the slow one rather than after it: a website is
+    // a minute or more of waiting on the model (sites.ts), not of this Worker's
+    // CPU, and the agent's jobs and the texts shouldn't queue behind it. Only
+    // when something is waiting, so an idle tick doesn't write a lease.
+    const sitesLane = (async () => {
+      if (!(await buildsWaiting(env.DB).catch(() => false))) return;
+      const sites = await lease(env, "sites", SLOW_LANE_MS);
+      if (!sites) return;
+      await part("sites", sitesTick(env, Date.now() + SITES_BUDGET_MS));
+      await release(env, "sites", sites);
+    })();
     const slow = await lease(env, "slow", SLOW_LANE_MS);
     if (slow) {
       // Each person is swept on one tick in five (sweep.ts).
       const slice = sliceFor(at);
       // Texts nobody is answering yet: someone is waiting on these (texting.ts).
       await part("texts", textsTick(env, textTurn));
+      // Questions OVOA texted that went unanswered, looked at once (agent.ts followUpDropped).
+      await part("followups", followUpDropped(env));
       await part("agent", tick(env, cron));
       await part("evening", eveningTick(env, slice));
       await part("transcripts", titleTranscripts(env));
@@ -3545,6 +3600,7 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
       await part("money", moneyTick(env, slice));
       await release(env, "slow", slow);
     } else decided.slowBusy = 1;
+    await sitesLane;
   }
 
   const ms = Date.now() - started;
@@ -3563,7 +3619,12 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
  * answers every request 503 and skips every tick while data is being moved.
  */
 export default withMaintenance({
-  fetch: app.fetch,
+  // <name>.ovoa.ai is a website OVOA built (sites.ts), served before anything
+  // else; everything else, api.ovoa.ai included, is the API.
+  fetch: (request: Request, env: Env, ctx: ExecutionContext) => {
+    const label = siteLabel(new URL(request.url), env);
+    return label ? serveSite(request, env, ctx, label) : app.fetch(request, env, ctx);
+  },
   scheduled: (event: ScheduledController, env: Env, ctx: ExecutionContext) => {
     ctx.waitUntil(runTick(env, event.cron, event.scheduledTime).catch((err) => console.error("ovoa.err cron failed outright", err)));
   },

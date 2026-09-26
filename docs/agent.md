@@ -68,6 +68,22 @@ Off until asked for, per user, like the timeline.
 At both levels the outbound-communication and deletion tools are absent. "Act"
 widens what it may set up, never what it may do behind your back.
 
+Since 2026-09-26 (Instinct, docs/texting.md) a run also has OVOA's own things
+(`ownToolsFor`, handed in by `index.ts setOwnTools`): at both levels it can read
+notes, the to-do list, routines, alarms and reminders, people, money, and the
+websites and the messages that came through them; on **act** it can also add a
+note, a to-do, an OVOA reminder, or a fact about someone. None of those reaches
+another person or deletes anything, so the rule above holds.
+
+For someone who texts OVOA, what a run says arrives as a text in their
+conversation (`reach.ts`), so they can answer it there, and a proposal ends by
+asking for a YES that counts for 12 hours. A run that needs something sent
+drafts it; the send happens in a turn with them there.
+
+A third trigger besides the clock and the promises: a question OVOA texted that
+went unanswered for three hours gets one run (`followUpDropped`, stored as
+trigger `event`), which follows it up once or stays quiet.
+
 ## Quiet hours
 
 `quiet_start`/`quiet_end`, minutes past local midnight, defaulting to 22:00 to
@@ -128,7 +144,8 @@ in the list.
 - **React to events.** It reacts to the clock. An interval job is the closest
   thing to a watch, and it polls. There's no webhook from Gmail or Calendar.
 - **Ask you something and wait.** There's nobody there. It can send a note of
-  kind `question` and stop.
+  kind `question` and stop. (By text, that question is a text, and the answer
+  comes back as an ordinary conversation.)
 - **Use the phone.** Phone lookups pause a turn until the app answers, and the
   app isn't there, so no phone tools are offered to an autonomous run.
 

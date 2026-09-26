@@ -169,7 +169,18 @@ type Options = {
    * a caller that learns midway that the answer isn't wanted.
    */
   signal?: AbortSignal;
+  /**
+   * A long answer (a whole website, sites.ts): room for this many tokens, where
+   * a plain call gets GENERATE_TOKENS. Past that it's also streamed, so the
+   * idle deadline watches it rather than the start one: a page written before
+   * the first byte of an unstreamed answer comes back takes a minute or more,
+   * and the start deadline is 20 s.
+   */
+  maxTokens?: number;
 };
+
+/** What a plain generateText call may write. */
+const GENERATE_TOKENS = 2048;
 
 export type ToolSpec = { name: string; description: string; parameters: Record<string, unknown> };
 
@@ -2117,16 +2128,19 @@ async function openAiGenerate(env: LlmEnv, engine: OpenAiEngine, model: string, 
     : system;
 
   const at = Date.now();
+  const maxTokens = Math.max(GENERATE_TOKENS, opts.maxTokens ?? 0);
   const { content, usage } = await openAiRound(
     env,
     engine,
     model,
     {
       messages: openAiTurns(systemText, turns),
-      max_tokens: 2048,
+      max_tokens: maxTokens,
       ...thinkingFields(model, thinkingLevelFor(env, engine, !!fast), thinkingFlavorOf(env, engine)),
     },
-    { signal: opts.signal, affinity: opts.usage.userId },
+    // A long answer streams (Options.maxTokens): nothing is done with the pieces
+    // but keep reading, which is what holds the idle deadline off.
+    { signal: opts.signal, affinity: opts.usage.userId, ...(maxTokens > GENERATE_TOKENS && { onText: () => {} }) },
   );
   reportUsage(env, opts, engine, model, usage, Date.now() - at);
 

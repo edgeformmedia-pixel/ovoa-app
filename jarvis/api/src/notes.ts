@@ -5,6 +5,7 @@ import { resolveDue } from "./context";
 import { validTimeZone } from "./google/assistant";
 import type { CallTool, ToolSpec } from "./llm";
 import { push } from "./push";
+import { reach } from "./reach";
 import { clock } from "./time";
 import type { Env, Vars } from "./types";
 
@@ -114,13 +115,17 @@ export async function fireDueNotes(env: Env) {
     const caps = await capabilities(env.DB, n.user_id);
     // "Remind Sarah at 6" (remind_other): the text arrives ready, one tap from being sent.
     const other = /^Text (.+?): ([\s\S]+)$/.exec(n.text);
-    await push(
-      env,
-      n.user_id,
-      n.tags.includes('"remind_other"') && other
-        ? { title: `Text ${other[1]}?`, body: other[2].slice(0, 180), data: { type: "remind-other", who: other[1], text: other[2] } }
-        : { title: "Reminder", body: n.text.slice(0, 180), data: { type: "note", noteId: n.id } },
-    );
+    if (n.tags.includes('"remind_other"') && other) {
+      // Opens Messages on the phone, ready to send: only the app can do that.
+      await push(env, n.user_id, { title: `Text ${other[1]}?`, body: other[2].slice(0, 180), data: { type: "remind-other", who: other[1], text: other[2] } });
+    } else {
+      // By text for someone who texts OVOA (reach.ts), where "done" is the answer.
+      await reach(env, n.user_id, {
+        kind: "reminder",
+        text: `Reminder: ${n.text}${n.urgent ? `\n\nText "done" when it's done.` : ""}`,
+        push: { title: "Reminder", body: n.text.slice(0, 180), data: { type: "note", noteId: n.id } },
+      });
+    }
     if (n.urgent) {
       // The phone buzzes every 30 s until it hears "I did it" (alarms.ts keeps pushing too).
       await push(env, n.user_id, { silent: true, data: { type: "nag", id: crypto.randomUUID(), key: `note:${n.id}`, label: n.text.slice(0, 120) } });

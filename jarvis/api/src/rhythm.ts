@@ -8,6 +8,7 @@ import { readiness, triageInbox } from "./extras";
 import { distanceM } from "./location";
 import { getProfile } from "./onboarding";
 import { push } from "./push";
+import { reach } from "./reach";
 import { addDays, atLocalTime, buckets, clock, clockFromMinutes, dayRange, localMinutes, localWeekday } from "./time";
 import { moneyBriefLine } from "./money";
 import { listTodos } from "./todos";
@@ -192,7 +193,12 @@ async function morningTick(env: Env, u: TickUser, covered: () => Promise<boolean
   // gets that morning's.
   if (!up || !(await covered()) || !(await mark(env.DB, u.userId, "brief", today))) return false;
   const brief = await buildMorningBrief(env, u.userId, u.timeZone);
-  await push(env, u.userId, { title: "Good morning", body: brief.text.slice(0, 180), data: { type: "brief" } });
+  // A text for someone who texts OVOA (reach.ts), a notification otherwise; the phone still reads it out if it's awake.
+  await reach(env, u.userId, {
+    kind: "brief",
+    text: `Good morning! ${brief.text}`,
+    push: { title: "Good morning", body: brief.text.slice(0, 180), data: { type: "brief" } },
+  });
   await push(env, u.userId, { silent: true, data: { type: "speak", id: crypto.randomUUID(), text: brief.text } });
   await sendBuzz(env, u.userId, "ack", "Morning brief", "system");
   await logAction(env.DB, u.userId, "brief", "Morning brief", "system");
@@ -222,7 +228,7 @@ async function windDownTick(env: Env, u: TickUser) {
     ]
       .filter(Boolean)
       .join(" ");
-    await push(env, u.userId, { title: "Winding down", body: text.slice(0, 180), data: { type: "winddown" } });
+    await reach(env, u.userId, { kind: "winddown", text, push: { title: "Winding down", body: text.slice(0, 180), data: { type: "winddown" } } });
     await logAction(env.DB, u.userId, "winddown", "Wind-down recap", "system");
     return true;
   }
@@ -385,7 +391,7 @@ async function commuteTick(env: Env, u: TickUser) {
     const left = Math.max(1, Math.round((k.leave_at - now) / 60_000));
     const line = `Leave in ${left} minute${left === 1 ? "" : "s"} for ${k.title} at ${clock(k.starts_at, u.timeZone)} — about ${minutes} min drive.`;
     await sendBuzz(env, u.userId, "double", line, "system");
-    await push(env, u.userId, { title: "Time to go soon", body: line, urgent: true, data: { type: "commute" } });
+    await reach(env, u.userId, { kind: "commute", text: line, push: { title: "Time to go soon", body: line, urgent: true, data: { type: "commute" } } });
     await logAction(db, u.userId, "commute", line, "system");
     sent++;
   }
@@ -510,11 +516,8 @@ async function oddityTick(env: Env, u: TickUser) {
         : await db.prepare("SELECT 1 FROM workouts WHERE user_id = ? AND end_at > ? LIMIT 1").bind(u.userId, start).first();
     await db.prepare("UPDATE expectations SET asked_day = ? WHERE id = ?").bind(today, e.id).run();
     if (happened) continue;
-    await push(env, u.userId, {
-      title: "Different day?",
-      body: `You're usually ${e.what} around ${clockFromMinutes(e.window_start + 30)}. Everything alright — or skipping today?`,
-      data: { type: "oddity", expectationId: e.id },
-    });
+    const question = `You're usually ${e.what} around ${clockFromMinutes(e.window_start + 30)}. Everything alright, or skipping today?`;
+    await reach(env, u.userId, { kind: "oddity", text: question, push: { title: "Different day?", body: question, data: { type: "oddity", expectationId: e.id } } });
     await logAction(db, u.userId, "oddity", `Noticed: not ${e.what} today`, "system", e.id);
     asked++;
   }
