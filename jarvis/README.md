@@ -480,6 +480,20 @@ text, and Ask Claude (`/claude`, `ANTHROPIC_API_KEY`). A copied
 **To add the Gemini key:** double-click `jarvis/set-gemini-key.cmd` and paste
 the key when asked.
 
+## Websites, usernames and other people's OVOAs
+
+Built 2026-09-26 (Instinct). In the app or by text, OVOA builds and hosts
+websites (`site_build`, `site_change`, `site_list`, `site_leads`,
+`site_manage`; docs/sites.md) at `<username>.ovoa.ai/<project>`, under the
+person's @username (`username_get`, `username_set`, `username_change`), whose
+own address lists their projects. With someone else's yes, their OVOAs talk to
+each other: find a time, ask something, pass on a reminder or a short text,
+with only free/busy crossing over and anything that commits someone waiting for
+their yes (`ovoa_connect`, `ovoa_connect_answer`, `ovoa_connections`,
+`ovoa_perms`, `ovoa_ask`, `ovoa_inbox`, `ovoa_approve`, `ovoa_log`,
+`ovoa_disconnect`; docs/ovoa-network.md). In the app: the Username row in
+Settings → Account, and Settings → Assistant → Connections.
+
 ## API
 
 ```powershell
@@ -564,6 +578,17 @@ summaries, then the 14-day purge; `docs/retention.md`).
 | POST | /me/email/verify | `{ code }` → proves the address, and a new account can use everything |
 | POST / DELETE | /me/consent | POST `{ version }` agrees to AI (the consent screen); DELETE takes it back (`src/consent.ts`) |
 | POST | /me/plan/refresh | asks ovoa.ai for the plan again, after checkout |
+| GET / PUT | /me/username | their @username (`src/usernames.ts`): GET → `{ username, address, changeableAt, suggestion }`; PUT `{ username }` sets it, or changes it (once in 30 days; projects move, the old address 301s for 90) |
+| GET | /me/username/check?name= | `{ username, available, problem? }`, as they type |
+| GET / DELETE | /sites, /sites/:id | their websites, each with `address` and `link` (`src/sites.ts`, docs/sites.md) |
+| GET | /ovoa/connections | their OVOA connections as they see them, each connected one's `perms`, and `waiting` (what waits for their yes) (`src/network.ts`, docs/ovoa-network.md) |
+| POST | /ovoa/connect | `{ username }`: asks to connect OVOAs (409 `needsUsername` without one of their own) |
+| POST | /ovoa/connections/:username/answer | `{ answer: "yes" \| "no" \| "block" }` |
+| PUT | /ovoa/connections/:username/perms | `{ shareFreeBusy?, autoAcceptMeetings?, autoAnswerQuestions?, shareNote? }` |
+| DELETE | /ovoa/connections/:username[?block=1] | disconnect (open exchanges stop), or block |
+| POST | /ovoa/ask | `{ username, kind: "schedule" \| "question" \| "reminder" \| "share", text?, topic?, minutes?, from?, to?, times?, book?, at? }` (Base) |
+| POST | /ovoa/approvals/:id | `{ decision: "yes" \| "no" \| "changes", choice?, text? }`: their answer to what waits |
+| GET | /ovoa/log | everything their OVOA said to other OVOAs in the last 14 days |
 | GET / DELETE | /chat/messages | history / clear |
 | POST | /chat | `{ message, timeZone?, phone? }` → `{ messages }` or `{ paused }` (see iPhone apps) |
 | POST | /chat/resume | `{ turnId, results }` → same as /chat |

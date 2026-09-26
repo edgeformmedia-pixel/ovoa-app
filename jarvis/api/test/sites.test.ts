@@ -26,8 +26,18 @@ import {
   slugify,
   slugProblem,
   titleOf,
+  descriptionOf,
+  indexPage,
+  labelTaken,
+  pathProblem,
+  pickSite,
+  relativeLinks,
+  resolveSite,
+  siteAddress,
+  slugsFrom,
   MAX_SITES,
 } from "../src/sites";
+import { claimUsername } from "../src/usernames";
 import type { Env } from "../src/types";
 
 let fails = 0;
@@ -129,7 +139,7 @@ eq("a map stays", clean.includes("https://www.google.com/maps?q=1234"), true);
 eq("no plugins", /<object|<embed/i.test(clean), false);
 eq("no redirects", /http-equiv/i.test(clean), false);
 eq("no base", /<base/i.test(clean), false);
-eq("forms only post back to the site", (clean.match(/<form[^>]*>/gi) ?? []).join(""), '<form method="post" action="/contact">');
+eq("forms only post back to the site", (clean.match(/<form[^>]*>/gi) ?? []).join(""), '<form method="post" action="contact">');
 eq("no password field", /type="password"/i.test(clean), false);
 eq("no card field", clean.includes("card_number"), false);
 eq("the ordinary fields stay", clean.includes('name="name"') && clean.includes('name="email"'), true);
@@ -176,6 +186,78 @@ eq("a change is added", briefWith("A pizza shop.", "Open till 2am Fridays."), "A
 }
 
 eq("the site tools are known", ["site_build", "site_change", "site_list", "site_leads", "site_manage"].every(isSiteTool), true);
+
+// ---------- Projects under a username: addresses and links ----------
+
+eq("a flat site's address", siteAddress({ SITES_DOMAIN: "ovoa.ai" }, "tonys-pizza"), "https://tonys-pizza.ovoa.ai");
+eq("a project's", siteAddress({ SITES_DOMAIN: "ovoa.ai" }, "thomas/tonys-pizza"), "https://thomas.ovoa.ai/tonys-pizza");
+eq("an address said with a folder is a project first", slugsFrom("https://thomas.ovoa.ai/tonys-pizza/", "ovoa.ai"), ["thomas/tonys-pizza", "thomas"]);
+eq("and without one, the host", slugsFrom("tonys.ovoa.ai", "ovoa.ai"), ["tonys"]);
+eq("a project's name can be a word OVOA keeps as a host", pathProblem("shop"), null);
+eq("but not a brand", pathProblem("paypal-login")?.includes("brand"), true);
+eq("nor a bad shape", pathProblem("a--b")?.includes("single hyphens"), true);
+
+eq("links to the host's root become relative", relativeLinks('<a href="/#menu">M</a><a href="/">H</a><a href="/about">A</a><img src="/logo.png">'), '<a href="#menu">M</a><a href="./">H</a><a href="about">A</a><img src="logo.png">');
+eq("another host's links and anchors are left", relativeLinks('<a href="//cdn.example/x">x</a><a href="https://x.example/">y</a><a href="#top">z</a>'), '<a href="//cdn.example/x">x</a><a href="https://x.example/">y</a><a href="#top">z</a>');
+eq("words on the page are never touched", relativeLinks("<p>Visit /menu for more</p>"), "<p>Visit /menu for more</p>");
+{
+  // A multi-section site as a designer writes one, cleaned as it's kept: nothing
+  // may point at the host's root, or it breaks inside thomas.ovoa.ai/<project>/.
+  const multi = cleanSiteHtml(
+    page(
+      [
+        `<header><nav><a href="/">Tony's</a><a href="/#menu">Menu</a><a href="/#hours">Hours</a><a href='/#contact'>Contact</a></nav></header>`,
+        `<main><section id="menu"><h2>Menu</h2><img src="/images/pie.png" alt=""></section>`,
+        `<section id="hours"><h2>Hours</h2><p>11 to 11. See /hours for holidays.</p></section>`,
+        `<section id="contact"><form action="/contact" method="post"><button formaction="/contact">Send</button></form></section></main>`,
+        `<footer><a href="https://www.instagram.com/tonys">Instagram</a><a href="tel:+13055550142">Call</a></footer>`,
+      ].join(""),
+      `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter"><link rel="icon" href="/favicon.svg">`,
+    ),
+  );
+  const rooted = [...multi.matchAll(/\s(?:href|src|action|formaction|poster|srcset)\s*=\s*["']\/(?!\/)/gi)].map((m) => m[0]);
+  eq("a generated multi-section site has no absolute root links", rooted, []);
+  eq("its sections are anchors", multi.includes('href="#menu"') && multi.includes("href='#contact'"), true);
+  eq("its form posts to its own folder", multi.includes('<form method="post" action="contact">'), true);
+  eq("and outside links are kept", multi.includes('href="https://www.instagram.com/tonys"'), true);
+}
+
+{
+  const theirs = [{ slug: "sam/sams-bakery" }, { slug: "joes-freight" }];
+  const preview = (slug: string) => `https://api.ovoa.ai/s/${slug}`;
+  eq("a project's address is mended to its link, full stop kept", mendLinks("Live at sam.ovoa.ai/sams-bakery.", "ovoa.ai", theirs, preview), "Live at https://api.ovoa.ai/s/sam/sams-bakery.");
+  eq("a project's name got wrong", mendLinks("See https://sam.ovoa.ai/bakery now", "ovoa.ai", theirs, preview), "See https://api.ovoa.ai/s/sam/sams-bakery now");
+  eq("their username's own page is left as it is", mendLinks("All of them are at sam.ovoa.ai.", "ovoa.ai", theirs, preview), "All of them are at sam.ovoa.ai.");
+}
+
+{
+  const mine = [
+    { slug: "sam/sams-bakery", name: "Sam's Bakery", client: null, path: "sams-bakery" },
+    { slug: "sam/tonys-pizza", name: "Tony's Pizza", client: "Tony Russo", path: "tonys-pizza" },
+    { slug: "joes-freight", name: "Joe's Trucking", client: null, path: null },
+  ];
+  const which = (said: string) => {
+    const got = pickSite(mine, said, "ovoa.ai");
+    return "error" in got ? "error" : got.slug;
+  };
+  eq('"my pizza site" is the pizza one', which("my pizza site"), "sam/tonys-pizza");
+  eq("by its project's address", which("sam.ovoa.ai/sams-bakery"), "sam/sams-bakery");
+  eq("by its project's name", which("tonys-pizza"), "sam/tonys-pizza");
+  eq("by the client", which("tony russo"), "sam/tonys-pizza");
+  eq("a flat one by its address", which("https://joes-freight.ovoa.ai/"), "joes-freight");
+  eq("the trucking website", which("the trucking website"), "joes-freight");
+  eq("nothing like it", which("my salon"), "error");
+}
+
+eq("a page's description, as text", descriptionOf('<meta name="description" content="Fresh bread &amp; cakes in Doral.">'), "Fresh bread & cakes in Doral.");
+eq("none", descriptionOf("<title>x</title>"), null);
+{
+  const index = indexPage("sam", [{ name: "<Sam's>", line: "Bread & cakes", path: "sams-bakery" }], "", "sam.ovoa.ai");
+  eq("a username's page links each project in its folder", index.includes('href="/sams-bakery/"'), true);
+  eq("and escapes what it shows", index.includes("&lt;Sam&#39;s&gt;") && index.includes("Bread &amp; cakes"), true);
+  eq("and has no script", /<script/i.test(index), false);
+  eq("and says who made it, with a way to report it", index.includes("Report this site"), true);
+}
 eq("and nothing else is one", isSiteTool("site_delete"), false);
 
 // ---------- A D1 over node:sqlite, with every migration ----------
@@ -274,7 +356,7 @@ async function main() {
   eq("none yet", (await call("site_list", {})).sites, 0);
 
   // ---------- Building ----------
-  const built = await call("site_build", { name: "Tony's Pizza", about: "NY style pizza in Hialeah. Call (305) 555-0142.", forClient: "Tony Russo" });
+  const built = await call("site_build", { ownAddress: true, name: "Tony's Pizza", about: "NY style pizza in Hialeah. Call (305) 555-0142.", forClient: "Tony Russo" });
   eq("building", built.building, true);
   eq("the link is the preview until the wildcard answers", built.link, "https://api.ovoa.ai/s/tonys-pizza");
   eq("and they're told it isn't live yet", String(built.note).includes("Don't say it's live yet"), true);
@@ -282,13 +364,13 @@ async function main() {
   eq("the site is written down", one<{ status: string; client: string }>("SELECT status, client FROM sites WHERE slug = 'tonys-pizza'"), { status: "building", client: "Tony Russo" });
   eq("and its build queued", count("SELECT COUNT(*) AS n FROM site_builds WHERE status = 'queued' AND kind = 'create'"), 1);
 
-  const again = await call("site_build", { name: "Tony's Pizza", about: "A second shop." });
+  const again = await call("site_build", { ownAddress: true, name: "Tony's Pizza", about: "A second shop." });
   eq("the same name again gets the next free address", again.link, "https://api.ovoa.ai/s/tonys-pizza-2");
   eq("an address asked for that's taken", String((await call("site_build", { name: "X", about: "y", subdomain: "tonys-pizza" })).error).includes("is taken"), true);
-  eq("a brand's name can't be had", String((await call("site_build", { name: "PayPal Refunds", about: "y" })).error).includes("brand"), true);
-  eq("nor a kept one", String((await call("site_build", { name: "Admin", about: "y" })).error).includes("kept for OVOA"), true);
+  eq("a brand's name can't be had", String((await call("site_build", { ownAddress: true, name: "PayPal Refunds", about: "y" })).error).includes("brand"), true);
+  eq("nor a kept one", String((await call("site_build", { ownAddress: true, name: "Admin", about: "y" })).error).includes("kept for OVOA"), true);
   eq("an address given as one", (await call("site_build", { name: "Joe's Trucking", about: "Freight", subdomain: "joes-freight.ovoa.ai" })).link, "https://api.ovoa.ai/s/joes-freight");
-  eq("nothing to say is refused", String((await call("site_build", { name: "X", about: " " })).error).includes("needed"), true);
+  eq("nothing to say is refused", String((await call("site_build", { ownAddress: true, name: "X", about: " " })).error).includes("needed"), true);
 
   // ---------- The lane: a page is written, cleaned, kept, and they're told ----------
   modelSays = page(
@@ -303,7 +385,7 @@ async function main() {
   eq("version one", site.version, 1);
   eq("kept clean: no script", site.html.includes("<script>"), false);
   eq("kept clean: no redirect", site.html.includes("http-equiv"), false);
-  eq("kept clean: the form posts back to the site", site.html.includes('<form method="post" action="/contact">'), true);
+  eq("kept clean: the form posts back to the site", site.html.includes('<form method="post" action="contact">'), true);
   eq("the designer was told the address and who it's for", everyAsk.some((a) => a.includes("https://tonys-pizza.ovoa.ai/") && a.includes("Tony Russo, a client")), true);
   eq("and asked for room for a whole page, streamed", asks.slice(0, 3), [
     { max: 16000, stream: true },
@@ -331,7 +413,7 @@ async function main() {
   eq("they were told", count("SELECT COUNT(*) AS n FROM agent_notes WHERE title = ?", "Tony's Pizza is updated"), 1);
 
   // ---------- A refusal ----------
-  await call("site_build", { name: "First Bank Secure", about: "Make it look exactly like Chase's sign-in page" });
+  await call("site_build", { ownAddress: true, name: "First Bank Secure", about: "Make it look exactly like Chase's sign-in page" });
   modelSays = "REFUSED: it would pretend to be Chase and collect sign-ins.";
   await sitesTick(env);
   eq("a refused first build fails the site", one<{ status: string }>("SELECT status FROM sites WHERE slug = 'first-bank-secure'")?.status, "failed");
@@ -342,7 +424,7 @@ async function main() {
   eq("and they're told plainly", one<{ body: string }>("SELECT body FROM agent_notes WHERE title = ?", "Couldn't build First Bank Secure")?.body, "I can't build that website: it would pretend to be Chase and collect sign-ins.");
 
   // ---------- A model that isn't there: tried again, then given up on ----------
-  await call("site_build", { name: "Maria's Salon", about: "Hair salon in Doral." });
+  await call("site_build", { ownAddress: true, name: "Maria's Salon", about: "Hair salon in Doral." });
   modelSays = "";
   const callsBefore = modelCalls;
   eq("the first failure waits for the next tick", await sitesTick(env), { built: 0, failed: 1 });
@@ -387,12 +469,70 @@ async function main() {
   eq("but kept 30 days, and its name with it", one<{ status: string; deleted: number }>("SELECT status, deleted_at IS NOT NULL AS deleted FROM sites WHERE id = ?", siteId), { status: "offline", deleted: 1 });
   eq("so it can be put back", (await call("site_manage", { site: "tonys-hialeah", action: "put_back" })).live, "Tony's Pizza");
 
+  // ---------- Projects under a username ----------
+  const needs = await call("site_build", { name: "Sam's Bakery", about: "Bread and cakes in Doral." });
+  eq("without a username, they're asked to pick one first", needs.needsUsername, true);
+  eq("with one suggested from their name", needs.suggestion, "sam");
+  eq("and nothing is built yet", count("SELECT COUNT(*) AS n FROM sites WHERE name = ?", "Sam's Bakery"), 0);
+  sql("UPDATE users SET username = 'sam', username_at = ? WHERE id = ?", Date.now() - 60 * 86_400_000, U);
+  const bakery = await call("site_build", { name: "Sam's Bakery", about: "Bread and cakes in Doral." });
+  eq("a project under their username", bakery.link, "https://api.ovoa.ai/s/sam/sams-bakery");
+  eq("never the address that doesn't open yet", String(bakery.note).includes("sam.ovoa.ai/sams-bakery doesn't open yet"), true);
+  eq("written down as one", one("SELECT slug, owner_username, path FROM sites WHERE name = ?", "Sam's Bakery"), { slug: "sam/sams-bakery", owner_username: "sam", path: "sams-bakery" });
+  eq("a project named as asked", (await call("site_build", { name: "Cakes by Sam", about: "Cakes.", project: "cakes" })).link, "https://api.ovoa.ai/s/sam/cakes");
+  eq("one they have already isn't taken over", String((await call("site_build", { name: "Cakes Two", about: "x", project: "cakes" })).error).includes("one of theirs already"), true);
+  eq("an address of its own can't be their username", String((await call("site_build", { name: "X", about: "y", subdomain: "sam" })).error).includes("someone's username"), true);
+  modelSays = page(
+    `<nav><a href="/">Sam's</a><a href="/#menu">Menu</a></nav><section id="menu"><h2>Menu</h2></section><form action="/contact"><input name="message"></form>`,
+    `<meta name="description" content="Fresh bread and cakes in Doral."><link rel="canonical" href="https://sam.ovoa.ai/sams-bakery/">`,
+  );
+  // With the earlier move's rebuild still queued.
+  eq("both are built", await sitesTick(env), { built: 3, failed: 0 });
+  const bakeryHtml = one<{ html: string }>("SELECT html FROM sites WHERE slug = 'sam/sams-bakery'")!.html;
+  eq("the designer was told the project's address", everyAsk.some((a) => a.includes("https://sam.ovoa.ai/sams-bakery/")), true);
+  eq("kept with no link to the host's root", /\s(?:href|src|action)="\/(?!\/)/.test(bakeryHtml), false);
+  eq("they're told it's live at its link", one<{ body: string }>("SELECT body FROM agent_notes WHERE title = ?", "Sam's Bakery is live")?.body.includes("https://api.ovoa.ai/s/sam/sams-bakery"), true);
+
+  // ---------- Routing: a username's page, its projects, flat sites, a rename ----------
+  const route = (label: string, path: string, preview = false) => resolveSite(env, label, path, preview);
+  const index = await route("sam", "/");
+  eq("a username's address is their page of projects", index.kind === "index" && index.sites.map((s) => `${s.path}: ${s.line}`).sort(), ["cakes: Fresh bread and cakes in Doral.", "sams-bakery: Fresh bread and cakes in Doral."]);
+  const project = await route("sam", "/sams-bakery/");
+  eq("a project is served in its folder", project.kind === "site" && { slug: project.site.slug, base: project.base, path: project.path, home: project.home }, {
+    slug: "sam/sams-bakery",
+    base: "/sams-bakery",
+    path: "/",
+    home: "sam.ovoa.ai/sams-bakery",
+  });
+  eq("its contact form too", (await route("sam", "/sams-bakery/contact")).kind === "site" && ((await route("sam", "/sams-bakery/contact")) as { path: string }).path, "/contact");
+  eq("a project without its slash gets one", await route("sam", "/sams-bakery"), { kind: "redirect", to: "/sams-bakery/" });
+  const previewed = await route("sam", "/sams-bakery/", true);
+  eq("the preview of a project", previewed.kind === "site" && previewed.base, "/s/sam/sams-bakery");
+  eq("a project that isn't there", (await route("sam", "/nope/")).kind, "none");
+  eq("a flat site is served as before", (await route("joes-freight", "/")).kind === "site" && ((await route("joes-freight", "/")) as { base: string }).base, "");
+  eq("an unknown name is nothing", (await route("nobody-here", "/")).kind, "none");
+
+  eq("a changed site found by its words", (await call("site_change", { site: "my bakery site", change: "Add rye bread." })).site, "Sam's Bakery");
+
+  // A new username: the projects move, and the old address sends people on.
+  eq("the username changes", await claimUsername(DB, U, "samuel"), { username: "samuel" });
+  eq("its projects moved with it", one("SELECT slug, owner_username FROM sites WHERE path = 'sams-bakery'"), { slug: "samuel/sams-bakery", owner_username: "samuel" });
+  eq("the old address answers 301 to the new one", await route("sam", "/sams-bakery/"), { kind: "redirect", to: "https://samuel.ovoa.ai/sams-bakery/" });
+  eq("and its preview too", await route("sam", "/sams-bakery/", true), { kind: "redirect", to: "https://api.ovoa.ai/s/samuel/sams-bakery/" });
+  eq("the new one serves it", (await route("samuel", "/sams-bakery/")).kind, "site");
+  eq("nobody else can take the old name for 90 days", await labelTaken(DB, "sam", OTHER), "held");
+  eq("nor make it a website's address", String((await sitesAssistant(env, OTHER, "UTC").callTool("site_build", { name: "Sam", about: "x", subdomain: "sam" }) as { error: string }).error).includes("taken"), true);
+  eq("but its owner can have it back", await labelTaken(DB, "sam", U), null);
+  eq("after 90 days it's forgotten", (sql("UPDATE usernames_history SET released_at = ? WHERE username = 'sam'", Date.now() - 91 * 86_400_000), await route("sam", "/sams-bakery/")).kind, "none");
+  eq("the list gives the new links", ((await call("site_list", {})).sites as { name: string; link: string }[]).find((s) => s.name === "Sam's Bakery")?.link, "https://api.ovoa.ai/s/samuel/sams-bakery");
+  eq("a project can move to another name", (await call("site_manage", { site: "Cakes by Sam", action: "move", project: "sweets" })).link, "https://api.ovoa.ai/s/samuel/sweets");
+
   // ---------- Limits ----------
   const have = count("SELECT COUNT(*) AS n FROM sites WHERE user_id = ?", U);
   for (let i = have; i < MAX_SITES; i++) {
     sql("INSERT INTO sites (id, user_id, slug, name, brief, status, created_at, updated_at) VALUES (?, ?, ?, 'x', 'x', 'live', 0, 0)", `s${i}`, U, `filler-${i}`);
   }
-  eq(`at most ${MAX_SITES} each`, String((await call("site_build", { name: "One More", about: "x" })).error).includes(`${MAX_SITES} websites`), true);
+  eq(`at most ${MAX_SITES} each`, String((await call("site_build", { ownAddress: true, name: "One More", about: "x" })).error).includes(`${MAX_SITES} websites`), true);
 }
 
 main()

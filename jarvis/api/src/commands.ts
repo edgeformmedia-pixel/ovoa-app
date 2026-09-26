@@ -30,6 +30,15 @@ export const FORBIDDEN_FOR_COMMANDS = new Set([
   "phone_call",
   "phone_calendar_delete_event",
   "phone_shortcut_run",
+  // Another person's OVOA is another person (network.ts), and a username is theirs to pick.
+  "ovoa_connect",
+  "ovoa_connect_answer",
+  "ovoa_ask",
+  "ovoa_approve",
+  "ovoa_disconnect",
+  "ovoa_perms",
+  "username_set",
+  "username_change",
 ]);
 
 export async function enqueueCommand(env: Env, userId: string, text: string, source: CommandSource, reason?: string) {

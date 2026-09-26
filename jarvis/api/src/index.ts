@@ -43,6 +43,8 @@ import {
   sitesTick,
   SITES_BUDGET_MS,
 } from "./sites";
+import { isNetworkTool, networkAssistant, networkContext, networkRoutes, networkTick, networkWaiting, NETWORK_BUDGET_MS } from "./network";
+import { isUsernameTool, usernameAssistant, usernameRoutes } from "./usernames";
 import { contextAssistant, isContextTool, recordBlock, type BlockSource } from "./context";
 import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
@@ -459,12 +461,12 @@ async function publicUser(env: Env, userId: string) {
   const db = env.DB;
   const row = await db
     .prepare(
-      `SELECT id, email, name, created_at, email_verified_at, must_verify, ai_consent_at, ai_consent_version,
+      `SELECT id, email, name, username, created_at, email_verified_at, must_verify, ai_consent_at, ai_consent_version,
               terms_accepted_at, terms_version
          FROM users WHERE id = ?`,
     )
     .bind(userId)
-    .first<{ id: string; email: string; name: string; created_at: number } & VerifyRow & ConsentRow & TermsRow>();
+    .first<{ id: string; email: string; name: string; username: string | null; created_at: number } & VerifyRow & ConsentRow & TermsRow>();
   if (!row) return null;
   const { email_verified_at, must_verify, ai_consent_at, ai_consent_version, terms_accepted_at, terms_version, ...user } = row;
   const [settings, profile] = await Promise.all([getSettings(db, userId), getProfile(db, userId)]);
@@ -1512,6 +1514,15 @@ async function runTurn(
   const foodTools = foodAssistant(env, userId, timeZone, { voice: !!voice, level: food.level });
   // Websites they (or their clients) get at <name>.ovoa.ai (sites.ts).
   const siteTools = sitesAssistant(env, userId, timeZone);
+  // Their @username, and their OVOA talking to other people's (usernames.ts, network.ts).
+  const usernameTools = usernameAssistant(env, userId);
+  const networkTools = networkAssistant(env, userId, timeZone);
+  // Who they're connected to and what waits for their yes: one read, and nothing
+  // in the prompt for the many who have none of it. Not for the agent's commands.
+  const network = fromAgent ? { prompt: "", carry: [] as string[] } : await networkContext(env, userId, timeZone).catch((err) => {
+    console.error("network: couldn't read the turn's context", err);
+    return { prompt: "", carry: [] as string[] };
+  });
   // Once a week at most, and only to someone who's there to hear it: not to a
   // line still being judged, since the claim is a write.
   const askLowerThanUsual = !fromAgent && !resume && !gate && (await food.claimLower());
@@ -1594,6 +1605,8 @@ async function runTurn(
     ...moneyTools.tools,
     ...foodTools.tools,
     ...siteTools.tools,
+    ...usernameTools.tools,
+    ...networkTools.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -1622,6 +1635,8 @@ async function runTurn(
     money: { tools: moneyTools.tools, prompt: moneyTools.prompt },
     food: { tools: foodTools.tools, prompt: foodTools.prompt },
     sites: { tools: siteTools.tools, prompt: siteTools.prompt },
+    usernames: { tools: usernameTools.tools, prompt: usernameTools.prompt },
+    network: { tools: networkTools.tools, prompt: networkTools.prompt },
     transcripts: {
       tools: transcriptTools.tools,
       prompt: settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : "",
@@ -1651,6 +1666,12 @@ async function runTurn(
   if (appTools) tools.push(...appTools.tools);
   // A channel's own tools ride along the same way.
   if (channel) tools.push(...channel.tools);
+  // What waits for them from another OVOA is answered with these, and "yes" names no tool.
+  for (const name of network.carry) {
+    const spec = networkTools.tools.find((t) => t.name === name);
+    if (spec && !tools.some((t) => t.name === name) && allTools.some((t) => t.name === name)) tools.push(spec);
+  }
+  if (network.carry.length && !belt.carriedGuides.includes(guides.network)) belt.carriedGuides.push(guides.network);
   const carriedTools = tools.length;
   const guided = (guide: ToolGuide) => (belt.carriedGuides.includes(guide) ? guide.prompt : "");
 
@@ -1714,6 +1735,9 @@ async function runTurn(
     ["money", guided(guides.money)],
     ["food", guided(guides.food)],
     ["sites", guided(guides.sites)],
+    ["usernames", guided(guides.usernames)],
+    ["network", guided(guides.network)],
+    ["ovoas", network.prompt],
     ["transcripts", guided(guides.transcripts)],
     ["command", fromAgent
       ? [
@@ -1848,6 +1872,10 @@ async function runTurn(
                                     ? foodTools.callTool
                                   : isSiteTool(name)
                                     ? siteTools.callTool
+                                  : isUsernameTool(name)
+                                    ? usernameTools.callTool
+                                  : isNetworkTool(name)
+                                    ? networkTools.callTool
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name
@@ -3447,6 +3475,8 @@ authed.route("/", actions);
 authed.route("/", voice);
 authed.route("/", textingRoutes(textTurn));
 authed.route("/", siteRoutes);
+authed.route("/", usernameRoutes);
+authed.route("/", networkRoutes);
 
 app.route("/", authed);
 
@@ -3580,6 +3610,16 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
     // a minute or more of waiting on the model (sites.ts), not of this Worker's
     // CPU, and the agent's jobs and the texts shouldn't queue behind it. Only
     // when something is waiting, so an idle tick doesn't write a lease.
+    // OVOA to OVOA (network.ts): messages handed to the other side, beside the
+    // others for the same reason (a free/busy lookup or an answer is waiting on
+    // Google or the model), and only when something is queued.
+    const networkLane = (async () => {
+      if (!(await networkWaiting(env.DB).catch(() => false))) return;
+      const held = await lease(env, "network", SLOW_LANE_MS);
+      if (!held) return;
+      await part("network", networkTick(env, Date.now() + NETWORK_BUDGET_MS));
+      await release(env, "network", held);
+    })();
     const sitesLane = (async () => {
       if (!(await buildsWaiting(env.DB).catch(() => false))) return;
       const sites = await lease(env, "sites", SLOW_LANE_MS);
@@ -3604,6 +3644,7 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
       await release(env, "slow", slow);
     } else decided.slowBusy = 1;
     await sitesLane;
+    await networkLane;
   }
 
   const ms = Date.now() - started;

@@ -239,6 +239,8 @@ export type User = {
   id: string;
   email: string;
   name: string;
+  /** Their @username (api/src/usernames.ts): their websites' address, and how other OVOAs find theirs. Null until picked. */
+  username?: string | null;
   created_at: number;
   settings: Settings;
   onboarded?: boolean;
@@ -374,6 +376,26 @@ export type TextingState = {
   linked: { phone: string; linkedAt: number } | null;
 };
 export type Memory = { id: string; content: string; created_at: number };
+
+/** Their username (api/src/usernames.ts), when it can next change, and one to offer when there's none. */
+export type UsernameState = { username: string | null; address: string | null; changeableAt: number | null; suggestion: string | null };
+
+/** What their OVOA may do for one connection (api/src/network.ts connection_perms). */
+export type ConnectionPerms = { shareFreeBusy: boolean; autoAnswerQuestions: boolean; autoAcceptMeetings: boolean; shareNote: string };
+
+/** A connection as they see it: someone who declined or blocked them still shows as waiting. */
+export type Connection = {
+  username: string | null;
+  name: string | null;
+  status: "connected" | "waiting for them" | "asked you" | "you declined" | "blocked" | "disconnected";
+  perms?: ConnectionPerms;
+};
+
+/** Something another OVOA asked that waits for their yes. */
+export type OvoaWaiting = { id: string; kind: "accept_meeting" | "answer_question" | "book_meeting"; from: string; summary: string; times?: string[] };
+
+/** A line of the log: what their OVOA said to another. */
+export type OvoaLogLine = { to: string; said: string; at: number; status: string };
 
 export type StepDay = { day: string; steps: number };
 
@@ -1504,6 +1526,35 @@ export const api = {
   textingLink: (token: string) =>
     request<{ code: string; number: string; body: string; expiresAt: number }>("/texting/link", token, { method: "POST" }),
   textingUnlink: (token: string) => request<{ ok: true }>("/texting/link", token, { method: "DELETE" }),
+
+  // ---------- Username (api/src/usernames.ts) ----------
+
+  username: (token: string) => request<UsernameState>("/me/username", token),
+  /** Whether a username is free for them, as they type it. */
+  checkUsername: (token: string, name: string) =>
+    request<{ username: string; available: boolean; problem?: string }>(`/me/username/check?name=${encodeURIComponent(name)}`, token),
+  setUsername: (token: string, username: string) =>
+    request<{ username: string; address: string; changeableAt: number | null }>("/me/username", token, {
+      method: "PUT",
+      body: JSON.stringify({ username }),
+    }),
+
+  // ---------- OVOA to OVOA (api/src/network.ts) ----------
+
+  connections: (token: string) =>
+    request<{ username: string | null; connections: Connection[]; waiting: OvoaWaiting[] }>("/ovoa/connections", token),
+  connect: (token: string, username: string) =>
+    request<{ outcome?: string; needsUsername?: boolean; error?: string }>("/ovoa/connect", token, { method: "POST", body: JSON.stringify({ username }) }),
+  answerConnection: (token: string, username: string, answer: "yes" | "no" | "block") =>
+    request<{ outcome: string }>(`/ovoa/connections/${encodeURIComponent(username)}/answer`, token, { method: "POST", body: JSON.stringify({ answer }) }),
+  setConnectionPerms: (token: string, username: string, perms: Partial<ConnectionPerms>) =>
+    request<{ perms: ConnectionPerms }>(`/ovoa/connections/${encodeURIComponent(username)}/perms`, token, { method: "PUT", body: JSON.stringify(perms) }),
+  disconnect: (token: string, username: string, block = false) =>
+    request<{ outcome: string }>(`/ovoa/connections/${encodeURIComponent(username)}${block ? "?block=1" : ""}`, token, { method: "DELETE" }),
+  /** Their answer to what waits: yes (with a time's number, or the words to send), no, or changes. */
+  decideOvoa: (token: string, id: string, decision: "yes" | "no" | "changes", extra: { choice?: string; text?: string } = {}) =>
+    request<{ done: string }>(`/ovoa/approvals/${encodeURIComponent(id)}`, token, { method: "POST", body: JSON.stringify({ decision, ...extra }) }),
+  ovoaLog: (token: string) => request<{ log: OvoaLogLine[] }>("/ovoa/log", token),
 
   // ---------- What it costs ----------
 

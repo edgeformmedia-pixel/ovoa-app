@@ -175,6 +175,7 @@ function RootStack() {
         <Stack.Screen name="es100" options={{ ...pushed, title: "OVOA Band" }} />
         <Stack.Screen name="motion-lab" options={{ ...pushed, title: "Motion lab" }} />
         <Stack.Screen name="transcripts" options={{ ...pushed, title: "Transcripts" }} />
+        <Stack.Screen name="connections" options={{ ...pushed, title: "Connections" }} />
         <Stack.Screen name="live" options={{ ...pushed, title: "Live" }} />
         <Stack.Screen name="create" options={{ ...pushed, title: "Create an app" }} />
         {/* A made app on its own screen: its own header, its own colour. */}

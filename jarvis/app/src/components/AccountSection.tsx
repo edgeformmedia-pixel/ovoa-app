@@ -2,12 +2,13 @@ import { useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { GoogleConnection } from "./GoogleConnection";
 import { YourPlan } from "./Plan";
+import { UsernameRow } from "./UsernameRow";
 import { Btn, Row } from "./ui";
 import { api, ApiError } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { colors, space, type } from "../lib/theme";
 
-// Who you are to OVOA: your plan, your email, your name, your password, your
+// Who you are to OVOA: your plan, your email, your name, your @username, your password, your
 // Google accounts, and the ways out. Settings → Account (2026-09-24: Settings
 // became groups that open and close, and the Google accounts moved up here with
 // the rest of the account). The password fields stay folded away behind
@@ -96,6 +97,8 @@ export function AccountSection({ google }: { /** Show the Google accounts (not o
         disabled={!name.trim() || name.trim() === user.name || saving}
         style={styles.btn}
       />
+
+      <UsernameRow />
 
       <Pressable
         style={styles.disclosure}

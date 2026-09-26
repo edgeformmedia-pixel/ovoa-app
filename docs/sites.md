@@ -1,14 +1,43 @@
-# Websites at <name>.ovoa.ai
+# Websites at <username>.ovoa.ai/<project>
 
 Built 2026-09-26, as part of making texting OVOA (Instinct) do more on its own: someone texts or says
 "build a website for my client Tony's Pizza", and a few minutes later OVOA sends the link to a finished,
-hosted site: `tonys-pizza.ovoa.ai`, right on a phone and a laptop, with a contact form whose messages
+hosted site: `thomas.ovoa.ai/tonys-pizza`, right on a phone and a laptop, with a contact form whose messages
 come back to them by text and email. It's for their own business, or for the clients of someone who
 builds sites for others, which is why a site can name a `client`.
 
 Code: `jarvis/api/src/sites.ts` (all of it), migration `0050_sites_and_texting_first.sql`, the lane in
 `index.ts runTick`, the front door in `index.ts`'s default export. Tests: `test/sites.test.ts`
 (everything but serving), `scripts/sites-probe.mjs` (production, end to end).
+
+## Where a site lives (2026-09-26, later that day)
+
+A new site is a **project under the person's username**: `thomas.ovoa.ai/tonys-pizza` (docs/ovoa-network.md has
+usernames). Without a username, `site_build` answers `needsUsername` with a suggestion, and OVOA asks them to
+pick one in the conversation before building. An **address of its own** (`tonyspizza.ovoa.ai`, a "flat" site)
+only when they ask for one: `site_build` with `subdomain` (the one they named) or `ownAddress` (from the name).
+Every site from before is flat and keeps its address.
+
+- A project's `slug` is `<username>/<project>` (and `owner_username`, `path`, migration 0053), so `slug` is
+  still the one unique name, and `siteAddress` / `siteLink` give `https://thomas.ovoa.ai/tonys-pizza` and, as a
+  preview, `https://api.ovoa.ai/s/thomas/tonys-pizza`.
+- **Routing** (`sites.ts resolveSite`, tested on the real schema): a flat site's name serves that site as
+  before; a username's `/` is a page listing their live projects (name, the page's description, link) and
+  `/<project>/…` serves the project (`/<project>` without its slash gets a 301 to it, so the page's relative
+  links work); a username given up in the last 90 days answers 301 to the same path at the new name; anything
+  else is "Nothing here yet". A username with nothing published looks like an unknown name (404), so it says
+  nothing about the account.
+- **Links inside a project** stay in its folder: the designer is told never to write a link starting with "/";
+  `cleanSiteHtml` makes any it wrote relative (`relativeLinks`: "/#menu" is "#menu", "/" is "./"); and as it's
+  served, `present` puts any root link inside the folder, posts the form to `/<project>/contact`, and sets the
+  canonical and og:url to where the site lives now (a username can change). `sites.test.ts` checks a
+  multi-section page has no root link left.
+- **Which site they mean**: `site_change`, `site_leads`, `site_manage` find it by its address (a project's too),
+  its name, its project's name, the client's, or the words of it ("my pizza site", `pickSite`).
+- `site_manage move` takes `project` (a new name under their username; a flat site can come under it this way)
+  or `subdomain` (an address of its own).
+- **Changing the username** moves every project (`usernames.ts claimUsername`), and the old addresses 301 to the
+  new ones for 90 days.
 
 ## How it's used
 
