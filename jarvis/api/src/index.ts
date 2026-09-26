@@ -799,7 +799,7 @@ async function afterApple(
   env: Env,
   email: string,
   name: string | null,
-  appleSub: string,
+  appleSub: string | null,
   { kind = "app" }: { kind?: SessionKind } = {},
 ) {
   let user = await provenAccount(env.DB, email);
@@ -817,7 +817,7 @@ async function afterApple(
   if (!user.provenBefore) {
     await env.DB.prepare("UPDATE users SET email_verified_at = ? WHERE id = ?").bind(Date.now(), user.id).run();
   }
-  await linkAppleSub(env.DB, user.id, appleSub);
+  if (appleSub) await linkAppleSub(env.DB, user.id, appleSub);
   const token = await createSession(env.DB, user.id, { kind });
   return { token, user: await publicUser(env, user.id), created };
 }
@@ -981,9 +981,11 @@ app.post("/auth/google", async (c) => {
     logAuth("google", "rejected", null);
     return c.json({ error: "Google didn't confirm that sign-in. Try again." }, 401);
   }
-  const result = await afterProven(c.env, who.email, who.name);
-  logAuth("google", provenOutcome(result), who.email);
-  return c.json(result);
+  // Like Apple: Google has proven the address, so no name + password step. A
+  // new account is made then and there, passwordless (the site's /text page).
+  const result = await afterApple(c.env, who.email, who.name, null, { kind: "web" });
+  logAuth("google", result.created ? "created" : "signed in", who.email, { user: result.user?.id });
+  return c.json(result, result.created ? 201 : 200);
 });
 
 // ---------- The app's own Google and Apple sign-ins (signin.ts) ----------
