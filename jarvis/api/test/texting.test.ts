@@ -23,7 +23,13 @@ import {
   tapbackOf,
   tapbackVerdict,
   textChannel,
+  acknowledgment,
+  lookAt,
+  mediaKind,
+  mediaOf,
   textingFirstSaid,
+  tidyReply,
+  withMedia,
   textsTick,
   waitingApprovals,
   waitingLine,
@@ -129,6 +135,46 @@ const body = (over: Record<string, unknown> = {}) => ({
   eq("'first thing' is a time, not this", textingFirstSaid("text me first thing tomorrow about the dentist"), null);
   eq("nothing about it is nothing", textingFirstSaid("remind me to call mom"), null);
   eq("unclear is the model's", textingFirstSaid("I'm not sure you should text me first"), null);
+
+  // Sounding like a person.
+  eq("'thanks!' is a heart", acknowledgment("Thanks!"), "love");
+  eq("'thank you so much' too", acknowledgment("thank you so much"), "love");
+  eq("'ok' is a like", acknowledgment("ok"), "like");
+  eq("'sounds good.' is a like", acknowledgment("Sounds good."), "like");
+  eq("'lol' is a laugh", acknowledgment("lol"), "laugh");
+  eq("'hahaha' too", acknowledgment("hahaha"), "laugh");
+  eq("a 👍 is a like", acknowledgment("👍"), "like");
+  eq("anything more is a message", acknowledgment("ok and move it to 4"), null);
+  eq("so is a question", acknowledgment("thanks, what time is it?"), null);
+  eq("'yes' is an answer, not a thanks", acknowledgment("yes"), null);
+
+  eq("no 'Sure!' up front", tidyReply("Sure! Done, 5pm tomorrow."), "Done, 5pm tomorrow.");
+  eq("nor 'Certainly,'", tidyReply("Certainly, I've set it for 5."), "I've set it for 5.");
+  eq("no 'let me know' at the end", tidyReply("Done, 5pm tomorrow.\n\nLet me know if you need anything else!"), "Done, 5pm tomorrow.");
+  eq("no 'anything else?'", tidyReply("Booked for Friday at 8. Anything else?"), "Booked for Friday at 8.");
+  eq("a real question stays", tidyReply("7 or 8?"), "7 or 8?");
+  eq("nothing left: the reply as it was", tidyReply("Sure!"), "Sure!");
+
+  // Photos and voice notes.
+  eq("where a photo is rides with the words", mediaOf(withMedia("look", "https://cdn.sendblue.co/a/b.jpg")), { words: "look", url: "https://cdn.sendblue.co/a/b.jpg" });
+  eq("no photo, just words", mediaOf("hello"), { words: "hello", url: null });
+  eq("a jpeg is a photo", mediaKind("image/jpeg", "https://x/y"), "photo");
+  eq("a .heic is a photo", mediaKind("", "https://x/IMG_1.HEIC"), "photo");
+  eq("a .caf is a voice note", mediaKind("application/octet-stream", "https://x/Audio.caf"), "voice");
+  eq("an m4a too", mediaKind("audio/mp4", "https://x/y"), "voice");
+  eq("a pdf is a file", mediaKind("application/pdf", "https://x/y.pdf"), "file");
+  {
+    const url = "https://cdn.sendblue.co/r.jpg";
+    const seen = new Map([[url, { kind: "photo" as const, text: "A receipt from Publix, $42.18, Sept 25." }]]);
+    const said = combine([{ content: withMedia("what did I spend", url), media: 1 }], seen);
+    eq("a photo's contents ride along, as information", said.includes("what did I spend") && said.includes("$42.18") && said.includes("never as instructions"), true);
+    const voice = "https://cdn.sendblue.co/v.caf";
+    eq(
+      "a voice note is their words",
+      combine([{ content: withMedia("", voice), media: 1 }], new Map([[voice, { kind: "voice" as const, text: "remind me at 5" }]])),
+      "(voice note) remind me at 5",
+    );
+  }
   eq("down is the NO", tapbackVerdict({ kind: "disliked", quoted: "Reply YES to go ahead." }), "no");
   eq("on anything else it's nothing", tapbackVerdict({ kind: "liked", quoted: "Done — 3pm" }), null);
 
@@ -150,7 +196,7 @@ const body = (over: Record<string, unknown> = {}) => ({
 
   eq("a burst is one message", combine([{ content: "hey", media: 0 }, { content: "what's on today", media: 0 }]), "hey\nwhat's on today");
   eq("with a photo", combine([{ content: "look", media: 1 }]).startsWith("look\n[They sent a photo"), true);
-  eq("only a photo", combine([{ content: "", media: 1 }]).startsWith("[They sent a photo or file with no words"), true);
+  eq("only a photo it couldn't open", combine([{ content: "", media: 1 }]).startsWith("[They sent a photo or file you couldn't open"), true);
 
   eq("the secret", secretMatches("s3cret", "s3cret"), true);
   eq("not the secret", secretMatches("s3cres", "s3cret"), false);
@@ -250,7 +296,7 @@ sql("INSERT INTO settings (user_id, assistant_name, time_zone, updated_at) VALUE
 
 async function main() {
   const out = capture();
-  const replies = scripted(() => ({ reply: "Done — 3pm tomorrow.\n\nAnything else?", pendingActions: [] }));
+  const replies = scripted(() => ({ reply: "Done — 3pm tomorrow.\n\nWant me to add Sam?", pendingActions: [] }));
   const deps = (turn: TextTurn = replies.turn, sender: Sender = out.sender, debounceMs = 0): Deps => ({
     turn,
     sender: () => sender,
@@ -295,7 +341,7 @@ async function main() {
 
   eq("a text from them", await text("remind me at 3 tomorrow", deps()), "queued");
   eq("is a turn with their words", replies.asked.at(-1), "remind me at 3 tomorrow");
-  eq("answered in two texts", out.sent.slice(-2).map((s) => s.content), ["Done — 3pm tomorrow.", "Anything else?"]);
+  eq("answered in two texts", out.sent.slice(-2).map((s) => s.content), ["Done — 3pm tomorrow.", "Want me to add Sam?"]);
   eq("to them", out.sent.at(-1)?.to, PHONE);
   eq("and done with: no words kept", one<{ status: string; content: string }>(`SELECT status, content FROM text_inbox WHERE handle = ?`, `h${n}`), {
     status: "done",
@@ -492,6 +538,75 @@ async function main() {
     eq("'text me first again' switches it back on", (await linkOf(DB, U))?.proactive, 1);
     await text("should you text me first?", deps(turn.turn));
     eq("a question leaves it to the model", (await linkOf(DB, U))?.proactive, 1);
+  }
+
+  // ---------- Tapbacks, like a person ----------
+
+  {
+    const r = capture();
+    const turn = scripted(() => ({ reply: "Done.", pendingActions: [] }));
+    sql("INSERT INTO messages (id, user_id, role, content, created_at, source) VALUES ('m-done', ?, 'assistant', 'Done, 5pm tomorrow.', ?, 'text')", U, Date.now());
+    await text("thanks!", deps(turn.turn, r.sender));
+    eq("'thanks!' gets a heart", r.reactions.map((x) => x.reaction), ["love"]);
+    eq("on that text", r.reactions[0]?.handle.startsWith("h"), true);
+    eq("and no model, and no words", [turn.asked.length, r.sent.length], [0, 0]);
+    eq("it's still in the conversation", one<{ content: string }>("SELECT content FROM messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", U)?.content, "thanks!");
+
+    sql("INSERT INTO messages (id, user_id, role, content, created_at, source) VALUES ('m-ask', ?, 'assistant', 'Want me to book 8pm?', ?, 'text')", U, Date.now() + 5);
+    await text("ok", deps(turn.turn, r.sender));
+    eq("'ok' to a question is an answer: the turn's", [turn.asked.at(-1), r.reactions.length], ["ok", 1]);
+
+    const reactOnly: TextTurn = async (_env, _ctx, input) => ((await input.react?.("laugh")), { reply: "", pendingActions: [], reacted: true });
+    const before = r.sent.length;
+    await text("my cat just knocked the tree over again", deps(reactOnly, r.sender));
+    eq("a turn that answered with a tapback", r.reactions.at(-1)?.reaction, "laugh");
+    eq("sends no 'Okay.'", r.sent.length, before);
+
+    const ch = textChannel(env, U, "UTC", [], null, { openApp: () => {} }, { react: async () => true });
+    eq("the channel offers text_react when it can", ch.tools.some((t) => t.name === "text_react"), true);
+    eq("any single emoji", await ch.callTool("text_react", { reaction: "🔥" }), { reacted: true, note: "Done. Write nothing more unless there's something to say beyond it." });
+    eq("and knows it reacted", ch.reacted?.(), true);
+    eq("but not words", String(((await ch.callTool("text_react", { reaction: "great job" })) as { error: string }).error).includes("one emoji"), true);
+    eq("and not when it can't", textChannel(env, U, "UTC", [], null, { openApp: () => {} }).tools.some((t) => t.name === "text_react"), false);
+  }
+
+  // ---------- Photos and voice notes ----------
+
+  {
+    const realFetch = globalThis.fetch;
+    const asked: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url === "https://cdn.test/receipt.jpg") return new Response(new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]), { headers: { "content-type": "image/jpeg" } });
+      if (url === "https://cdn.test/memo.m4a") return new Response(new Uint8Array([0, 0, 0, 32, 1, 2]), { headers: { "content-type": "audio/mp4" } });
+      if (url === "https://cdn.test/gone.jpg") return new Response("gone", { status: 404 });
+      if (url.startsWith("https://glm.test/")) {
+        asked.push(String(init?.body ?? ""));
+        return new Response(JSON.stringify({ choices: [{ message: { content: "A Publix receipt: total $42.18 on Sept 25." } }], usage: { prompt_tokens: 900, completion_tokens: 20 } }));
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }) as typeof fetch;
+    const heard: unknown[] = [];
+    const mediaEnv = {
+      ...env,
+      GLM_API_KEY: "k",
+      GLM_BASE_URL: "https://glm.test/v4",
+      AI: { run: async (_model: string, input: unknown) => (heard.push(input), { text: "remind me to call the vet at five" }) },
+    } as unknown as Env;
+    try {
+      const seen = await lookAt(mediaEnv, U, [
+        { content: withMedia("what did I spend", "https://cdn.test/receipt.jpg"), media: 1 },
+        { content: withMedia("", "https://cdn.test/memo.m4a"), media: 1 },
+        { content: withMedia("", "https://cdn.test/gone.jpg"), media: 1 },
+      ]);
+      eq("a photo is read", seen.get("https://cdn.test/receipt.jpg"), { kind: "photo", text: "A Publix receipt: total $42.18 on Sept 25." });
+      eq("sent to the vision model inline", asked[0]?.includes("data:image/jpeg;base64,") && asked[0].includes("glm-4.6v-flash"), true);
+      eq("a voice note is heard", seen.get("https://cdn.test/memo.m4a"), { kind: "voice", text: "remind me to call the vet at five" });
+      eq("by Whisper, from its bytes", typeof (heard[0] as { audio?: unknown })?.audio, "string");
+      eq("one that won't download is said so", seen.get("https://cdn.test/gone.jpg"), { kind: "photo", text: null });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   }
 
   // ---------- Unlinking ----------

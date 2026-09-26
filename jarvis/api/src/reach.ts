@@ -50,12 +50,100 @@ async function sentLately(db: D1Database, userId: string, now: number) {
   return row?.n ?? 0;
 }
 
+// ---------- Pacing (2026-09-26) ----------
+//
+// Not messaging too much is most of sounding like a person. An assistant that
+// asks something every few hours gets muted; the one people keep asks once a
+// day at most, and when they don't answer, waits: a day, then three, then a
+// week (Instinct's rhythm, as the user described it). Their reply, in the app
+// or by text, starts it over.
+//
+// Three kinds of text OVOA sends first:
+//   their own:  what they set up and wait for (a reminder, a routine's check-in,
+//               "leave now", meeting prep) and anything they asked for: never held.
+//   asks:       OVOA wanting something of them (a question, a nudge about a
+//               promise, a follow-up, "different day?"): one a day at most, and
+//               backing off while they don't answer.
+//   news:       everything else (the brief, the wind-down, what background
+//               work found): three a day at most, and fewer once they've gone
+//               quiet altogether.
+// What's held isn't sent at all, not even as a notification: it's in the app.
+
+/** Kinds that are theirs: they set these up, and they're on time or they're useless. */
+const THEIRS = new Set(["reminder", "routine", "commute", "prep"]);
+/** Kinds that ask something of them. */
+const ASKS = new Set(["followup", "oddity", "note:question", "note:nudge"]);
+/** News texts in any 24 hours. */
+export const NEWS_PER_DAY = 3;
+/** How long an ask waits after unanswered ones: one, two, three or more since their last word. */
+const ASK_BACKOFF_MS = [0, 20 * 3_600_000, 3 * DAY_MS, 7 * DAY_MS];
+
+export type PaceState = {
+  /** When they last said anything to OVOA, in the app or by text. */
+  lastWordAt: number | null;
+  /** Asks sent since then, and when the last of them went. */
+  asksSince: number;
+  lastAskAt: number | null;
+  /** News sent since then, and when the last went. */
+  newsSince: number;
+  lastNewsAt: number | null;
+  /** In the last day. */
+  newsToday: number;
+};
+
+/** Which group a kind is in (THEIRS, ASKS, news). Pure. */
+export function paceGroup(kind: string): "theirs" | "ask" | "news" {
+  return THEIRS.has(kind) ? "theirs" : ASKS.has(kind) ? "ask" : "news";
+}
+
+/**
+ * Whether a text sent first goes now or is held. `asked`: they asked for it
+ * and are waiting (a website that's ready). Pure.
+ */
+export function paceVerdict(kind: string, asked: boolean, s: PaceState, now: number): "send" | "hold" {
+  const group = paceGroup(kind);
+  if (asked || group === "theirs") return "send";
+  if (group === "ask") {
+    const wait = ASK_BACKOFF_MS[Math.min(s.asksSince, ASK_BACKOFF_MS.length - 1)];
+    return s.lastAskAt !== null && now - s.lastAskAt < Math.max(wait, 20 * 3_600_000) ? "hold" : "send";
+  }
+  if (s.newsToday >= NEWS_PER_DAY) return "hold";
+  // Quiet for a week and not answering: news every three days; three weeks: every week.
+  const quietFor = s.lastWordAt === null ? Infinity : now - s.lastWordAt;
+  const gap = quietFor > 21 * DAY_MS ? 7 * DAY_MS : quietFor > 7 * DAY_MS ? 3 * DAY_MS : 0;
+  return gap && s.newsSince >= 2 && s.lastNewsAt !== null && now - s.lastNewsAt < gap ? "hold" : "send";
+}
+
+/** Where things stand with them, from the conversation and the outbox. */
+export async function paceState(db: D1Database, userId: string, now: number): Promise<PaceState> {
+  const word = await db
+    .prepare("SELECT MAX(created_at) AS at FROM messages WHERE user_id = ? AND role = 'user'")
+    .bind(userId)
+    .first<{ at: number | null }>();
+  const lastWordAt = word?.at ?? null;
+  const { results } = await db
+    .prepare("SELECT kind, sent_at FROM text_outbox WHERE user_id = ? AND ok = 1 AND kind NOT LIKE 'asked:%' AND sent_at > ? ORDER BY sent_at")
+    .bind(userId, now - 30 * DAY_MS)
+    .all<{ kind: string; sent_at: number }>();
+  const since = results.filter((r) => lastWordAt === null || r.sent_at > lastWordAt);
+  const asks = since.filter((r) => paceGroup(r.kind) === "ask");
+  const news = since.filter((r) => paceGroup(r.kind) === "news");
+  return {
+    lastWordAt,
+    asksSince: asks.length,
+    lastAskAt: results.filter((r) => paceGroup(r.kind) === "ask").at(-1)?.sent_at ?? null,
+    newsSince: news.length,
+    lastNewsAt: news.at(-1)?.sent_at ?? null,
+    newsToday: results.filter((r) => paceGroup(r.kind) === "news" && r.sent_at > now - DAY_MS).length,
+  };
+}
+
 /**
  * Tells them, by text when they text OVOA and by notification otherwise. Never
  * throws. "text": it went by text and is in the conversation; "push": it went
  * as a notification (which may have reached no phone, as ever).
  */
-export async function reach(env: Env, userId: string, r: Reach, io: ReachIo = {}): Promise<"text" | "push"> {
+export async function reach(env: Env, userId: string, r: Reach, io: ReachIo = {}): Promise<"text" | "push" | "held"> {
   const now = io.now ?? Date.now();
   const notify = async () => {
     await (io.push ?? push)(env, userId, r.push).catch((err) => console.error("reach: push failed", err));
@@ -65,6 +153,11 @@ export async function reach(env: Env, userId: string, r: Reach, io: ReachIo = {}
     if (!textingReady(env)) return notify();
     const link = await linkOf(env.DB, userId);
     if (!link || link.proactive === 0) return notify();
+    // Paced like a person (paceVerdict): held ones wait in the app, with no notification either.
+    if (paceVerdict(r.kind, !!r.asked, await paceState(env.DB, userId, now), now) === "hold") {
+      say("text", { outcome: "first: held for pacing", user: userId, kind: r.kind });
+      return "held";
+    }
     if (!r.asked && (await sentLately(env.DB, userId, now)) >= TEXTS_FIRST_PER_DAY) {
       say("text", { outcome: "first: over the day's texts", user: userId, kind: r.kind });
       return notify();

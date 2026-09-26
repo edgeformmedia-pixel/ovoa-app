@@ -2545,7 +2545,7 @@ const TEXT_TOO_FAST = "That's a lot at once. Give me a minute, then text me agai
  * month's. Nothing on the phone can be looked up from here (ACTIONS_ONLY, as
  * for Siri): what has to run on it waits in the app, and the channel says so.
  */
-async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId }: TextTurnInput): Promise<TextTurnOutcome> {
+async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId, react }: TextTurnInput): Promise<TextTurnOutcome> {
   const plain = (reply: string): TextTurnOutcome => ({ reply, pendingActions: [] });
   if (await needsVerification(env, userId)) return plain(TEXT_VERIFY);
   // Which engines answer may have been switched in the table (as the app's requests do on sign-in).
@@ -2567,6 +2567,8 @@ async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId }
   // Into the transcript, as a typed turn's words are, when the timeline is on (transcripts.ts).
   ctx.waitUntil(storeLine(env.DB, userId, text, "mic").catch(() => false));
   const started = Date.now();
+  // Kept, to ask afterwards whether the turn answered with a tapback (texting.ts text_react).
+  let channel: TurnChannel | undefined;
   const result = await runTurn(env, ctx, {
     userId,
     text,
@@ -2575,10 +2577,11 @@ async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId }
     app,
     requestId,
     channel: (hooks) =>
-      textChannel(env, userId, timeZone, apps, app, hooks, {
+      (channel = textChannel(env, userId, timeZone, apps, app, hooks, {
         agent: !!settings.agent_enabled && settings.agent_autonomy !== "off",
         proactive: link.proactive !== 0,
-      }),
+        react,
+      })),
   }).catch((err: unknown): TurnResult => {
     if (isModelRefused(err)) return refusedReply(err, plan.tier, timeZone);
     if (!isAiUnreachable(err)) throw err;
@@ -2590,9 +2593,9 @@ async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId }
   const monthly = standing.month;
   if (monthly?.verdict === "warn" && (result.meta.engine as string) !== "none") {
     ctx.waitUntil(markWarned(env.DB, userId, monthly.month));
-    return { reply: `${result.reply}\n\n${warnMessage(monthly.used, monthly.cap)}`, pendingActions: result.pendingActions };
+    return { reply: `${result.reply}\n\n${warnMessage(monthly.used, monthly.cap)}`, pendingActions: result.pendingActions, reacted: channel?.reacted?.() };
   }
-  return { reply: result.reply, pendingActions: result.pendingActions };
+  return { reply: result.reply, pendingActions: result.pendingActions, reacted: channel?.reacted?.() };
 }
 
 // ---------- Memory ----------

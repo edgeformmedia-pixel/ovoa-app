@@ -7,7 +7,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { drainNotes, followUpDropped, ownToolsFor, READ_ALONE, tell, worthChasing, WRITE_ON_ACT } from "../src/agent";
-import { reach, TEXTS_FIRST_PER_DAY } from "../src/reach";
+import { NEWS_PER_DAY, paceGroup, paceVerdict, reach, TEXTS_FIRST_PER_DAY, type PaceState } from "../src/reach";
 import { capture, textChannel, waitingApprovals, type Sender } from "../src/texting";
 import type { ToolSpec } from "../src/llm";
 import type { Env } from "../src/types";
@@ -38,6 +38,39 @@ eq("Suggest reads only", ownToolsFor([family], "suggest").tools.map((t) => t.nam
 eq("Act adds the writes that only touch their own things", ownToolsFor([family], "act").tools.map((t) => t.name), ["note_add", "note_search", "todo_add", "todo_list", "reminder_set", "site_list"]);
 eq("never an alarm, a routine change or a website build on their own", ["alarm_set", "routine_change", "site_build"].some((n) => READ_ALONE.has(n) || WRITE_ON_ACT.has(n)), false);
 eq("and it calls the right family", await ownToolsFor([family], "act").callTool("todo_add", {}), { ran: "todo_add" });
+
+// ---------- Pacing, like a person ----------
+
+{
+  const H = 3_600_000;
+  const D = 24 * H;
+  const now = Date.parse("2026-09-26T15:00:00Z");
+  const fresh: PaceState = { lastWordAt: now - H, asksSince: 0, lastAskAt: null, newsSince: 0, lastNewsAt: null, newsToday: 0 };
+  eq("their own reminders are theirs", paceGroup("reminder"), "theirs");
+  eq("a follow-up asks", paceGroup("followup"), "ask");
+  eq("a nudge asks", paceGroup("note:nudge"), "ask");
+  eq("the brief is news", paceGroup("brief"), "news");
+
+  eq("a first ask goes", paceVerdict("followup", false, fresh, now), "send");
+  eq("one ask a day, even when they answer", paceVerdict("followup", false, { ...fresh, lastAskAt: now - 5 * H }, now), "hold");
+  eq("a day later, another", paceVerdict("followup", false, { ...fresh, lastAskAt: now - 21 * H }, now), "send");
+  eq("one unanswered: the next day", paceVerdict("note:question", false, { ...fresh, asksSince: 1, lastAskAt: now - 21 * H }, now), "send");
+  eq("two unanswered: not for three days", paceVerdict("note:question", false, { ...fresh, asksSince: 2, lastAskAt: now - 2 * D }, now), "hold");
+  eq("but on the third", paceVerdict("note:question", false, { ...fresh, asksSince: 2, lastAskAt: now - 3 * D - H }, now), "send");
+  eq("three unanswered: a week", paceVerdict("oddity", false, { ...fresh, asksSince: 3, lastAskAt: now - 6 * D }, now), "hold");
+  eq("after a week, once more", paceVerdict("oddity", false, { ...fresh, asksSince: 5, lastAskAt: now - 7 * D - H }, now), "send");
+
+  eq(`news: ${NEWS_PER_DAY} a day`, paceVerdict("brief", false, { ...fresh, newsToday: NEWS_PER_DAY }, now), "hold");
+  eq("under that it goes", paceVerdict("brief", false, { ...fresh, newsToday: NEWS_PER_DAY - 1 }, now), "send");
+  eq("quiet for a week: news every three days", paceVerdict("weekly", false, { ...fresh, lastWordAt: now - 8 * D, newsSince: 3, lastNewsAt: now - D }, now), "hold");
+  eq("quiet for three weeks: every week", paceVerdict("brief", false, { ...fresh, lastWordAt: now - 30 * D, newsSince: 9, lastNewsAt: now - 4 * D }, now), "hold");
+  eq("and then it goes", paceVerdict("brief", false, { ...fresh, lastWordAt: now - 30 * D, newsSince: 9, lastNewsAt: now - 8 * D }, now), "send");
+
+  const silent: PaceState = { lastWordAt: now - 30 * D, asksSince: 9, lastAskAt: now - H, newsSince: 9, lastNewsAt: now - H, newsToday: 9 };
+  eq("their reminder is never held", paceVerdict("reminder", false, silent, now), "send");
+  eq("nor a routine check-in they set up", paceVerdict("routine", false, silent, now), "send");
+  eq("nor what they asked for", paceVerdict("note:done", true, silent, now), "send");
+}
 
 // ---------- A D1 over node:sqlite, with every migration ----------
 
@@ -172,15 +205,30 @@ async function main() {
     // The day's share.
     sql("DELETE FROM text_outbox");
     const many = capture();
-    for (let i = 0; i < TEXTS_FIRST_PER_DAY; i++) await reach(env, TEXTER, { kind: "nudge", text: `n${i}`, push: notification }, { sender: many.sender, push: io.push });
+    for (let i = 0; i < TEXTS_FIRST_PER_DAY; i++) await reach(env, TEXTER, { kind: "reminder", text: `n${i}`, push: notification }, { sender: many.sender, push: io.push });
     eq(`${TEXTS_FIRST_PER_DAY} a day by text`, many.sent.length, TEXTS_FIRST_PER_DAY);
-    eq("then notifications", await reach(env, TEXTER, { kind: "nudge", text: "one too many", push: notification }, { sender: many.sender, push: io.push }), "push");
+    eq("then notifications", await reach(env, TEXTER, { kind: "reminder", text: "one too many", push: notification }, { sender: many.sender, push: io.push }), "push");
     eq("except what they asked for and are waiting on", await reach(env, TEXTER, { kind: "site", text: "Your site is live", push: notification, asked: true }, { sender: many.sender, push: io.push }), "text");
     sql("DELETE FROM text_outbox");
 
     sql("UPDATE text_links SET proactive = 0 WHERE user_id = ?", TEXTER);
     eq("texting first turned off: notifications", await reach(env, TEXTER, { kind: "reminder", text: "x", push: notification }, io), "push");
     sql("UPDATE text_links SET proactive = 1 WHERE user_id = ?", TEXTER);
+  }
+
+  // ---------- Pacing, through reach ----------
+  {
+    sql("DELETE FROM text_outbox");
+    sql("INSERT INTO messages (id, user_id, role, content, created_at, source) VALUES ('said-hi', ?, 'user', 'hi', ?, 'text')", TEXTER, Date.now() - 60_000);
+    const paced = capture();
+    const io = { sender: paced.sender, push: async () => 1 };
+    eq("a question goes", await reach(env, TEXTER, { kind: "note:question", text: "Want me to book 8?", push: notification }, io), "text");
+    eq("a second the same day is held", await reach(env, TEXTER, { kind: "followup", text: "Still want 8?", push: notification }, io), "held");
+    eq("held means nothing at all, not a notification", paced.sent.map((s) => s.content), ["Want me to book 8?"]);
+    eq("their reminder still goes", await reach(env, TEXTER, { kind: "reminder", text: "Reminder: vet", push: notification }, io), "text");
+    for (let i = 0; i < NEWS_PER_DAY; i++) await reach(env, TEXTER, { kind: "brief", text: `b${i}`, push: notification }, io);
+    eq(`news stops at ${NEWS_PER_DAY} a day`, await reach(env, TEXTER, { kind: "weekly", text: "Your week", push: notification }, io), "held");
+    sql("DELETE FROM text_outbox");
   }
 
   // ---------- texting_first, by text ----------
@@ -236,7 +284,7 @@ async function main() {
 
   // ---------- A question left hanging ----------
   {
-    const at = Date.now() - 4 * 3_600_000;
+    const at = Date.now() - 24 * 3_600_000;
     const say = (role: string, content: string, t: number, source: string | null = "text") =>
       sql("INSERT INTO messages (id, user_id, role, content, created_at, source) VALUES (?, ?, ?, ?, ?, ?)", crypto.randomUUID(), TEXTER, role, content, t, source);
     sql("DELETE FROM messages WHERE user_id = ?", TEXTER);
@@ -251,7 +299,7 @@ async function main() {
 
     sql("DELETE FROM messages WHERE user_id = ?", TEXTER);
     sql("UPDATE text_links SET followed_up_at = NULL WHERE user_id = ?", TEXTER);
-    const later = Date.now() - 5 * 3_600_000;
+    const later = Date.now() - 26 * 3_600_000;
     say("assistant", "Here's your brief for today.", later - 60_000);
     say("assistant", 'Did you do Gym? Text "done" when you have.', later);
     await followUpDropped(env);
@@ -266,7 +314,7 @@ async function main() {
     eq("too soon to chase", count("SELECT COUNT(*) AS n FROM agent_runs WHERE user_id = ? AND trigger = 'event'", TEXTER), 1);
 
     sql("DELETE FROM messages WHERE user_id = ?", TEXTER);
-    const old = Date.now() - 30 * 3_600_000;
+    const old = Date.now() - 60 * 3_600_000;
     say("user", "Book dinner", old);
     say("assistant", "7 or 8?", old + 1);
     await followUpDropped(env);

@@ -1413,6 +1413,72 @@ async function repairClaim(env: LlmEnv, engine: Engine, opts: ToolLoopOptions, r
  * model call like any other, so it asks the gate first. Its cost is filed by
  * the caller as a search (usage.ts searchRow), not through the usage sink.
  */
+// ---------- Photos and voice notes (texting.ts) ----------
+//
+// What someone texts OVOA that isn't words: a photo read by GLM's vision model
+// on the same provider and key as GLM (flash first, the full model when flash
+// is busy), and a voice note transcribed by Whisper on Workers AI. Both ask the
+// gate first and are written down like any call. Probed 2026-09-26: glm-4.6v
+// described a photo in 2.5 s; whisper-large-v3-turbo read an M4A and an Opus
+// memo word for word in 1.4-2.6 s; Z.ai's own transcriber took neither.
+
+/** Base64 of bytes, in pieces: a whole photo at once overflows the call stack. */
+function base64Of(bytes: Uint8Array) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+const VISION_MODELS = ["glm-4.6v-flash", "glm-4.6v"];
+
+/** A photo as words, answering `prompt`. Throws when no vision model answers. */
+export async function describeImage(env: LlmEnv, opts: { bytes: Uint8Array; type: string; prompt: string; usage: UsageTag }) {
+  await askGate(env, opts.usage);
+  const key = varOf(env, OPENAI_PROVIDERS.glm.keyVar);
+  if (!key) throw new Error("No GLM key for photos");
+  const url = chatCompletionsUrl(baseUrlOf(env, "glm"));
+  const image = `data:${opts.type || "image/jpeg"};base64,${base64Of(opts.bytes)}`;
+  let last: unknown = null;
+  for (const model of VISION_MODELS) {
+    const at = Date.now();
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+        body: JSON.stringify({
+          model,
+          max_tokens: 600,
+          thinking: { type: "disabled" },
+          messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: image } }, { type: "text", text: opts.prompt }] }],
+        }),
+        signal: AbortSignal.timeout(25_000),
+      });
+      if (!res.ok) throw new Error(`GLM ${model} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      const out = (await res.json()) as OpenAiOut & { usage?: unknown };
+      reportUsage(env, opts, "glm", model, readOpenAiUsage(out.usage), Date.now() - at);
+      const text = openAiText(out).trim();
+      if (text) return text;
+      last = new Error(`GLM ${model} said nothing about the photo`);
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw last instanceof Error ? last : new Error("No vision model answered");
+}
+
+/** A voice note as words. Throws when it can't be heard (a format Whisper can't decode, say). */
+export async function transcribeAudio(env: LlmEnv, opts: { bytes: Uint8Array; usage: UsageTag }) {
+  await askGate(env, opts.usage);
+  const ai = (env as Record<string, unknown>).AI as Ai | undefined;
+  if (!ai) throw new Error("No Workers AI binding for voice notes");
+  const at = Date.now();
+  const out = (await ai.run("@cf/openai/whisper-large-v3-turbo" as keyof AiModels, { audio: base64Of(opts.bytes) } as never)) as { text?: string };
+  reportUsage(env, opts, "workers", "@cf/openai/whisper-large-v3-turbo", null, Date.now() - at);
+  const text = (out?.text ?? "").trim();
+  if (!text) throw new Error("Nothing heard in the voice note");
+  return text;
+}
+
 export async function searchGrounded(env: LlmEnv, opts: { query: string; today: string; usage: UsageTag }) {
   await askGate(env, opts.usage);
   if (!env.GEMINI_API_KEY) throw new Error("Gemini search has no key (GEMINI_API_KEY)");

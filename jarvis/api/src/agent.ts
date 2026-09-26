@@ -7,7 +7,7 @@ import { googleAssistant, validTimeZone } from "./google/assistant";
 import { healthSummaryFor } from "./healthdays";
 import { healthSummaryTool } from "./heart";
 import { chatWithTools, isModelRefused, type CallTool, type ToolSpec } from "./llm";
-import { reach } from "./reach";
+import { paceState, reach } from "./reach";
 import { linkOf, textingReady } from "./texting";
 import {
   addDays,
@@ -432,6 +432,9 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
   const own = ownToolsFor(ownToolsFrom?.(env, userId, timeZone) ?? [], autonomy);
   // Someone who texts OVOA gets what it says by text (reach.ts), and can answer it there.
   const texted = textingReady(env) && (await linkOf(db, userId))?.proactive === 1;
+  // How quiet they've been, so a run knows when saying less is the kind thing (reach.ts pacing).
+  const pace = texted ? await paceState(db, userId, Date.now()) : null;
+  const quietDays = pace?.lastWordAt ? Math.floor((Date.now() - pace.lastWordAt) / 86_400_000) : null;
 
   // What the agent is allowed to say, and how it says it.
   let spoke: NewNote | null = null;
@@ -616,8 +619,11 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
       : "The user has you on Suggest: look, think, and tell them. Anything that would change something appears as a card for them to approve — set it up and say so, but never say it is done.",
     "You cannot send email or messages, and you cannot delete anything. Those tools are not available to you here, on purpose. If something needs sending, write it as a draft (gmail_create_draft) and tell them it's ready: once they answer, you can send it with them there.",
     texted
-      ? "What you say with agent_say reaches them as a text, in the conversation they have with you, and they can answer it there. Write it as a text: short and plain, no Markdown. When you set up something that waits for their OK, a line asking them to reply YES is added for you. If you need an answer, ask it in that text (kind 'question'): their reply comes back to you as an ordinary conversation."
+      ? "What you say with agent_say reaches them as a text, in the conversation they have with you, and they can answer it there. Write it like a friend texting: one or two short lines, the thing itself, no greeting, no \"just checking in\", no Markdown. When you set up something that waits for their OK, a line asking them to reply YES is added for you. If you need an answer, ask it in that text (kind 'question'): their reply comes back to you as an ordinary conversation."
       : "You also cannot ask them a question and wait: there is nobody there. If you genuinely need an answer, say so with agent_say and kind 'question', and stop.",
+    pace && pace.asksSince + pace.newsSince >= 2
+      ? `They haven't answered your last ${pace.asksSince + pace.newsSince} texts${quietDays ? ` (last heard from them ${quietDays} day${quietDays === 1 ? "" : "s"} ago)` : ""}. Say something only if it really matters to them; more texts now make the next one less likely to be read.`
+      : "",
     "",
     known.length ? `What you know about ${user?.name ?? "them"} from talking with them:\n${known.join("\n")}` : "",
     conversation.length
@@ -1102,10 +1108,14 @@ export async function runJobNow(env: Env, userId: string, jobId: string) {
 // question is looked at once, never at night, and only for someone who gets
 // texts first (text_links.proactive).
 
-/** OVOA asked them something by text and they never answered: this long after, it may ask once more. */
-const FOLLOW_UP_AFTER_MS = 3 * 3_600_000;
+/**
+ * OVOA asked them something by text and they never answered: the next day it
+ * may ask once more (2026-09-26: once a day, as a person would, not after a few
+ * hours). Past that it's paced like any ask (reach.ts): three days, then a week.
+ */
+const FOLLOW_UP_AFTER_MS = 20 * 3_600_000;
 /** Past this the question is old news, and it's let go. */
-const FOLLOW_UP_WITHIN_MS = 20 * 3_600_000;
+const FOLLOW_UP_WITHIN_MS = 48 * 3_600_000;
 /** People looked at per tick. */
 const FOLLOW_UPS_PER_TICK = 5;
 /** A reply is saved a millisecond after the text it answers (index.ts runTurn); a text OVOA sent first stands alone. */
