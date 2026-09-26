@@ -86,7 +86,18 @@ Instinct's other half: an assistant you text also texts you, and gets on with th
   alarms, people, money and websites, and on Act also add notes, to-dos, OVOA reminders and facts about
   people. Sending, deleting and messaging anyone still never happen on their own (`FORBIDDEN_ALONE`);
   a run drafts, and the send happens in a turn with them there.
-- **Websites** by text: docs/sites.md.
+- **Websites** by text: docs/sites.md. They live at `<username>.ovoa.ai/<project>`; the first time, OVOA asks
+  for a username by text and suggests one.
+
+## Other people's OVOAs, by text (2026-09-26)
+
+Everything in docs/ovoa-network.md works by text, the same as in the app: "connect with @maria", "find a time
+with Maria next week", "ask Jake's OVOA if he got the invoice", "what did my OVOA tell Maria?". What waits for
+their yes (a connection request, a meeting another OVOA asked for, a question, putting an agreed meeting on the
+calendar) arrives as a text OVOA sends first, so it counts toward the 12 a day and waits out quiet hours. The
+reply ("yes", "Tuesday at 3", "no", "tell her it came Monday") is a normal turn: the turn's prompt lists what
+waits, with ids, and carries `ovoa_approve` and `ovoa_connect_answer`, so a bare "yes" is enough. These aren't
+parked actions, so the texting channel's own YES shortcut (above) doesn't take them.
 
 ## Rules
 

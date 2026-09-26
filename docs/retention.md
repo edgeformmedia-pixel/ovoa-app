@@ -137,6 +137,12 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 | sites | mixed | the websites someone had OVOA build (`sites.ts`): kept. One they deleted goes **30 d** after `deleted_at` (it can be put back until then); one whose first build never worked (`status = 'failed'`, no page) 14 d after `updated_at`. Its builds and messages go with it | |
 | site_builds | delete | 14 d after `created_at`: each build or change asked for, and how it went | |
 | site_leads | delete | 14 d after `created_at`: what visitors sent through a website's contact form. Each was texted (or pushed) and emailed to the site's owner as it arrived | the owner's email copy is theirs |
+| usernames_history | expires | 90 d after `released_at`: a username someone moved away from, held for them and redirecting until then (`usernames.ts`) | |
+| connections | keep | who agreed to let their OVOAs talk (`network.ts`), until they disconnect or delete the account | |
+| connection_perms | keep | what each owner lets their OVOA do for one connection | |
+| ovoa_threads | delete | 14 d after `updated_at`: one exchange between two OVOAs; its messages and approvals go with it | |
+| ovoa_messages | delete | 14 d after `created_at`: what one OVOA said to another, which is also the log (`ovoa_log`) | |
+| ovoa_approvals | delete | 14 d after `created_at`: what waited for an owner's yes | |
 
 ## What changed from before
 
