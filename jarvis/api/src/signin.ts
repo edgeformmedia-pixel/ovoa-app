@@ -59,6 +59,8 @@ const EXPO_GO_HOST =
 export const GOOGLE_SIGNIN_SCOPES = "openid email profile";
 /** The app's bundle id: Apple's identity tokens for it name it as their audience. */
 export const APPLE_AUDIENCE = "com.ovoa.app";
+/** "Continue with Apple" on ovoa.ai: the Services ID its tokens name as their audience. */
+export const APPLE_WEB_AUDIENCE = "ai.ovoa.web";
 export const APPLE_ISSUER = "https://appleid.apple.com";
 export const APPLE_KEYS_URL = "https://appleid.apple.com/auth/keys";
 
@@ -275,12 +277,12 @@ export async function spendAppleNonce(db: D1Database, nonce: string, now = Date.
 export type AppleIdentity = { sub: string; email: string; nonce: string | null };
 
 /** Who a signature-checked identity token's claims say this is, or null for anything off. */
-export function appleIdentityFrom(claims: unknown, now = Date.now()): AppleIdentity | null {
+export function appleIdentityFrom(claims: unknown, now = Date.now(), audience = APPLE_AUDIENCE): AppleIdentity | null {
   if (!claims || typeof claims !== "object") return null;
   const t = claims as Record<string, unknown>;
   if (t.iss !== APPLE_ISSUER) return null;
   const aud = Array.isArray(t.aud) ? t.aud : [t.aud];
-  if (!aud.includes(APPLE_AUDIENCE)) return null;
+  if (!aud.includes(audience)) return null;
   if (!(Number(t.exp) * 1000 > now)) return null;
   // Issued in the future is a clock or a forgery; five minutes for the clock.
   if (Number(t.iat) * 1000 > now + 5 * 60 * 1000) return null;
@@ -341,6 +343,7 @@ export async function verifyAppleIdentityToken(
   token: string,
   fetcher: Fetcher = fetch,
   now = Date.now(),
+  audience = APPLE_AUDIENCE,
 ): Promise<AppleIdentity | null> {
   try {
     const parts = token.split(".");
@@ -364,7 +367,7 @@ export async function verifyAppleIdentityToken(
       new TextEncoder().encode(`${head}.${body}`),
     );
     if (!good) return null;
-    return appleIdentityFrom(JSON.parse(new TextDecoder().decode(fromBase64url(body))), now);
+    return appleIdentityFrom(JSON.parse(new TextDecoder().decode(fromBase64url(body))), now, audience);
   } catch (err) {
     console.error("signin: couldn't check an Apple identity token", err);
     return null;

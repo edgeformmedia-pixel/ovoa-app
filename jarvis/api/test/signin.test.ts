@@ -16,6 +16,7 @@ import {
   appleName,
   appReturnUrl,
   APPLE_AUDIENCE,
+  APPLE_WEB_AUDIENCE,
   APPLE_ISSUER,
   APPLE_KEYS_URL,
   finishGoogleSignin,
@@ -318,6 +319,8 @@ async function appleToken(claims: Record<string, unknown>, { kid = "test-kid", a
   eq("a Hide My Email address is fine", appleIdentityFrom(appleClaims({ email: "x1y2@privaterelay.appleid.com" }), T0)?.email, "x1y2@privaterelay.appleid.com");
   eq("another issuer's isn't", appleIdentityFrom(appleClaims({ iss: "https://evil.example" }), T0), null);
   eq("nor one for another app", appleIdentityFrom(appleClaims({ aud: "com.someone.else" }), T0), null);
+  eq("the site's Services ID is its own audience", appleIdentityFrom(appleClaims({ aud: APPLE_WEB_AUDIENCE }), T0, APPLE_WEB_AUDIENCE)?.email, "grace@example.com");
+  eq("and the app's token isn't the site's", appleIdentityFrom(appleClaims(), T0, APPLE_WEB_AUDIENCE), null);
   eq("nor an expired one", appleIdentityFrom(appleClaims({ exp: nowSec() - 1 }), T0), null);
   eq("nor one issued an hour from now", appleIdentityFrom(appleClaims({ iat: nowSec() + 3600 }), T0), null);
   eq("nor an unverified address", appleIdentityFrom(appleClaims({ email_verified: "false" }), T0), null);

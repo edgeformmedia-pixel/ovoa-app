@@ -125,6 +125,7 @@ import {
   startGoogleSignin,
   userForAppleSub,
   verifyAppleIdentityToken,
+  APPLE_WEB_AUDIENCE,
 } from "./signin";
 import {
   emailVerifyRoutes,
@@ -794,7 +795,13 @@ function provenOutcome(result: Awaited<ReturnType<typeof afterProven>>) {
  * name Apple sent or none (setup's first question asks it; Settings can
  * change it) and no password. The Apple ID is linked either way.
  */
-async function afterApple(env: Env, email: string, name: string | null, appleSub: string) {
+async function afterApple(
+  env: Env,
+  email: string,
+  name: string | null,
+  appleSub: string,
+  { kind = "app" }: { kind?: SessionKind } = {},
+) {
   let user = await provenAccount(env.DB, email);
   let created = false;
   if (!user) {
@@ -811,7 +818,7 @@ async function afterApple(env: Env, email: string, name: string | null, appleSub
     await env.DB.prepare("UPDATE users SET email_verified_at = ? WHERE id = ?").bind(Date.now(), user.id).run();
   }
   await linkAppleSub(env.DB, user.id, appleSub);
-  const token = await createSession(env.DB, user.id, { kind: "app" });
+  const token = await createSession(env.DB, user.id, { kind });
   return { token, user: await publicUser(env, user.id), created };
 }
 
@@ -1075,6 +1082,44 @@ app.post("/auth/apple", async (c) => {
   }
   const result = await afterApple(c.env, who.email, appleName(fullName), who.sub);
   logAuth("apple", result.created ? "created (app)" : "signed in (app)", who.email, { user: result.user?.id });
+  return c.json(result, result.created ? 201 : 200);
+});
+
+const appleWebSchema = z.object({
+  identityToken: z.string().min(20).max(8192),
+  nonce: z.string().max(100),
+  name: z.string().max(160).nullish(),
+});
+
+/**
+ * "Continue with Apple" on ovoa.ai (the site's /text page): the identity token
+ * Apple posted back to the site's server, for the Services ID APPLE_WEB_AUDIENCE,
+ * carrying a nonce from /auth/apple/start. Ends like /auth/apple, with a "web" session.
+ */
+app.post("/auth/apple/web", async (c) => {
+  if (!(await allowed(c.env, "RL_AUTH", `ip:${clientIp(c)}`))) {
+    logAuth("apple", "rate limited", null);
+    return tooMany(c, "attempts");
+  }
+  const parsed = appleWebSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "No Apple sign-in to check" }, 400);
+  const { identityToken, nonce, name } = parsed.data;
+  const who = await verifyAppleIdentityToken(identityToken, fetch, Date.now(), APPLE_WEB_AUDIENCE);
+  if (!who || who.nonce !== nonce || !(await spendAppleNonce(c.env.DB, nonce))) {
+    logAuth("apple", who ? "nonce refused (web)" : "rejected (web)", who?.email ?? null);
+    return c.json({ error: "Apple didn't confirm that sign-in. Try again." }, 401);
+  }
+  const linked = await userForAppleSub(c.env.DB, who.sub);
+  if (linked) {
+    if (linked.email.toLowerCase() === who.email) {
+      await c.env.DB.prepare("UPDATE users SET email_verified_at = ? WHERE id = ?").bind(Date.now(), linked.id).run();
+    }
+    const token = await createSession(c.env.DB, linked.id, { kind: "web" });
+    logAuth("apple", "signed in (web)", who.email, { user: linked.id });
+    return c.json({ token, user: await publicUser(c.env, linked.id) });
+  }
+  const result = await afterApple(c.env, who.email, name?.trim().slice(0, 80) || null, who.sub, { kind: "web" });
+  logAuth("apple", result.created ? "created (web)" : "signed in (web)", who.email, { user: result.user?.id });
   return c.json(result, result.created ? 201 : 200);
 });
 
