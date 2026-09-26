@@ -85,7 +85,8 @@ const id = user.id.replace(/[^0-9a-f-]/gi, "");
 console.error(`account ${id} created`);
 try {
   d1Execute([
-    `UPDATE users SET email_verified_at = ${Date.now()} WHERE id = '${id}'`,
+    // Base, since plans are on: building a website is a turn.
+    `UPDATE users SET email_verified_at = ${Date.now()}, plan_override = 'base' WHERE id = '${id}'`,
     `UPDATE settings SET time_zone = 'America/New_York' WHERE user_id = '${id}'`,
     `INSERT INTO text_links (user_id, phone, linked_at, proactive) VALUES ('${id}', '${phone}', ${Date.now()}, 0)`,
   ]);
@@ -93,6 +94,20 @@ try {
   await json("/me/consent", token, { method: "POST", body: JSON.stringify({ version: me.user.aiConsent.current }) });
   const set = await json("/me/username", token, { method: "PUT", body: JSON.stringify({ username }) });
   check("the username is set", set.username === username, JSON.stringify(set));
+
+  // 0. A flat site from before (<name>.ovoa.ai) still loads, at its address and its preview.
+  const flat = `${username}-flat`;
+  d1Execute([
+    `INSERT INTO sites (id, user_id, slug, name, brief, html, title, status, version, created_at, updated_at, published_at) VALUES ('${crypto.randomUUID()}', '${id}', '${flat}', 'Flat Probe', 'x', '<!doctype html><html><head><title>Flat Probe</title></head><body><h1>Flat probe page</h1><form method="post" action="contact"></form></body></html>', 'Flat Probe', 'live', 1, ${Date.now()}, ${Date.now()}, ${Date.now()})`,
+  ]);
+  const flatRes = await fetch(`https://${flat}.ovoa.ai/`);
+  const flatHtml = await flatRes.text();
+  check("a flat site still loads at its own address", flatRes.status === 200 && flatHtml.includes("Flat probe page"), String(flatRes.status));
+  check("its form posts to its own /contact", /<form[^>]*action="\/contact"/.test(flatHtml), flatHtml.match(/<form[^>]*>/)?.[0]);
+  const flatPreview = await fetch(`https://api.ovoa.ai/s/${flat}`);
+  check("and its preview", flatPreview.status === 200 && (await flatPreview.text()).includes("Flat probe page"), String(flatPreview.status));
+  // Gone again, so the rest reads one site.
+  d1Execute([`DELETE FROM sites WHERE slug = '${flat}'`]);
 
   // 1. Texting first, on and off by text (left off: the number is made up).
   await text(token, "text me first with reminders and stuff from now on");
