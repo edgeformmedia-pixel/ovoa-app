@@ -2,6 +2,9 @@
 // text turn calls site_build, the cron's sites lane writes the page (a minute
 // or two), the page is served with its policy, a change by text lands, and
 // texting first can be turned off and on by text (src/sites.ts, src/reach.ts).
+// The site is a project under the account's username (<username>.ovoa.ai/<project>):
+// its username's page lists it, the folder's links stay in the folder, and a
+// new username sends the old address on with a 301 (src/usernames.ts).
 // Runs through POST /texting/try, so no real text is sent.
 //
 //     cd jarvis/api
@@ -76,6 +79,7 @@ async function waitFor(token, what, done) {
 const email = `probe-${Date.now().toString(36)}@example.com`;
 const password = `p${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
 const phone = `+1555${String(Math.floor(Math.random() * 1e7)).padStart(7, "0")}`;
+const username = `siteprobe-${Date.now().toString(36)}`;
 const { token, user } = await json("/auth/signup", null, { method: "POST", body: JSON.stringify({ email, password, name: "Probe Person" }) });
 const id = user.id.replace(/[^0-9a-f-]/gi, "");
 console.error(`account ${id} created`);
@@ -87,6 +91,8 @@ try {
   ]);
   const me = await json("/me", token);
   await json("/me/consent", token, { method: "POST", body: JSON.stringify({ version: me.user.aiConsent.current }) });
+  const set = await json("/me/username", token, { method: "PUT", body: JSON.stringify({ username }) });
+  check("the username is set", set.username === username, JSON.stringify(set));
 
   // 1. Texting first, on and off by text (left off: the number is made up).
   await text(token, "text me first with reminders and stuff from now on");
@@ -103,6 +109,7 @@ try {
   check("site_build was called: the site is written down", listed.length === 1, JSON.stringify(listed));
   const site = listed[0];
   check("for the client", /tony/i.test(site?.client ?? site?.name ?? ""), `${site?.name} / ${site?.client}`);
+  check("a project under their username", !!site && new URL(site.address).hostname === `${username}.ovoa.ai` && new URL(site.address).pathname.length > 1, site?.address);
   check("the reply says it's on its way, not that it's live", /build|on its way|minute/i.test(asked) && !/\bis live\b/i.test(asked), asked.split("\n")[0]);
   // The link now, or only once it's live, but never a wrong one.
   const given = asked.match(/https?:\/\/\S+/g) ?? [];
@@ -123,7 +130,17 @@ try {
   const policy = res.headers.get("content-security-policy") ?? "";
   check("under the policy with no script source", policy.includes("default-src 'none'") && !/script-src/.test(policy), policy.slice(0, 80));
   check("made with OVOA, with a way to report it", html.includes("Made with") && html.includes("Report this site"));
-  check("its contact form posts back to the site (the preview's does nothing)", /<form[^>]*action="(\/contact|#)"/.test(html));
+  const folder = new URL(built[0].address).pathname;
+  check("its contact form posts back to its own folder (the preview's does nothing)", new RegExp(`<form[^>]*action="(${folder}/contact|#)"`).test(html), html.match(/<form[^>]*>/)?.[0]);
+  check("it was served from the folder, with its slash", res.url.endsWith(`${folder}/`), res.url);
+  const rooted = [...html.matchAll(/\s(?:href|src|action)="(\/[^/"][^"]*|\/)"/g)].map((m) => m[1]).filter((u) => !u.startsWith(`${folder}/`));
+  check("no link leaves its folder for the host's root", rooted.length === 0, rooted.join(" "));
+  const index = await fetch(`https://${username}.ovoa.ai/`);
+  const indexHtml = await index.text();
+  check("their username's page lists it", index.status === 200 && indexHtml.includes(`href="${folder}/"`), String(index.status));
+  check("under the same policy", (index.headers.get("content-security-policy") ?? "").includes("default-src 'none'"));
+  const bare = await fetch(built[0].address, { redirect: "manual" });
+  check("the address without its slash gets one", bare.status === 301 && (bare.headers.get("location") ?? "").endsWith(`${folder}/`), `${bare.status} ${bare.headers.get("location")}`);
   if (built[0].link.includes("/s/")) check("a preview is never indexed", (res.headers.get("x-robots-tag") ?? "").includes("noindex"));
 
   // 4. A change, by text; asked about while it's being made, it isn't claimed.
@@ -143,6 +160,17 @@ try {
   const changed = await waitFor(token, "the change", (s) => s[0]?.version > before && !s[0]?.changing);
   const again = await (await fetch(changed[0].link)).text();
   check("the change landed", changed[0].version > before && /cater/i.test(again), `version ${before} -> ${changed[0].version}`);
+
+  // 5. A new username: the site moves, and the old address sends people on.
+  d1Execute([`UPDATE users SET username_at = ${Date.now() - 31 * 86_400_000} WHERE id = '${id}'`]);
+  const renamed = `${username}-new`;
+  await json("/me/username", token, { method: "PUT", body: JSON.stringify({ username: renamed }) });
+  const moved = (await json("/sites", token)).sites[0];
+  check("the site moved with the username", moved?.address === `https://${renamed}.ovoa.ai${folder}`, moved?.address);
+  const old = await fetch(`https://${username}.ovoa.ai${folder}/`, { redirect: "manual" });
+  check("the old address answers 301 to the new one", old.status === 301 && old.headers.get("location") === `https://${renamed}.ovoa.ai${folder}/`, `${old.status} ${old.headers.get("location")}`);
+  const now = await fetch(`https://${renamed}.ovoa.ai${folder}/`);
+  check("and the new one serves it", now.status === 200 && /Tony/i.test(await now.text()), String(now.status));
 } finally {
   await json("/me", token, { method: "DELETE" }).catch((err) => console.error(`couldn't delete ${id}: ${err.message}`));
   console.error(`account ${id} deleted`);
