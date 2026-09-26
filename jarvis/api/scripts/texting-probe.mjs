@@ -67,7 +67,8 @@ const id = user.id.replace(/[^0-9a-f-]/gi, "");
 console.error(`account ${id} created`);
 try {
   d1Execute([
-    `UPDATE users SET email_verified_at = ${Date.now()} WHERE id = '${id}'`,
+    // Base, since plans are on: texting OVOA is a turn.
+    `UPDATE users SET email_verified_at = ${Date.now()}, plan_override = 'base' WHERE id = '${id}'`,
     `UPDATE settings SET time_zone = 'America/New_York' WHERE user_id = '${id}'`,
     `INSERT INTO text_links (user_id, phone, linked_at) VALUES ('${id}', '${phone}', ${Date.now()})`,
   ]);
