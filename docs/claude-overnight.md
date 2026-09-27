@@ -173,7 +173,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       trip with a check-in reminder 24 hours before and a leave-for-the-airport text using the existing commute
       timing; a delivery due today goes in the morning brief. Never clicks links, never replies, never changes a
       booking. Dedupe by message id; the person can say "stop reading my email for trips". Tests with fake mail.
-- [~] claimed 2026-09-27T14:00Z by local session. 27. **Receipts into money** (from task 21): a photo texted to OVOA that describeImage reads as a receipt (total,
+- [x] 27. **Receipts into money** (from task 21): a photo texted to OVOA that describeImage reads as a receipt (total,
       merchant, date) is offered as a spend entry ("Log $42.10 at Trader Joe's to groceries?"); YES records it in
       money.ts the way money_update does, and it counts against a matching budget (budget.ts) for the period. Never
       stores card digits from the photo (strip anything that looks like a card or account number before saving).
@@ -218,6 +218,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 | 19 | Outlook and Microsoft 365 mail and calendar, off until the owner sets two secrets (microsoft.ts) | 35d1336 |
 | 22 | Review of 17 to 20: six fixes, plus reclaimed accounts lose what the squatter left | eb5ad82, cfa268a |
 | 23 | Invite a friend: invite_friend, GET /invites, app screen; credited when the friend links (invites.ts) | dcf5b08 |
+| 27 | Receipts into money: a texted receipt is offered as spending, logged on yes, counted against a budget (receipts.ts) | 2b110dd |
 | 20 | Read files: PDFs, Word, Excel and text, texted in, at a link, or attached to an email (files.ts) | 1f3fac6 |
 
 ### Deploy order (owner)
@@ -225,7 +226,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 1. Review and merge `claude/overnight` into main (no conflicts with main as of 16c2deb).
 2. `cd jarvis/api && npm run db:migrate` BEFORE deploying: applies 0060 to 0069 (guest_daily, user_lists, vault,
    do_not_contact, campaigns, approval_rules, text_groups, site_sessions, inbound_codes, page_watches) and 0070
-   (microsoft_accounts) and 0071 (invite_referrals). The new code
+   (microsoft_accounts), 0071 (invite_referrals) and 0072 (money_spend.budget_id). The new code
    reads these tables (the watches cron lane runs for everyone), so migrate first. The 0057 to 0059 gap is on purpose.
 3. `wrangler deploy`. With no new vars set, behavior changes are: fetch_url, lists, vault (uses the existing
    TOKEN_ENC_KEY), reading files (uses the existing AI binding), keywords + do-not-contact, approval rules, signed-in sites API, page watchers, the guest daily
@@ -315,6 +316,8 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   back. The real owner links their phone again. Revert that one line (TAKEN_BACK in index.ts) if that's unwanted.
 - Task 23 (invites): apply migration `0071_invite_referrals.sql`. No switch. Rewards for inviting (free days, a plan
   upgrade) are the owner's call; the joined count per person is there to build one on.
+- Task 27 (receipts): apply migration `0072_money_spend_budget.sql` (one nullable column). No switch. budget_status now
+  counts spending recorded with a category (money_update) as well as approved purchases.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -333,6 +336,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 - Outlook (microsoft.ts, off unless MS_CLIENT_ID and MS_CLIENT_SECRET): one Microsoft account per person in microsoft_accounts (tokens encrypted, refresh token rotated); outlook_ tools through Graph; outlook_send and outlook_calendar_create with guests park like Gmail's (approvers.ts), rules.ts covers them as email and calendar; FORBIDDEN_FOR_COMMANDS and FORBIDDEN_ALONE include outlook_send; oauth_states shared with Google, Microsoft's states start "ms_".
 - Reading files (files.ts): fileToText turns PDFs and Office files into text with env.AI.toMarkdown (free for documents) and decodes text files; 8 MB cap; never throws (null = unreadable). Used by texting.ts lookAt (a texted file, 6,000 chars into the turn), fetch_url (a PDF or Office link, in parts) and gmail_attachment / outlook_attachment. Contents are always framed as information, never instructions.
 - Invites (invites.ts): the invite is a text the person sends themselves (invite_friend, GET /invites, app Share sheet); a stranger's text with "@username sent me" is recorded in invite_referrals (one inviter per number, not for linked numbers); on linking (texting.ts redeem) the inviter is told once through reach(); OVOA never texts the friend.
+- Receipts (receipts.ts): the texted-photo prompt asks for a final "RECEIPT | total | store | date" line; lookAt takes it off and strips card numbers (Luhn-checked, and masked ones) from photo descriptions; combine tells the turn to offer logging and only call money_update spend after a yes; money_update's optional category links the spend to a budget (money_spend.budget_id) and budget.ts spentIn counts it.
 - Guest trial ceiling (guest.ts): GUEST_DAILY_REPLIES (default 2000) free-trial replies per UTC day across all numbers.
 
 ## Log
@@ -432,3 +436,13 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   shared lists with Friends, scheduling with people not on OVOA, trips and orders from email, receipts into money,
   voice-note replies (behind a var). origin/main unchanged since 16c2deb. 75 test files pass, tsc clean. Note for runs:
   a clean container needs `npm ci` in jarvis/app too, or one api test fails to bundle (can't resolve "react").
+- 2026-09-27 14:07 UTC (local session): a second reviewer read 964defb..7b88ecd (invites, Outlook in jobs and the brief,
+  the inbox words): eight findings, all fixed with tests in fa80395 (a joiner's name is only a first name's letters in
+  what OVOA texts, since it came from a user-set field; only a new account counts as a join; unjoined invites kept as
+  long as the free trial keeps the number (180 days) and removed with either account; old usernames still credit;
+  leave-now alerts for Outlook-only people; all-day Outlook events on the right local day; "invite"/"friend" made
+  generic words so "invite Sarah to lunch" isn't an OVOA invite; "inbox" alone still ovoa_inbox without Outlook).
+  Residual, noted for rewards: one person with two accounts can still credit themselves.
+- 2026-09-27 14:07 UTC (local session): also shipped since task 23: Outlook contacts (e583aba), campaigns sending from
+  Outlook when there's no Gmail (2e56944), Outlook in background jobs (833841b) and the brief/leave-now (7b88ecd).
+  Task 27 (receipts into money) in 2b110dd; migration 0072. 76 test files pass, tsc clean.
