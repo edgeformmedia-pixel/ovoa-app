@@ -209,6 +209,10 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - [x] 39. **Cancel a meeting offer**: a meet_cancel tool ("stop waiting for Dana's reply") and
       GET /meetings, DELETE /meetings/:id, plus an app screen listing offers waiting on a reply or an approval, with
       Cancel. Cancelling an offer that's still waiting for approval also removes its pending action. Tests.
+- [ ] 40. **Fresh-clone check**: in a fresh clone of the branch (the cloud session is one), `cd jarvis/api && npm ci
+      && npx tsc --noEmit && npm test`, and `cd jarvis/app && npm ci && npx tsc --noEmit`. This catches anything that
+      only works on the machine that wrote it (an untracked file, a missing dependency). Then make sure the Final
+      report's numbers (files, lines, tests, reviews) are current. Fix anything found; log the result.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 - [x] 25. **Scheduling with people not on OVOA** (from task 21): "find a time with dana@x.com next week". OVOA reads the
@@ -249,7 +253,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 7. Owner notes worth a look: main's account take-back now unlinks a squatter's phone, and main's own smoke check
    for the second consent wording waits on commit 10f1fd2.
 
-Branch `claude/overnight` is on top of main 16c2deb (main has not moved since): 108 files, 11738 insertions(+), 67 deletions(-),
+Branch `claude/overnight` is on top of main 16c2deb (main has not moved since): as of 17:00 UTC, 111 files, 12556 insertions(+), 77 deletions(-),
 mostly new files; the edits to existing files are small hooks. 81 unit test files pass, `npx tsc --noEmit`
 is clean in jarvis/api and jarvis/app. Local smoke on fresh state: texting-smoke all green; smoke.sh 439 / 1 (the known
 consent-wording check, see task 17) when the auth rate limit doesn't trip on a fast machine. Six reviews
@@ -286,6 +290,13 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 | 28 | Voice-note replies, off unless TEXT_VOICE_REPLIES=1 (voicereply.ts) | 7fb2820 |
 | 25 | Scheduling with people not on OVOA: meet_propose, the meetings lane (meetings.ts) | 7235355 |
 | 24 | Shared lists with Friends (lists.ts, list_shares; by the scheduled session) | 3025f69 |
+| 29 | Review of 24 to 28: signed Friend rows, safe concurrent list edits, pinned campaign mailbox, and more | 7202d52 |
+| 32 | One guide per block (and preloaded block/Outlook tools now bring their instructions) | c72631d |
+| 33 | Prompt budget: ordinary turns match main (scripts/prompt-budget.mjs) | 5a52fff |
+| 34 | No dashes, enforced (test/nodashes.test.ts; reach() cleans texts sent first) | 6b1c96b |
+| 36 | Whole-branch review: rule_add needs the person's YES, stale YES ended, take-back widened, and more | e8b3765 |
+| 38 | Watching screen (GET/DELETE /watches) | 77fdcd0 |
+| 39 | Cancel a meeting offer (meet_cancel, Meeting offers screen) | 9ef10b2 |
 | 20 | Read files: PDFs, Word, Excel and text, texted in, at a link, or attached to an email (files.ts) | 1f3fac6 |
 | 33 | Prompt budget: scripts/prompt-budget.mjs; ordinary turns back to main's size (fetch_url's guide rides only with it) | 5a52fff |
 
