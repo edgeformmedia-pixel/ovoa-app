@@ -35,6 +35,14 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
     `git push origin claude/overnight`, tick the box `[x]`, add a log line. If blocked, write why and move on.
     If `git push` fails for permissions, write that in the log and stop.
 
+## Shared hooks (use these, don't add parallel ones)
+
+- `jarvis/api/src/blocks.ts`: the ONE place new tools and app routes are wired (blocksAssistant, isBlockTool,
+  blockRoutes). Add a block there; don't edit index.ts again.
+- `jarvis/api/src/approvers.ts`: `registerApprover(toolName, fn)` for anything parked in pending_actions that isn't a
+  Google or phone tool (browser submits, campaigns). approveAction (google/assistant.ts) already checks it first.
+  Park with `parkAction(env, userId, toolName, args, summary, false)` from google/assistant.ts.
+
 ## Tasks (top to bottom)
 
 - [x] 1. **fetch_url tool** (web agent, read-only): read a full public web page, JSON or CSV by URL. http(s) only;
