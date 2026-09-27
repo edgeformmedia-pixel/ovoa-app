@@ -288,6 +288,9 @@ const SYNONYMS: Record<string, string[]> = {
   reserve: ["browser"],
   reservation: ["browser"],
   checkout: ["browser"],
+  // Email attachments (files.ts): "what does the PDF she sent say".
+  pdf: ["attachment"],
+  attached: ["attachment"],
   // Generic words, which only break ties: "stop watching that page" is watch_remove,
   // "stop the JAKE code" is inbound_close.
   stop: ["remove", "close"],

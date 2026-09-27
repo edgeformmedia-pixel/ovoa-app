@@ -272,6 +272,8 @@ for (const [said, want] of [
 eq("'how's the outreach going' brings campaign_status", has(namedTools(withBlocks, "how's the landlord outreach going"), "campaign_status"), true);
 eq("'open opentable' names browser_open", has(namedTools(withBlocks, "open opentable and book a table for 4"), "browser_open"), true);
 eq("'send this email to everyone' still names gmail_send", has(namedTools(withBlocks, "send this email to everyone on my list"), "gmail_send"), true);
+const mailFiles = [...withBlocks, t("gmail_read", "Reads an email."), t("gmail_attachment", "Reads an attachment.")];
+eq("'what does the PDF she sent say' names gmail_attachment", has(namedTools(mailFiles, "what does the PDF she sent say"), "gmail_attachment"), true);
 // "lists" names the list family, not every tool that lists something.
 eq("'my lists' doesn't name alarm_list", has(namedTools(withBlocks, "show me my lists"), "alarm_list"), false);
 eq("'list my alarms' still names alarm_list", has(namedTools(withBlocks, "list my alarms"), "alarm_list"), true);

@@ -1,5 +1,6 @@
 import { isCooling, isModelRefused, searchGrounded, searchZai, type CallTool, type ToolSpec } from "./llm";
 import { FetchRefused, fetchPage } from "./fetchurl";
+import { fileToText } from "./files";
 import type { Env } from "./types";
 
 // Looking things up on the internet.
@@ -230,7 +231,7 @@ const TOOLS: ToolSpec[] = [
 TOOLS.push({
   name: "fetch_url",
   description:
-    "Reads a public web page, JSON or CSV at a link and returns its text (tables stay tab-separated). Use it when someone gives or asks about a specific link, or to read a page web_search found. Long pages come in parts: pass offset=nextOffset for the next one.",
+    "Reads a public web page, JSON, CSV, PDF or Word/Excel file at a link and returns its text (tables stay tab-separated). Use it when someone gives or asks about a specific link, or to read a page web_search found. Long pages come in parts: pass offset=nextOffset for the next one.",
   parameters: {
     type: "object",
     properties: {
@@ -267,7 +268,11 @@ export function webAssistant(env: Env, userId: string, timeZone: string, ctx?: {
       }
       reads++;
       try {
-        return await fetchPage(String(args.url ?? ""), { offset: Number(args.offset ?? 0) || 0 });
+        return await fetchPage(String(args.url ?? ""), {
+          offset: Number(args.offset ?? 0) || 0,
+          // A PDF or Office document at the link is read as a file (files.ts).
+          readFile: (bytes, file, type) => fileToText(env, bytes, file, type),
+        });
       } catch (err) {
         if (err instanceof FetchRefused) return { error: err.message };
         console.error("fetch_url failed", err);

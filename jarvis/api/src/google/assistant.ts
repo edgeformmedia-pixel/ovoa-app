@@ -1,5 +1,6 @@
 import { approverFor } from "../approvers";
 import type { RuleCheck } from "../rules";
+import { fileToText } from "../files";
 import { noDashes } from "../sentences";
 import { Hono } from "hono";
 import { DEFER, type CallTool, type ToolSpec } from "../llm";
@@ -141,7 +142,11 @@ export function validTimeZone(tz: unknown) {
 }
 
 async function context(env: Env, userId: string, accountId: string, timeZone: string): Promise<ToolContext> {
-  return { token: await googleAccessToken(env, userId, accountId), timeZone };
+  return {
+    token: await googleAccessToken(env, userId, accountId),
+    timeZone,
+    readFile: (bytes, name, type) => fileToText(env, bytes, name, type),
+  };
 }
 
 /** How an account is named in prompts, summaries, and errors. */

@@ -11,6 +11,8 @@
 // link-local or metadata ranges, no internal-looking host names, and the same
 // check again after every redirect.
 
+import { FILE_MAX_BYTES, isDocumentType, part, readableAs } from "./files";
+
 const MAX_BYTES = 3_000_000;
 const MAX_REDIRECTS = 3;
 const TIMEOUT_MS = 15_000;
@@ -102,9 +104,13 @@ export function htmlToText(html: string): string {
 }
 
 async function readCapped(response: Response): Promise<string> {
+  return new TextDecoder().decode(await readCappedBytes(response, MAX_BYTES));
+}
+
+async function readCappedBytes(response: Response, max: number): Promise<Uint8Array> {
   const declared = Number(response.headers.get("content-length") ?? 0);
-  if (declared > MAX_BYTES) throw new FetchRefused("That page is too big to read.");
-  if (!response.body) return "";
+  if (declared > max) throw new FetchRefused("That page is too big to read.");
+  if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -112,7 +118,7 @@ async function readCapped(response: Response): Promise<string> {
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > MAX_BYTES) {
+    if (total > max) {
       await reader.cancel();
       throw new FetchRefused("That page is too big to read.");
     }
@@ -124,7 +130,7 @@ async function readCapped(response: Response): Promise<string> {
     all.set(chunk, at);
     at += chunk.byteLength;
   }
-  return new TextDecoder().decode(all);
+  return all;
 }
 
 export type FetchedPage = {
@@ -137,10 +143,18 @@ export type FetchedPage = {
   text: string;
 };
 
+const clampChars = (n: number | undefined) => Math.min(FETCH_MAX_CHARS, Math.max(200, Math.floor(n ?? FETCH_DEFAULT_CHARS)));
+
 /** GET one public page, following at most three redirects, each re-checked. */
 export async function fetchPage(
   raw: string,
-  options: { offset?: number; maxChars?: number; raw?: boolean } = {},
+  options: {
+    offset?: number;
+    maxChars?: number;
+    raw?: boolean;
+    /** Reads a PDF or Office document (files.ts fileToText). Without it, those links are refused. */
+    readFile?: (bytes: Uint8Array, name: string, type: string) => Promise<string | null>;
+  } = {},
   fetchImpl: typeof fetch = fetch,
 ): Promise<FetchedPage> {
   let url = assertPublicUrl(raw);
@@ -160,13 +174,25 @@ export async function fetchPage(
       continue;
     }
     const contentType = response.headers.get("content-type") ?? "";
-    if (/^(image|audio|video)\//i.test(contentType) || /octet-stream|zip|pdf/i.test(contentType)) {
+    // A PDF or an Office document: read as a file (files.ts). A generic type
+    // ("octet-stream") counts when the address names such a file.
+    const name = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+    const generic = /octet-stream/i.test(contentType) || !contentType;
+    const named = generic ? readableAs("", name) : null;
+    const document = isDocumentType(contentType) || (named !== null && !/^(txt|csv|tsv|md|json|ics|vcf)$/.test(named));
+    if (document && options.readFile) {
+      const bytes = await readCappedBytes(response, FILE_MAX_BYTES);
+      const read = await options.readFile(bytes, name, contentType);
+      if (!read) throw new FetchRefused("OVOA couldn't read that file.");
+      return { url: url.toString(), status: response.status, contentType, ...part(read, options.offset, clampChars(options.maxChars)) };
+    }
+    if (/^(image|audio|video)\//i.test(contentType) || /octet-stream|zip|pdf/i.test(contentType) || document) {
       throw new FetchRefused("That link isn't a page OVOA can read as text.");
     }
     const body = await readCapped(response);
     const text = !options.raw && /html/i.test(contentType) ? htmlToText(body) : body;
     const offset = Math.max(0, Math.floor(options.offset ?? 0));
-    const maxChars = Math.min(FETCH_MAX_CHARS, Math.max(200, Math.floor(options.maxChars ?? FETCH_DEFAULT_CHARS)));
+    const maxChars = clampChars(options.maxChars);
     const slice = text.slice(offset, offset + maxChars);
     return {
       url: url.toString(),

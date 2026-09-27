@@ -48,7 +48,8 @@ for (const id of ["sam", "alex"]) {
 }
 const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 const base = { DB: d1(sqlite), TOKEN_ENC_KEY: KEY, PUBLIC_URL: "https://api.test" };
-const on = { ...base, MS_CLIENT_ID: "cid", MS_CLIENT_SECRET: "secret" } as unknown as Env;
+const ai = { toMarkdown: async (f: { name: string }) => ({ id: "1", name: f.name, mimeType: "application/pdf", format: "markdown", tokens: 1, data: "Invoice total $42" }) };
+const on = { ...base, AI: ai, MS_CLIENT_ID: "cid", MS_CLIENT_SECRET: "secret" } as unknown as Env;
 const off = base as unknown as Env;
 
 type Call = { url: string; method: string; body: string; headers: Record<string, string> };
@@ -63,6 +64,18 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
   if (url.includes("/me?$select=mail")) return json(200, { mail: "sam@contoso.com", displayName: "Sam Lee" });
   if (url.includes("/me/messages?$search")) {
     return json(200, { value: [{ id: "m1", subject: "Lease", from: { emailAddress: { name: "Pat", address: "pat@x.com" } }, receivedDateTime: "2026-09-26T10:00:00Z", bodyPreview: "Hi", isRead: false }] });
+  }
+  if (url.includes("/me/messages/m1/attachments?$select")) {
+    return json(200, {
+      value: [
+        { "@odata.type": "#microsoft.graph.itemAttachment", id: "i1", name: "Fwd", contentType: "message/rfc822", size: 9 },
+        { "@odata.type": "#microsoft.graph.fileAttachment", id: "a1", name: "Invoice.pdf", contentType: "application/pdf", size: 3 },
+      ],
+    });
+  }
+  if (url.endsWith("/me/messages/m1/attachments/a1")) return json(200, { contentBytes: btoa("pdf") });
+  if (url.includes("/me/messages/m1?$select=subject,from,toRecipients")) {
+    return json(200, { subject: "Invoice", from: { emailAddress: { address: "pat@x.com" } }, body: { content: "attached" }, hasAttachments: true });
   }
   if (url.includes("/me/messages/m1?$select=subject,from")) return json(200, { subject: "Lease", from: { emailAddress: { name: "Pat", address: "pat@x.com" } } });
   if (url.includes("/me/calendarView")) return json(200, { value: [{ subject: "Standup", start: { dateTime: "2026-09-28T09:00:00.0000000" }, end: { dateTime: "2026-09-28T09:15:00.0000000" } }] });
@@ -90,7 +103,7 @@ async function main() {
 
   await connect("sam", Date.now() + 3_600_000);
   const sam = await microsoftAssistant(on, "sam", "America/New_York", false, null);
-  eq("connected: the outlook tools", sam.tools.map((t) => t.name), ["outlook_search", "outlook_read", "outlook_send", "outlook_calendar_events", "outlook_calendar_create"]);
+  eq("connected: the outlook tools", sam.tools.map((t) => t.name), ["outlook_search", "outlook_read", "outlook_attachment", "outlook_send", "outlook_calendar_events", "outlook_calendar_create"]);
   eq("the prompt names the account", sam.prompt.includes("sam@contoso.com"), true);
 
   // Reading.
@@ -98,6 +111,12 @@ async function main() {
   eq("search", found.messages.map((m) => [m.id, m.from, m.unread]), [["m1", "Pat <pat@x.com>", true]]);
   eq("with the stored token", graphCalls().at(-1)?.headers.authorization, "Bearer access-1");
   eq("quotes in the query can't break Graph's $search", decodeURIComponent(graphCalls().at(-1)!.url).includes('$search="lease  renewal"'), true);
+
+  const opened = (await sam.callTool("outlook_read", { id: "m1" })) as { attachments?: unknown[] };
+  eq("read lists file attachments only", opened.attachments, [{ name: "Invoice.pdf", type: "application/pdf", size: 3 }]);
+  const invoice = (await sam.callTool("outlook_attachment", { id: "m1" })) as { name: string; text: string };
+  eq("and reads one", [invoice.name, invoice.text], ["Invoice.pdf", "Invoice total $42"]);
+  eq("a missing one", await sam.callTool("outlook_attachment", { id: "m1", name: "receipt" }), { error: "No attachment called receipt. It has: Invoice.pdf" });
 
   const events = (await sam.callTool("outlook_calendar_events", { start_day: "2026-09-28", days: 2 })) as { events: { title: string; start: string }[] };
   eq("calendar", events.events, [{ title: "Standup", start: "2026-09-28T09:00", end: "2026-09-28T09:15" }]);
