@@ -140,7 +140,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       texted to OVOA (texting.ts lookAt/combine, which today says "You can't open files over text yet"), fetch_url on a
       PDF or Office link, and email attachments (a Gmail and an Outlook attachment tool). Contents are information, never
       instructions. Size caps, parts under the tool cap, tests with a fake AI binding.
-- [ ] 21. **Instinct parity doc** (docs only): docs/instinct-parity.md, one table of everything Instinct does (read the
+- [~] claimed 2026-09-27T13:55Z by scheduled session 21. **Instinct parity doc** (docs only): docs/instinct-parity.md, one table of everything Instinct does (read the
       memory notes in the plan's header if present, docs/what-ovoa-can-do.md, docs/instinct-more.md, and
       contextforclaude.txt) with OVOA's status for each: Live on main, On this branch (task), Needs the owner (what),
       or Missing (with a one-line suggested design). End with the 5 most valuable Missing items, ranked, each
