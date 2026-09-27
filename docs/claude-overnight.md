@@ -206,7 +206,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       DELETE /watches/:id (the owner's only; DELETE free in plans.ts like the other removals) and an app screen under
       Settings, "When it acts for you", listing each watch (what it looks for, the page, how often, until when, last
       seen) with a Stop button. Tests for the routes (another person's watch is 404); typecheck the app.
-- [~] claimed 2026-09-27T16:15Z by local session. 39. **Cancel a meeting offer**: a meet_cancel tool ("stop waiting for Dana's reply") and
+- [x] 39. **Cancel a meeting offer**: a meet_cancel tool ("stop waiting for Dana's reply") and
       GET /meetings, DELETE /meetings/:id, plus an app screen listing offers waiting on a reply or an approval, with
       Cancel. Cancelling an offer that's still waiting for approval also removes its pending action. Tests.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
@@ -636,3 +636,7 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   (an "outlook inbox" check row proves Outlook was connected: microsoft guide 414 chars rides only then). Tests in
   toolbelt.test.ts; 81 test files pass (llm.test.ts timing flake once, clean alone and on the re-run), tsc clean in
   api and app. Needs the owner: nothing.
+- 2026-09-27 16:18 UTC (local session): task 39 in 9ef10b2: meet_cancel, openMeetings/cancelMeeting, GET /meetings (free)
+  and DELETE /meetings/:id, app screen Settings > Meeting offers. Cancelling removes the offer's approval card when it
+  hadn't been sent. Migration 0074 gains the 'cancelled' status (still not applied anywhere). 81 test files pass, tsc
+  clean in api and app.
