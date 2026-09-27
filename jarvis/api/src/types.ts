@@ -1,4 +1,6 @@
 export type Env = {
+  /** Cloudflare Browser Rendering (browser.ts). Absent until the owner adds the binding; then the browser tools appear. */
+  BROWSER?: Fetcher;
   /** Free-trial AI replies across all numbers per UTC day (guest.ts). Default 2000; "0" pauses the trial. */
   GUEST_DAILY_REPLIES?: string;
   DB: D1Database;
