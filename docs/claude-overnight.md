@@ -69,7 +69,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       per item; one summary when done; `campaign_status` / `campaign_stop` tools; authed GET `/campaigns`,
       `/campaigns/:id`, POST `/campaigns/:id/stop`, GET `/campaigns/:id/export.csv` (formula-safe). Counts against
       plan spend via the model gate. Tests.
-- [ ] 7. **Web agent: real browser** (needs owner: new library `@cloudflare/puppeteer` + Browser Rendering binding):
+- [~] claimed 2026-09-27T11:53Z by local session. 7. **Web agent: real browser** (needs owner: new library `@cloudflare/puppeteer` + Browser Rendering binding):
       tools browser_open, browser_read (text + numbered clickable elements), browser_click, browser_type,
       browser_back; one session per turn, always closed; only public http(s) URLs (reuse task 1's guard). Anything
       that submits a form, buys, books or posts first creates a pending action describing exactly what it will do.
