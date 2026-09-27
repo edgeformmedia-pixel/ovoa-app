@@ -360,6 +360,8 @@ export const TABLES = {
   text_outbox: "delete",
   text_guests: "delete",
   guest_daily: "delete",
+  // Their own saved lists (lists.ts): theirs until they delete them.
+  user_lists: "keep",
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",

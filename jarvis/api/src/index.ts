@@ -90,6 +90,7 @@ import { healthDays } from "./healthdays";
 import { isPeopleTool, people, peopleAssistant } from "./people";
 import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "./rhythm";
 import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
+import { blocksAssistant, isBlockTool } from "./blocks";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
 import { appAssistant, appFor, describeScreen, isAppTool, myApps, type MadeApp } from "./myapps";
@@ -1561,6 +1562,8 @@ async function runTurn(
   const transcriptTools = transcriptAssistant(env, userId, timeZone);
   const peopleTools = peopleAssistant(env, userId, timeZone);
   const extraTools = extrasAssistant(env, userId, timeZone);
+  // Saved lists and the other general building blocks (blocks.ts).
+  const blockTools = blocksAssistant(env, userId, timeZone);
   const alarmTools = alarmAssistant(env, userId, timeZone, { voice: !!voice });
   const moneyTools = moneyAssistant(env, userId, timeZone, { voice: !!voice });
   const foodTools = foodAssistant(env, userId, timeZone, { voice: !!voice, level: food.level });
@@ -1670,6 +1673,7 @@ async function runTurn(
     ...togetherTools.tools,
     ...planTools.tools,
     ...budgetTools.tools,
+    ...blockTools.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -1703,6 +1707,7 @@ async function runTurn(
     together: { tools: togetherTools.tools, prompt: togetherTools.prompt },
     plans: { tools: planTools.tools, prompt: planTools.prompt },
     budget: { tools: budgetTools.tools, prompt: budgetTools.prompt },
+    blocks: { tools: blockTools.tools, prompt: blockTools.prompt },
     transcripts: {
       tools: transcriptTools.tools,
       prompt: settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : "",
@@ -1960,6 +1965,8 @@ async function runTurn(
                                     ? planTools.callTool
                                   : isBudgetTool(name)
                                     ? budgetTools.callTool
+                                  : isBlockTool(name)
+                                    ? blockTools.callTool
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name
