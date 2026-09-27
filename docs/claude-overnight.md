@@ -42,7 +42,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       15 s timeout; 3 MB cap; HTML to readable text keeping table cells tab-separated and link hrefs; `offset` /
       `maxChars` paging. Offer it next to web_search (see `web.ts`, `toolbelt.ts`). Tests for the address guard,
       redirects and HTML-to-text.
-- [ ] 2. **Tone gaps + guest cap**: apply `noDashes` (sentences.ts) to push notifications, email bodies OVOA writes,
+- [~] claimed 2026-09-27T11:22Z by local session. 2. **Tone gaps + guest cap**: apply `noDashes` (sentences.ts) to push notifications, email bodies OVOA writes,
       and friend answers sent as a push. Guest texting (`guest.ts`) calls the model with `userId: null`, which the
       model gate lets through (`plans.ts`): add a global daily guest cap (var with a safe default) so guest trials
       can't run up unbounded cost; over the cap, reply with the existing "Get Base" style text. Tests.
