@@ -93,10 +93,21 @@ function budgetFor(budgets: Budget[], category: string) {
   );
 }
 
+/** The budget spending in a category counts against, or null (money.ts money_update spend). */
+export async function budgetForSpend(db: D1Database, userId: string, category: string): Promise<{ id: string; category: string } | null> {
+  if (!category.trim()) return null;
+  const b = budgetFor(await budgetsOf(db, userId), category);
+  return b ? { id: b.id, category: b.category } : null;
+}
+
 async function spentIn(db: D1Database, b: Budget, now: number, timeZone: string) {
+  const since = periodStart(b.period, now, timeZone, b.created_at);
+  // Approved purchases, and spending they recorded against it (a receipt, "I spent $40 on dinner").
   const row = await db
-    .prepare("SELECT COALESCE(SUM(price_cents), 0) AS n FROM purchases WHERE budget_id = ? AND status = 'approved' AND decided_at >= ?")
-    .bind(b.id, periodStart(b.period, now, timeZone, b.created_at))
+    .prepare(
+      "SELECT (SELECT COALESCE(SUM(price_cents), 0) FROM purchases WHERE budget_id = ?1 AND status = 'approved' AND decided_at >= ?2) + (SELECT COALESCE(SUM(amount_cents), 0) FROM money_spend WHERE budget_id = ?1 AND ts >= ?2) AS n",
+    )
+    .bind(b.id, since)
     .first<{ n: number }>();
   return row?.n ?? 0;
 }

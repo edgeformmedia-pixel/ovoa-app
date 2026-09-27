@@ -626,6 +626,37 @@ async function main() {
     }
   }
 
+  // ---------- A receipt (receipts.ts) ----------
+
+  {
+    const realFetch = globalThis.fetch;
+    const asked: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url === "https://cdn.test/tj.jpg") return new Response(new Uint8Array([0xff, 0xd8, 0xff, 9]), { headers: { "content-type": "image/jpeg" } });
+      if (url.startsWith("https://glm.test/")) {
+        asked.push(String(init?.body ?? ""));
+        const said = "A Trader Joe's receipt for groceries, paid with Visa 4111 1111 1111 1111, card **** 1111.\nRECEIPT | 42.10 | Trader Joe's | 2026-09-27";
+        return new Response(JSON.stringify({ choices: [{ message: { content: said } }], usage: { prompt_tokens: 900, completion_tokens: 30 } }));
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }) as typeof fetch;
+    const mediaEnv = { ...env, GLM_API_KEY: "k", GLM_BASE_URL: "https://glm.test/v4" } as unknown as Env;
+    try {
+      const row = { content: withMedia("", "https://cdn.test/tj.jpg"), media: 1 };
+      const seen = await lookAt(mediaEnv, U, [row]);
+      const got = seen.get("https://cdn.test/tj.jpg");
+      eq("the photo model is asked about receipts", asked[0]?.includes("RECEIPT |"), true);
+      eq("a receipt is read off the photo", got?.receipt, { cents: 4210, merchant: "Trader Joe's", date: "2026-09-27" });
+      eq("no card number is kept from it", [got?.text?.includes("4111"), got?.text?.includes("RECEIPT")], [false, false]);
+      const said = combine([row], seen);
+      eq("the turn is asked to offer logging it", said.includes("Offer to log it as spending") && said.includes("$42.10 at Trader Joe's"), true);
+      eq("and to wait for a yes", said.includes("Only after they say yes"), true);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
   // ---------- Unlinking ----------
 
   eq("UNLINK by text", await text("Unlink", deps()), "unlinked");

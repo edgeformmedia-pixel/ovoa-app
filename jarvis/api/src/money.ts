@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { logAction } from "./actionlog";
+import { budgetForSpend } from "./budget";
 import { validTimeZone } from "./google/assistant";
+import { withoutCardNumbers } from "./receipts";
 import type { CallTool, ToolSpec } from "./llm";
 import { push } from "./push";
 import { reach } from "./reach";
@@ -569,6 +571,7 @@ const TOOLS: ToolSpec[] = [
         kind: { type: "string", enum: ["balance", "paycheck", "spend", "income", "cushion"] },
         amount: { type: "number", description: "Dollars." },
         what: { type: "string", description: "For spend, what it was on. For balance or income, which account or job." },
+        category: { type: "string", description: "For spend: the kind of spending (groceries, dinners, travel). It counts against a matching budget." },
         date: { type: "string", description: "YYYY-MM-DD. For income, a payday that actually happened. Defaults to today." },
         cadence: { type: "string", enum: ["weekly", "biweekly", "semimonthly", "monthly"], description: "For income." },
         account: { type: "string", enum: ["checking", "savings", "cash"], description: "For balance. Defaults to checking." },
@@ -667,12 +670,13 @@ export function moneyAssistant(env: Env, userId: string, timeZone: string, { voi
         };
       }
       if (kind === "spend") {
+        const budget = await budgetForSpend(db, userId, String(args.category ?? ""));
         await db
-          .prepare("INSERT INTO money_spend (id, user_id, ts, amount_cents, what, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-          .bind(crypto.randomUUID(), userId, Date.now(), cents, typeof args.what === "string" ? args.what.slice(0, 120) : null, Date.now())
+          .prepare("INSERT INTO money_spend (id, user_id, ts, amount_cents, what, created_at, budget_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(crypto.randomUUID(), userId, Date.now(), cents, typeof args.what === "string" ? withoutCardNumbers(args.what).slice(0, 120) : null, Date.now(), budget?.id ?? null)
           .run();
         await db.prepare("UPDATE money_accounts SET balance_cents = balance_cents - ?, updated_at = ? WHERE user_id = ? AND kind = 'checking'").bind(cents, Date.now(), userId).run();
-        return { saved: `spent ${money(cents)}` };
+        return { saved: `spent ${money(cents)}`, ...(budget && { countedAgainst: `the ${budget.category} budget (budget_status has what's left)` }) };
       }
       if (kind === "income") {
         const cadence = String(args.cadence ?? "");
