@@ -19,6 +19,30 @@ export type Turn = { role: "user" | "model"; text: string };
 export const ASK_EMAIL = `That was your ${FREE}th free text. Reply with your email and you'll get ${FREE} more, no account needed.`;
 export const GOT_EMAIL = `Thanks! You've got ${FREE} more free texts. Go ahead.`;
 export const CAPPED = `You've used your free texts. Get OVOA Base to keep texting me (I'll remember this chat): ${SIGN_UP}`;
+export const BUSY = `I'm getting a ton of texts today, so free replies are paused till tomorrow. You can keep going with OVOA Base: ${SIGN_UP}`;
+
+/**
+ * AI replies the whole free trial may give in a UTC day, across every number.
+ * Guest calls carry no account, so the model gate's plan and spend checks pass
+ * them (plans.ts); this is their ceiling. GUEST_DAILY_REPLIES overrides it.
+ */
+export const GUEST_DAILY_DEFAULT = 2_000;
+export const guestDailyLimit = (env: { GUEST_DAILY_REPLIES?: string }) => {
+  const set = Number(env.GUEST_DAILY_REPLIES);
+  return Number.isFinite(set) && set >= 0 ? Math.floor(set) : GUEST_DAILY_DEFAULT;
+};
+
+/** Takes one of today's trial replies. False when the day's are all used. */
+async function takeDaily(db: D1Database, now: number, limit: number): Promise<boolean> {
+  const day = new Date(now).toISOString().slice(0, 10);
+  const row = await db
+    .prepare(
+      "INSERT INTO guest_daily (day, replies) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET replies = replies + 1 WHERE replies < ? RETURNING replies",
+    )
+    .bind(day, limit)
+    .first<{ replies: number }>();
+  return limit > 0 && row !== null;
+}
 
 const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 export const emailIn = (text: string) => text.match(EMAIL)?.[0]?.toLowerCase() ?? null;
@@ -84,6 +108,14 @@ export async function guestText(
     return "guest capped";
   }
   const used = row.used + 1;
+
+  // The whole trial's ceiling for the day. Over it, their text is given back.
+  if (!(await takeDaily(db, now, guestDailyLimit(env)))) {
+    await db.prepare("UPDATE text_guests SET used = used - 1 WHERE phone = ?").bind(phone).run();
+    await send(BUSY);
+    say("text", { outcome: "guest busy" });
+    return "guest busy";
+  }
 
   let history: Turn[] = [];
   try {

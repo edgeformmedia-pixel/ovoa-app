@@ -1,4 +1,6 @@
 export type Env = {
+  /** Free-trial AI replies across all numbers per UTC day (guest.ts). Default 2000; "0" pauses the trial. */
+  GUEST_DAILY_REPLIES?: string;
   DB: D1Database;
   /** A game's online room (gameroom.ts), one per game. */
   GAME_ROOM: DurableObjectNamespace;

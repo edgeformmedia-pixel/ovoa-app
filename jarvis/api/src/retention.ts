@@ -226,6 +226,8 @@ export const RULES: Rule[] = [
   // What was said is in messages; this is only there to tell a text delivered twice.
   { name: "text_inbox", table: "text_inbox", where: "received_at < ?", args: (c) => [c.now - TEXT_INBOX_DAYS * DAY_MS] },
   { name: "text_guests", table: "text_guests", where: "updated_at < ?", args: (c) => [c.now - TEXT_GUEST_DAYS * DAY_MS] },
+  // The free trial's daily count (guest.ts): a number per day, nothing about anyone.
+  { name: "guest_daily", table: "guest_daily", where: "day < ?", args: (c) => [c.countsDay], key: ["day"] },
   // Which texts OVOA sent first, for the day's cap (reach.ts): kinds and times, no words.
   { name: "text_outbox", table: "text_outbox", where: "sent_at < ?", args: (c) => [c.cutoff] },
 
@@ -357,6 +359,7 @@ export const TABLES = {
   text_inbox: "delete",
   text_outbox: "delete",
   text_guests: "delete",
+  guest_daily: "delete",
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",

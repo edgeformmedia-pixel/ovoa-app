@@ -1,3 +1,4 @@
+import { noDashes } from "./sentences";
 import type { Env } from "./types";
 
 // Expo push notifications: the only way an agent that works while the app is
@@ -95,8 +96,9 @@ export async function push(env: Env, userId: string, message: PushMessage | Sile
           { to, data: message.data, _contentAvailable: true, priority: "high" }
         : {
             to,
-            title: message.title,
-            body: message.body,
+            // OVOA never writes em dashes (sentences.ts), notifications included.
+            title: message.title && noDashes(message.title),
+            body: message.body && noDashes(message.body),
             sound: message.urgent ? "default" : null,
             // Urgent notes wake the screen; the rest wait for the user to look.
             priority: message.urgent ? "high" : "normal",

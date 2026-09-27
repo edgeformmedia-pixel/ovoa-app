@@ -1,3 +1,4 @@
+import { noDashes } from "../sentences";
 import { Hono } from "hono";
 import { DEFER, type CallTool, type ToolSpec } from "../llm";
 import {
@@ -23,6 +24,20 @@ import {
 } from "./oauth";
 import { pickAccountFor } from "./routing";
 import { googleTools, toolsByName, type ToolContext } from "./tools";
+
+/** Google tools that write an email in the user's name. */
+const EMAIL_WRITES = new Set(["gmail_send", "gmail_create_draft"]);
+
+/**
+ * Emails OVOA writes follow its tone rule too (no em dashes, sentences.ts),
+ * cleaned before the approval card shows them, so what's approved is what's sent.
+ */
+export function cleanEmailArgs(name: string, args: Record<string, unknown>) {
+  if (!EMAIL_WRITES.has(name)) return;
+  for (const key of ["subject", "body"] as const) {
+    if (typeof args[key] === "string") args[key] = noDashes(args[key] as string);
+  }
+}
 
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 /** The old whole-Drive scope. Accounts connected since hold drive.file instead. */
@@ -225,6 +240,7 @@ export async function googleAssistant(
     if (!tool) return { error: `Unknown tool ${name}` };
 
     const { account: _, ...toolArgs } = args;
+    cleanEmailArgs(name, toolArgs);
     // A change with no account named: pick the one it belongs to (routing.ts),
     // rather than falling back to the default blindly.
     const unnamed = multi && (args.account === undefined || args.account === null || args.account === "") && WRITES.test(name);
