@@ -144,7 +144,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       memory notes in the plan's header if present, docs/what-ovoa-can-do.md, docs/instinct-more.md, and
       contextforclaude.txt) with OVOA's status for each: Live on main, On this branch (task), Needs the owner (what),
       or Missing (with a one-line suggested design). End with the 5 most valuable Missing items, ranked, each
-      written as a task in this file's format (append them below as tasks 23+ so the next runs can build them).
+      written as a task in this file's format (append them below as tasks 24+ so the next runs can build them; skip anything tasks 18 to 23 already did).
 - [x] 22. **Review tasks 17 to 20** (only once 20 is [x]): read `git diff 93e3950..HEAD -- jarvis/` line by line for
       bugs (wrong conditions, missing awaits, approvals that can be skipped, data shown to the wrong person, anything
       that changes behavior when a flag is off). Fix each real one with a test; log what was checked and found.
