@@ -202,7 +202,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       test/texting-smoke.mjs on fresh state with CAMPAIGNS=1, TEXT_GROUPS=1, INBOUND_CODES=1, TEXT_VOICE_REPLIES=1,
       SENDBLUE_CONTACT_SHARING=1 and MS_CLIENT_ID/MS_CLIENT_SECRET set (dummy values; nothing reaches a real
       service). Same pass bar as task 31. Fix anything a switch breaks.
-- [~] claimed 2026-09-27T16:55Z by scheduled session 38. **Watching screen**: page watches (watches.ts) can only be seen and stopped in chat. Add GET /watches and
+- [x] 38. **Watching screen**: page watches (watches.ts) can only be seen and stopped in chat. Add GET /watches and
       DELETE /watches/:id (the owner's only; DELETE free in plans.ts like the other removals) and an app screen under
       Settings, "When it acts for you", listing each watch (what it looks for, the page, how often, until when, last
       seen) with a Stop button. Tests for the routes (another person's watch is 404); typecheck the app.
@@ -640,3 +640,12 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   and DELETE /meetings/:id, app screen Settings > Meeting offers. Cancelling removes the offer's approval card when it
   hadn't been sent. Migration 0074 gains the 'cancelled' status (still not applied anywhere). 81 test files pass, tsc
   clean in api and app.
+- 2026-09-27 16:58 UTC (scheduled session): origin/main has one new commit since 16c2deb (9b33d3d, sites showcase: sites.ts,
+  migration 0057, sites.test.ts), none of it in files this task touched, so no merge. Task 38 in 77fdcd0: listWatches /
+  stopWatch in watches.ts, GET /watches (free) and DELETE /watches/:id (free, added to the removals rule in plans.ts),
+  wired through blocks.ts; app screen Settings > Watching (watches.tsx) with what it looks for, the site, how often,
+  until when, last seen, and Stop. Decision: the list shows active watches and ones that already happened (same as
+  watch_list); DELETE ends either, so a happened one can be cleared off the list ("Clear", no confirm) while an active
+  one asks first. Another person's watch is 404. No migration needed. 81 test files pass, tsc clean in api and app.
+  Every numbered task is now [x]; the Final report (task 16) predates tasks 38 and 39, so the owner may want to glance
+  at their log lines. Needs the owner: nothing new.
