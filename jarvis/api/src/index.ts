@@ -92,6 +92,7 @@ import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "
 import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { blockRoutes, blocksAssistant, isBlockTool } from "./blocks";
 import { campaignsTick, campaignsWaiting } from "./campaigns";
+import { watchesTick, watchesWaiting } from "./watches";
 import { rulesFor } from "./rules";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
@@ -3729,6 +3730,14 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
       await part("campaigns", campaignsTick(env, undefined, Date.now() + 60_000));
       await release(env, "campaigns", held);
     })();
+    // Page watchers (watches.ts): due checks only, so an idle tick writes nothing.
+    const watchesLane = (async () => {
+      if (!(await watchesWaiting(env.DB).catch(() => false))) return;
+      const held = await lease(env, "watches", CLOCK_LANE_MS);
+      if (!held) return;
+      await part("watches", watchesTick(env));
+      await release(env, "watches", held);
+    })();
     const slow = await lease(env, "slow", SLOW_LANE_MS);
     if (slow) {
       // Each person is swept on one tick in five (sweep.ts).
@@ -3751,6 +3760,7 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
     await sitesLane;
     await networkLane;
     await campaignsLane;
+    await watchesLane;
   }
 
   const ms = Date.now() - started;
