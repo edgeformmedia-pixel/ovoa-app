@@ -283,7 +283,13 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 14. Settings > Invite a friend > Share: text it from your phone to a second phone that has never texted OVOA; from there
     text "@yourname sent me", then link that phone to a new account: the first phone hears "... joined OVOA from your
     invite" and the count goes to 1.
-15. Base account: plan screen says 15 replies a day and background work is Plus's (main's own behavior, sanity check).
+15. Text a photo of a receipt: it offers "log $X at Y?"; say "yes, groceries" and "how's my groceries budget" shows it.
+16. (Plus) Forward yourself a flight confirmation the evening before; the next morning (6 to 7 AM) plan_list shows the
+    trip and a check-in reminder is set for the day before the flight.
+17. (Plus) "Find a time with <your other email> next week for coffee": approve the email, reply from the other account
+    "the second one works", and within the hour OVOA texts "... picked ... Want me to send the invite?"; YES adds it.
+18. With TEXT_VOICE_REPLIES=1: text a voice memo; the text reply comes, then a voice note of it.
+19. Base account: plan screen says 15 replies a day and background work is Plus's (main's own behavior, sanity check).
 
 ## Needs the owner
 
