@@ -748,16 +748,20 @@ async function signOutEverywhere(db: D1Database, userId: string) {
  * phones and Google left alone (provenAccount). Proving the address of the account you're signed in to, with
  * the code in the app (POST /me/email/verify), isn't this either: it only stamps it.
  */
-/** Tables cleared with Google when an account is taken back (disown and the claim in /auth/email/signup). */
-const TAKEN_BACK = ["approval_rules", "site_sessions", "vault_items"];
+/**
+ * Tables cleared with Google when an account is taken back (disown and the claim
+ * in /auth/email/signup). text_links: a phone whoever made it linked would go on
+ * texting the account, and being answered from the owner's things, after the
+ * owner took it back. The owner links their own phone again, as with Google.
+ */
+const TAKEN_BACK = ["approval_rules", "site_sessions", "vault_items", "text_links", "text_link_codes"];
 
 async function disown(db: D1Database, userId: string) {
   await db.batch([
     db.prepare("UPDATE users SET password_hash = '' WHERE id = ?").bind(userId),
     db.prepare("DELETE FROM google_accounts WHERE user_id = ?").bind(userId),
     db.prepare("DELETE FROM microsoft_accounts WHERE user_id = ?").bind(userId),
-    // What this branch's blocks keep for an account (blocks.ts): whoever made it may have
-    // left rules that skip approvals, their own sites' sign-ins, or details of their own.
+    // What whoever made it may have left that would go on acting for the owner (TAKEN_BACK).
     ...TAKEN_BACK.map((table) => db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId)),
     db.prepare("DELETE FROM oauth_states WHERE user_id = ?").bind(userId),
   ]);
