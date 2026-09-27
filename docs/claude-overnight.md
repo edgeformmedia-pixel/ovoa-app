@@ -160,7 +160,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       table (list_shares) in the next free migration; caps as lists.ts. Adding to someone's list never texts them
       unless they asked to be told. Tests: share, read and add from the friend's side, access too low, unshare,
       disconnect.
-- [ ] 29. **Review tasks 24 to 28 and the Outlook follow-ups**: read `git diff fa80395..HEAD -- jarvis/` line by line
+- [~] claimed 2026-09-27T15:05Z by local session. 29. **Review tasks 24 to 28 and the Outlook follow-ups**: read `git diff fa80395..HEAD -- jarvis/` line by line
       (receipts, trips from email, voice-note replies, meetings, shared lists, Outlook contacts and campaigns) for real
       bugs: approvals that can be skipped, anything that texts or emails someone who didn't ask, data reaching the wrong
       person, time-zone mistakes in meetings.ts freeSlots and mailtrips.ts reminders, crons that could run for
