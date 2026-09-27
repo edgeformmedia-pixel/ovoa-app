@@ -87,7 +87,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       recipient, per tool, per amount), checked before creating a pending action; `rule_add` / `rule_list` /
       `rule_remove` tools and authed routes. Never bypass: money over budget limits, Full-access danger items,
       agent-started turns, anything in FORBIDDEN_ALONE. Tests.
-- [~] claimed 2026-09-27T12:12Z by local session. 9. **Group chats**: OVOA answers in an iMessage group (Sendblue group_id; texting.ts currently ignores groups)
+- [x] 9. **Group chats**: OVOA answers in an iMessage group (Sendblue group_id; texting.ts currently ignores groups)
       only when mentioned by name, only if everyone else in the group is the sender's Friend, never shares private
       details there, and sends approvals to the person privately. Group replies via Sendblue send-group-message.
       Everything else about groups stays ignored as today. Tests with a fake Sendblue.
@@ -128,6 +128,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   so each friend still goes through the network's own limits; daytime = 8 AM to 9 PM local and outside quiet hours.
   (Fixed since: the browser block now pushes its submit approvals into blocksAssistant's `pending` list too.)
 - Task 8: apply migration `0065_approval_rules.sql`. Money is deliberately NOT a rule kind: purchases (budget.ts) always wait for a YES.
+- Task 9: apply migration `0066_text_groups.sql`; set var `TEXT_GROUPS=1` to turn group answers on (off = groups ignored as before). Sendblue group sending may need enabling on the Sendblue plan.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -159,3 +160,4 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   Needs the owner: migration 0064 and the CAMPAIGNS=1 var (see Needs the owner).
 - 2026-09-27 12:09 UTC (local session): task 8 done (migration renamed to 0065 in the rebase). Approval rules; 67 test files pass, tsc clean; full local smoke 427/6, identical to untouched main.
 - 2026-09-27 12:12 UTC (local session): rebased over task 6, migration clash resolved (approval_rules is 0065), browser approvals now handed to the app via blocks pending (thanks to the task 6 note). 68 test files pass.
+- 2026-09-27 12:17 UTC (local session): task 9 done in aaa18d5. Group chats; 69 test files pass, tsc clean; texting smoke 6 failed, identical to untouched main.
