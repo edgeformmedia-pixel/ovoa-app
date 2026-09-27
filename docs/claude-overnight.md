@@ -425,3 +425,10 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 - 2026-09-27 13:51 UTC (local session): 833841b: agent.ts runs (background jobs) get the Outlook tools minus FORBIDDEN_ALONE
   (the reviewer's gap note), prompt included, parked invites handed on like Google's. Full smoke with MS_CLIENT_ID and
   MS_CLIENT_SECRET set on the local worker: 439 / 1 (the known consent wording); scheduled ticks errors=0.
+- 2026-09-27 14:10 UTC (scheduled session): task 21 done in 062783e: docs/instinct-parity.md, one table of what Instinct
+  does with OVOA's status (sources: texting.md, instinct-more.md, sites.md, ovoa-network.md, server-calls.md,
+  what-ovoa-can-do.md, contextforclaude.txt; no memory notes existed in the plan header, so rows no note spells out are
+  marked "(typical)" for the owner to check against Instinct). Five Missing items added as tasks 24 to 28, ranked:
+  shared lists with Friends, scheduling with people not on OVOA, trips and orders from email, receipts into money,
+  voice-note replies (behind a var). origin/main unchanged since 16c2deb. 75 test files pass, tsc clean. Note for runs:
+  a clean container needs `npm ci` in jarvis/app too, or one api test fails to bundle (can't resolve "react").
