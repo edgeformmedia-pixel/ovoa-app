@@ -126,8 +126,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   connected Google account with Gmail send. Design choices worth a look: email is the approved template filled per item
   (no model rewrite, so what's approved is what's sent); friends mode uses network.ts shareWithConnection (kind share),
   so each friend still goes through the network's own limits; daytime = 8 AM to 9 PM local and outside quiet hours.
-  Also: browser.ts parks its submit approval but doesn't hand it to the app in the reply; blocksAssistant now returns
-  a `pending` list (index.ts adds it to pendingActions) that the browser block could push into too.
+  (Fixed since: the browser block now pushes its submit approvals into blocksAssistant's `pending` list too.)
 - Task 8: apply migration `0065_approval_rules.sql`. Money is deliberately NOT a rule kind: purchases (budget.ts) always wait for a YES.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
@@ -159,3 +158,4 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   pass, tsc clean. Rebased over task 7 (merged the blocks.ts conflict by hand). origin/main unchanged since 16c2deb.
   Needs the owner: migration 0064 and the CAMPAIGNS=1 var (see Needs the owner).
 - 2026-09-27 12:09 UTC (local session): task 8 done (migration renamed to 0065 in the rebase). Approval rules; 67 test files pass, tsc clean; full local smoke 427/6, identical to untouched main.
+- 2026-09-27 12:12 UTC (local session): rebased over task 6, migration clash resolved (approval_rules is 0065), browser approvals now handed to the app via blocks pending (thanks to the task 6 note). 68 test files pass.
