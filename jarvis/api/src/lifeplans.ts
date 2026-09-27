@@ -18,6 +18,9 @@ import type { Env } from "./types";
 // day, as an ask (reach.ts: paced, one a day at most). No model call in the
 // background: the question was written with them there.
 
+/** "Sunday, Oct 11" from 2026-10-11. Pure. */
+export const humanDay = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", weekday: "long", month: "short", day: "numeric" });
+
 const DAY_OK = /^\d{4}-\d{2}-\d{2}$/;
 const day = (v: unknown) => (typeof v === "string" && DAY_OK.test(v.trim()) ? v.trim() : null);
 
@@ -187,8 +190,8 @@ export function lifePlansAssistant(env: Env, userId: string, timeZone: string) {
         note: [
           "Now be useful in this reply: give 2 or 3 concrete options (web_search for real ones: flights and typical fares, areas to stay, something to do), and say the timing advice in a sentence, as a rule of thumb.",
           tip.remindOn
-            ? `Offer to remind them to book on ${tip.remindOn}; only if they say yes, call reminder_set for that day at 10:00 with the words "Book your ${title}${startsOn ? ` (${startsOn})` : ""}".`
-            : "If it's close, suggest booking now.",
+            ? `End your reply with this exact offer: "Want me to remind you to book on ${humanDay(tip.remindOn)}?" Only if they say yes, call reminder_set for that day at 10:00 with the words "Book your ${title}${startsOn ? ` (${startsOn})` : ""}".`
+            : `It's close, so say to book soon, and end your reply with this exact offer: "Want me to remind you tomorrow morning to book?" Only if they say yes, call reminder_set for tomorrow at 10:00 with the words "Book your ${title}".`,
           useful ? "" : "It has no follow-up: call plan_update with one specific followupQuestion (offer something concrete) if you can think of one.",
         ]
           .filter(Boolean)
@@ -232,7 +235,7 @@ export function lifePlansAssistant(env: Env, userId: string, timeZone: string) {
     tools: specs(),
     callTool,
     prompt: [
-      "Plans: when they mention a trip or an event with a place or a time (\"I'm going to SF next month\"), call plan_add (a best-guess date is fine; say so) with one specific followupQuestion for a few days before. Then answer usefully: 2 or 3 concrete options (web_search for real flights, fares, neighborhoods, things to do), the timing advice plan_add gives as a rule of thumb (\"flights are often cheapest 3 weeks to 3 months out\"), and offer to remind them to book; only on their yes, reminder_set for that day.",
+      "Plans: when they mention a trip or an event with a place or a time (\"I'm going to SF next month\"), call plan_add (a best-guess date is fine; say so) with one specific followupQuestion for a few days before. Then answer usefully: 2 or 3 concrete options (web_search for real flights, fares, neighborhoods, things to do), the timing advice plan_add gives as a rule of thumb (\"flights are often cheapest 3 weeks to 3 months out\"), and always end with the offer to remind them to book (plan_add gives the words); only on their yes, reminder_set for that day.",
       "A follow-up is never a generic check-in: it offers something specific you can do.",
     ].join("\n"),
   };

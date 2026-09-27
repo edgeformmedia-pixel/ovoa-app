@@ -1479,6 +1479,33 @@ export async function transcribeAudio(env: LlmEnv, opts: { bytes: Uint8Array; us
   return text;
 }
 
+/**
+ * A web search on Z.ai's own search API (POST <GLM_BASE_URL>/web_search), with
+ * the GLM key: results with titles, text and links, no model answer. Through
+ * the gate like any call here. Web search's first route since Gemini's project
+ * was denied (403 PERMISSION_DENIED, 2026-09-20 on) and DuckDuckGo stopped
+ * answering Cloudflare's addresses (web.ts).
+ */
+export async function searchZai(env: LlmEnv, opts: { query: string; usage: UsageTag; count?: number }) {
+  await askGate(env, opts.usage);
+  if (!env.GLM_API_KEY) throw new Error("Z.ai search has no key (GLM_API_KEY)");
+  const base = (env.GLM_BASE_URL || "https://api.z.ai/api/paas/v4").replace(/\/+$/, "");
+  const res = await fetch(`${base}/web_search`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${env.GLM_API_KEY}` },
+    body: JSON.stringify({ search_engine: "search-std", search_query: opts.query.slice(0, 70), count: opts.count ?? 6, search_recency_filter: "noLimit" }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Z.ai search ${res.status}: ${text.slice(0, 300)}`);
+  const body = JSON.parse(text) as { search_result?: { title?: string; content?: string; link?: string; publish_date?: string }[] };
+  const results = (body.search_result ?? [])
+    .filter((r) => r.title && r.content)
+    .map((r) => ({ title: String(r.title).slice(0, 200), text: String(r.content).slice(0, 600), url: String(r.link ?? ""), date: r.publish_date ?? null }));
+  if (!results.length) throw new Error("Z.ai search found nothing");
+  return results;
+}
+
 export async function searchGrounded(env: LlmEnv, opts: { query: string; today: string; usage: UsageTag }) {
   await askGate(env, opts.usage);
   if (!env.GEMINI_API_KEY) throw new Error("Gemini search has no key (GEMINI_API_KEY)");

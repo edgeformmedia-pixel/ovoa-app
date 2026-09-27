@@ -132,7 +132,7 @@ function specs(): ToolSpec[] {
     },
     {
       name: "budget_status",
-      description: "Their spending budgets: how much each has, what's been booked against it this period, and what's left.",
+      description: "Their spending budgets (\"how's my travel budget\", \"how much budget is left\"): how much each has, what's been booked against it this period, and what's left.",
       parameters: { type: "object", properties: {} },
     },
     {
@@ -283,7 +283,7 @@ export function budgetAssistant(env: Env, userId: string, timeZone: string, born
         link: p.url,
         ...(after && { budget: after }),
         note: [
-          `Give them the link to finish booking it themselves (you don't pay and never ask for a card): ${p.url}`,
+          `It is NOT booked yet: never say "booked" or "paid". Say it's approved and counted against the budget, and give them the link to finish booking it themselves (you don't pay and never ask for a card): ${p.url}`,
           after?.warning ? `Warn them: the ${budget!.category} budget is ${after.warning} (${after.spent} of ${after.budget}).` : after ? `Say what's left: ${after.left}.` : "",
         ]
           .filter(Boolean)

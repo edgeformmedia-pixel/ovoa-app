@@ -556,7 +556,7 @@ const TOOLS: ToolSpec[] = [
   },
   {
     name: "money_status",
-    description: "Where their money stands: balance, next payday, bills due before it, what's already planned, what's spare. Use for 'how am I doing', 'can I make it to payday', 'what's left'.",
+    description: "Where their money stands: balance, next payday, bills due before it, what's already planned, what's spare. Use for 'how am I doing', 'can I make it to payday', 'what's left'. Not for a spending budget they set with you (travel, dinners): that's budget_status.",
     parameters: { type: "object", properties: {} },
   },
   {

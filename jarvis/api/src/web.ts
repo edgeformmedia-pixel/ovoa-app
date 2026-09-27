@@ -1,4 +1,4 @@
-import { isCooling, isModelRefused, searchGrounded, type CallTool, type ToolSpec } from "./llm";
+import { isCooling, isModelRefused, searchGrounded, searchZai, type CallTool, type ToolSpec } from "./llm";
 import type { Env } from "./types";
 
 // Looking things up on the internet.
@@ -30,7 +30,7 @@ export type SearchResult = {
   snippets?: { title: string; text: string }[];
   note?: string;
   /** Which route answered, so the usage table can count searches by what they cost. "cache": a recent answer, free. */
-  via?: "gemini" | "duckduckgo" | "cache";
+  via?: "gemini" | "zai" | "duckduckgo" | "cache";
 };
 
 /**
@@ -138,6 +138,23 @@ async function duckDuckGo(query: string): Promise<SearchResult> {
  * says. Throws only if every route fails.
  */
 async function searchFresh(env: Env, userId: string, engine: SearchEngine, query: string, today: string): Promise<SearchResult> {
+  // Z.ai's search first (2026-09-27): Gemini's project answers 403 PERMISSION_DENIED
+  // and DuckDuckGo gives Cloudflare's addresses a page with no results, so from
+  // 2026-09-20 no search came back at all. Same key as the chat engine.
+  if (engine !== "duckduckgo" && env.GLM_API_KEY) {
+    try {
+      const found = await searchZai(env, { query, usage: { userId, purpose: "search" } });
+      return {
+        snippets: found.slice(0, MAX_SOURCES).map((r) => ({ title: r.title, text: r.text })),
+        sources: found.slice(0, MAX_SOURCES).filter((r) => r.url).map((r) => ({ title: r.title, url: r.url })),
+        note: "Search results, not a checked answer: say what they say, and that it came from a search. Links in sources are real pages you can give.",
+        via: "zai",
+      };
+    } catch (err) {
+      if (isModelRefused(err)) throw err;
+      console.error("web: Z.ai search failed, trying the next route", err);
+    }
+  }
   if (engine !== "duckduckgo" && env.GEMINI_API_KEY) {
     try {
       const found = await searchGrounded(env, { query, today, usage: { userId, purpose: "search" } });

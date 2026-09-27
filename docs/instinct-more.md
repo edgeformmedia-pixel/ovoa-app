@@ -86,6 +86,14 @@ against your budget; finish it at this link". Hands-off paying would need virtua
 checkout by a browsing agent or merchant API, authorizations webhooked back to count against the budget), plus
 KYC and a terms update. That's later work, not built.
 
+## Web search (2026-09-27)
+
+From 2026-09-20 no web search came back: Gemini's project answers 403 "Your project has been denied access"
+(google_search grounding), and DuckDuckGo's HTML endpoint gives Cloudflare's addresses a page with no results.
+`web.ts` now asks Z.ai's search API first (`llm.ts searchZai`, `POST <GLM_BASE_URL>/web_search`, the GLM key,
+behind the model gate), then Gemini, then DuckDuckGo. Usage rows say `search` / `zai` (priced $0 in the
+estimate: add Z.ai's per-search price to pricing.ts when known).
+
 ## Kept
 
 `life_plans` mixed (an active plan stays; one over goes 14 days later), `spend_budgets` kept, `purchases` 35

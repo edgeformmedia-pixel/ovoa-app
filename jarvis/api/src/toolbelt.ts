@@ -67,6 +67,8 @@ export const TYPED_CORE = new Set([
   "person_lookup",
   // A plan mentioned in passing ("I'm in SF next month") names no tool (lifeplans.ts).
   "plan_add",
+  // "How's my travel budget?" would otherwise go to money_status, which is about the bank balance.
+  "budget_status",
   // Standing work and the day.
   "agent_schedule",
   "web_search",

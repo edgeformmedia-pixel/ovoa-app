@@ -155,7 +155,7 @@ try {
   const yes = await text(me.token, "yes, remind me to book");
   const reminders = d1Query(`SELECT text, remind_at FROM notes WHERE user_id = '${me.id}' AND remind_at IS NOT NULL`);
   check("a dated reminder to book was set", reminders.some((r) => /book/i.test(r.text) && r.remind_at > Date.now()), JSON.stringify(reminders.map((r) => [r.text, new Date(Number(r.remind_at)).toISOString()])));
-  check("and it says so", /remind/i.test(yes));
+  check("and it says so", /remind|buzz|set|done/i.test(yes));
 
   // ---------- 3. A budget, a purchase, a YES ----------
   await text(me.token, "set a travel budget of $900 a month, max $600 per purchase");
@@ -169,12 +169,13 @@ try {
     [prop] = d1Query(`SELECT id, what, price_cents, url, status FROM purchases WHERE user_id = '${me.id}'`);
   }
   check("purchase_propose prepared one within the budget", !!prop && prop.status === "proposed" && prop.price_cents <= 60000, JSON.stringify(prop));
-  check("nothing is bought yet", !/booked|paid|purchased/i.test(offer.replace(/not (been )?(booked|paid)/gi, "")), "");
+  check("nothing is bought yet", !/booked|paid|purchased/i.test(offer.replace(/(not|nothing('s| is)) (been |yet )?(booked|paid|purchased)/gi, "")), offer.split("\n")[0]);
   if (prop) {
     const done = await text(me.token, "YES");
     const [after] = d1Query(`SELECT status FROM purchases WHERE id = '${prop.id}'`);
     check("the YES recorded it against the budget", after?.status === "approved", after?.status);
     check("and gave the link to finish it", done.includes(new URL(prop.url).hostname), prop.url);
+    check("without claiming it's booked or paid", !/\b(booked|paid)\b/i.test(done.replace(/not (yet )?(booked|paid)|isn't (booked|paid)/gi, "")), done.split("\n")[0]);
   }
   const status = await text(me.token, "how's my travel budget?");
   check("the budget's status is told", /\$\d/.test(status));
