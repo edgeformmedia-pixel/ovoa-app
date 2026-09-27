@@ -312,7 +312,8 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
    "Save my card number 4111..." is refused.
 3. "Make a list of 3 pizza places near me and save it", then later "what was on my pizza list?".
 4. "Tell me when https://example.com changes" (on Plus with AI consent): watch_list shows it; remove it.
-5. "Don't ask me before adding things to my calendar": the rule shows in Approval rules; add an event, no approval card;
+5. "Don't ask me before adding things to my calendar": approve the rule's card (a rule never sets itself), and it
+   shows in Approval rules; add an event, no approval card;
    remove the rule, the card comes back.
 6. From a second phone that never texted OVOA: text HELP (keyword reply), STOP, then START. With the first phone,
    confirm OVOA never texts the STOP number first.
