@@ -571,7 +571,7 @@ const TOOLS: ToolSpec[] = [
         kind: { type: "string", enum: ["balance", "paycheck", "spend", "income", "cushion"] },
         amount: { type: "number", description: "Dollars." },
         what: { type: "string", description: "For spend, what it was on. For balance or income, which account or job." },
-        category: { type: "string", description: "For spend: the kind of spending (groceries, dinners, travel). It counts against a matching budget." },
+        category: { type: "string", description: "For spend: its kind (groceries, travel), for a matching budget." },
         date: { type: "string", description: "YYYY-MM-DD. For income, a payday that actually happened. Defaults to today." },
         cadence: { type: "string", enum: ["weekly", "biweekly", "semimonthly", "monthly"], description: "For income." },
         account: { type: "string", enum: ["checking", "savings", "cash"], description: "For balance. Defaults to checking." },

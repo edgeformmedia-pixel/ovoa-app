@@ -11,6 +11,7 @@ import { setBrowserFactory } from "../src/browser";
 import { heartAssistant } from "../src/heart";
 import type { ToolSpec } from "../src/llm";
 import { phoneToolSpecs, type PhoneCaps } from "../src/phone";
+import { webAssistant } from "../src/web";
 import { namedTools, pickTools, SPOKEN_CORE, toolbelt, TYPED_CORE } from "../src/toolbelt";
 import type { Env } from "../src/types";
 
@@ -307,6 +308,22 @@ listsBelt.preload("show me my lists");
 const carried = listsBelt.carriedGuides.map((g) => g.tools[0]?.name);
 eq("preloading a list tool carries the lists guide", carried.includes("list_save"), true);
 eq("and no other block's", carried.filter((n) => n !== "list_save").length, 0);
+
+// fetch_url's instructions ride only with fetch_url (prompt budget, task 33): web_search is in
+// both cores, so the search guide is on every turn and must not carry the page reader's line.
+const web = webAssistant(blockEnv, "u", "UTC");
+const webGuides = [web.guides.search, web.guides.page];
+for (const [label, core] of [["typed", TYPED_CORE], ["spoken", SPOKEN_CORE]] as const) {
+  const plain = toolbelt(web.tools, core, webGuides);
+  plain.preload("what should I make for dinner tonight?");
+  eq(`${label}: an ordinary turn carries the search guide`, plain.carriedGuides.includes(web.guides.search), true);
+  eq(`${label}: but not fetch_url's`, plain.carriedGuides.includes(web.guides.page), false);
+  eq(`${label}: and the search guide doesn't mention fetch_url`, web.guides.search.prompt.includes("fetch_url"), false);
+  const linked = toolbelt(web.tools, core, webGuides);
+  linked.preload("read https://example.com/menu and tell me what's good");
+  eq(`${label}: a link brings fetch_url's guide`, linked.carriedGuides.includes(web.guides.page), true);
+}
+eq("a run with every tool still gets both (agent.ts)", web.prompt.includes("fetch_url") && web.prompt.includes("web_search"), true);
 
 // more_tools is carried by every turn: it stays short.
 eq("more_tools is short", JSON.stringify(toolbelt(spokenAll, SPOKEN_CORE).tools.find((x) => x.name === "more_tools")).length <= 400, true);
