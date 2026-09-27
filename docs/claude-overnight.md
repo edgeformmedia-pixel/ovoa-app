@@ -130,8 +130,77 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       (inbound_create), "don't ask me before" (rule_add), "open that site / book it on the site" (browser_open when on).
       Add SYNONYMS entries (without stealing words existing tools rely on: run test/toolbelt.test.ts and add cases), and
       a short test per phrase with namedTools against the real catalogue.
-- [~] claimed 2026-09-27T13:12Z by scheduled session. 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
+- [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
+
+## Final report (task 16, 2026-09-27 13:20 UTC)
+
+Branch `claude/overnight` is 18 tasks on top of main 16c2deb (main has not moved since). 64 files, about 7,000 lines,
+mostly new files; the edits to existing files are small hooks. 72 unit test files pass, `npx tsc --noEmit` is clean in
+jarvis/api and jarvis/app. Local smoke: texting-smoke all green; smoke.sh 438 / 1 (the known consent-wording check, see
+task 17) when the auth rate limit doesn't trip on a fast machine.
+
+### What shipped (commits)
+
+| Task | What | Commit |
+| --- | --- | --- |
+| 1 | fetch_url: read a public page, JSON or CSV by link (fetchurl.ts) | f0c2cce |
+| 2 | No dashes in pushes and emails; daily ceiling on the guest free trial | adace60 |
+| 3 | Saved lists (lists.ts) and the shared blocks.ts entry point | 872499f |
+| 4 | Vault: encrypted personal details, /vault routes (vault.ts) | b75d794 |
+| 5 | STOP / START / HELP / CARD on the texting line, do_not_contact (keywords.ts) | 418f751 |
+| - | approvers.ts: approved actions for new blocks | 3058635 |
+| 7 | Web agent real browser, off until the owner adds the library + binding (browser.ts) | de529d8, c74cc5c |
+| 6 | Campaigns: one approval, many targets, off unless CAMPAIGNS=1 (campaigns.ts) | b804e26 |
+| 8 | Standing approval rules (rules.ts) | 1a2fb95 |
+| 9 | iMessage group answers, off unless TEXT_GROUPS=1 (textgroups.ts) | aaa18d5 |
+| 10 | Logins without passwords, server side + design (sitesessions.ts, docs/logins-without-passwords.md) | d39d49d |
+| 11 | Server-side calls, design only (docs/server-calls.md) | 7fdc0ba |
+| 14 | Text-in codes for creators, off unless INBOUND_CODES=1 (inbound.ts) | 03166e9 |
+| 12 | App screens: Vault, Campaigns, Approval rules, Signed-in sites | 3705128 |
+| 15 | docs/what-ovoa-can-do.md | 9b731e4, 1e28aa8 |
+| 13 | Page watchers (watches.ts) | d936205 |
+| - | Whole-branch review, 8 fixes | ed39979 |
+| 18 | Plain requests reach the new tools (toolbelt.ts) | 4e531ed |
+| 17 | Smoke suites match main's current behavior | ba73df0 |
+
+### Deploy order (owner)
+
+1. Review and merge `claude/overnight` into main (no conflicts with main as of 16c2deb).
+2. `cd jarvis/api && npm run db:migrate` BEFORE deploying: applies 0060 to 0069 (guest_daily, user_lists, vault,
+   do_not_contact, campaigns, approval_rules, text_groups, site_sessions, inbound_codes, page_watches). The new code
+   reads these tables (the watches cron lane runs for everyone), so migrate first. The 0057 to 0059 gap is on purpose.
+3. `wrangler deploy`. With no new vars set, behavior changes are: fetch_url, lists, vault (uses the existing
+   TOKEN_ENC_KEY), keywords + do-not-contact, approval rules, signed-in sites API, page watchers, the guest daily
+   ceiling (default 2000) and the tool belt words. Everything else stays off.
+4. Switches, one at a time, each safe to unset: `CAMPAIGNS=1`, `TEXT_GROUPS=1` (check Sendblue group sending on the
+   plan), `INBOUND_CODES=1`, optional `SENDBLUE_CONTACT_SHARING=1` (set the Sendblue profile first), optional
+   `GUEST_DAILY_REPLIES`.
+5. Browser (optional, Workers Paid): the four steps under "Needs the owner", task 7 (new library, nodejs_compat,
+   BROWSER binding, move the adapter, one llm.ts line).
+6. App: start a TestFlight build by hand in Codemagic after the API is live, then run the phone test plan.
+7. No new secrets. New libraries only for the browser (@cloudflare/puppeteer) and, if wanted later, the app's
+   in-app login screen (@react-native-cookies/cookies, needs a dev build).
+
+### Phone test plan (after deploy, about 20 minutes)
+
+1. Text OVOA "read https://example.com and tell me the title": answers from the page.
+2. "Save my frequent flyer number, Delta 1234567": saved; Settings, When it acts for you, Vault shows it masked.
+   "Save my card number 4111..." is refused.
+3. "Make a list of 3 pizza places near me and save it", then later "what was on my pizza list?".
+4. "Tell me when https://example.com changes" (on Plus with AI consent): watch_list shows it; remove it.
+5. "Don't ask me before adding things to my calendar": the rule shows in Approval rules; add an event, no approval card;
+   remove the rule, the card comes back.
+6. From a second phone that never texted OVOA: text HELP (keyword reply), STOP, then START. With the first phone,
+   confirm OVOA never texts the STOP number first.
+7. On the linked phone, with an approval waiting, text "stop": it must cancel the approval (NO), not opt you out.
+8. CARD on the linked phone: the contact card comes again.
+9. With CAMPAIGNS=1: "research these 3 companies: A, B, C" gives one approval with count and cost; approve; results in
+   the Campaigns screen during the day; export CSV.
+10. With INBOUND_CODES=1: make a code with 2 questions, text it from the second phone, answer, then ask "who answered?".
+11. With TEXT_GROUPS=1: a group with you, OVOA and a Friend who has OVOA linked; "OVOA what time is it in Tokyo" gets a
+    group answer; a group with a non-Friend gets nothing.
+12. Base account: plan screen says 15 replies a day and background work is Plus's (main's own behavior, sanity check).
 
 ## Needs the owner
 
@@ -174,6 +243,16 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 
 - Web agent, part 1 (fetchurl.ts): fetch_url reads a public page by link (public http(s) only, redirects re-checked, 3 MB cap, parts under the 6,000-char tool cap, 6 reads a reply); offered with web_search; a pasted link or "link/article" preloads it.
 - Campaigns (campaigns.ts, off unless CAMPAIGNS=1): campaign_start parks ONE approval (count, cost, first item filled in); only approving it sets approved_at, and the cron's campaigns lane works 5 items per campaign per tick in the owner's daytime; caps in code: research 500 items, email 200 sent per rolling 24h from their Gmail, friends 50 through the OVOA network; do_not_contact numbers skipped; one summary message + push when done; /campaigns routes with a formula-safe CSV.
+- Shared hooks: blocks.ts is the one place new tools and app routes are wired (blocksAssistant, isBlockTool, blockRoutes); approvers.ts registerApprover runs approved pending_actions for new blocks before the Google and phone cases.
+- Saved lists (lists.ts): list_save / list_read / list_delete, per user and name, 5,000 rows and 100 lists caps, read back in pages under the tool cap.
+- Vault (vault.ts): encrypted personal details (TOKEN_ENC_KEY) for bookings and forms; refuses cards, bank numbers, SSNs, passwords, codes; values never logged; friends never see it; /vault routes; tools absent without TOKEN_ENC_KEY.
+- Texting keywords (keywords.ts): whole-message STOP / START / HELP / CARD on the line; a bare "stop" with an approval waiting is still NO; STOP adds do_not_contact, which reach.ts and campaigns check.
+- Approval rules (rules.ts): "don't ask before emailing my wife" per kind and recipient, checked before parking; never covers money, Full-access danger items, agent-started turns or FORBIDDEN_ALONE.
+- Group chats (textgroups.ts, off unless TEXT_GROUPS=1): answers in a group only when named, only if everyone else is the sender's linked Friend; approvals go to the sender privately.
+- Browser (browser.ts, absent without env.BROWSER; adapter in optional/browser-puppeteer.ts): open / read / click / type / back on public pages, one session per turn, submits wait for approval; signed-in sites (sitesessions.ts) lend cookies the user made themselves, never passwords, no money sites.
+- Text-in codes (inbound.ts, off unless INBOUND_CODES=1): someone texts a creator's code, opts in, answers up to 5 questions; inbound_results for the owner only; per-code daily cap; the owner's plan pays.
+- Page watchers (watches.ts): watch_add / watch_list / watch_remove, hourly or daily, max 10 active; the 2-minute cron reads due pages with fetchurl.ts and a cheap model call through the model gate (Plus with consent); tells the owner via reach.ts; never acts.
+- Guest trial ceiling (guest.ts): GUEST_DAILY_REPLIES (default 2000) free-trial replies per UTC day across all numbers.
 
 ## Log
 
@@ -231,3 +310,5 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   the suite may want a pause or a per-run cf-connecting-ip; left alone (not a stale expectation). 72 test files pass.
   Side note for the owner: guest.ts takes a guest_daily slot before the model call and does not give it back when the
   model fails (the per-number count is given back). Harmless at the 2000 default; noted, not changed.
+- 2026-09-27 13:20 UTC (scheduled session): task 16 done: final report (shipped table, deploy order, phone test plan) and
+  proposed contextforclaude.txt lines added above. Every task is now [x].
