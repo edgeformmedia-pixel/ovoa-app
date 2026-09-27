@@ -209,7 +209,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - [x] 39. **Cancel a meeting offer**: a meet_cancel tool ("stop waiting for Dana's reply") and
       GET /meetings, DELETE /meetings/:id, plus an app screen listing offers waiting on a reply or an approval, with
       Cancel. Cancelling an offer that's still waiting for approval also removes its pending action. Tests.
-- [ ] 40. **Fresh-clone check**: in a fresh clone of the branch (the cloud session is one), `cd jarvis/api && npm ci
+- [~] claimed 2026-09-27T17:55Z by scheduled session 40. **Fresh-clone check**: in a fresh clone of the branch (the cloud session is one), `cd jarvis/api && npm ci
       && npx tsc --noEmit && npm test`, and `cd jarvis/app && npm ci && npx tsc --noEmit`. This catches anything that
       only works on the machine that wrote it (an untracked file, a missing dependency). Then make sure the Final
       report's numbers (files, lines, tests, reviews) are current. Fix anything found; log the result.
