@@ -245,11 +245,14 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
    (microsoft_accounts), 0071 (invite_referrals), 0072 (money_spend.budget_id), 0073 (voice_clips) and 0074 (meetings). The new code
    reads these tables (the watches cron lane runs for everyone), so migrate first. The 0057 to 0059 gap is on purpose.
 3. `wrangler deploy`. With no new vars set, behavior changes are: fetch_url, lists, vault (uses the existing
-   TOKEN_ENC_KEY), reading files (uses the existing AI binding), keywords + do-not-contact, approval rules, signed-in sites API, page watchers, the guest daily
-   ceiling (default 2000) and the tool belt words. Everything else stays off.
+   TOKEN_ENC_KEY), reading files (uses the existing AI binding), keywords + do-not-contact, approval rules, signed-in
+   sites API, page watchers, invites, receipts into money (budgets also count spending logged with a category), trips
+   and deliveries from email (Plus), finding a time by email (meet_propose; reading replies is Plus), the guest daily
+   ceiling (default 2000) and the tool belt words. Main's own account take-back now also unlinks a squatter's texting
+   phone (see Needs the owner). Everything else stays off.
 4. Switches, one at a time, each safe to unset: `CAMPAIGNS=1`, `TEXT_GROUPS=1` (check Sendblue group sending on the
-   plan), `INBOUND_CODES=1`, optional `SENDBLUE_CONTACT_SHARING=1` (set the Sendblue profile first), optional
-   `GUEST_DAILY_REPLIES`.
+   plan), `INBOUND_CODES=1`, `TEXT_VOICE_REPLIES=1` (voice-note replies; uses DEEPGRAM_API_KEY), optional
+   `SENDBLUE_CONTACT_SHARING=1` (set the Sendblue profile first), optional `GUEST_DAILY_REPLIES`.
 5. Outlook (optional): register the app with Microsoft and set the `MS_CLIENT_ID` and `MS_CLIENT_SECRET` secrets
    (docs/outlook.md). No app build needed; the Connect Outlook card appears once the server has them.
 6. Browser (optional, Workers Paid): the four steps under "Needs the owner", task 7 (new library, nodejs_compat,
