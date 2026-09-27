@@ -257,11 +257,10 @@ for (const [said, want] of [
   ["tell me when the Nike site restocks", "watch_add"],
   ["stop watching that page", "watch_remove"],
   ["save my frequent flyer number", "vault_save"],
-  ["save my home address", "vault_save"],
   ["what's my gym locker code", "vault_lookup"],
   ["make a text-in code for my fans", "inbound_create"],
   ["who answered my code", "inbound_results"],
-  ["you can text Sam without checking with me", "rule_add"],
+  ["you don't need my approval to text Sam", "rule_add"],
   ["stop auto approving emails", "rule_remove"],
   ["go to the site and fill out the form", "browser_type"],
   ["click the reserve button", "browser_click"],
@@ -274,6 +273,13 @@ eq("'open opentable' names browser_open", has(namedTools(withBlocks, "open opent
 eq("'send this email to everyone' still names gmail_send", has(namedTools(withBlocks, "send this email to everyone on my list"), "gmail_send"), true);
 const mailFiles = [...withBlocks, t("gmail_read", "Reads an email."), t("gmail_attachment", "Reads an attachment.")];
 eq("'what does the PDF she sent say' names gmail_attachment", has(namedTools(mailFiles, "what does the PDF she sent say"), "gmail_attachment"), true);
+// Words that are the blocks' in some requests and nobody's in most.
+for (const said of ["what's in my checking account", "what's the price of bitcoin", "what's the address of the restaurant", "what size is my phone"]) {
+  eq(`"${said}" names none of the blocks`, namedTools(withBlocks, said).filter((x) => /^(rule|watch|vault)_/.test(x.name)).length, 0);
+}
+// A verb form of a generic name part still breaks the tie: "searching" and note_search.
+const noting = [t("note_add", "Adds a note."), t("note_list", "Lists notes."), t("note_search", "Searches notes."), t("gmail_search", "Searches mail.")];
+eq("'searching for my notes' puts note_search first", namedTools(noting, "searching for my notes about the trip")[0]?.name, "note_search");
 // "lists" names the list family, not every tool that lists something.
 eq("'my lists' doesn't name alarm_list", has(namedTools(withBlocks, "show me my lists"), "alarm_list"), false);
 eq("'list my alarms' still names alarm_list", has(namedTools(withBlocks, "list my alarms"), "alarm_list"), true);

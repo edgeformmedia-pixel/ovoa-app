@@ -70,12 +70,17 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
       value: [
         { "@odata.type": "#microsoft.graph.itemAttachment", id: "i1", name: "Fwd", contentType: "message/rfc822", size: 9 },
         { "@odata.type": "#microsoft.graph.fileAttachment", id: "a1", name: "Invoice.pdf", contentType: "application/pdf", size: 3 },
+        { "@odata.type": "#microsoft.graph.fileAttachment", id: "a2", name: "Scan.pdf", contentType: "application/pdf", size: 40_000_000 },
       ],
     });
   }
   if (url.endsWith("/me/messages/m1/attachments/a1")) return json(200, { contentBytes: btoa("pdf") });
   if (url.includes("/me/messages/m1?$select=subject,from,toRecipients")) {
     return json(200, { subject: "Invoice", from: { emailAddress: { address: "pat@x.com" } }, body: { content: "attached" }, hasAttachments: true });
+  }
+  // An email whose Reply-To isn't its sender: a reply goes to the Reply-To.
+  if (url.includes("/me/messages/m2?$select=subject,from,replyTo")) {
+    return json(200, { subject: "Quick favor", from: { emailAddress: { address: "pat@x.com" } }, replyTo: [{ emailAddress: { address: "evil@x.com" } }] });
   }
   if (url.includes("/me/messages/m1?$select=subject,from")) return json(200, { subject: "Lease", from: { emailAddress: { name: "Pat", address: "pat@x.com" } } });
   if (url.includes("/me/calendarView")) return json(200, { value: [{ subject: "Standup", start: { dateTime: "2026-09-28T09:00:00.0000000" }, end: { dateTime: "2026-09-28T09:15:00.0000000" } }] });
@@ -113,10 +118,18 @@ async function main() {
   eq("quotes in the query can't break Graph's $search", decodeURIComponent(graphCalls().at(-1)!.url).includes('$search="lease  renewal"'), true);
 
   const opened = (await sam.callTool("outlook_read", { id: "m1" })) as { attachments?: unknown[] };
-  eq("read lists file attachments only", opened.attachments, [{ name: "Invoice.pdf", type: "application/pdf", size: 3 }]);
+  eq("read lists file attachments only", opened.attachments, [
+    { name: "Invoice.pdf", type: "application/pdf", size: 3 },
+    { name: "Scan.pdf", type: "application/pdf", size: 40_000_000 },
+  ]);
   const invoice = (await sam.callTool("outlook_attachment", { id: "m1" })) as { name: string; text: string };
   eq("and reads one", [invoice.name, invoice.text], ["Invoice.pdf", "Invoice total $42"]);
-  eq("a missing one", await sam.callTool("outlook_attachment", { id: "m1", name: "receipt" }), { error: "No attachment called receipt. It has: Invoice.pdf" });
+  eq("a missing one", await sam.callTool("outlook_attachment", { id: "m1", name: "receipt" }), { error: "No attachment called receipt. It has: Invoice.pdf, Scan.pdf" });
+  calls.length = 0;
+  eq("one too big isn't downloaded at all", [await sam.callTool("outlook_attachment", { id: "m1", name: "scan" }), graphCalls().some((c) => c.url.endsWith("/attachments/a2"))], [
+    { error: "Scan.pdf is too big to read (over 8 MB)." },
+    false,
+  ]);
 
   const events = (await sam.callTool("outlook_calendar_events", { start_day: "2026-09-28", days: 2 })) as { events: { title: string; start: string }[] };
   eq("calendar", events.events, [{ title: "Standup", start: "2026-09-28T09:00", end: "2026-09-28T09:15" }]);
@@ -143,7 +156,7 @@ async function main() {
   // A reply's card says who it goes to.
   const reply = await microsoftAssistant(on, "sam", "UTC", false, null);
   await reply.callTool("outlook_send", { reply_to: "m1", body: "Yes" });
-  eq("reply card", reply.pending[0]?.summary.split("\n").slice(0, 2), ["Send an email from Outlook to Pat <pat@x.com>", "Subject: Re: Lease"]);
+  eq("reply card", reply.pending[0]?.summary.split("\n").slice(0, 2), ["Send an email from Outlook to pat@x.com", "Subject: Re: Lease"]);
 
   // A standing rule, and Approve for me.
   eq("rules know outlook_send is email", [kindOfTool("outlook_send"), kindOfTool("outlook_calendar_create")], ["email", "calendar"]);
@@ -152,6 +165,10 @@ async function main() {
   calls.length = 0;
   eq("a rule for Pat sends without asking", await ruled.callTool("outlook_send", { to: "pat@x.com", subject: "hi", body: "hi" }), { sent: true });
   eq("but not to someone else", ((await ruled.callTool("outlook_send", { to: "lee@x.com", subject: "hi", body: "hi" })) as { status: string }).status, "waiting_for_user_approval");
+  // A reply goes to the email's Reply-To whatever `to` says: the rule and the card see that address.
+  const tricked = (await ruled.callTool("outlook_send", { to: "pat@x.com", reply_to: "m2", body: "the code is 1234" })) as { status: string };
+  eq("a reply to a Reply-To nobody approved still asks", tricked.status, "waiting_for_user_approval");
+  eq("and the card names where it really goes", ruled.pending.at(-1)?.summary.split("\n")[0], "Send an email from Outlook to evil@x.com");
   const auto = await microsoftAssistant(on, "sam", "UTC", Promise.resolve(true), null);
   eq("Approve for me sends", await auto.callTool("outlook_send", { to: "lee@x.com", subject: "hi", body: "hi" }), { sent: true });
 

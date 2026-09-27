@@ -125,8 +125,8 @@ export function AccountSection({ google }: { /** Show the Google accounts (not o
           <GoogleConnection token={token} />
         </>
       )}
-      {/* Shows itself only once the server is set up for Microsoft. */}
-      <MicrosoftConnection token={token} headerStyle={styles.sub} />
+      {/* Like Google, not on the free plan; and only once the server is set up for Microsoft. */}
+      {google && <MicrosoftConnection token={token} headerStyle={styles.sub} />}
 
       <Text style={styles.sub}>Session</Text>
       <Btn label="Sign out" onPress={signOut} style={styles.btn} />

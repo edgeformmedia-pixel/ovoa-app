@@ -1,5 +1,5 @@
 import { base64url } from "../crypto";
-import { base64Bytes, part } from "../files";
+import { base64Bytes, FILE_MAX_BYTES, part } from "../files";
 
 export type ToolContext = {
   token: string;
@@ -330,6 +330,7 @@ export const googleTools: Tool[] = [
       const want = String(a.filename ?? "").trim().toLowerCase();
       const found = want ? all.find((x) => x.filename.toLowerCase() === want) ?? all.find((x) => x.filename.toLowerCase().includes(want)) : all[0];
       if (!found) return { error: all.length ? `No attachment called ${a.filename}. It has: ${all.map((x) => x.filename).join(", ")}` : "That email has no attachments." };
+      if (found.size > FILE_MAX_BYTES) return { error: `${found.filename} is too big to read (over 8 MB).` };
       // Attachment ids change between reads, so it's fetched with the one just listed.
       const got = await g(ctx, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${a.messageId}/attachments/${found.attachmentId}`);
       const text = await ctx.readFile(base64Bytes(String(got.data ?? "")), found.filename, found.mimeType);

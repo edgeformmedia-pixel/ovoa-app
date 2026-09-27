@@ -11,7 +11,7 @@
 // link-local or metadata ranges, no internal-looking host names, and the same
 // check again after every redirect.
 
-import { FILE_MAX_BYTES, isDocumentType, part, readableAs } from "./files";
+import { FILE_MAX_BYTES, fileNameOf, isDocumentType, part, readableAs } from "./files";
 
 const MAX_BYTES = 3_000_000;
 const MAX_REDIRECTS = 3;
@@ -176,7 +176,7 @@ export async function fetchPage(
     const contentType = response.headers.get("content-type") ?? "";
     // A PDF or an Office document: read as a file (files.ts). A generic type
     // ("octet-stream") counts when the address names such a file.
-    const name = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+    const name = fileNameOf(url.pathname);
     const generic = /octet-stream/i.test(contentType) || !contentType;
     const named = generic ? readableAs("", name) : null;
     const document = isDocumentType(contentType) || (named !== null && !/^(txt|csv|tsv|md|json|ics|vcf)$/.test(named));

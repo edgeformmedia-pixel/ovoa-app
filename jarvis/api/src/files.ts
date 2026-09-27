@@ -69,6 +69,17 @@ export async function fileToText(env: Pick<Env, "AI">, bytes: Uint8Array, name: 
   }
 }
 
+/** The last part of an address's path, as a file name ("" when there's none or it won't decode). Pure. */
+export function fileNameOf(pathname: string): string {
+  const last = pathname.split("/").pop() ?? "";
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    // "sale-50%-off" isn't valid percent-encoding: the name as it stands.
+    return last;
+  }
+}
+
 /** A long text in parts, for a tool that reads it: what fetch_url does for pages. Pure. */
 export function part(text: string, offset: unknown, max: number) {
   const from = Math.max(0, Math.floor(Number(offset) || 0));

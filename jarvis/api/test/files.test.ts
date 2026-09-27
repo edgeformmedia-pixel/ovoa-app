@@ -65,6 +65,8 @@ async function main() {
   eq("an unreadable PDF says so", broken instanceof FetchRefused && broken.message, "OVOA couldn't read that file.");
   const html = await fetchPage("https://example.com/", { readFile }, serve("text/html", "<p>Hello</p>"));
   eq("pages are unchanged", html.text, "Hello");
+  const percent = await fetchPage("https://shop.example.com/sale-50%-off", { readFile }, serve("text/html", "<p>Sale</p>"));
+  eq("an address with a stray % still reads", percent.text, "Sale");
 
   globalThis.fetch = serve("application/pdf", "pdf");
   const web = webAssistant(env, "u", "UTC");
@@ -96,17 +98,26 @@ async function main() {
         parts: [
           { mimeType: "text/plain", body: { data: btoa("see attached") } },
           { mimeType: "application/pdf", filename: "Lease 2026.pdf", body: { attachmentId: "att-1", size: 3 } },
+          { mimeType: "application/pdf", filename: "Scan.pdf", body: { attachmentId: "att-2", size: 30_000_000 } },
         ],
       },
     });
   }) as typeof fetch;
   const ctx = { token: "t", timeZone: "UTC", readFile };
   const read = (await toolsByName.get("gmail_read")!.run(ctx, { messageId: "m1" })) as { attachments: unknown[] };
-  eq("gmail_read lists attachments", read.attachments, [{ filename: "Lease 2026.pdf", type: "application/pdf", size: 3 }]);
+  eq("gmail_read lists attachments", read.attachments, [
+    { filename: "Lease 2026.pdf", type: "application/pdf", size: 3 },
+    { filename: "Scan.pdf", type: "application/pdf", size: 30_000_000 },
+  ]);
   const att = (await toolsByName.get("gmail_attachment")!.run(ctx, { messageId: "m1", filename: "lease" })) as { filename: string; text: string };
   eq("gmail_attachment reads it by part of its name", [att.filename, att.text.includes("Rent")], ["Lease 2026.pdf", true]);
   eq("fetched with the id just listed", gmailCalls.at(-1)?.endsWith("/messages/m1/attachments/att-1"), true);
-  eq("a missing one says what there is", await toolsByName.get("gmail_attachment")!.run(ctx, { messageId: "m1", filename: "invoice" }), { error: "No attachment called invoice. It has: Lease 2026.pdf" });
+  eq("a missing one says what there is", await toolsByName.get("gmail_attachment")!.run(ctx, { messageId: "m1", filename: "invoice" }), { error: "No attachment called invoice. It has: Lease 2026.pdf, Scan.pdf" });
+  gmailCalls.length = 0;
+  eq("one too big isn't downloaded", [await toolsByName.get("gmail_attachment")!.run(ctx, { messageId: "m1", filename: "scan" }), gmailCalls.some((u) => u.includes("att-2"))], [
+    { error: "Scan.pdf is too big to read (over 8 MB)." },
+    false,
+  ]);
   eq("without a reader, it says so", await toolsByName.get("gmail_attachment")!.run({ token: "t", timeZone: "UTC" }, { messageId: "m1" }), { error: "Attachments can't be read here." });
 
   console.log(fails ? `\n${fails} failed` : "\nall passed");

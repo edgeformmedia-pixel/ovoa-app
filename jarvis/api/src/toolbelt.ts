@@ -242,7 +242,6 @@ const SYNONYMS: Record<string, string[]> = {
   eye: ["watch", "add"],
   monitor: ["watch", "add"],
   watching: ["watch"],
-  price: ["watch", "add"],
   // Their vault (vault.ts): details to fill forms with.
   passport: ["vault"],
   flyer: ["vault"],
@@ -254,9 +253,6 @@ const SYNONYMS: Record<string, string[]> = {
   plate: ["vault"],
   locker: ["vault"],
   wifi: ["vault"],
-  size: ["vault"],
-  sizes: ["vault"],
-  address: ["vault"],
   // The same job over many (campaigns.ts).
   blast: ["campaign"],
   bulk: ["campaign"],
@@ -274,13 +270,12 @@ const SYNONYMS: Record<string, string[]> = {
   responses: ["inbound", "results"],
   respondents: ["inbound", "results"],
   applicants: ["inbound"],
-  // Standing approvals (rules.ts): "you can text Sam without checking with me".
+  // Standing approvals (rules.ts): "you don't need my approval to text Sam".
   approve: ["rule"],
   approving: ["rule"],
   approval: ["rule"],
   approvals: ["rule"],
   permission: ["rule"],
-  checking: ["rule"],
   // The browser (browser.ts), when it's on: "fill out the form on their site".
   form: ["browser"],
   forms: ["browser"],
@@ -291,8 +286,8 @@ const SYNONYMS: Record<string, string[]> = {
   // Email attachments (files.ts): "what does the PDF she sent say".
   pdf: ["attachment"],
   attached: ["attachment"],
-  // Generic words, which only break ties: "stop watching that page" is watch_remove,
-  // "stop the JAKE code" is inbound_close.
+  // Generic words, whose synonyms only break ties between tools something else
+  // named: "stop watching that page" is watch_remove, not watch_add.
   stop: ["remove", "close"],
   make: ["create"],
   show: ["read", "list"],
@@ -377,7 +372,7 @@ export function namedTools(catalogue: ToolSpec[], request: string, max = 2, pref
   for (const w of words(request)) {
     if (GENERIC.has(w)) {
       generic.add(w);
-      for (const s of SYNONYMS[w] ?? []) if (GENERIC.has(s)) generic.add(s);
+      for (const s of SYNONYMS[w] ?? []) generic.add(s);
       continue;
     }
     asked.add(w);
@@ -402,7 +397,9 @@ export function namedTools(catalogue: ToolSpec[], request: string, max = 2, pref
         // A generic word only breaks ties: "cancel my alarm" puts alarm_cancel
         // ahead of alarm_list, and "send" alone names nothing.
         const bonus = repeating && parts.includes("routine") ? 1 : 0;
-        return { tool, score: parts.filter(names).length + 0.5 * parts.filter((n) => generic.has(n)).length + bonus, named: parts.some(names) };
+        // A generic part the request only stems ("searching" and note_search) breaks ties too.
+        const ties = parts.filter((n, i) => generic.has(n) || (i > 0 && GENERIC.has(n) && stem(n))).length;
+        return { tool, score: parts.filter(names).length + 0.5 * ties + bonus, named: parts.some(names) };
       })
       .filter((m) => m.named)
       .sort((a, b) => b.score - a.score || Number(preferred.has(b.tool.name)) - Number(preferred.has(a.tool.name)))

@@ -10,7 +10,7 @@ import { inboundOn, inboundText } from "./inbound";
 import { guestText, type Turn as GuestTurn } from "./guest";
 import { appFor, describeScreen, type MadeApp } from "./myapps";
 import { describeImage, transcribeAudio } from "./llm";
-import { fileToText } from "./files";
+import { fileNameOf, fileToText } from "./files";
 import { recordError, say } from "./obs";
 import { isPhoneTool } from "./phone";
 import { push } from "./push";
@@ -617,7 +617,7 @@ export async function lookAt(env: Env, userId: string, batch: Pick<InboxRow, "co
             })
           : kind === "voice"
             ? await transcribeAudio(env, { bytes, usage })
-            : await fileToText(env, bytes, decodeURIComponent(new URL(url).pathname.split("/").pop() ?? ""), type);
+            : await fileToText(env, bytes, fileNameOf(new URL(url).pathname), type);
       seen.set(url, { kind, text: text ? text.slice(0, kind === "file" ? FILE_TEXT_MAX : 3_000) : null });
       say("text", { outcome: `read a ${kind}`, user: userId, type, bytes: bytes.length });
     } catch (err) {

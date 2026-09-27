@@ -20,7 +20,7 @@ import { parkAction } from "./google/assistant";
 import type { CallTool, ToolSpec } from "./llm";
 import type { RuleCheck } from "./rules";
 import { noDashes } from "./sentences";
-import { base64Bytes, fileToText, part } from "./files";
+import { base64Bytes, FILE_MAX_BYTES, fileToText, part } from "./files";
 import { addDays, buckets, startOfDay } from "./time";
 import type { Env, Vars } from "./types";
 
@@ -250,6 +250,7 @@ async function run(env: Env, userId: string, timeZone: string, name: string, arg
     const want = String(args.name ?? "").trim().toLowerCase();
     const found = want ? (all.find((a) => a.name.toLowerCase() === want) ?? all.find((a) => a.name.toLowerCase().includes(want))) : all[0];
     if (!found) return { error: all.length ? `No attachment called ${args.name}. It has: ${all.map((a) => a.name).join(", ")}` : "That email has no attachments." };
+    if (found.size > FILE_MAX_BYTES) return { error: `${found.name} is too big to read (over 8 MB).` };
     const got = await graph<{ contentBytes?: string }>(env, userId, `/me/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(found.id)}`);
     const read = got.contentBytes ? await fileToText(env, base64Bytes(got.contentBytes), found.name, found.contentType) : null;
     if (!read) return { error: `OVOA can't read ${found.name}. It reads PDFs, Word and Excel files, and text files.` };
@@ -321,17 +322,28 @@ async function run(env: Env, userId: string, timeZone: string, name: string, arg
   return { error: `Unknown tool ${name}` };
 }
 
+/**
+ * Who a reply really goes to: the email's Reply-To, or its sender. Graph's
+ * /reply sends there whatever `to` the model passed, so the rule check and the
+ * card have to see these addresses, not the model's.
+ */
+async function replyTarget(env: Env, userId: string, args: Record<string, unknown>) {
+  const m = await graph<{ subject?: string; from?: Address; replyTo?: Address[] }>(
+    env,
+    userId,
+    `/me/messages/${encodeURIComponent(String(args.reply_to))}?$select=subject,from,replyTo`,
+  );
+  const replyTo = (m.replyTo ?? []).map((a) => a.emailAddress?.address ?? "").filter(Boolean);
+  args.to = (replyTo.length ? replyTo : [m.from?.emailAddress?.address ?? ""]).filter(Boolean).join(", ");
+  delete args.cc;
+  args.subject = `Re: ${m.subject ?? ""}`;
+}
+
 /** The approval card's words: what will happen, to whom. Null when it needs no approval. */
 async function confirmFor(env: Env, userId: string, name: string, args: Record<string, unknown>): Promise<string | null> {
   if (name === "outlook_send") {
-    let to = addresses(args.to).join(", ");
-    let subject = String(args.subject ?? "");
-    if (args.reply_to) {
-      const m = await graph<{ subject?: string; from?: Address }>(env, userId, `/me/messages/${encodeURIComponent(String(args.reply_to))}?$select=subject,from`);
-      to = who(m.from);
-      subject = `Re: ${m.subject ?? ""}`;
-    }
-    return `Send an email from Outlook to ${to}\nSubject: ${subject}\n\n${String(args.body ?? "").slice(0, 600)}`;
+    // A reply's `to` and `subject` were set from the email it answers (replyTarget).
+    return `Send an email from Outlook to ${addresses(args.to).join(", ")}\nSubject: ${String(args.subject ?? "")}\n\n${String(args.body ?? "").slice(0, 600)}`;
   }
   if (name === "outlook_calendar_create") {
     const guests = addresses(args.attendees);
@@ -381,6 +393,7 @@ export async function microsoftAssistant(
     const toolArgs = { ...args };
     clean(name, toolArgs);
     try {
+      if (name === "outlook_send" && toolArgs.reply_to) await replyTarget(env, userId, toolArgs);
       const autoApprove = await autoApproveSetting;
       const standing = !autoApprove && rules ? await rules(name, toolArgs) : false;
       const summary = autoApprove || standing ? null : await confirmFor(env, userId, name, toolArgs);

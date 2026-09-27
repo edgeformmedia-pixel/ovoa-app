@@ -748,10 +748,17 @@ async function signOutEverywhere(db: D1Database, userId: string) {
  * phones and Google left alone (provenAccount). Proving the address of the account you're signed in to, with
  * the code in the app (POST /me/email/verify), isn't this either: it only stamps it.
  */
+/** Tables cleared with Google when an account is taken back (disown and the claim in /auth/email/signup). */
+const TAKEN_BACK = ["approval_rules", "site_sessions", "vault_items"];
+
 async function disown(db: D1Database, userId: string) {
   await db.batch([
     db.prepare("UPDATE users SET password_hash = '' WHERE id = ?").bind(userId),
     db.prepare("DELETE FROM google_accounts WHERE user_id = ?").bind(userId),
+    db.prepare("DELETE FROM microsoft_accounts WHERE user_id = ?").bind(userId),
+    // What this branch's blocks keep for an account (blocks.ts): whoever made it may have
+    // left rules that skip approvals, their own sites' sign-ins, or details of their own.
+    ...TAKEN_BACK.map((table) => db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId)),
     db.prepare("DELETE FROM oauth_states WHERE user_id = ?").bind(userId),
   ]);
   await signOutEverywhere(db, userId);
@@ -967,6 +974,8 @@ app.post("/auth/email/signup", async (c) => {
         .prepare("UPDATE users SET password_hash = ?, password_salt = ?, name = ?, email_verified_at = ? WHERE id = ?")
         .bind(hash, salt, name, Date.now(), id),
       c.env.DB.prepare("DELETE FROM google_accounts WHERE user_id = ?").bind(id),
+      c.env.DB.prepare("DELETE FROM microsoft_accounts WHERE user_id = ?").bind(id),
+      ...TAKEN_BACK.map((table) => c.env.DB.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(id)),
       c.env.DB.prepare("DELETE FROM oauth_states WHERE user_id = ?").bind(id),
     ]);
     await signOutEverywhere(c.env.DB, id);
