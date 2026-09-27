@@ -153,6 +153,13 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       friend. A stranger's text naming "@tigh sent me" is remembered (one inviter per number); when that number links an
       account the inviter is told once. invite_friend tool, GET /invites, an app screen with the Share sheet. Rewards
       are the owner's call (not built). Migration 0071.
+- [ ] 24. **Shared lists with Friends** (from task 21, docs/instinct-parity.md): "share my grocery list with Maria".
+      A saved list (lists.ts) can be shared with a Friend whose access level is Partner or Best friend (network.ts
+      ACCESS_LEVELS; add a switch in Advanced rather than widening Basic). Both people's OVOAs can list_read it and
+      add or tick rows; the owner can unshare. A Friend below that level, or a disconnected one, reads nothing. New
+      table (list_shares) in the next free migration; caps as lists.ts. Adding to someone's list never texts them
+      unless they asked to be told. Tests: share, read and add from the friend's side, access too low, unshare,
+      disconnect.
 - [ ] 29. **Review tasks 24 to 28 and the Outlook follow-ups**: read `git diff fa80395..HEAD -- jarvis/` line by line
       (receipts, trips from email, voice-note replies, meetings, shared lists, Outlook contacts and campaigns) for real
       bugs: approvals that can be skipped, anything that texts or emails someone who didn't ask, data reaching the wrong
@@ -167,13 +174,6 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       else the branch broke, with a test.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
-- [ ] 24. **Shared lists with Friends** (from task 21, docs/instinct-parity.md): "share my grocery list with Maria".
-      A saved list (lists.ts) can be shared with a Friend whose access level is Partner or Best friend (network.ts
-      ACCESS_LEVELS; add a switch in Advanced rather than widening Basic). Both people's OVOAs can list_read it and
-      add or tick rows; the owner can unshare. A Friend below that level, or a disconnected one, reads nothing. New
-      table (list_shares) in the next free migration; caps as lists.ts. Adding to someone's list never texts them
-      unless they asked to be told. Tests: share, read and add from the friend's side, access too low, unshare,
-      disconnect.
 - [x] 25. **Scheduling with people not on OVOA** (from task 21): "find a time with dana@x.com next week". OVOA reads the
       person's free time (Google or Outlook calendar), picks 3 slots in their zone and parks ONE email to Dana from
       their own account (pending_actions, rules.ts applies like any email). When Dana's reply arrives (read-only check
