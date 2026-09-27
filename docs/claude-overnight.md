@@ -105,7 +105,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       if they text OVOA, else a push) and the watch ends unless told to keep going. Read-only: a watch never buys,
       books or sends anything to anyone but its owner. Respect plan tiers the way agent jobs do (check agent.ts for how
       background work is gated) and count its model calls through the model gate. Tests with a fake fetch.
-- [~] claimed 2026-09-27T12:28Z by local session. 14. **Opt-in inbound ("text my AI") for creators**: a person makes a public code (e.g. "JAKE"). Anyone who texts
+- [x] 14. **Opt-in inbound ("text my AI") for creators**: a person makes a public code (e.g. "JAKE"). Anyone who texts
       that code to OVOA's line is opted in and gets the owner's short screener (up to 5 questions the owner set), asked
       one at a time by OVOA in the guest flow (guest.ts / texting.ts receive, before the free trial), answers saved per
       respondent; the owner can ask "who answered?" (tool) and gets a ranked summary; a respondent can text STOP anytime
@@ -149,6 +149,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - Task 10: apply migration `0067_site_sessions.sql`. The app screen (docs/logins-without-passwords.md) needs a new native library
   (@react-native-cookies/cookies) and a dev build: owner decision.
 - Task 11: pick a voice provider (Twilio Voice + Media Streams, or a hosted agent like Vapi/Retell/ElevenLabs Agents); design in docs/server-calls.md.
+- Task 14: apply migration `0068_inbound_codes.sql`; var `INBOUND_CODES=1` turns text-in codes on (off = unchanged).
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -183,3 +184,4 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - 2026-09-27 12:17 UTC (local session): task 9 done in aaa18d5. Group chats; 69 test files pass, tsc clean; texting smoke 6 failed, identical to untouched main.
 - 2026-09-27 12:20 UTC (local session): task 10 done in d39d49d. Server side + design doc; 70 test files pass, tsc clean.
 - 2026-09-27 12:21 UTC (local session): task 11 done in 7fdc0ba (docs/server-calls.md, design only, needs a provider).
+- 2026-09-27 12:31 UTC (local session): task 14 done in 03166e9. Text-in codes; 71 test files pass, tsc clean; texting smoke 6 = main.
