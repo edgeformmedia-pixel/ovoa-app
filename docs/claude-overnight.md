@@ -153,6 +153,18 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       friend. A stranger's text naming "@tigh sent me" is remembered (one inviter per number); when that number links an
       account the inviter is told once. invite_friend tool, GET /invites, an app screen with the Share sheet. Rewards
       are the owner's call (not built). Migration 0071.
+- [ ] 29. **Review tasks 24 to 28 and the Outlook follow-ups**: read `git diff fa80395..HEAD -- jarvis/` line by line
+      (receipts, trips from email, voice-note replies, meetings, shared lists, Outlook contacts and campaigns) for real
+      bugs: approvals that can be skipped, anything that texts or emails someone who didn't ask, data reaching the wrong
+      person, time-zone mistakes in meetings.ts freeSlots and mailtrips.ts reminders, crons that could run for
+      everyone or never, behavior changes with flags off. Fix each real one with a test; log what was checked.
+- [ ] 30. **Docs catch-up**: docs/instinct-parity.md (tasks 24 to 28 now On this branch), docs/what-ovoa-can-do.md
+      (receipts, trips from email, voice-note replies, meetings, shared lists, Outlook contacts), the final report's
+      phone test plan (one step each), and docs/outlook.md if anything changed. Docs only.
+- [ ] 31. **Full local smoke, both suites, fresh state**: run test/smoke.sh and test/texting-smoke.mjs as their headers
+      say (fresh --persist-to, local only) and record the counts. The only allowed failure is "the server wants the
+      second wording". If the auth rate limit trips on a fast machine, re-run after a minute and say so. Fix anything
+      else the branch broke, with a test.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 - [ ] 24. **Shared lists with Friends** (from task 21, docs/instinct-parity.md): "share my grocery list with Maria".
@@ -162,7 +174,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       table (list_shares) in the next free migration; caps as lists.ts. Adding to someone's list never texts them
       unless they asked to be told. Tests: share, read and add from the friend's side, access too low, unshare,
       disconnect.
-- [~] claimed 2026-09-27T14:15Z by local session. 25. **Scheduling with people not on OVOA** (from task 21): "find a time with dana@x.com next week". OVOA reads the
+- [x] 25. **Scheduling with people not on OVOA** (from task 21): "find a time with dana@x.com next week". OVOA reads the
       person's free time (Google or Outlook calendar), picks 3 slots in their zone and parks ONE email to Dana from
       their own account (pending_actions, rules.ts applies like any email). When Dana's reply arrives (read-only check
       of the thread in the slow lane, Plus and consent like watches), OVOA works out the chosen slot and parks the
@@ -221,6 +233,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 | 27 | Receipts into money: a texted receipt is offered as spending, logged on yes, counted against a budget (receipts.ts) | 2b110dd |
 | 26 | Trips and deliveries from email: trips, check-in and booking reminders, deliveries in the brief (mailtrips.ts) | 2f3a850 |
 | 28 | Voice-note replies, off unless TEXT_VOICE_REPLIES=1 (voicereply.ts) | 7fb2820 |
+| 25 | Scheduling with people not on OVOA: meet_propose, the meetings lane (meetings.ts) | 7235355 |
 | 20 | Read files: PDFs, Word, Excel and text, texted in, at a link, or attached to an email (files.ts) | 1f3fac6 |
 
 ### Deploy order (owner)
@@ -228,7 +241,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 1. Review and merge `claude/overnight` into main (no conflicts with main as of 16c2deb).
 2. `cd jarvis/api && npm run db:migrate` BEFORE deploying: applies 0060 to 0069 (guest_daily, user_lists, vault,
    do_not_contact, campaigns, approval_rules, text_groups, site_sessions, inbound_codes, page_watches) and 0070
-   (microsoft_accounts), 0071 (invite_referrals), 0072 (money_spend.budget_id) and 0073 (voice_clips). The new code
+   (microsoft_accounts), 0071 (invite_referrals), 0072 (money_spend.budget_id), 0073 (voice_clips) and 0074 (meetings). The new code
    reads these tables (the watches cron lane runs for everyone), so migrate first. The 0057 to 0059 gap is on purpose.
 3. `wrangler deploy`. With no new vars set, behavior changes are: fetch_url, lists, vault (uses the existing
    TOKEN_ENC_KEY), reading files (uses the existing AI binding), keywords + do-not-contact, approval rules, signed-in sites API, page watchers, the guest daily
@@ -324,6 +337,8 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   (needs DEEPGRAM_API_KEY, already set for the app's voice). Cost: one Deepgram Aura voicing of up to 600 characters
   per voice memo answered (voice.ts counts it in usage like the app's). Check that Sendblue plays an MP3 sent as
   media_url with no text (it should; if not, send "🎧" as the content in voicereply.ts).
+- Task 25 (meetings): apply migration `0074_meetings.sql`. No switch. Uses Google's freeBusy (the calendar scope
+  OVOA already asks for) or Outlook's calendar.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -345,6 +360,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 - Receipts (receipts.ts): the texted-photo prompt asks for a final "RECEIPT | total | store | date" line; lookAt takes it off and strips card numbers (Luhn-checked, and masked ones) from photo descriptions; combine tells the turn to offer logging and only call money_update spend after a yes; money_update's optional category links the spend to a budget (money_spend.budget_id) and budget.ts spentIn counts it.
 - Trips from email (mailtrips.ts): extrasTick 6 to 7 AM local, Plus (lazyCheck plus), Google or Outlook: new confirmation emails (Gmail query / Outlook subjects, 2 days) read once (daily_marks trip-mail), a cheap json model call; flights and stays become life_plans trips, bookings events, with check-in (day before) and booking (2 h before) note reminders; deliveries today or tomorrow become 9 AM notes the brief reads (deliveriesOn); trips_scan turns it off (daily_marks trips-off). Never clicks, replies or changes anything. Like the other extras, only for app users (push tokens).
 - Voice-note replies (voicereply.ts, off unless TEXT_VOICE_REPLIES=1 and DEEPGRAM_API_KEY): after the text reply to a batch that had a voice memo, the reply (up to 600 characters, cut at a sentence) is voiced with voiceText (Base, consent and allowance via blockedFor), kept in voice_clips behind a random token for an hour, and sent as Sendblue media_url from PUBLIC_URL/texting/voice/<token>.mp3 (public route). Any failure only skips the audio.
+- Meetings (meetings.ts): meet_propose (blocks.ts) takes 3 free weekday slots 9 to 5 local from Google freeBusy or Outlook calendarView (not free, all-day only if out of office), 2 h out at least, one a day first; parks ONE gmail_send / outlook_send (ruleAllows sends it directly); meetings row waits 7 days; the meetings cron lane (lease "meetings") checks each hourly for Plus with consent (blockedFor), reads the newest reply from that address, a cheap json model picks 1 to 3 or 0; a pick parks calendar_create_event / outlook_calendar_create with the guest and texts them with approvals (reach), 0 hands the quoted reply to them. Max 5 open.
 - Guest trial ceiling (guest.ts): GUEST_DAILY_REPLIES (default 2000) free-trial replies per UTC day across all numbers.
 
 ## Log
@@ -460,3 +476,5 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   mail extras, it runs for app users (the extras tick reads users with push tokens). 77 test files pass, tsc clean.
 - 2026-09-27 14:14 UTC (local session): task 28 (voice-note replies) in 7fb2820; migration 0073; off by default. 78 test
   files pass, tsc clean.
+- 2026-09-27 14:19 UTC (local session): task 25 (meetings) in 7235355; migration 0074. 79 test files pass, tsc clean. Added
+  tasks 29 (review of 24 to 28), 30 (docs catch-up) and 31 (full smoke) for the hourly runs.
