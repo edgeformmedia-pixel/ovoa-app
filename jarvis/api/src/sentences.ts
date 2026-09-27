@@ -116,3 +116,17 @@ export function dropRepeats(reply: string) {
   out.end();
   return out.repeated() ? out.text() : reply;
 }
+
+/**
+ * A reply with its em dashes (and spaced en dashes) turned into commas: they
+ * read as machine-written, and the user wants none (2026-09-27). "3–5" keeps
+ * a plain hyphen. Pure.
+ */
+export function noDashes(text: string) {
+  return text
+    .replace(/(\d)\s*[–—]\s*(\d)/g, "$1-$2")
+    .replace(/\s*—\s*([.!?,]|$)/gm, "$1")
+    .replace(/^\s*[—–]\s*/gm, "")
+    .replace(/\s*[—]\s*|\s+–\s+/g, ", ")
+    .replace(/,\s*,/g, ",");
+}

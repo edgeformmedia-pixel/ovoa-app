@@ -2,6 +2,7 @@
 // The first FREE texts get real AI replies; then an automated (no AI) text
 // asks for their email, which is worth FREE more; after that an automated
 // text sends them to Base. The counts are per phone number.
+import { noDashes } from "./sentences";
 import { CONTACT_CARD_PATH } from "./contactcard";
 import { generateText } from "./llm";
 import { say } from "./obs";
@@ -34,7 +35,7 @@ async function load(db: D1Database, phone: string, now: number): Promise<Row> {
 
 const SYSTEM = [
   "You are OVOA, an AI assistant people text over iMessage. This person is trying you out: they have no account yet.",
-  "Text like a person: short, warm, plain. One to three sentences unless they ask for more. No markdown.",
+  "Text like a real person, super chill and casual: short, warm, plain words, contractions, lowercase is fine if they write that way. One to three sentences unless they ask for more. No markdown. Never use em dashes; use commas or periods.",
   "Answer questions, help them think, draft things, explain things. You can't set reminders, read their accounts, or look things up live in this trial; if they ask for that, say it comes with an OVOA account.",
   "Don't mention limits or pricing unless asked.",
 ].join("\n");
@@ -93,7 +94,7 @@ export async function guestText(
   const text = content.trim() || "(they sent something without words)";
   let reply: string;
   try {
-    reply = (await write([...history, { role: "user", text }])).trim();
+    reply = noDashes((await write([...history, { role: "user", text }])).trim());
   } catch (err) {
     console.error("ovoa.err guest text", err);
     // Give the text back: it wasn't answered.

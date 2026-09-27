@@ -68,7 +68,7 @@ import {
 } from "./llm";
 import { labelFor, noteEngines, noteTick, observe, recordError, say } from "./obs";
 import { describeToolCall, kindForTool, logAction, toolSucceeded } from "./actionlog";
-import { dropRepeats, sentenceStream } from "./sentences";
+import { dropRepeats, noDashes, sentenceStream } from "./sentences";
 import { isPhoneTool, type PhoneCaps } from "./phone";
 import { isShortcutTool, shortcutAssistant, shortcutFiles } from "./shortcuts/assistant";
 import type { Env, Vars } from "./types";
@@ -1753,6 +1753,8 @@ async function runTurn(
     ["base", [
       `You are ${settings.assistant_name}, a friendly personal AI assistant that also helps with fitness and safety.`,
       `Personality: ${settings.personality}`,
+      // The user wants it to sound like a real, relaxed person (2026-09-27).
+      "Sound like a real human friend: relaxed, casual and warm, with contractions and everyday words. Never stiff, formal or corporate, never \"As an AI\". Never use em dashes (—); use a comma or a period instead.",
       `You are talking with ${user!.name}. Their time zone is ${timeZone}.`,
       "Each of their messages starts with the current time, and sometimes their step counts or where they are, in square brackets. The app adds that, not them: use it, but don't mention it unless it's relevant.",
       // Both engines answered "Add milk and eggs to my notes" with "Noted — milk and
@@ -1776,7 +1778,7 @@ async function runTurn(
       ? [
           "You're talking out loud and your reply is read aloud: say it as a person would.",
           "The answer first, usually in one to three short sentences, with contractions and plain words: \"tomorrow at three\", not \"Monday, September 21st at 3:00 PM\". No lists, URLs or long numbers unless asked.",
-          "Confirm actions in a few words (\"Done — three tomorrow, invite sent to Ty\"). Never open with filler like \"Certainly\" or \"Sure thing\".",
+          "Confirm actions in a few words (\"Done, three tomorrow. Invite sent to Ty.\"). Never open with filler like \"Certainly\" or \"Sure thing\".",
           "If you need one detail, ask just for that.",
           // Text written alongside a tool call is spoken straight away: \"checking now\" instead of silence while a lookup runs.
           "Before a lookup, say four words or fewer (\"Checking your calendar.\") in the same message as the tool call.",
@@ -1849,7 +1851,7 @@ async function runTurn(
     ? sentenceStream(
         (s) => {
           firstSentenceMs ??= Date.now() - started;
-          verdict.pass(s);
+          verdict.pass(noDashes(s));
         },
         voice ? undefined : Infinity,
         // Aloud, a long first sentence goes out at its first comma: the phone can be
@@ -2110,7 +2112,7 @@ async function runTurn(
 
   // What was streamed (minus repeats) is what the user heard, so that's what's kept. A
   // website's address, when the reply gives one, is the one that opens (sites.ts mendSiteLinks).
-  const reply = await mendSiteLinks(env, userId, spoken?.emitted() ? spoken.text() : dropRepeats(outcome.text));
+  const reply = noDashes(await mendSiteLinks(env, userId, spoken?.emitted() ? spoken.text() : dropRepeats(outcome.text)));
   const now = Date.now();
   const userMsg = { id: crypto.randomUUID(), role: "user", content: text, created_at: now };
   const botMsg = { id: crypto.randomUUID(), role: "assistant", content: reply, created_at: now + 1 };

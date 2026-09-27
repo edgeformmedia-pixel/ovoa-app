@@ -179,10 +179,10 @@ const body = (over: Record<string, unknown> = {}) => ({
   eq("down is the NO", tapbackVerdict({ kind: "disliked", quoted: "Reply YES to go ahead." }), "no");
   eq("on anything else it's nothing", tapbackVerdict({ kind: "liked", quoted: "Done — 3pm" }), null);
 
-  eq("Markdown comes out", plainText("**Done** — *really*. See [the doc](https://x.co/d).\n\n## Next\n* one\n* two"), "Done — really. See the doc (https://x.co/d).\n\nNext\n- one\n- two");
+  eq("Markdown comes out", plainText("**Done** — *really*. See [the doc](https://x.co/d).\n\n## Next\n* one\n* two"), "Done, really. See the doc (https://x.co/d).\n\nNext\n- one\n- two");
   eq("arithmetic stays", plainText("2 * 3 * 4 = 24"), "2 * 3 * 4 = 24");
   eq("a link that is its own label", plainText("[https://x.co](https://x.co)"), "https://x.co");
-  eq("a blank line starts the next text", bubbles("Done — 3pm tomorrow.\n\nWant me to add Sam?"), ["Done — 3pm tomorrow.", "Want me to add Sam?"]);
+  eq("a blank line starts the next text", bubbles("Done — 3pm tomorrow.\n\nWant me to add Sam?"), ["Done, 3pm tomorrow.", "Want me to add Sam?"]);
   eq("three at most", bubbles("a\n\nb\n\nc\n\nd"), ["a", "b", "c\n\nd"]);
   eq("nothing is no texts", bubbles("  \n\n "), []);
 
@@ -358,7 +358,7 @@ async function main() {
 
   eq("a text from them", await text("remind me at 3 tomorrow", deps()), "queued");
   eq("is a turn with their words", replies.asked.at(-1), "remind me at 3 tomorrow");
-  eq("answered in two texts", out.sent.slice(-2).map((s) => s.content), ["Done — 3pm tomorrow.", "Want me to add Sam?"]);
+  eq("answered in two texts", out.sent.slice(-2).map((s) => s.content), ["Done, 3pm tomorrow.", "Want me to add Sam?"]);
   eq("to them", out.sent.at(-1)?.to, PHONE);
   eq("and done with: no words kept", one<{ status: string; content: string }>(`SELECT status, content FROM text_inbox WHERE handle = ?`, `h${n}`), {
     status: "done",

@@ -1,3 +1,4 @@
+import { noDashes } from "./sentences";
 import { Hono } from "hono";
 import { approveAction, type PendingAction } from "./google/assistant";
 import { allowed, tooMany } from "./limits";
@@ -319,7 +320,7 @@ export function yesOrNo(text: string): "yes" | "no" | null {
  * model forgets. Pure.
  */
 export function plainText(reply: string) {
-  return reply
+  return noDashes(reply)
     .replace(/\r\n?/g, "\n")
     .replace(/```[a-z]*\n?([\s\S]*?)```/gi, "$1")
     .replace(/`([^`\n]+)`/g, "$1")
@@ -1291,7 +1292,7 @@ export function textChannel(
   const prompt = [
     "They're texting you from Messages on their iPhone (iMessage), not using the OVOA app. It's the same conversation as the app, with the same memories, lists, notes, reminders and tools.",
     // Instinct, 2026-09-26: people answer texts that sound like a person, and mute ones that sound like a form.
-    "Text like a sharp friend, not a help desk: usually one short line, two at most, plain words. No greeting, no \"Sure!\" or \"Great question\", no repeating what they asked, no \"I've gone ahead and\", no sign-off, no offer of more help. Say the result, not the process (\"Done, 5pm tomorrow\", not \"I have set a reminder for you for tomorrow at 5:00 PM\"). Match how they write; emoji only if they use them. No Markdown, headings or asterisks. A blank line starts a new bubble; almost always use one. Links are fine: they can tap them.",
+    "Text like a real person who's chill and easygoing, a sharp friend, not a help desk or a bot: usually one short line, two at most, plain words. No greeting, no \"Sure!\" or \"Great question\", no repeating what they asked, no \"I've gone ahead and\", no sign-off, no offer of more help. Say the result, not the process (\"Done, 5pm tomorrow\", not \"I have set a reminder for you for tomorrow at 5:00 PM\"). Match how they write; emoji only if they use them. No Markdown, headings or asterisks. A blank line starts a new bubble; almost always use one. Links are fine: they can tap them. Never use em dashes (—); use a comma or a period.",
     opts.react ? "When a tapback says it (a thanks, an ok, something funny), react with text_react and write nothing, like a person would." : "",
     // Instinct (2026-09-26): an assistant you text does things; it doesn't describe them.
     "Act, don't narrate: when what they want is clear, do it now with your tools and say what you did in a few words. Ask only for what you can't reasonably work out yourself, one question at a time. Make the reasonable choice for small details and mention it, rather than asking.",
