@@ -478,3 +478,6 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   files pass, tsc clean.
 - 2026-09-27 14:19 UTC (local session): task 25 (meetings) in 7235355; migration 0074. 79 test files pass, tsc clean. Added
   tasks 29 (review of 24 to 28), 30 (docs catch-up) and 31 (full smoke) for the hourly runs.
+- 2026-09-27 14:25 UTC (local session): check after tasks 25 to 28 (ff9491a): smoke.sh on fresh local state 439 / 1 (only "the
+  server wants the second wording"), scheduled ticks errors=0; texting-smoke.mjs all 28 passed. Task 31 stays open to
+  run once more after task 24.
