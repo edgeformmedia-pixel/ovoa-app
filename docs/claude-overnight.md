@@ -46,7 +46,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       and friend answers sent as a push. Guest texting (`guest.ts`) calls the model with `userId: null`, which the
       model gate lets through (`plans.ts`): add a global daily guest cap (var with a safe default) so guest trials
       can't run up unbounded cost; over the cap, reply with the existing "Get Base" style text. Tests.
-- [ ] 3. **Saved lists**: `list_save` / `list_read` tools backed by a new D1 table (user_id, name, rows JSON, unique
+- [~] claimed 2026-09-27T11:48Z by local session. 3. **Saved lists**: `list_save` / `list_read` tools backed by a new D1 table (user_id, name, rows JSON, unique
       per user+name, ~5,000 row cap, size cap). Lets OVOA build a list across steps and reuse it later. Tests.
 - [ ] 4. **Vault**: encrypted personal details OVOA uses when booking or filling forms (addresses, loyalty and
       frequent-flyer numbers, sizes, seat preferences, car). AES-GCM via existing `crypto.ts` / `TOKEN_ENC_KEY`.
