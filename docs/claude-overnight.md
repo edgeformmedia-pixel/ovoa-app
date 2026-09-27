@@ -506,7 +506,7 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   changed (new columns and statuses); it isn't applied anywhere yet. 79 test files pass, tsc clean.
 - 2026-09-27 14:42 UTC (local session): after the third review's fixes (2650241): smoke.sh on fresh local state 439 / 1 (only
   "the server wants the second wording"), scheduled ticks errors=0.
-- 2026-09-27 15:20 UTC (scheduled session): origin/main had no new commits. Task 24 (shared lists with Friends) in
+- 2026-09-27 15:03 UTC (scheduled session): origin/main had no new commits. Task 24 (shared lists with Friends) in
   3025f69; migration 0075 (list_shares, plus connection_perms.share_lists backfilled for connections already at
   Best friend, Partner or Full so their level still reads the same). Decisions: the Advanced switch is a new
   Access key (shareLists), on from Best friend up, off for Basic; the Friend's OVOA may read, append and tick
