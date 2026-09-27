@@ -130,7 +130,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       (inbound_create), "don't ask me before" (rule_add), "open that site / book it on the site" (browser_open when on).
       Add SYNONYMS entries (without stealing words existing tools rely on: run test/toolbelt.test.ts and add cases), and
       a short test per phrase with namedTools against the real catalogue.
-- [ ] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
+- [~] claimed 2026-09-27T13:12Z by scheduled session. 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 
 ## Needs the owner
