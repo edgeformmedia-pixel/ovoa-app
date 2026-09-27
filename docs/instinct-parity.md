@@ -52,7 +52,7 @@ Status words:
 | Builds and hosts websites | Live on main | sites.ts at username.ovoa.ai |
 | Makes a game for two people | Live on main | together.ts |
 | Keeps lists across steps | On this branch (task 3) | lists.ts |
-| Shared lists with a partner or friend (typical) | Missing | A list shared with a Friend at Partner or Best friend level, both OVOAs read and add (task 24) |
+| Shared lists with a partner or friend (typical) | On this branch (task 24) | lists.ts + list_shares: a Friend at Best friend or above (or the Share lists switch) reads, adds and ticks |
 | Receipts into money: text a photo of a receipt and it's counted (typical) | On this branch (task 27) | receipts.ts: offered, logged on yes, counts against a budget |
 | **Many at once** | | |
 | One approval, many targets (emails, research, friends) | On this branch (task 6) | Off until `CAMPAIGNS=1` |
@@ -67,7 +67,7 @@ Status words:
 ## The 5 most valuable Missing items
 
 Ranked by how often a person would feel them, and all buildable without a new provider or key. They are
-appended to docs/claude-overnight.md as tasks 24 to 28.
+appended to docs/claude-overnight.md as tasks 24 to 28, and all five are now built on the branch.
 
 1. **Shared lists with Friends** (task 24): groceries and packing lists with a partner are an everyday use, and
    lists.ts plus network.ts access levels already hold both halves.

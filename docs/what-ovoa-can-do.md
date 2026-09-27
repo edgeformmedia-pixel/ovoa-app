@@ -18,8 +18,8 @@ live when it's merged and deployed; "Switch" says what turns it on.
 
 - **Calendar and email** (Google): *"what's on tomorrow"*, *"reply to Dana that Thursday works"*,
   *"find the email from my landlord"*. Sending waits for your OK. (Live)
-- **Outlook and Microsoft 365** mail and calendar, the same way: *"what's in my Outlook inbox"*, *"put lunch
-  Friday on my Outlook calendar"*. Sending and inviting wait for your OK. (New. Switch: register the app with
+- **Outlook and Microsoft 365** mail, calendar and contacts, the same way: *"what's in my Outlook inbox"*, *"put lunch
+  Friday on my Outlook calendar"*, *"what's Pat's email"*. Sending and inviting wait for your OK. (New. Switch: register the app with
   Microsoft, docs/outlook.md)
 - **Voice notes back**: text it a voice memo and the answer comes as text and then as a voice note too.
   (New. Switch: `TEXT_VOICE_REPLIES=1`)
@@ -53,7 +53,9 @@ live when it's merged and deployed; "Switch" says what turns it on.
   sign-in screen needs a native library, docs/logins-without-passwords.md)
 - **Your vault**: *"my Delta number is 1234567, save it"*. Addresses, loyalty numbers, sizes, seat
   preference, encrypted, used when it books or fills forms. Never cards or passwords. (New)
-- **Saved lists** it builds over time: *"keep a list of the places we liked"*. (New)
+- **Saved lists** it builds over time: *"keep a list of the places we liked"*. Share one with a partner or best
+  friend on OVOA (*"share my grocery list with Maria"*) and both of your OVOAs can add to it and tick things off.
+  (New)
 - **Watch a page for you**: *"tell me when Saturday tickets go on sale"*, *"let me know if this jacket drops
   under $120"*. Checks hourly or daily and texts you once when it happens; it never buys. (New, Plus)
 - **Plans and trips**: options, when to book, a reminder, a follow-up. (Live)

@@ -165,7 +165,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       bugs: approvals that can be skipped, anything that texts or emails someone who didn't ask, data reaching the wrong
       person, time-zone mistakes in meetings.ts freeSlots and mailtrips.ts reminders, crons that could run for
       everyone or never, behavior changes with flags off. Fix each real one with a test; log what was checked.
-- [ ] 30. **Docs catch-up**: docs/instinct-parity.md (tasks 24 to 28 now On this branch), docs/what-ovoa-can-do.md
+- [x] 30. **Docs catch-up**: docs/instinct-parity.md (tasks 24 to 28 now On this branch), docs/what-ovoa-can-do.md
       (receipts, trips from email, voice-note replies, meetings, shared lists, Outlook contacts), the final report's
       phone test plan (one step each), and docs/outlook.md if anything changed. Docs only.
 - [ ] 31. **Full local smoke, both suites, fresh state**: run test/smoke.sh and test/texting-smoke.mjs as their headers
@@ -203,7 +203,7 @@ Branch `claude/overnight` is on top of main 16c2deb (main has not moved since): 
 10,700 lines, mostly new files; the edits to existing files are small hooks. 79 unit test files pass, `npx tsc --noEmit`
 is clean in jarvis/api and jarvis/app. Local smoke on fresh state: texting-smoke all green; smoke.sh 439 / 1 (the known
 consent-wording check, see task 17) when the auth rate limit doesn't trip on a fast machine. Four reviews so far
-(ed39979, task 22, fa80395 and 3a6bda5) found 30 real issues, all fixed with tests.
+(ed39979, task 22, fa80395 and 3a6bda5) found 30 real issues, all fixed with tests; a fifth (task 29) covers task 24.
 
 ### What shipped (commits)
 
@@ -235,6 +235,7 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 | 26 | Trips and deliveries from email: trips, check-in and booking reminders, deliveries in the brief (mailtrips.ts) | 2f3a850 |
 | 28 | Voice-note replies, off unless TEXT_VOICE_REPLIES=1 (voicereply.ts) | 7fb2820 |
 | 25 | Scheduling with people not on OVOA: meet_propose, the meetings lane (meetings.ts) | 7235355 |
+| 24 | Shared lists with Friends (lists.ts, list_shares; by the scheduled session) | 3025f69 |
 | 20 | Read files: PDFs, Word, Excel and text, texted in, at a link, or attached to an email (files.ts) | 1f3fac6 |
 
 ### Deploy order (owner)
@@ -293,7 +294,9 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 17. (Plus) "Find a time with <your other email> next week for coffee": approve the email, reply from the other account
     "the second one works", and within the hour OVOA texts "... picked ... Want me to send the invite?"; YES adds it.
 18. With TEXT_VOICE_REPLIES=1: text a voice memo; the text reply comes, then a voice note of it.
-19. Base account: plan screen says 15 replies a day and background work is Plus's (main's own behavior, sanity check).
+19. With a Friend at Best friend: "share my grocery list with <them>"; from their phone "add oat milk to <you>'s
+    grocery list"; your list shows it. Lower them to Basic: they can't read it any more.
+20. Base account: plan screen says 15 replies a day and background work is Plus's (main's own behavior, sanity check).
 
 ## Needs the owner
 
@@ -515,3 +518,6 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   list_tick. Two existing tests got the new field/tools added to their expected values (network.test.ts perms
   object, lists.test.ts tool names), nothing loosened. 80 test files pass, tsc clean in api and app. Needs the
   owner: apply 0075 before the deploy (network.ts reads the new column).
+- 2026-09-27 15:10 UTC (local session): task 30 (docs catch-up): parity table (task 24 done; all five of task 21's
+  items built), what-ovoa-can-do (shared lists, Outlook contacts; receipts, trips, meetings and voice replies were
+  added earlier), the shipped table (24) and a phone test step for shared lists. Docs only.
