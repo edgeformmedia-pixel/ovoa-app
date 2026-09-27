@@ -198,3 +198,8 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - 2026-09-27 12:32 UTC (local session): task 12 done in 3705128. App screens; app tsc clean (jarvis/app npx tsc --noEmit). Codemagic only builds main, so this branch starts no build.
 - 2026-09-27 12:33 UTC (local session): task 15 done in 9b731e4: docs/what-ovoa-can-do.md (docs/capabilities.md is an older pendant-era note, left alone).
 - 2026-09-27 12:41 UTC (local session): task 13 done in d936205. Page watchers; 72 test files pass, tsc clean; full smoke 427/6 = main; a local scheduled tick ran the new lane with errors=0.
+- 2026-09-27 12:53 UTC (local session): code review of the whole branch (origin/main...claude/overnight) found 8 issues;
+  all fixed in ed39979 with tests: group check failed open without participants; group history could steer the sender's
+  private turn; screener answers equal to a code restarted it; keyword replies hijacked linked users' one-word answers;
+  deleting vault/sites/rules needed a paid plan; email campaigns didn't re-check plan/consent; browser sessions weren't
+  closed per turn; public-suffix cookies accepted. 72 test files pass; both smokes at main's baseline.
