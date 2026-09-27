@@ -51,8 +51,17 @@ function d1Execute(statements) {
 }
 
 /** One SELECT's rows. */
-function d1Query(sql) {
-  const r = spawnSync("npx", ["wrangler", "d1", "execute", "jarvis-db", "--remote", "--json", "--command", JSON.stringify(sql.replace(/\s+/g, " "))], { shell: true, encoding: "utf8", env: process.env });
+function d1Query(sql, tries = 3) {
+  try {
+    return d1QueryOnce(sql);
+  } catch (err) {
+    if (tries <= 1) throw err;
+    return d1Query(sql, tries - 1);
+  }
+}
+
+function d1QueryOnce(sql) {
+  const r =spawnSync("npx", ["wrangler", "d1", "execute", "jarvis-db", "--remote", "--json", "--command", JSON.stringify(sql.replace(/\s+/g, " "))], { shell: true, encoding: "utf8", env: process.env });
   if (r.status !== 0) throw new Error(`wrangler d1 query failed: ${(r.stderr || r.stdout).slice(-400)}`);
   return JSON.parse(r.stdout.slice(r.stdout.indexOf("[")))[0]?.results ?? [];
 }
