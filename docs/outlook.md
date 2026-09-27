@@ -25,6 +25,14 @@ calendar. The agent's own background jobs can't send Outlook mail, the same as
 Gmail (`commands.ts`, `agent.ts`). Sent mail and new events show in the
 action log.
 
+Outlook events are in the morning brief and the leave-now alerts, like Google
+Calendar's. Background jobs ("every morning, tell me what's new in my Outlook")
+can read Outlook the same way they read Gmail. They can't send from it, and
+an invite they propose waits for approval.
+
+"Check my Hotmail", "what's in my inbox" and "email Pat" reach the Outlook
+tools for someone who has Outlook connected.
+
 One Microsoft account per person. Connecting again replaces it.
 
 ## Switching it on (the owner)
