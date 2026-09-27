@@ -17,7 +17,7 @@ import type { Env, Vars } from "./types";
 import { isRuleTool, ruleRoutes, rulesAssistant } from "./rules";
 import { siteSessionRoutes } from "./sitesessions";
 import { isVaultTool, vaultAssistant, vaultRoutes } from "./vault";
-import { isWatchTool, watchesAssistant } from "./watches";
+import { isWatchTool, watchesAssistant, watchRoutes } from "./watches";
 
 type Block = { tools: ToolSpec[]; callTool: CallTool; prompt: string };
 
@@ -74,3 +74,4 @@ blockRoutes.route("/", ruleRoutes);
 blockRoutes.route("/", siteSessionRoutes);
 blockRoutes.route("/", inviteRoutes);
 blockRoutes.route("/", meetingRoutes);
+blockRoutes.route("/", watchRoutes);

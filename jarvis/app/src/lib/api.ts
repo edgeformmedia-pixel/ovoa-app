@@ -459,6 +459,18 @@ export type MeetingOffer = {
   until: number;
 };
 
+/** A page OVOA watches for them (api/src/watches.ts). */
+export type PageWatch = {
+  id: string;
+  url: string;
+  lookingFor: string;
+  checks: "hourly" | "daily";
+  until: number;
+  lastSaw: string | null;
+  timesChecked: number;
+  status: "watching" | "happened";
+};
+
 /** Invite a friend (api/src/invites.ts). */
 export type Invite = { number: string; text: string; smsLink: string | null; username: string | null; joined: number; waiting: number };
 
@@ -1687,6 +1699,8 @@ export const api = {
   invites: (token: string) => request<Invite>("/invites", token),
   meetings: (token: string) => request<{ meetings: MeetingOffer[] }>("/meetings", token),
   cancelMeeting: (token: string, id: string) => request(`/meetings/${id}`, token, { method: "DELETE" }),
+  watches: (token: string) => request<{ watches: PageWatch[] }>("/watches", token),
+  stopWatch: (token: string, id: string) => request(`/watches/${id}`, token, { method: "DELETE" }),
   approvalRules: (token: string) => request<{ rules: ApprovalRule[] }>("/approval-rules", token),
   /** No recipient means anyone. Adding one that exists already is a quiet no-op on the server. */
   addApprovalRule: (token: string, kind: RuleKind, recipient?: string) =>

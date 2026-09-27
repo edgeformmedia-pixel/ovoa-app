@@ -111,6 +111,40 @@ async function main() {
   eq("no consent: nothing read", reads, waitReads);
   eq("and it's still there for later", (sqlite.prepare("SELECT status FROM page_watches WHERE user_id = 'lee'").get() as { status: string }).status, "active");
 
+  // The app's Watching screen: the list and Stop, the owner's only, and free on every plan.
+  sqlite.prepare("UPDATE page_watches SET status = 'ended'").run();
+  const { Hono } = await import("hono");
+  const { blockRoutes } = await import("../src/blocks");
+  const { tierForRoute: routeTier } = await import("../src/plans");
+  const appFor = (who: string) => {
+    const app = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
+    app.use("*", async (c, next) => {
+      c.set("userId", who);
+      await next();
+    });
+    app.route("/", blockRoutes as never);
+    return app;
+  };
+  const shown = (await sam.callTool("watch_add", { url: "https://shop.example.com/boots", looking_for: "boots under $90", how_often: "daily", days: 3 })) as { id: string };
+  const done = (await sam.callTool("watch_add", { url: "https://shop.example.com/hat", looking_for: "hat back in stock" })) as { id: string };
+  sqlite.prepare("UPDATE page_watches SET status = 'met', last_note = 'In stock now' WHERE id = ?").run(done.id);
+  type Listed = { id: string; lookingFor: string; checks: string; status: string; lastSaw: string | null; until: number; url: string };
+  const onScreen = ((await (await appFor("sam").request("/watches", {}, env)).json()) as { watches: Listed[] }).watches;
+  eq("GET /watches: watching first, then what happened", onScreen.map((w) => [w.lookingFor, w.checks, w.status, w.lastSaw]), [
+    ["boots under $90", "daily", "watching", null],
+    ["hat back in stock", "hourly", "happened", "In stock now"],
+  ]);
+  eq("with the page and until when", [onScreen[0]!.url, onScreen[0]!.until > Date.now() + 2 * 86_400_000], ["https://shop.example.com/boots", true]);
+  eq("someone else sees none of them", await (await appFor("lee").request("/watches", {}, env)).json(), { watches: [] });
+  eq("someone else can't stop one", (await appFor("lee").request(`/watches/${shown.id}`, { method: "DELETE" }, env)).status, 404);
+  eq("still watching", (sqlite.prepare("SELECT status FROM page_watches WHERE id = ?").get(shown.id) as { status: string }).status, "active");
+  eq("DELETE /watches/:id", (await appFor("sam").request(`/watches/${shown.id}`, { method: "DELETE" }, env)).status, 204);
+  eq("stopped", (sqlite.prepare("SELECT status FROM page_watches WHERE id = ?").get(shown.id) as { status: string }).status, "ended");
+  eq("stopping it twice is 404", (await appFor("sam").request(`/watches/${shown.id}`, { method: "DELETE" }, env)).status, 404);
+  eq("one that happened clears off the list", (await appFor("sam").request(`/watches/${done.id}`, { method: "DELETE" }, env)).status, 204);
+  eq("list empty", await (await appFor("sam").request("/watches", {}, env)).json(), { watches: [] });
+  eq("free on every plan", [routeTier("GET", "/watches"), routeTier("DELETE", `/watches/${done.id}`)], ["free", "free"]);
+
   console.log(fails ? `\n${fails} failed` : "\nall passed");
   if (fails) process.exit(1);
 }

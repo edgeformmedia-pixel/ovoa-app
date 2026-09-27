@@ -11,12 +11,13 @@
 // below Plus keeps their watches, and they wait. Every check's model call goes
 // through the model gate as theirs.
 
+import { Hono } from "hono";
 import { assertPublicUrl, FetchRefused, fetchPage } from "./fetchurl";
 import { blockedFor } from "./plans";
 import { generateText, isModelRefused, type CallTool, type ToolSpec } from "./llm";
 import { reach } from "./reach";
 import { noDashes } from "./sentences";
-import type { Env } from "./types";
+import type { Env, Vars } from "./types";
 
 export const MAX_WATCHES = 10;
 const HOUR = 3_600_000;
@@ -187,6 +188,47 @@ const TOOLS: ToolSpec[] = [
 
 const NAMES = new Set(TOOLS.map((t) => t.name));
 export const isWatchTool = (name: string) => NAMES.has(name);
+
+/** Their watches for the app: the ones still watching, then the ones that happened. */
+export async function listWatches(db: D1Database, userId: string) {
+  const { results } = await db
+    .prepare(
+      "SELECT id, url, looking_for, every_min, until_at, last_note, checks, status FROM page_watches WHERE user_id = ? AND status IN ('active', 'met') ORDER BY status = 'met', created_at DESC LIMIT 50",
+    )
+    .bind(userId)
+    .all<Pick<WatchRow, "id" | "url" | "looking_for" | "every_min" | "until_at" | "last_note" | "checks" | "status">>();
+  return results.map((r) => ({
+    id: r.id,
+    url: r.url,
+    lookingFor: r.looking_for,
+    checks: r.every_min === EVERY_MIN.hourly ? ("hourly" as const) : ("daily" as const),
+    until: r.until_at,
+    lastSaw: r.last_note,
+    timesChecked: r.checks,
+    status: r.status === "met" ? ("happened" as const) : ("watching" as const),
+  }));
+}
+
+/**
+ * Stops one of their watches (or clears one that already happened off the
+ * list). True when there was one.
+ */
+export async function stopWatch(db: D1Database, userId: string, id: string) {
+  const done = await db
+    .prepare("UPDATE page_watches SET status = 'ended' WHERE id = ? AND user_id = ? AND status IN ('active', 'met')")
+    .bind(id, userId)
+    .run();
+  return done.meta.changes > 0;
+}
+
+/** The app's Watching screen: the list, and Stop. Neither calls a model. */
+export const watchRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
+
+watchRoutes.get("/watches", async (c) => c.json({ watches: await listWatches(c.env.DB, c.var.userId) }));
+
+watchRoutes.delete("/watches/:id", async (c) =>
+  (await stopWatch(c.env.DB, c.var.userId, c.req.param("id"))) ? c.body(null, 204) : c.json({ error: "Not found." }, 404),
+);
 
 export function watchesAssistant(env: Env, userId: string) {
   const db = env.DB;

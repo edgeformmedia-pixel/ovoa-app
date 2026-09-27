@@ -58,7 +58,8 @@ live when it's merged and deployed; "Switch" says what turns it on.
   friend on OVOA (*"share my grocery list with Maria"*) and both of your OVOAs can add to it and tick things off.
   (New)
 - **Watch a page for you**: *"tell me when Saturday tickets go on sale"*, *"let me know if this jacket drops
-  under $120"*. Checks hourly or daily and texts you once when it happens; it never buys. (New, Plus)
+  under $120"*. Checks hourly or daily and texts you once when it happens; it never buys. See and stop
+  them in Settings > Watching. (New, Plus)
 - **Plans and trips**: options, when to book, a reminder, a follow-up. (Live)
 - **Buy within a budget**: it finds it, you say YES, you finish at the store's checkout. OVOA never pays. (Live)
 - **Websites** at yourname.ovoa.ai: *"make a site for my dog walking business"*. (Live)

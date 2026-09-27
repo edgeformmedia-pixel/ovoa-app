@@ -339,18 +339,19 @@ export default function Settings() {
         {/* Its own heading, shown once the server can take texts (components/TextingSetup.tsx). */}
         <TextingSetup token={token} assistantName={user.settings.assistantName || "OVOA"} />
 
-        {/* What it uses and may do when it acts for them: api/src/vault.ts, rules.ts, sitesessions.ts, campaigns.ts. */}
+        {/* What it uses and may do when it acts for them: api/src/vault.ts, rules.ts, sitesessions.ts, campaigns.ts, meetings.ts, watches.ts. */}
         <Sub>When it acts for you</Sub>
         <About>
           The vault holds details {assistantName || "OVOA"} fills in for you, like your address. Approval rules are the things it
           can do without asking. Signed-in sites are sites it can use as you. Campaigns are big jobs it works through in the
-          background, like emailing a whole list.
+          background, like emailing a whole list. Watching is the pages it checks for you, like a price or tickets.
         </About>
         <Button label="Vault" onPress={() => router.push("/vault" as Href)} />
         <Button label="Approval rules" onPress={() => router.push("/approval-rules" as Href)} />
         <Button label="Signed-in sites" onPress={() => router.push("/signed-in-sites" as Href)} />
         <Button label="Campaigns" onPress={() => router.push("/campaigns" as Href)} />
         <Button label="Meeting offers" onPress={() => router.push("/meetings" as Href)} />
+        <Button label="Watching" onPress={() => router.push("/watches" as Href)} />
 
         {/* Other people's OVOAs (api/src/network.ts): who yours can talk to, and what each may do. */}
         <Sub>Other people's OVOAs</Sub>

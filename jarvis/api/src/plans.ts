@@ -131,6 +131,7 @@ export const ROUTE_TIERS: RouteRule[] = [
   { method: "*", path: /^\/google\/(status|connect|callback|accounts\/[^/]+)$/, tier: "free", why: "connecting Google and managing its accounts" },
   { method: "*", path: /^\/microsoft\/(status|connect|callback)$/, tier: "free", why: "connecting Outlook" },
   { method: "GET", path: /^\/invites$/, tier: "free", why: "inviting a friend" },
+  { method: "GET", path: /^\/watches$/, tier: "free", why: "seeing (and stopping) what OVOA watches for you" },
   { method: "GET", path: /^\/meetings$/, tier: "free", why: "seeing (and cancelling) offers of meeting times" },
   { method: "GET", path: /^\/actions$/, tier: "free", why: "the actions waiting for your OK" },
   { method: "POST", path: /^\/actions\/[^/]+\/approve$/, tier: "free", why: "approving one: it runs as written, no model" },
@@ -148,7 +149,7 @@ export const ROUTE_TIERS: RouteRule[] = [
   // What OVOA keeps for them (vault.ts, sitesessions.ts, rules.ts): seeing it and removing it is
   // never behind a plan, so someone who drops to free can still take their details back.
   { method: "GET", path: /^\/(vault|browser\/sites|approval-rules)$/, tier: "free", why: "what OVOA keeps for you" },
-  { method: "DELETE", path: /^\/(vault|browser\/sites|approval-rules)\/[^/]+$/, tier: "free", why: "removing what OVOA keeps for you" },
+  { method: "DELETE", path: /^\/(vault|browser\/sites|approval-rules|watches)\/[^/]+$/, tier: "free", why: "removing what OVOA keeps for you" },
   // Your @username (usernames.ts): picking, checking and changing it calls no model.
   { method: "*", path: /^\/me\/username(\/check)?$/, tier: "free", why: "your username, and whether one is free" },
   // OVOA to OVOA (network.ts): connecting, permissions, answering what waits for
