@@ -1,5 +1,9 @@
 # OVOA plans, paywall and beta site: spec
 
+> **2026-09-27:** Plus added between Base and Pro. Base: 15 replies/day, $0.1875 ceiling, no background agent
+> (`/agent/jobs|goals` POST and the agent crons need `plus`; `features.agent` is true from Plus). Plus: 30/day,
+> $0.375. Pro: 60/day, $0.75. Every ceiling is $0.0125 a reply. The tables below predate this where they differ.
+
 Written 2026-09-22 and brought up to date for the v1 release (2026-09-23). The v1 brief,
 `docs/release-v1-prompt.md`, and the decisions made with it win where this file disagrees. Everything here is built:
 the server side in `jarvis/api/src/plans.ts` (on the cost pass's `pricing.ts`, `usage.ts` and migration
@@ -19,8 +23,9 @@ The prompts the agents built this from are in this folder (`01-…` to `06-…`)
 | Free app | **Health tracking**, **notetaking** and every app that doesn't use AI. Speech is recognised **on the iPhone** (Apple's speech recognition) for everyone since v1, recordings and spoken turns alike, so free users cost ~$0 on the server. |
 | Plans switched on | **Not yet.** Until `MEMBERSHIP_API_KEY` is set on the Worker and the site, the server treats everyone as **Pro**, so no tester is locked out. The user sets it after comp Pro accounts exist for App Review and the testers. Until then a test account's tier can only be changed with `PUT /debug/plan` (DEBUG_KEY, `users.plan_override`), which is how the free and Base states are tried. |
 | Consent | Before anything goes to an AI company, the person agrees on a screen that says where their data goes (`app/consent.tsx`, `api/src/consent.ts`). Base without consent shows AI locked with "Agree to use AI". |
-| Base AI | **$9.95/month** or **$95.99/year**. **Every** AI feature, the wake word, Always listen and the background agent included. 20 replies a day. |
-| Pro AI | **$25.95/month** or **$195.99/year**. **3× Base's usage and nothing else**: 60 replies a day. |
+| Base AI | **$9.95/month** or **$95.99/year**. Every AI feature **but the background agent** (since 2026-09-27), the wake word and Always listen included. **15** replies a day (was 20). |
+| Plus AI (2026-09-27) | **$13.95/month** or **$133.99/year**. Base plus the background agent, **30** replies a day. |
+| Pro AI | **$25.95/month** or **$195.99/year**. Plus with **4× Base's usage**: 60 replies a day. |
 | Trial without a Band | **None.** You pay from day one. |
 | Dropped | The $249 lifetime plan, the $9.99/$99.99 prices, the $19.99 "Pro" on `/checkout`, and the $99 Band price on the home page. |
 

@@ -171,8 +171,10 @@ export function YourPlan() {
         {plan?.tier === "free"
           ? "Health, notes and the apps that don't use AI are free. Talking to OVOA, and everything else that uses AI, is for Base users."
           : plan?.tier === "base"
-            ? "Base has everything. Pro is the same with three times the daily usage."
-            : ""}
+            ? "Base has the assistant. Plus adds the background agent and twice the daily replies; Pro has four times Base's."
+            : plan?.tier === "plus"
+              ? "Pro is Plus with twice the daily replies."
+              : ""}
         {plan?.tier === "pro" ? "" : " "}
         {MANAGED_AT}
       </Text>

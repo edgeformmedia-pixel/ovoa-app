@@ -3442,7 +3442,7 @@ app.post("/debug/usage", async (c) => {
  * whatever the site says (plans.ts). Needs DEBUG_KEY.
  *
  *   GET /debug/plan?email=...                          what they're on, and why
- *   PUT /debug/plan  {"email":"...","override":"pro"}  or "base", "free", or null to clear
+ *   PUT /debug/plan  {"email":"...","override":"pro"}  or "plus", "base", "free", or null to clear
  *
  * `userId` works in place of `email`. Other isolates see a change within a minute.
  */
@@ -3467,7 +3467,7 @@ app.put("/debug/plan", async (c) => {
   if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
   const body = (await c.req.json().catch(() => null)) as { email?: unknown; userId?: unknown; override?: unknown } | null;
   if (!body || !("override" in body) || (body.override !== null && !isTier(body.override))) {
-    return c.json({ error: 'Send {"email" or "userId", "override": "free" | "base" | "pro" | null}.' }, 400);
+    return c.json({ error: 'Send {"email" or "userId", "override": "free" | "base" | "plus" | "pro" | null}.' }, 400);
   }
   const user = await debugPlanUser(c.env, body);
   if (!user) return c.json({ error: "No such account" }, 404);

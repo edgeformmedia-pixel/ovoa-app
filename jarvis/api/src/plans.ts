@@ -5,12 +5,13 @@ import { say } from "./obs";
 import { ttsCostMicro } from "./pricing";
 import type { Env, Vars } from "./types";
 
-// Plans: free, base and pro (docs/paywall/SPEC.md; the v1 release brief wins
-// where they differ).
+// Plans: free, base, plus and pro (docs/paywall/SPEC.md; the v1 release brief
+// wins where they differ).
 //
-// Free is health, notes and every app that doesn't use AI. Base is every AI
-// feature: talking to OVOA, the wake word, Always listen, background work,
-// making apps. Pro is three times Base's daily usage and nothing else. The
+// Free is health, notes and every app that doesn't use AI. Base is the AI:
+// talking to OVOA, the wake word, Always listen, making apps. Plus (added
+// 2026-09-27) adds background work, the agent's jobs and goals, and doubles
+// Base's daily replies. Pro is four times Base's daily usage and nothing more. The
 // site (ovoa.ai) sells the plans and says which tier an email is on; this file
 // asks it, remembers the answer, and decides what each route, each cron job
 // and each model call may do for the person asking.
@@ -23,7 +24,8 @@ import type { Env, Vars } from "./types";
 //      calls a model is behind requirePlan below, the cron jobs that call
 //      models ask mayRunFor first, and every model call asks modelGate (the
 //      gate, near the end) before anything is sent.
-//   3. At its cap, Base costs under $0.25 a day and Pro under $0.75 (the
+//   3. At its cap, Base costs under $0.19 a day, Plus under $0.38 and Pro
+//      under $0.75 (the
 //      allowance section below has the arithmetic).
 
 // ---------------------------------------------------------------------------
@@ -54,7 +56,7 @@ import type { Env, Vars } from "./types";
 // their own silent pre-check (blockedFor, mayRunFor, lazyCheck) and then by the
 // gate on each model call, which they treat as a skip:
 //   */2 clock lane  alarms, routines, escalate, note reminders   no model: run for everyone
-//   */2 slow lane   agent jobs (agent.ts runJob)                 BASE (model)
+//   */2 slow lane   agent jobs (agent.ts runJob)                 PLUS (model)
 //                   evening list (todos.ts)                      no model: runs for everyone
 //                   transcript titles (transcripts.ts)           BASE (model)
 //                   rhythm: morning brief (rhythm.ts)            BASE (model); wind-down,
@@ -67,12 +69,12 @@ import type { Env, Vars } from "./types";
 //                   day summaries (daysummary.ts)                BASE (model)
 //                   the 14-day purge (retention.ts)              no model: runs for everyone
 // And one request-time model call on a free route: a detected workout's
-// one-line summary (heart.ts) is written by a model only for base and pro;
+// one-line summary (heart.ts) is written by a model only for the paid plans;
 // free gets the plain sentence the code already had as its fallback.
 
-export type Tier = "free" | "base" | "pro";
-export const TIERS: readonly Tier[] = ["free", "base", "pro"];
-const RANK: Record<Tier, number> = { free: 0, base: 1, pro: 2 };
+export type Tier = "free" | "base" | "plus" | "pro";
+export const TIERS: readonly Tier[] = ["free", "base", "plus", "pro"];
+const RANK: Record<Tier, number> = { free: 0, base: 1, plus: 2, pro: 3 };
 
 export const isTier = (v: unknown): v is Tier => typeof v === "string" && (TIERS as readonly string[]).includes(v);
 /** Whether `have` includes everything `need` does. */
@@ -151,8 +153,8 @@ export const ROUTE_TIERS: RouteRule[] = [
   { method: "POST", path: /^\/voice\/speak$/, tier: "base", why: "OVOA's voice (Deepgram)" },
   { method: "*", path: /^\/context\//, tier: "base", why: "the timeline (summaries are a model)" },
   { method: "*", path: /^\/onboarding(\/.*)?$/, tier: "base", why: "the setup conversation (a model)" },
-  { method: "POST", path: /^\/agent\/(jobs|goals)$/, tier: "base", why: "setting up background work" },
-  { method: "POST", path: /^\/agent\/jobs\/[^/]+\/run$/, tier: "base", why: "running background work now" },
+  { method: "POST", path: /^\/agent\/(jobs|goals)$/, tier: "plus", why: "setting up background work" },
+  { method: "POST", path: /^\/agent\/jobs\/[^/]+\/run$/, tier: "plus", why: "running background work now" },
   { method: "POST", path: /^\/transcripts\/heard$/, tier: "base", why: "overheard lines, kept for the timeline" },
 ];
 
@@ -402,25 +404,28 @@ export function isDevEmail(env: Pick<Env, "DEV_EMAILS">, email: string) {
 // The gate
 // ---------------------------------------------------------------------------
 
-export type NeedsPlan = { error: "needs_plan"; needs: "base" | "pro"; message: string };
+export type NeedsPlan = { error: "needs_plan"; needs: "base" | "plus" | "pro"; message: string };
 
 /**
  * The 402 body (SPEC §2). The app keys off `error`, never off the status alone.
- * No route needs Pro any more (Pro is usage, not features); "pro" stays in the
- * contract because the app still reads it.
+ * Background work needs Plus. No route needs Pro (Pro is usage, not
+ * features); "pro" stays in the contract because the app still reads it.
+ * Builds from before Plus read "plus" as "base", and show `message` either way.
  */
-export function needsPlanBody(needs: "base" | "pro"): NeedsPlan {
+export function needsPlanBody(needs: "base" | "plus" | "pro"): NeedsPlan {
   return {
     error: "needs_plan",
     needs,
     message:
       needs === "pro"
         ? "That's for Pro users. Plans are on ovoa.ai."
-        : "That's for Base users. Your health, notes and the apps that don't use AI stay free. Plans are on ovoa.ai.",
+        : needs === "plus"
+          ? "Background work is for Plus users. Plans are on ovoa.ai."
+          : "That's for Base users. Your health, notes and the apps that don't use AI stay free. Plans are on ovoa.ai.",
   };
 }
 
-export function needsPlan(c: Context, needs: "base" | "pro") {
+export function needsPlan(c: Context, needs: "base" | "plus" | "pro") {
   return c.json(needsPlanBody(needs), 402);
 }
 
@@ -460,10 +465,12 @@ export function requirePlan(): MiddlewareHandler<{ Bindings: Env; Variables: Var
 // recognises speech itself, so the $0.0028 of Nova-3 live listening that used
 // to be in this sum is gone (voice.ts).
 //
-// Base: 20 replies × $0.0088 = $0.176 a day, under the $0.25 ceiling (SPEC §1;
+// Base: 15 replies × $0.0088 = $0.132 a day, under the $0.19 ceiling (SPEC §1;
 //       $9.95 a month is about $0.31 a day after Stripe).
-// Pro:  60 replies × $0.0088 = $0.528 a day, under the $0.75 ceiling. Exactly
-//       3× Base, in replies and in ceiling: that is all Pro is (2026-09-23).
+// Plus: 30 replies × $0.0088 = $0.264 a day, under the $0.38 ceiling ($13.95
+//       is about $0.44 a day after Stripe), with background work inside it.
+// Pro:  60 replies × $0.0088 = $0.528 a day, under the $0.75 ceiling.
+// Every ceiling is $0.0125 a reply (2026-09-27; Base was 20 replies and $0.25).
 //
 // Replies are the limit a person can see and count. Behind them is a spend
 // ceiling, read from usage_daily, which catches everything else the day cost:
@@ -481,25 +488,29 @@ export function requirePlan(): MiddlewareHandler<{ Bindings: Env; Variables: Var
 // Both are counted per UTC day, because usage_daily is (usage.ts); the person
 // is told the reset in their own time.
 //
-// A monthly ceiling applies on top (cap.ts): the daily replies × 31, so Base 620
-// and Pro 1,860 a calendar month. Development accounts are exempt from all of it.
+// A monthly ceiling applies on top (cap.ts): the daily replies × 31, so Base 465,
+// Plus 930 and Pro 1,860 a calendar month. Development accounts are exempt from all of it.
 
 /** One spoken reply at list price, in micro-dollars (see the table above). */
 export const MODEL_MICRO_PER_SPOKEN_REPLY = 2_200;
 export const SPOKEN_REPLY_MICRO = MODEL_MICRO_PER_SPOKEN_REPLY + ttsCostMicro("deepgram-aura-2", 220);
 
-export const BASE_REPLIES_PER_DAY = 20;
+export const BASE_REPLIES_PER_DAY = 15;
+export const PLUS_REPLIES_PER_DAY = 30;
 export const PRO_REPLIES_PER_DAY = 60;
-export const BASE_DAILY_CEILING_MICRO = 250_000;
+export const BASE_DAILY_CEILING_MICRO = 187_500;
+export const PLUS_DAILY_CEILING_MICRO = 375_000;
 export const PRO_DAILY_CEILING_MICRO = 750_000;
 /** The daily replies × 31 (the brief's default): a month can't use more than its longest days would. */
 export const BASE_REPLIES_PER_MONTH = BASE_REPLIES_PER_DAY * 31;
+export const PLUS_REPLIES_PER_MONTH = PLUS_REPLIES_PER_DAY * 31;
 export const PRO_REPLIES_PER_MONTH = PRO_REPLIES_PER_DAY * 31;
 
 /** Per plan: replies a day, the day's spend ceiling, and replies a calendar month (cap.ts). */
 export const ALLOWANCES: Record<Tier, { replies: number; ceilingMicro: number; monthly: number }> = {
   free: { replies: 0, ceilingMicro: 0, monthly: 0 },
   base: { replies: BASE_REPLIES_PER_DAY, ceilingMicro: BASE_DAILY_CEILING_MICRO, monthly: BASE_REPLIES_PER_MONTH },
+  plus: { replies: PLUS_REPLIES_PER_DAY, ceilingMicro: PLUS_DAILY_CEILING_MICRO, monthly: PLUS_REPLIES_PER_MONTH },
   pro: { replies: PRO_REPLIES_PER_DAY, ceilingMicro: PRO_DAILY_CEILING_MICRO, monthly: PRO_REPLIES_PER_MONTH },
 };
 
@@ -591,7 +602,7 @@ export function lazyCheck(env: Env, userId: string, need: Tier) {
 //
 //   1. The plan. Free never reaches a model: needs_plan.
 //   2. Today's spend, against the plan's line (spendStopMicro): allowance. The
-//      spend only, never the 20 or 60 replies: those are counted where a turn
+//      spend only, never the daily replies: those are counted where a turn
 //      starts (index.ts chatTurn), so the reply that uses the last one still
 //      gets its memory update, and a paused turn can still finish. A resumed
 //      turn (GateCall.continuing) isn't asked about the spend at all: it was let
@@ -690,13 +701,13 @@ export function planView(plan: Plan, allowance: Allowance | null, now: number): 
     trialEndsAt: plan.trialEndsAt,
     renewsAt: plan.renewsAt,
     limits: { repliesLeftToday: allowance ? allowance.left : null, resetsAt: new Date(nextUtcMidnight(now)).toISOString() },
-    // Every feature comes with Base (Pro is more usage, not more features).
-    // Four flags still, because every build of the app reads all four.
+    // Base has every feature but background work, which is Plus's (Pro is
+    // more usage, not more features). Every build of the app reads all four.
     features: {
       chat: atLeast(plan.tier, "base"),
       voice: atLeast(plan.tier, "base"),
       wake: atLeast(plan.tier, "base"),
-      agent: atLeast(plan.tier, "base"),
+      agent: atLeast(plan.tier, "plus"),
     },
   };
 }

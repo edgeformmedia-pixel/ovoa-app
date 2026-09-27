@@ -705,8 +705,8 @@ export function noteCoded(body: unknown) {
 
 // ---------- Plans ----------
 
-export type Tier = "free" | "base" | "pro";
-export type PlanNeeded = "base" | "pro";
+export type Tier = "free" | "base" | "plus" | "pro";
+export type PlanNeeded = "base" | "plus" | "pro";
 
 /** What GET /me says this person is on (api/src/plans.ts planView). */
 export type Plan = {
@@ -735,7 +735,7 @@ export function whenPlanNeeded(handler: ((needs: PlanNeeded) => void) | null) {
 export function notePlanNeeded(body: unknown): PlanNeeded | null {
   const b = body as { error?: unknown; needs?: unknown } | null;
   if (b?.error !== "needs_plan") return null;
-  const needs: PlanNeeded = b.needs === "pro" ? "pro" : "base";
+  const needs: PlanNeeded = b.needs === "pro" || b.needs === "plus" ? b.needs : "base";
   try {
     planNeeded?.(needs);
   } catch {}

@@ -47,7 +47,7 @@ const ALL: Plan["features"] = { chat: true, voice: true, wake: true, agent: true
 const NONE: Plan["features"] = { chat: false, voice: false, wake: false, agent: false };
 
 /** What the plan is called on screen. */
-export const PLAN_NAMES: Record<Tier, string> = { free: "Free", base: "Base", pro: "Pro" };
+export const PLAN_NAMES: Record<Tier, string> = { free: "Free", base: "Base", plus: "Plus", pro: "Pro" };
 
 export type PlanState = {
   /** Null until the server has said (or an older server never will). */
@@ -70,15 +70,17 @@ export type PlanState = {
 
 const PlanContext = createContext<PlanState | null>(null);
 
+const RANK: Record<Tier, number> = { free: 0, base: 1, plus: 2, pro: 3 };
+
 /**
  * The plan with everything above `needs` taken away: what a needs_plan answer
- * proves. Mirrors the server's planView: every feature comes with Base, so a
- * paid plan has all four and free has none. (No route needs Pro any more; a
- * "pro" answer from an older server still reads as "not more than Base".)
+ * proves. Mirrors the server's planView: Base has chat, voice and the wake
+ * word, the background agent needs Plus, and free has none. (No route needs
+ * Pro; Pro is more usage, not more features.)
  */
 function lockedTo(plan: Plan | null, needs: PlanNeeded): Plan | null {
-  const tier: Tier = needs === "pro" ? "base" : "free";
-  if (plan && (plan.tier === tier || (needs === "pro" && plan.tier === "free"))) return plan;
+  const tier: Tier = needs === "pro" ? "plus" : needs === "plus" ? "base" : "free";
+  if (plan && RANK[plan.tier] <= RANK[tier]) return plan;
   const base = plan ?? {
     status: "none" as const,
     trialEndsAt: null,
@@ -86,7 +88,7 @@ function lockedTo(plan: Plan | null, needs: PlanNeeded): Plan | null {
     limits: { repliesLeftToday: 0, resetsAt: new Date(Date.now() + 86_400_000).toISOString() },
   };
   const paid = tier !== "free";
-  return { ...base, tier, features: { chat: paid, voice: paid, wake: paid, agent: paid } };
+  return { ...base, tier, features: { chat: paid, voice: paid, wake: paid, agent: RANK[tier] >= RANK.plus } };
 }
 
 export function PlanProvider({ children }: { children: ReactNode }) {

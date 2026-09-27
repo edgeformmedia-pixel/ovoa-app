@@ -14,11 +14,12 @@ function eq(label: string, got: unknown, want: unknown) {
 
 // ---------- The numbers, per plan ----------
 
-eq("Base: 620 a month (20 a day × 31)", ALLOWANCES.base.monthly, 620);
+eq("Base: 465 a month (15 a day × 31)", ALLOWANCES.base.monthly, 465);
+eq("Plus: 930 a month (30 a day × 31)", ALLOWANCES.plus.monthly, 930);
 eq("Pro: 1,860 a month (60 a day × 31)", ALLOWANCES.pro.monthly, 1860);
 eq("free has no cap to count (it has no replies)", ALLOWANCES.free.monthly, 0);
-eq("Base is warned at 496", capVerdict(496, ALLOWANCES.base.monthly, false), "warn");
-eq("and stops at 620", capVerdict(620, ALLOWANCES.base.monthly, true), "over");
+eq("Base is warned at 372", capVerdict(372, ALLOWANCES.base.monthly, false), "warn");
+eq("and stops at 465", capVerdict(465, ALLOWANCES.base.monthly, true), "over");
 
 // ---------- Where the lines are ----------
 

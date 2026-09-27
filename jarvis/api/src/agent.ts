@@ -18,7 +18,7 @@ import {
   localMinutes,
   localWeekday,
 } from "./time";
-import { blockedFor } from "./plans";
+import { atLeast, blockedFor, planFor } from "./plans";
 import type { Env } from "./types";
 import { isWebTool, webAssistant } from "./web";
 
@@ -990,9 +990,10 @@ async function runJob(env: Env, job: JobRow) {
     .bind(next ?? now + 86_400_000, now, next ? job.status : "done", job.id)
     .run();
 
-  // Background work is Base's, and comes out of the day's allowance like
-  // everything else (plans.ts). Written down like any other skipped run.
-  const blocked = await blockedFor(env, job.user_id, "base");
+  // Background work is Plus's (Base lost it 2026-09-27), and comes out of the
+  // day's allowance like everything else (plans.ts). Written down like any
+  // other skipped run.
+  const blocked = await blockedFor(env, job.user_id, "plus");
   if (blocked) {
     await db
       .prepare(
@@ -1005,7 +1006,7 @@ async function runJob(env: Env, job: JobRow) {
         job.id,
         now,
         blocked === "plan"
-          ? "Background work is for Base users."
+          ? "Background work is for Plus users."
           : blocked === "consent"
             ? "Waiting for you to agree to AI."
             : "Today's allowance on the plan was already used.",
@@ -1172,8 +1173,8 @@ export async function followUpDropped(env: Env, now = Date.now()) {
     // Only a reply to their text: a text OVOA sent first (a check-in, a brief) isn't chased.
     const reply = r.prev_role === "user" && r.prev_source === "text" && r.created_at - (r.prev_at ?? 0) <= REPLY_GAP_MS;
     if (!reply || !worthChasing(r.content)) continue;
-    // A model run, like any of the agent's: Base, and out of the day's runs.
-    if (await blockedFor(env, r.user_id, "base")) continue;
+    // A model run, like any of the agent's: Plus, and out of the day's runs.
+    if (await blockedFor(env, r.user_id, "plus")) continue;
     if (!(await claimBudget(env, r.user_id, settings.agent_daily_runs))) continue;
     const hours = Math.max(1, Math.round((now - r.created_at) / 3_600_000));
     const result = await autonomousTurn(env, {
@@ -1338,7 +1339,18 @@ export function agentAssistant(
     };
   }
 
+  // Setting up background work is Plus's. Asked once per turn, only when a
+  // tool that sets some up is called; the runs are held to Plus as well.
+  let onPlus: Promise<boolean> | null = null;
+  const SETS_UP = new Set(["agent_schedule", "agent_schedule_followup", "agent_add_goal"]);
+
   const callTool: CallTool = async (name, args) => {
+    if (SETS_UP.has(name) && !(await (onPlus ??= planFor(env, userId).then((p) => atLeast(p.tier, "plus"))))) {
+      return {
+        error:
+          "Background work (jobs that run on their own, follow-ups, goals) is on the Plus plan, and they're on Base. Say so plainly, mention Plus is on ovoa.ai, and do what they asked now if it can be done now.",
+      };
+    }
     if (name === "agent_schedule") {
       const kind = String(args.kind ?? "") as JobKind;
       if (!["once", "daily", "weekly", "interval"].includes(kind)) return { error: "kind must be once, daily, weekly or interval" };
