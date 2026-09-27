@@ -209,7 +209,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - [x] 39. **Cancel a meeting offer**: a meet_cancel tool ("stop waiting for Dana's reply") and
       GET /meetings, DELETE /meetings/:id, plus an app screen listing offers waiting on a reply or an approval, with
       Cancel. Cancelling an offer that's still waiting for approval also removes its pending action. Tests.
-- [~] claimed 2026-09-27T17:55Z by scheduled session 40. **Fresh-clone check**: in a fresh clone of the branch (the cloud session is one), `cd jarvis/api && npm ci
+- [x] 40. **Fresh-clone check**: in a fresh clone of the branch (the cloud session is one), `cd jarvis/api && npm ci
       && npx tsc --noEmit && npm test`, and `cd jarvis/app && npm ci && npx tsc --noEmit`. This catches anything that
       only works on the machine that wrote it (an untracked file, a missing dependency). Then make sure the Final
       report's numbers (files, lines, tests, reviews) are current. Fix anything found; log the result.
@@ -253,9 +253,10 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 7. Owner notes worth a look: main's account take-back now unlinks a squatter's phone, and main's own smoke check
    for the second consent wording waits on commit 10f1fd2.
 
-Branch `claude/overnight` is on top of main 16c2deb (main has not moved since): as of 17:00 UTC, 111 files, 12556 insertions(+), 77 deletions(-),
+Branch `claude/overnight` is on top of main 16c2deb; main has since gained one commit (9b33d3d, the websites gallery,
+migration 0057) and the branch still merges into it with no conflicts. As of 18:00 UTC: 111 files, 12567 insertions(+), 77 deletions(-),
 mostly new files; the edits to existing files are small hooks. 81 unit test files pass, `npx tsc --noEmit`
-is clean in jarvis/api and jarvis/app. Local smoke on fresh state: texting-smoke all green; smoke.sh 439 / 1 (the known
+is clean in jarvis/api and jarvis/app, also from a fresh clone after `npm ci` in both (task 40). Local smoke on fresh state: texting-smoke all green; smoke.sh 439 / 1 (the known
 consent-wording check, see task 17) when the auth rate limit doesn't trip on a fast machine. Six reviews
 (ed39979, task 22, fa80395, 3a6bda5, task 29 and task 36) found 46 real issues, all fixed with tests.
 
@@ -298,11 +299,10 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 | 38 | Watching screen (GET/DELETE /watches) | 77fdcd0 |
 | 39 | Cancel a meeting offer (meet_cancel, Meeting offers screen) | 9ef10b2 |
 | 20 | Read files: PDFs, Word, Excel and text, texted in, at a link, or attached to an email (files.ts) | 1f3fac6 |
-| 33 | Prompt budget: scripts/prompt-budget.mjs; ordinary turns back to main's size (fetch_url's guide rides only with it) | 5a52fff |
 
 ### Deploy order (owner)
 
-1. Review and merge `claude/overnight` into main (no conflicts with main as of 16c2deb).
+1. Review and merge `claude/overnight` into main (no conflicts with main as of 9b33d3d).
 2. `cd jarvis/api && npm run db:migrate` BEFORE deploying: applies 0060 to 0069 (guest_daily, user_lists, vault,
    do_not_contact, campaigns, approval_rules, text_groups, site_sessions, inbound_codes, page_watches) and 0070
    (microsoft_accounts), 0071 (invite_referrals), 0072 (money_spend.budget_id), 0073 (voice_clips), 0074 (meetings) and 0075 (list_shares, connection_perms.share_lists). The new code
@@ -660,3 +660,10 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   one asks first. Another person's watch is 404. No migration needed. 81 test files pass, tsc clean in api and app.
   Every numbered task is now [x]; the Final report (task 16) predates tasks 38 and 39, so the owner may want to glance
   at their log lines. Needs the owner: nothing new.
+- 2026-09-27 18:00 UTC (scheduled session): task 40 done. This cloud session is a fresh clone of the branch (no
+  node_modules): `npm ci` then `npx tsc --noEmit` clean in jarvis/api and in jarvis/app, and `npm test` in jarvis/api
+  81 test files passed (no flake this run). No untracked or machine-only file was needed. origin/main has 9b33d3d
+  beyond 16c2deb (already noted at 16:58); `git merge-tree` shows the branch still merges with no conflicts, so no
+  merge. Final report refreshed: 111 files, 12567 insertions, 77 deletions vs 16c2deb; main 9b33d3d noted in the
+  summary and deploy step 1; a duplicated task 33 row removed from the shipped table. Every numbered task is now [x].
+  Needs the owner: nothing new.
