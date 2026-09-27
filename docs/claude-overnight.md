@@ -130,13 +130,18 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       (inbound_create), "don't ask me before" (rule_add), "open that site / book it on the site" (browser_open when on).
       Add SYNONYMS entries (without stealing words existing tools rely on: run test/toolbelt.test.ts and add cases), and
       a short test per phrase with namedTools against the real catalogue.
+- [x] 19. **Outlook and Microsoft 365** (Instinct works with Outlook; OVOA only had Google): microsoft.ts with
+      outlook_search / outlook_read / outlook_send / outlook_calendar_events / outlook_calendar_create through Microsoft
+      Graph, the same approvals as Gmail (card, Approve for me, standing rules), connect / status / disconnect routes and
+      an app card in Settings > Account that shows only when the server has it. Off until MS_CLIENT_ID and
+      MS_CLIENT_SECRET are set (docs/outlook.md). Migration 0070_microsoft_accounts.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 
 ## Final report (task 16, 2026-09-27 13:20 UTC)
 
 Branch `claude/overnight` is 18 tasks on top of main 16c2deb (main has not moved since). 64 files, about 7,000 lines,
-mostly new files; the edits to existing files are small hooks. 72 unit test files pass, `npx tsc --noEmit` is clean in
+mostly new files; the edits to existing files are small hooks. 73 unit test files pass, `npx tsc --noEmit` is clean in
 jarvis/api and jarvis/app. Local smoke: texting-smoke all green; smoke.sh 438 / 1 (the known consent-wording check, see
 task 17) when the auth rate limit doesn't trip on a fast machine.
 
@@ -163,12 +168,14 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 | - | Whole-branch review, 8 fixes | ed39979 |
 | 18 | Plain requests reach the new tools (toolbelt.ts) | 4e531ed |
 | 17 | Smoke suites match main's current behavior | ba73df0 |
+| 19 | Outlook and Microsoft 365 mail and calendar, off until the owner sets two secrets (microsoft.ts) | 35d1336 |
 
 ### Deploy order (owner)
 
 1. Review and merge `claude/overnight` into main (no conflicts with main as of 16c2deb).
 2. `cd jarvis/api && npm run db:migrate` BEFORE deploying: applies 0060 to 0069 (guest_daily, user_lists, vault,
-   do_not_contact, campaigns, approval_rules, text_groups, site_sessions, inbound_codes, page_watches). The new code
+   do_not_contact, campaigns, approval_rules, text_groups, site_sessions, inbound_codes, page_watches) and 0070
+   (microsoft_accounts). The new code
    reads these tables (the watches cron lane runs for everyone), so migrate first. The 0057 to 0059 gap is on purpose.
 3. `wrangler deploy`. With no new vars set, behavior changes are: fetch_url, lists, vault (uses the existing
    TOKEN_ENC_KEY), keywords + do-not-contact, approval rules, signed-in sites API, page watchers, the guest daily
@@ -176,10 +183,12 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 4. Switches, one at a time, each safe to unset: `CAMPAIGNS=1`, `TEXT_GROUPS=1` (check Sendblue group sending on the
    plan), `INBOUND_CODES=1`, optional `SENDBLUE_CONTACT_SHARING=1` (set the Sendblue profile first), optional
    `GUEST_DAILY_REPLIES`.
-5. Browser (optional, Workers Paid): the four steps under "Needs the owner", task 7 (new library, nodejs_compat,
+5. Outlook (optional): register the app with Microsoft and set the `MS_CLIENT_ID` and `MS_CLIENT_SECRET` secrets
+   (docs/outlook.md). No app build needed; the Connect Outlook card appears once the server has them.
+6. Browser (optional, Workers Paid): the four steps under "Needs the owner", task 7 (new library, nodejs_compat,
    BROWSER binding, move the adapter, one llm.ts line).
-6. App: start a TestFlight build by hand in Codemagic after the API is live, then run the phone test plan.
-7. No new secrets. New libraries only for the browser (@cloudflare/puppeteer) and, if wanted later, the app's
+7. App: start a TestFlight build by hand in Codemagic after the API is live, then run the phone test plan.
+8. No new secrets except Outlook's two, and only if it's wanted. New libraries only for the browser (@cloudflare/puppeteer) and, if wanted later, the app's
    in-app login screen (@react-native-cookies/cookies, needs a dev build).
 
 ### Phone test plan (after deploy, about 20 minutes)
@@ -200,7 +209,10 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 10. With INBOUND_CODES=1: make a code with 2 questions, text it from the second phone, answer, then ask "who answered?".
 11. With TEXT_GROUPS=1: a group with you, OVOA and a Friend who has OVOA linked; "OVOA what time is it in Tokyo" gets a
     group answer; a group with a non-Friend gets nothing.
-12. Base account: plan screen says 15 replies a day and background work is Plus's (main's own behavior, sanity check).
+12. With Outlook set up: Settings > Account > Connect Outlook with an Outlook.com account; "what's in my Outlook
+    inbox", "email pat@... from Outlook saying hi" (approval card, then it's in Sent Items), "put lunch Friday at noon on
+    my Outlook calendar".
+13. Base account: plan screen says 15 replies a day and background work is Plus's (main's own behavior, sanity check).
 
 ## Needs the owner
 
@@ -237,6 +249,11 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 - Task 14: apply migration `0068_inbound_codes.sql`; var `INBOUND_CODES=1` turns text-in codes on (off = unchanged).
 - Task 12: app screens need a TestFlight build after the API is deployed (start it by hand in Codemagic once this is on main). Not run on a device yet.
 - Task 13: apply migration `0069_page_watches.sql`. No switch: watch tools are on for everyone; checks run only for Plus with consent.
+- Task 19 (Outlook): apply migration `0070_microsoft_accounts.sql`. To switch on, register an app in Microsoft Entra
+  (any org + personal accounts, redirect `https://api.ovoa.ai/microsoft/callback`, delegated Graph permissions
+  offline_access openid email profile User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite) and set the secrets
+  `MS_CLIENT_ID` and `MS_CLIENT_SECRET`. Step by step in docs/outlook.md. The client secret expires (Azure's maximum is
+  2 years), so put a reminder in to renew it.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -252,6 +269,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 - Browser (browser.ts, absent without env.BROWSER; adapter in optional/browser-puppeteer.ts): open / read / click / type / back on public pages, one session per turn, submits wait for approval; signed-in sites (sitesessions.ts) lend cookies the user made themselves, never passwords, no money sites.
 - Text-in codes (inbound.ts, off unless INBOUND_CODES=1): someone texts a creator's code, opts in, answers up to 5 questions; inbound_results for the owner only; per-code daily cap; the owner's plan pays.
 - Page watchers (watches.ts): watch_add / watch_list / watch_remove, hourly or daily, max 10 active; the 2-minute cron reads due pages with fetchurl.ts and a cheap model call through the model gate (Plus with consent); tells the owner via reach.ts; never acts.
+- Outlook (microsoft.ts, off unless MS_CLIENT_ID and MS_CLIENT_SECRET): one Microsoft account per person in microsoft_accounts (tokens encrypted, refresh token rotated); outlook_ tools through Graph; outlook_send and outlook_calendar_create with guests park like Gmail's (approvers.ts), rules.ts covers them as email and calendar; FORBIDDEN_FOR_COMMANDS and FORBIDDEN_ALONE include outlook_send; oauth_states shared with Google, Microsoft's states start "ms_".
 - Guest trial ceiling (guest.ts): GUEST_DAILY_REPLIES (default 2000) free-trial replies per UTC day across all numbers.
 
 ## Log
@@ -312,3 +330,10 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   model fails (the per-number count is given back). Harmless at the 2000 default; noted, not changed.
 - 2026-09-27 13:20 UTC (scheduled session): task 16 done: final report (shipped table, deploy order, phone test plan) and
   proposed contextforclaude.txt lines added above. Every task is now [x].
+- 2026-09-27 13:50 UTC (local session): task 19 (Outlook and Microsoft 365) in 35d1336, added after the final report
+  because it closes a real gap with Instinct. Off without MS_CLIENT_ID and MS_CLIENT_SECRET (a turn reads nothing
+  extra). test/microsoft.test.ts covers: off, not connected, search, read, calendar view in the person's zone, send and
+  reply parked then sent on approval, no em dashes in what's sent, rules and Approve for me, events with and without
+  guests, token refresh keeping the rotated refresh token, a revoked token disconnecting, the connect flow (PKCE, "ms_"
+  state, Google's states untouched, a used state refused, signed-out sessions refused) and account deletion. 73 test
+  files pass, tsc clean in api and app, `wrangler deploy --dry-run` bundles. The final report above is updated with it.

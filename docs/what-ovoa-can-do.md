@@ -18,6 +18,9 @@ live when it's merged and deployed; "Switch" says what turns it on.
 
 - **Calendar and email** (Google): *"what's on tomorrow"*, *"reply to Dana that Thursday works"*,
   *"find the email from my landlord"*. Sending waits for your OK. (Live)
+- **Outlook and Microsoft 365** mail and calendar, the same way: *"what's in my Outlook inbox"*, *"put lunch
+  Friday on my Outlook calendar"*. Sending and inviting wait for your OK. (New. Switch: register the app with
+  Microsoft, docs/outlook.md)
 - **Reminders, alarms, to-dos, notes, routines**: *"remind me to call mom Sunday at 5"*, *"every weekday
   at 7 wake me up"*. (Live)
 - **Morning brief** and a nightly summary of your day. (Live)
