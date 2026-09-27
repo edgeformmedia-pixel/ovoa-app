@@ -39,9 +39,9 @@ import { generate as geminiGenerate, grounded as geminiGrounded, quickThinking, 
 //
 // On Workers AI with "low", tool calls (alarm_set, web_search) were complete in
 // 1.0-1.8 s, and three calls at once were no slower than one. Per token it
-// costs more ($0.15 in, $0.03 cached, $0.50 out per million, against Z.ai's
-// $0.06 and $0.20), but the stable front of the prompt is cached (a person's
-// calls share an x-session-affinity), so a spoken turn costs about the same.
+// costs the same as Z.ai ($0.15 in, $0.03 cached, $0.50 out per million), and
+// the stable front of the prompt is cached (a person's calls share an
+// x-session-affinity).
 // docs/voice-latency.md has the measurements and what came before them.
 //
 // An engine without its key (for Workers AI, its binding) does not exist: it

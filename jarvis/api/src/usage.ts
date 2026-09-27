@@ -1,5 +1,5 @@
 import type { LlmUsage } from "./llm";
-import { llmCostMicro, sttCostMicro, ttsCostMicro, type TokenPrice, usd } from "./pricing";
+import { llmCostMicro, searchCostMicro, sttCostMicro, type TokenPrice, ttsCostMicro, usd } from "./pricing";
 
 // What each person's day cost, written down as it happens.
 //
@@ -124,7 +124,7 @@ export function sttStreamRow(userId: string | null, engine: string, seconds: num
 }
 
 export function searchRow(userId: string | null, engine: string): UsageRow {
-  return { userId, kind: "search", engine, n: 1 };
+  return { userId, kind: "search", engine, n: 1, microUsd: searchCostMicro(engine) };
 }
 
 export function turnRow(userId: string, engine: string, voice: boolean): UsageRow {

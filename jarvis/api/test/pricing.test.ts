@@ -5,6 +5,7 @@
 
 import {
   glmPriceFrom,
+  searchCostMicro,
   llmCostMicro,
   priceFor,
   sttCostMicro,
@@ -57,10 +58,14 @@ eq("nor does its output", priceFor("gemini-3.5-flash-lite", new Date("2027-06-01
 const glm = glmPriceFrom({ GLM_PRICE_IN_PER_M: "0.10", GLM_PRICE_OUT_PER_M: "0.40" });
 eq("GLM in from the var", glm.in, 0.1);
 eq("GLM out from the var", glm.out, 0.4);
-eq("GLM cached keeps its default", glm.cachedIn, 0.06);
-eq("a garbage var keeps the default", glmPriceFrom({ GLM_PRICE_IN_PER_M: "cheap" }).in, 0.06);
+eq("GLM cached keeps its default", glm.cachedIn, 0.03);
+eq("a garbage var keeps the default", glmPriceFrom({ GLM_PRICE_IN_PER_M: "cheap" }).in, 0.15);
 eq("an override replaces the table", llmCostMicro("glm-5.3-flash", { input: 1_000_000, output: 0 }, today, glm), 100_000);
-eq("the GLM default is Z.ai's price", glmPriceFrom({}).out, 0.2);
+eq("the GLM default is Z.ai's price: out", glmPriceFrom({}).out, 0.5);
+eq("in", glmPriceFrom({}).in, 0.15);
+eq("cached", glmPriceFrom({}).cachedIn, 0.03);
+eq("a Z.ai search is a cent", searchCostMicro("zai"), 10_000);
+eq("DuckDuckGo, Gemini and the cache are free", searchCostMicro("duckduckgo") + searchCostMicro("gemini") + searchCostMicro("cache"), 0);
 
 // ---------- GLM on Workers AI ----------
 
@@ -69,14 +74,14 @@ eq("Workers AI's GLM: $0.15 a million in", llmCostMicro(WORKERS_GLM, { input: 1_
 eq("$0.03 a million cached", llmCostMicro(WORKERS_GLM, { input: 1_000_000, cached: 1_000_000, output: 0 }, today), 30_000);
 eq("$0.50 a million out", llmCostMicro(WORKERS_GLM, { input: 0, output: 1_000_000 }, today), 500_000);
 eq("and it doesn't double in 2027", priceFor(WORKERS_GLM, new Date("2027-06-01T00:00:00Z"))?.in, 0.15);
-// A spoken turn: 6.7K tokens in, 12 out. On Z.ai that is 6,700 × $0.06 + 12 × $0.20
-// = 404 micro. On Workers AI with the stable front (5K) cached, it is
-// 1,700 × $0.15 + 5,000 × $0.03 + 12 × $0.50 = 411: the same, give or take.
-const zaiTurn = llmCostMicro("glm-5.3-flash", { input: 6_700, output: 12 }, today, glmPriceFrom({}));
+// A spoken turn: 6.7K tokens in (5K of them the cached front), 12 out. Z.ai
+// and Workers AI list GLM 5.3 Flash at the same price, so it is
+// 1,700 × $0.15 + 5,000 × $0.03 + 12 × $0.50 = 411 micro on either.
+const zaiTurn = llmCostMicro("glm-5.3-flash", { input: 6_700, cached: 5_000, output: 12 }, today, glmPriceFrom({}));
 const workersTurn = llmCostMicro(WORKERS_GLM, { input: 6_700, cached: 5_000, output: 12 }, today);
-eq("a spoken turn on Z.ai", zaiTurn, 404);
-eq("the same turn on Workers AI, cached", workersTurn, 411);
-eq("uncached it would be two and a half times Z.ai's", llmCostMicro(WORKERS_GLM, { input: 6_700, output: 12 }, today), 1_011);
+eq("a spoken turn on Z.ai", zaiTurn, 411);
+eq("the same turn on Workers AI", workersTurn, 411);
+eq("uncached it is two and a half times as much", llmCostMicro(WORKERS_GLM, { input: 6_700, output: 12 }, today), 1_011);
 
 // ---------- Speech ----------
 

@@ -45,21 +45,32 @@ export const LLM_PRICES: Record<string, TokenPrice> = {
   // GLM 5.3 Flash on Workers AI (llm.ts "workers", WORKERS_MODEL): the engine
   // spoken turns try first. Cloudflare bills in neurons and lists each model's
   // token equivalent, which is what this is, from Cloudflare's pricing page on
-  // 2026-09-23. Dearer per token than Z.ai's $0.06 / $0.20, but a person's calls
-  // share a prompt cache (x-session-affinity), so most of a spoken turn's input
-  // is read at the cached price and the turn costs about the same (pricing.test.ts).
+  // 2026-09-23. The same list price as Z.ai's own (checked 2026-09-27), and a
+  // person's calls share a prompt cache (x-session-affinity), so most of a
+  // spoken turn's input is read at the cached price (pricing.test.ts).
   // The account's 10,000 free neurons a day are shared by everyone and left out
   // of the per-call estimate, so the estimate runs slightly high.
   "@cf/zai-org/glm-5.3-flash": { in: 0.15, cachedIn: 0.03, out: 0.5 },
 };
 
 /**
- * GLM 5.3 Flash from the user's own cheap provider (Z.ai for v1), the "glm"
- * engine. The provider may change, so the price is a default that the
- * GLM_PRICE_* vars override. The same model on Workers AI is the "workers"
- * engine, priced by its model id in LLM_PRICES (usage.ts llmRow).
+ * GLM 5.3 Flash from the user's own provider (Z.ai for v1), the "glm" engine.
+ * Z.ai's list price for GLM-5.3-Flash, checked 2026-09-27 at
+ * https://docs.z.ai/guides/overview/pricing: $0.15 in, $0.03 cached in, $0.50
+ * out per million (until then this said $0.06 / $0.20, which undercounted a
+ * typed turn by about 40%). The provider may change, so the GLM_PRICE_* vars
+ * override it. The same model on Workers AI is the "workers" engine, priced by
+ * its model id in LLM_PRICES (usage.ts llmRow).
  */
-export const GLM_DEFAULT_PRICE: TokenPrice = { in: 0.06, cachedIn: 0.06, out: 0.2 };
+export const GLM_DEFAULT_PRICE: TokenPrice = { in: 0.15, cachedIn: 0.03, out: 0.5 };
+
+/**
+ * Web search, dollars per search, by where the answer came from (web.ts
+ * `via`). Z.ai's built-in Web Search is $0.01 a use (its pricing page,
+ * 2026-09-27). Gemini's grounding is on the free tier and DuckDuckGo is free;
+ * an answer from the cache cost nothing this time.
+ */
+export const SEARCH_PRICES: Record<string, number> = { zai: 0.01 };
 
 /**
  * Some Gemini models' paid prices double on this date. Applied by date so the
@@ -140,6 +151,11 @@ export function sttCostMicro(engine: string, seconds: number) {
   const perMinute = STT_PRICES_PER_MINUTE[engine];
   if (!perMinute) return 0;
   return Math.round((Math.max(0, seconds) / 60) * perMinute * MICRO_PER_USD);
+}
+
+/** What one web search cost, in micro-dollars. */
+export function searchCostMicro(via: string) {
+  return Math.round((SEARCH_PRICES[via] ?? 0) * MICRO_PER_USD);
 }
 
 /** Micro-dollars as a string a person reads: "$0.53", "$0.0048". */
