@@ -193,7 +193,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       list (at most 12 lines): the three things to decide, the one command to run before deploying (migrations),
       which switches to try first, and where the phone test plan is. Plain words, no jargon beyond names of
       switches. Docs only.
-- [ ] 36. **Whole-branch review, interactions** (after 33): read `git diff 16c2deb..HEAD -- jarvis/` looking at how
+- [~] claimed 2026-09-27T15:36Z by local session. 36. **Whole-branch review, interactions**: read `git diff 16c2deb..HEAD -- jarvis/` looking at how
       the features meet: approvals from several blocks in one turn (pending lists, the texting YES that approves all),
       standing rules applied through every path that sends (gmail, outlook, meetings, campaigns), what Friends and
       guests can reach through any new tool, cron lanes sharing leases or double-texting (watches, meetings, trips,
