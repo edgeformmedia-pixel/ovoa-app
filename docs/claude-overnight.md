@@ -168,7 +168,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       of the thread in the slow lane, Plus and consent like watches), OVOA works out the chosen slot and parks the
       calendar invite for the person's YES; unclear replies are handed to the person, never answered on its own. Max 5
       open at once, each ends after 7 days. Tests with fake Gmail and Graph.
-- [ ] 26. **Trips and orders from email** (from task 21): a read-only daily scan (Plus, consent, model gate, cheap
+- [~] claimed 2026-09-27T14:07Z by local session. 26. **Trips and orders from email** (from task 21): a read-only daily scan (Plus, consent, model gate, cheap
       model) of new flight, hotel and delivery confirmation emails in Gmail or Outlook. A flight becomes a life_plans
       trip with a check-in reminder 24 hours before and a leave-for-the-airport text using the existing commute
       timing; a delivery due today goes in the morning brief. Never clicks links, never replies, never changes a
