@@ -105,7 +105,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       if they text OVOA, else a push) and the watch ends unless told to keep going. Read-only: a watch never buys,
       books or sends anything to anyone but its owner. Respect plan tiers the way agent jobs do (check agent.ts for how
       background work is gated) and count its model calls through the model gate. Tests with a fake fetch.
-- [ ] 14. **Opt-in inbound ("text my AI") for creators**: a person makes a public code (e.g. "JAKE"). Anyone who texts
+- [~] claimed 2026-09-27T12:28Z by local session. 14. **Opt-in inbound ("text my AI") for creators**: a person makes a public code (e.g. "JAKE"). Anyone who texts
       that code to OVOA's line is opted in and gets the owner's short screener (up to 5 questions the owner set), asked
       one at a time by OVOA in the guest flow (guest.ts / texting.ts receive, before the free trial), answers saved per
       respondent; the owner can ask "who answered?" (tool) and gets a ranked summary; a respondent can text STOP anytime
