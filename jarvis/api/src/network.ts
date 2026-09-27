@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { tell } from "./agent";
+import { tell as tellNote } from "./agent";
+
+/** Someone is waiting on what another OVOA did, so these go out through quiet hours. */
+const tell = (env: Env, userId: string, note: Parameters<typeof tellNote>[2]) => tellNote(env, userId, { ...note, waiting: true });
 import { validTimeZone } from "./google/assistant";
 import { googleAccessToken, listGoogleAccounts } from "./google/oauth";
 import { generateText, isModelRefused, type CallTool, type ToolSpec } from "./llm";
@@ -647,6 +650,19 @@ async function handOver(env: Env, m: Message, now: number) {
     }
     // No calendar to look at, or they don't share free/busy with this person: they pick.
     const offered = freeSlots(windows, [], minutes);
+    // Unless they let this person book them: the first time offered, taken on that standing OK.
+    if (perms.auto_accept_meetings && offered.length) {
+      const slot = offered[0];
+      const booked = await calendar.book(env, me.id, { title: `${topic} with ${them.name}`, span: slot });
+      const sent = await send(db, thread, me.id, them.id, "reply", { re: "schedule", accepted: slot }, now);
+      if ("error" in sent) return finish(db, m.id, "done", sent.error, now);
+      await tell(env, me.id, {
+        kind: "done",
+        title: `Meeting with ${who}`,
+        body: `${who}'s OVOA asked for ${minutes} minutes about "${topic}", and you let them book you, so I took ${when(slot, tz)}${booked ? ". It's on your calendar." : ". I can't see your calendar, so tell me if that doesn't work."}`,
+      });
+      return finish(db, m.id, "done", "accepted on their standing OK", now);
+    }
     await askOwner(
       env,
       m,
