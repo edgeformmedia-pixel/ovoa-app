@@ -78,6 +78,9 @@ async function connectedTo(db: D1Database, userId: string): Promise<Connected[]>
   return results;
 }
 
+/** "me", "myself", "just me", or nothing: a game just for them. Pure. */
+export const soloWith = (said: string) => !said || /^(me|myself|just me|only me|solo|no one|nobody|alone|by myself|me alone|single ?player)$/i.test(said.trim());
+
 const first = (name: string) => name.trim().split(/\s+/)[0].toLowerCase();
 
 export type Partner =
@@ -140,18 +143,18 @@ function specs(): ToolSpec[] {
     {
       name: "game_make",
       description:
-        "Makes a small playable two-player game (a web page) for them and someone close: their girlfriend, a friend, family. Built in a few minutes; they get the link by text, and when that person's OVOA is connected to theirs, it's sent there too. Only when they ask for it (or said yes to your offer).",
+        "Makes a small playable game (a web page): any game they ask for, e.g. Connect 4, checkers, a quiz, just for them (against the computer or pass-and-play) or for them and someone close. Built in a few minutes; they get the link by text, and when the other person's OVOA is connected to theirs, it's sent there too. Every game goes here, never to site_build. Only when they ask for it (or said yes to your offer).",
       parameters: {
         type: "object",
         properties: {
-          with: { type: "string", description: "Who it's for, as they said it: \"my girlfriend\", \"Maria\", \"@maria\"" },
+          with: { type: "string", description: "Who they'll play with, as they said it: \"my girlfriend\", \"Maria\", \"@maria\". Leave out when it's just for them." },
           idea: {
             type: "string",
             description: "The game they want, and everything that makes it theirs: the kind of game, inside jokes, things they both like, the mood. Only what they said or you know.",
           },
           name: { type: "string", description: "A short title for the game, e.g. \"Thomas vs Maria: Movie Night Quiz\"" },
         },
-        required: ["with", "idea"],
+        required: ["idea"],
       },
     },
   ];
@@ -166,9 +169,9 @@ export function togetherAssistant(env: Env, userId: string) {
     if (name !== "game_make") return { error: `Unknown tool ${name}` };
     const idea = String(args.idea ?? "").trim().slice(0, 3_000);
     const said = String(args.with ?? "").trim().slice(0, 80);
-    if (!idea || !said) return { error: "with and idea are both needed" };
-    const partner = await resolvePartner(db, userId, said);
-    if ("ask" in partner) return { needsWho: true, note: partner.ask, ...(partner.options && { options: partner.options }) };
+    if (!idea) return { error: "idea is needed" };
+    const partner: Partner | null = soloWith(said) ? null : await resolvePartner(db, userId, said);
+    if (partner && "ask" in partner) return { needsWho: true, note: partner.ask, ...(partner.options && { options: partner.options }) };
     const me = await db.prepare("SELECT name, username FROM users WHERE id = ?").bind(userId).first<{ name: string; username: string | null }>();
     if (!me?.username) {
       const suggestion = await suggestUsername(db, me?.name ?? "me", userId);
@@ -184,8 +187,8 @@ export function togetherAssistant(env: Env, userId: string) {
     ]);
     if ((count?.n ?? 0) >= MAX_SITES) return { error: `They have ${MAX_SITES} websites and games, the most there can be. Deleting one makes room.` };
     if ((today?.n ?? 0) >= BUILDS_PER_DAY) return { error: "That's as many builds as can be made today. Say you'll make it tomorrow." };
-    const title = String(args.name ?? "").replace(/\s+/g, " ").trim().slice(0, 80) || `${me.name.split(" ")[0]} & ${partner.name}`;
-    const base = slugify(`game ${partner.name}`);
+    const title = String(args.name ?? "").replace(/\s+/g, " ").trim().slice(0, 80) || (partner ? `${me.name.split(" ")[0]} & ${partner.name}` : "Game");
+    const base = slugify(partner ? `game ${partner.name}` : title === "Game" ? "game" : title);
     const path = pathProblem(base) ? await freePath(db, me.username, "our-game") : await freePath(db, me.username, base);
     if (!path) return { error: "No free name for the game. Try another title." };
     const slug = `${me.username}/${path}`;
@@ -196,10 +199,17 @@ export function togetherAssistant(env: Env, userId: string) {
         `INSERT INTO sites (id, user_id, slug, name, client, brief, status, created_at, updated_at, owner_username, path, kind, share_to, share_for)
          VALUES (?, ?, ?, ?, NULL, ?, 'building', ?, ?, ?, ?, 'game', ?, ?)`,
       )
-      .bind(site.id, userId, slug, title, `Players: ${me.name.split(" ")[0]} and ${partner.name}.\n${idea}`, now, now, me.username, path, partner.username, partner.name)
+      .bind(
+        site.id, userId, slug, title,
+        partner ? `Players: ${me.name.split(" ")[0]} and ${partner.name}.\n${idea}` : `Player: ${me.name.split(" ")[0]} (their own game).\n${idea}`,
+        now, now, me.username, path, partner?.username ?? null, partner?.name ?? null,
+      )
       .run();
     await queueBuild(db, site, "create", idea);
-    say("game", { outcome: "queued", user: userId, shared: !!partner.username });
+    say("game", { outcome: "queued", user: userId, shared: !!partner?.username });
+    if (!partner) {
+      return { making: true, link: await siteLink(env, slug), note: "It's being made (a few minutes). Say so, and that you'll text them the link when it's ready. Don't say it's ready yet." };
+    }
     return {
       making: true,
       for: partner.name,
@@ -214,7 +224,7 @@ export function togetherAssistant(env: Env, userId: string) {
     tools: specs(),
     callTool,
     prompt: [
-      "Games for two: when they ask for a game (or something fun to do) with someone close, call game_make with who it's for as they said it and the idea, with what you know that makes it personal. It works out who \"my girlfriend\" is from what you remember and their OVOA connections; if it asks who, ask them in one short question.",
+      "Games: when they ask for any game (Connect 4, chess, a quiz, anything playable), call game_make, never site_build; leave out with when it's just for them. For a game with someone close (or something fun to do together), call game_make with who it's for as they said it and the idea, with what you know that makes it personal. It works out who \"my girlfriend\" is from what you remember and their OVOA connections; if it asks who, ask them in one short question.",
       "The finished link goes to them by text and, when that person's OVOA is connected, to theirs too; otherwise they forward it. Never say it's ready or sent before you've told them so.",
     ].join("\n"),
   };

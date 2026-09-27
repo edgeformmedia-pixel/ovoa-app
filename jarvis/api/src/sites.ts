@@ -384,11 +384,11 @@ export function gamePrompt(url: string, change = false) {
   return [
     change
       ? `You are OVOA's game maker, changing a small game you made. It is published at ${url}. You get the page as it is and the change asked for: write the whole page again with that change made and the rest kept.`
-      : `You are OVOA's game maker. You make one small, polished, playable game for two people who are close (a couple, friends, family), from what one of them asked for. It is published at ${url}.`,
+      : `You are OVOA's game maker. You make one small, polished, playable game from what someone asked for: a classic (Connect 4, checkers, tic-tac-toe...) or something new, just for them or for two people who are close. It is published at ${url}.`,
     "Write one HTML5 document and nothing else: start with <!doctype html> and end with </html>. No Markdown, no code fences, no commentary.",
     [
       "Rules for the page:",
-      "- Two players on one phone, taking turns (pass-and-play), unless they asked for something else that works the same way: a quiz about each other, would-you-rather, a drawing or guessing game, tic-tac-toe with a twist, a memory game, trivia about things they like.",
+      "- The game they asked for, with its real rules. For two named players: on one phone, taking turns (pass-and-play), or anything that works the same way (a quiz about each other, would-you-rather, a guessing game). For one player: against a simple computer opponent when the game has one, plus pass-and-play.",
       "- Use their names and what the owner told you about them to make it personal. Never invent private facts about them.",
       "- All code inline: one <style> and one <script> (plain JavaScript, no modules, no libraries). No external scripts, images, fonts or files except Google Fonts. Use emoji, CSS and inline SVG for visuals.",
       "- No network at all: no fetch, XMLHttpRequest, WebSocket, forms, links that submit anything, or trackers. No cookies, localStorage or sessionStorage (they are blocked, so code that uses them breaks). Keep the game's state in JavaScript variables.",
@@ -452,7 +452,11 @@ async function gameReady(env: Env, site: SiteRow, link: string, change: boolean)
     await tell(env, site.user_id, { kind: "done", title: `${site.name} is updated`, body: `Done, ${site.name} is updated: ${link}`, waiting: true });
     return;
   }
-  const other = site.share_for ?? "them";
+  if (!site.share_for) {
+    await tell(env, site.user_id, { kind: "done", title: `${site.name} is ready`, body: `Your game is ready: ${link}\n\nTell me anything to change in it.`, waiting: true });
+    return;
+  }
+  const other = site.share_for;
   let line: string;
   if (site.share_to && !site.shared_at) {
     const zone = await db.prepare("SELECT time_zone FROM settings WHERE user_id = ?").bind(site.user_id).first<{ time_zone: string | null }>();
@@ -1373,7 +1377,7 @@ function specs(domain: string): ToolSpec[] {
   return [
     {
       name: "site_build",
-      description: `Builds a real website and puts it online, for them, their business, or one of their clients: at <their username>.${domain}/<project>, or at an address of its own (<name>.${domain}) only when they ask for one. It takes a few minutes, and they're told the moment it's live (by text if they text you). Give it everything you know about the business.`,
+      description: `Builds a real website and puts it online, for them, their business, or one of their clients: at <their username>.${domain}/<project>, or at an address of its own (<name>.${domain}) only when they ask for one. It takes a few minutes, and they're told the moment it's live (by text if they text you). Give it everything you know about the business. Not for games (Connect 4, quizzes, anything playable): those are game_make.`,
       parameters: {
         type: "object",
         properties: {

@@ -204,6 +204,9 @@ async function main() {
 
   const solo = (await games.callTool("game_make", { with: "Sofia", idea: "tic tac toe" })) as Record<string, unknown>;
   eq("someone not on OVOA: the link is to forward", String(solo.note).includes("forward it to Sofia") || String(solo.note).includes("forward to Sofia"), true);
+  const mine = (await games.callTool("game_make", { idea: "Connect 4 against the computer", name: "Connect 4" })) as Record<string, unknown>;
+  eq("a game just for them needs no second player", mine.making, true);
+  eq("kept with no one to share it with", one<{ slug: string; share_for: string | null }>("SELECT slug, share_for FROM sites WHERE user_id = ? AND name = 'Connect 4'", T), { slug: "thomas/connect-4", share_for: null });
 
   // ---------- The occasional offer ----------
   sql("INSERT INTO text_links (user_id, phone, linked_at, proactive) VALUES (?, '+15550000001', ?, 1)", T, Date.now());
