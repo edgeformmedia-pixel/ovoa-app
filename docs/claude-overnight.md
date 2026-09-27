@@ -68,7 +68,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       and future campaigns check it. Optionally call Sendblue's contact sharing API (POST
       /api/v2/contact-sharing/profile then /share, headers sb-api-key-id / sb-api-secret-key, body fromNumber,
       firstName, photoUrl / fromNumber, toNumber; only works in an existing 1:1 iMessage chat) behind a flag. Tests.
-- [ ] 6. **Campaigns (one approval, many targets)**: `campaign_start` proposes a plan (mode `email` | `research` |
+- [~] claimed 2026-09-27T11:56Z by scheduled session. 6. **Campaigns (one approval, many targets)**: `campaign_start` proposes a plan (mode `email` | `research` |
       `friends`, title, instructions with `{field}` placeholders, items) as ONE pending action showing count and
       estimated cost. The approval is what runs it: after approval, the 2-minute cron works through a few items per
       tick, only inside the user's daytime hours, and only for campaigns with an approved action id. Caps in code:
