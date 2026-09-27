@@ -145,7 +145,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       contextforclaude.txt) with OVOA's status for each: Live on main, On this branch (task), Needs the owner (what),
       or Missing (with a one-line suggested design). End with the 5 most valuable Missing items, ranked, each
       written as a task in this file's format (append them below as tasks 23+ so the next runs can build them).
-- [~] claimed 2026-09-27T13:21Z by local session. 22. **Review tasks 17 to 20** (only once 20 is [x]): read `git diff 93e3950..HEAD -- jarvis/` line by line for
+- [x] 22. **Review tasks 17 to 20** (only once 20 is [x]): read `git diff 93e3950..HEAD -- jarvis/` line by line for
       bugs (wrong conditions, missing awaits, approvals that can be skipped, data shown to the wrong person, anything
       that changes behavior when a flag is off). Fix each real one with a test; log what was checked and found.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
@@ -182,6 +182,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 | 18 | Plain requests reach the new tools (toolbelt.ts) | 4e531ed |
 | 17 | Smoke suites match main's current behavior | ba73df0 |
 | 19 | Outlook and Microsoft 365 mail and calendar, off until the owner sets two secrets (microsoft.ts) | 35d1336 |
+| 22 | Review of 17 to 20: six fixes, plus reclaimed accounts lose what the squatter left | eb5ad82, cfa268a |
 | 20 | Read files: PDFs, Word, Excel and text, texted in, at a link, or attached to an email (files.ts) | 1f3fac6 |
 
 ### Deploy order (owner)
@@ -268,6 +269,10 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   offline_access openid email profile User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite) and set the secrets
   `MS_CLIENT_ID` and `MS_CLIENT_SECRET`. Step by step in docs/outlook.md. The client secret expires (Azure's maximum is
   2 years), so put a reminder in to renew it.
+- Behavior change on main's own code (task 22, cfa268a): when an unproven account is taken back (disown, and the claim in
+  /auth/email/signup), its texting link and link codes are now cleared along with Google, Outlook, approval rules,
+  signed-in sites and vault items. Before, a squatter's linked phone kept texting the account after the owner took it
+  back. The real owner links their phone again. Revert that one line (TAKEN_BACK in index.ts) if that's unwanted.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -357,3 +362,15 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   can't open files over text yet"), fetch_url on a document link (octet-stream counts when the name says .pdf/.docx),
   gmail_read (now lists attachments) + new gmail_attachment, and outlook_read + new outlook_attachment. "pdf" and
   "attached" name the attachment tools. test/files.test.ts plus Outlook cases; 74 test files pass, tsc clean.
+- 2026-09-27 13:42 UTC (local session): task 22 done. A separate reviewer read `git diff 93e3950..HEAD -- jarvis/`; six
+  real findings, all fixed with tests in eb5ad82: (1) an Outlook reply's rule check and card used the model's `to`
+  while Graph replies to the Reply-To/sender, so a rule for one person let a reply go elsewhere unasked; now both use
+  the real recipients; (2) taking back an account kept the squatter's Outlook; now it, approval rules, signed-in sites
+  and vault go too (TAKEN_BACK); (3) attachments over 8 MB were downloaded before the check; (4) fetch_url threw on
+  addresses with a stray % (watches on them would have failed); (5) the app had no microsoft-callback route and showed
+  Outlook on the free plan; (6) toolbelt: "searching" lost note_search's tie-break, and "checking account", "price",
+  "address", "size" pulled in block tools; fixed and tested both ways. Then cfa268a: main's own disown also left a
+  squatter's texting phone linked; now cleared (see Needs the owner). Smoke: 439 / 1 (the known consent wording),
+  including a new check that nothing a squatter planted survives the takeover; texting smoke all passed (after task
+  20); 74 test files pass; tsc clean in api and app. Checked and fine per the reviewer: OAuth state/PKCE, no tokens in
+  logs or parked args, approvals scoped to their user, Graph ids encoded, zero extra reads with Outlook off.
