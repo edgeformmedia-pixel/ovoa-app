@@ -83,7 +83,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       that submits a form, buys, books or posts first creates a pending action describing exactly what it will do.
       Code must compile and all tools must be absent when `env.BROWSER` is missing; test with a fake browser driver.
       Do NOT add the binding to wrangler.jsonc; write the exact snippet under "Needs the owner".
-- [ ] 8. **Approval rules**: saved rules like "don't ask before emailing my wife" or "book anything under $50" (per
+- [~] claimed 2026-09-27T12:01Z by local session. 8. **Approval rules**: saved rules like "don't ask before emailing my wife" or "book anything under $50" (per
       recipient, per tool, per amount), checked before creating a pending action; `rule_add` / `rule_list` /
       `rule_remove` tools and authed routes. Never bypass: money over budget limits, Full-access danger items,
       agent-started turns, anything in FORBIDDEN_ALONE. Tests.
