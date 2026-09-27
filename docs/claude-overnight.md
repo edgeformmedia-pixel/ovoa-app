@@ -202,7 +202,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       test/texting-smoke.mjs on fresh state with CAMPAIGNS=1, TEXT_GROUPS=1, INBOUND_CODES=1, TEXT_VOICE_REPLIES=1,
       SENDBLUE_CONTACT_SHARING=1 and MS_CLIENT_ID/MS_CLIENT_SECRET set (dummy values; nothing reaches a real
       service). Same pass bar as task 31. Fix anything a switch breaks.
-- [ ] 38. **Watching screen**: page watches (watches.ts) can only be seen and stopped in chat. Add GET /watches and
+- [~] claimed 2026-09-27T16:55Z by scheduled session 38. **Watching screen**: page watches (watches.ts) can only be seen and stopped in chat. Add GET /watches and
       DELETE /watches/:id (the owner's only; DELETE free in plans.ts like the other removals) and an app screen under
       Settings, "When it acts for you", listing each watch (what it looks for, the page, how often, until when, last
       seen) with a Stop button. Tests for the routes (another person's watch is 404); typecheck the app.
