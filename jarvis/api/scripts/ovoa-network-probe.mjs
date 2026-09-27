@@ -159,9 +159,10 @@ try {
   });
   const handled = await waitFor("the second question to be handled", async () => {
     const [w, notes] = await Promise.all([json("/ovoa/connections", answerer.token), json("/agent/notes", asker.token)]);
-    return w.waiting.find((x) => x.kind === "answer_question") ?? notes.notes.find((n) => /answered through their OVOA/.test(n.body) && !/friday|monday/i.test(n.body));
+    return w.waiting.find((x) => x.kind === "answer_question") ?? notes.notes.filter((n) => /answered through their OVOA/.test(n.body))[1];
   });
   check("the lane handled it", !!handled, handled?.summary ?? handled?.body);
+  check("and asked the owner rather than answering it", handled?.kind === "answer_question", handled?.summary ?? handled?.body);
   if (handled?.id && handled.kind === "answer_question") await json(`/ovoa/approvals/${handled.id}`, answerer.token, { method: "POST", body: JSON.stringify({ decision: "no" }) });
 
   // 5. Nothing private crossed over.
