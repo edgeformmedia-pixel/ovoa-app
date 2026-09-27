@@ -87,7 +87,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       recipient, per tool, per amount), checked before creating a pending action; `rule_add` / `rule_list` /
       `rule_remove` tools and authed routes. Never bypass: money over budget limits, Full-access danger items,
       agent-started turns, anything in FORBIDDEN_ALONE. Tests.
-- [ ] 9. **Group chats**: OVOA answers in an iMessage group (Sendblue group_id; texting.ts currently ignores groups)
+- [~] claimed 2026-09-27T12:12Z by local session. 9. **Group chats**: OVOA answers in an iMessage group (Sendblue group_id; texting.ts currently ignores groups)
       only when mentioned by name, only if everyone else in the group is the sender's Friend, never shares private
       details there, and sends approvals to the person privately. Group replies via Sendblue send-group-message.
       Everything else about groups stays ignored as today. Tests with a fake Sendblue.
