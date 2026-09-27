@@ -47,6 +47,7 @@ import type { Env, Vars } from "./types";
 //   POST /auth/*                  sign up, sign in, email codes, Google
 //   GET  /google/callback         OAuth return
 //   GET  /microsoft/callback      OAuth return (microsoft.ts)
+//   GET  /texting/voice/:token    a voice-note reply's audio, for Sendblue (voicereply.ts)
 //   GET  /shortcuts/file/:t/:name signed shortcut download
 //   POST /logs                    phone logs
 //   *    /debug/*                 DEBUG_KEY only (engines, usage, ticks, plan, verify)

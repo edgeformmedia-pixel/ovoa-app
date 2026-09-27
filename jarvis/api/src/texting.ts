@@ -12,6 +12,7 @@ import { guestText, type Turn as GuestTurn } from "./guest";
 import { appFor, describeScreen, type MadeApp } from "./myapps";
 import { describeImage, transcribeAudio } from "./llm";
 import { fileNameOf, fileToText } from "./files";
+import { sendVoiceReply, voiceRepliesOn } from "./voicereply";
 import { RECEIPT_ASK, receiptIn, receiptOffer, withoutCardNumbers, type Receipt } from "./receipts";
 import { recordError, say } from "./obs";
 import { isPhoneTool } from "./phone";
@@ -902,6 +903,11 @@ async function answer(env: Env, ctx: Waiter, userId: string, batch: InboxRow[], 
   // A reply with nothing in it (the model only ran a tool) is still an answer, unless a tapback was it.
   if (!texts.length && !outcome.reacted) texts.push("Okay.");
   await sendAll(out, to, texts);
+  // They sent a voice memo: the reply as audio too, after the text, when it's switched on (voicereply.ts).
+  if (voiceRepliesOn(env) && seen && [...seen.values()].some((s) => s.kind === "voice" && s.text)) {
+    const said = bubbles(tidyReply(outcome.reply)).join(" ");
+    if (said) ctx.waitUntil(sendVoiceReply(env, ctx, userId, to, said, (t, c, m) => out.text(t, c, m)));
+  }
   // An app open in the conversation stays open for an hour after its last use.
   await db.prepare("UPDATE text_links SET app_at = ? WHERE user_id = ? AND app_id IS NOT NULL").bind(Date.now(), userId).run();
   say("text", { outcome: "answered", user: userId, texts: batch.length, bubbles: texts.length, ms: Date.now() - started });

@@ -66,6 +66,8 @@ export type Env = {
   SHORTCUT_SIGNING_TOKEN?: string;
   /** Deepgram key for OVOA's voice (text to speech; speech to text is on the phone). Without it, /voice/speak returns 503. */
   DEEPGRAM_API_KEY?: string;
+  /** "1" answers a texted voice memo with a spoken reply too (voicereply.ts). */
+  TEXT_VOICE_REPLIES?: string;
   /** Which engine voices replies (voice.ts TTS_ENGINES). server_settings.tts_engine overrides it without a deploy. */
   TTS_ENGINE?: string;
   /** Which web search route goes first (web.ts): "auto" (Gemini grounding when keyed, else DuckDuckGo), "gemini", or "duckduckgo". */

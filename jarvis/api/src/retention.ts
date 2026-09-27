@@ -236,6 +236,8 @@ export const RULES: Rule[] = [
   // Group lines that named OVOA and its answers (textgroups.ts).
   { name: "text_groups", table: "text_groups", where: "updated_at < ?", args: (c) => [c.cutoff], key: ["group_id"] },
   // Numbers someone invited that never joined (invites.ts); joined ones stay, they're the count.
+  // Voice-note replies' audio (voicereply.ts), an hour after it was made.
+  { name: "voice_clips", table: "voice_clips", where: "expires_at < ?", args: (c) => [c.now] },
   // Kept as long as the free trial keeps the number, since they may join late.
   { name: "invite_referrals", table: "invite_referrals", where: "joined_at IS NULL AND invited_at < ?", args: (c) => [c.now - TEXT_GUEST_DAYS * DAY_MS], key: ["phone"] },
   { name: "guest_daily", table: "guest_daily", where: "day < ?", args: (c) => [c.countsDay], key: ["day"] },
@@ -307,6 +309,7 @@ export const TABLES = {
   google_accounts: "keep",
   microsoft_accounts: "keep",
   invite_referrals: "mixed",
+  voice_clips: "expires",
   oauth_states: "expires",
   pending_actions: "delete",
   paused_turns: "delete",

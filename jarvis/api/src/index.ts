@@ -53,6 +53,7 @@ import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
 import { googleAuthed, googlePublic } from "./google/oauth";
 import { isMicrosoftTool, microsoftAssistant, microsoftAuthed, microsoftPublic } from "./microsoft";
+import { voiceClipRoutes } from "./voicereply";
 import {
   AI_UNREACHABLE,
   chatWithTools,
@@ -376,6 +377,8 @@ app.get("/", (c) => c.json({ ok: true, service: "jarvis-api" }));
 
 app.route("/", googlePublic);
 app.route("/", microsoftPublic);
+// Voice-note replies' audio, for Sendblue to fetch by its token (voicereply.ts).
+app.route("/", voiceClipRoutes);
 // The link in the confirmation email: no session, the token is the proof (verify.ts).
 app.route("/", verifyLinkRoutes);
 // Texts to OVOA's number, from Sendblue: no session, the webhook secret is the proof (texting.ts).
