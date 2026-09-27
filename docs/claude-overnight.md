@@ -153,7 +153,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       friend. A stranger's text naming "@tigh sent me" is remembered (one inviter per number); when that number links an
       account the inviter is told once. invite_friend tool, GET /invites, an app screen with the Share sheet. Rewards
       are the owner's call (not built). Migration 0071.
-- [~] claimed 2026-09-27T14:56Z by scheduled session 24. **Shared lists with Friends** (from task 21, docs/instinct-parity.md): "share my grocery list with Maria".
+- [x] 24. **Shared lists with Friends** (from task 21, docs/instinct-parity.md): "share my grocery list with Maria".
       A saved list (lists.ts) can be shared with a Friend whose access level is Partner or Best friend (network.ts
       ACCESS_LEVELS; add a switch in Advanced rather than widening Basic). Both people's OVOAs can list_read it and
       add or tick rows; the owner can unshare. A Friend below that level, or a disconnected one, reads nothing. New
@@ -242,7 +242,7 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 1. Review and merge `claude/overnight` into main (no conflicts with main as of 16c2deb).
 2. `cd jarvis/api && npm run db:migrate` BEFORE deploying: applies 0060 to 0069 (guest_daily, user_lists, vault,
    do_not_contact, campaigns, approval_rules, text_groups, site_sessions, inbound_codes, page_watches) and 0070
-   (microsoft_accounts), 0071 (invite_referrals), 0072 (money_spend.budget_id), 0073 (voice_clips) and 0074 (meetings). The new code
+   (microsoft_accounts), 0071 (invite_referrals), 0072 (money_spend.budget_id), 0073 (voice_clips), 0074 (meetings) and 0075 (list_shares, connection_perms.share_lists). The new code
    reads these tables (the watches cron lane runs for everyone), so migrate first. The 0057 to 0059 gap is on purpose.
 3. `wrangler deploy`. With no new vars set, behavior changes are: fetch_url, lists, vault (uses the existing
    TOKEN_ENC_KEY), reading files (uses the existing AI binding), keywords + do-not-contact, approval rules, signed-in
@@ -349,6 +349,9 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   media_url with no text (it should; if not, send "🎧" as the content in voicereply.ts).
 - Task 25 (meetings): apply migration `0074_meetings.sql`. No switch. Uses Google's freeBusy (the calendar scope
   OVOA already asks for) or Outlook's calendar.
+- Task 24 (shared lists): apply migration `0075_list_shares.sql` BEFORE deploying (network.ts now selects
+  connection_perms.share_lists, so the Friends screens break without it). No switch. The app's Advanced tab
+  gets a "Lists I share" row; its type change ships with the next app build.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -503,3 +506,12 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   changed (new columns and statuses); it isn't applied anywhere yet. 79 test files pass, tsc clean.
 - 2026-09-27 14:42 UTC (local session): after the third review's fixes (2650241): smoke.sh on fresh local state 439 / 1 (only
   "the server wants the second wording"), scheduled ticks errors=0.
+- 2026-09-27 15:20 UTC (scheduled session): origin/main had no new commits. Task 24 (shared lists with Friends) in
+  3025f69; migration 0075 (list_shares, plus connection_perms.share_lists backfilled for connections already at
+  Best friend, Partner or Full so their level still reads the same). Decisions: the Advanced switch is a new
+  Access key (shareLists), on from Best friend up, off for Basic; the Friend's OVOA may read, append and tick
+  (list_tick) but never replace, delete or reshare; without `from`, a person's own list by that name wins over a
+  shared one; access is re-checked on every call; "tick" joined toolbelt GENERIC so "tickets" doesn't name
+  list_tick. Two existing tests got the new field/tools added to their expected values (network.test.ts perms
+  object, lists.test.ts tool names), nothing loosened. 80 test files pass, tsc clean in api and app. Needs the
+  owner: apply 0075 before the deploy (network.ts reads the new column).
