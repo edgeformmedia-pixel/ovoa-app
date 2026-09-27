@@ -501,3 +501,5 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   when the model gives one, titles are cleaned. Receipts: spend takes the receipt's date, only a same-category budget
   counts it (not "anything"), and one matching an approved purchase in that budget isn't counted twice. Migration 0074
   changed (new columns and statuses); it isn't applied anywhere yet. 79 test files pass, tsc clean.
+- 2026-09-27 14:42 UTC (local session): after the third review's fixes (2650241): smoke.sh on fresh local state 439 / 1 (only
+  "the server wants the second wording"), scheduled ticks errors=0.
