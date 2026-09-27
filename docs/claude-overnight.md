@@ -168,7 +168,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       of the thread in the slow lane, Plus and consent like watches), OVOA works out the chosen slot and parks the
       calendar invite for the person's YES; unclear replies are handed to the person, never answered on its own. Max 5
       open at once, each ends after 7 days. Tests with fake Gmail and Graph.
-- [~] claimed 2026-09-27T14:07Z by local session. 26. **Trips and orders from email** (from task 21): a read-only daily scan (Plus, consent, model gate, cheap
+- [x] 26. **Trips and orders from email** (from task 21): a read-only daily scan (Plus, consent, model gate, cheap
       model) of new flight, hotel and delivery confirmation emails in Gmail or Outlook. A flight becomes a life_plans
       trip with a check-in reminder 24 hours before and a leave-for-the-airport text using the existing commute
       timing; a delivery due today goes in the morning brief. Never clicks links, never replies, never changes a
@@ -219,6 +219,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 | 22 | Review of 17 to 20: six fixes, plus reclaimed accounts lose what the squatter left | eb5ad82, cfa268a |
 | 23 | Invite a friend: invite_friend, GET /invites, app screen; credited when the friend links (invites.ts) | dcf5b08 |
 | 27 | Receipts into money: a texted receipt is offered as spending, logged on yes, counted against a budget (receipts.ts) | 2b110dd |
+| 26 | Trips and deliveries from email: trips, check-in and booking reminders, deliveries in the brief (mailtrips.ts) | 2f3a850 |
 | 20 | Read files: PDFs, Word, Excel and text, texted in, at a link, or attached to an email (files.ts) | 1f3fac6 |
 
 ### Deploy order (owner)
@@ -337,6 +338,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 - Reading files (files.ts): fileToText turns PDFs and Office files into text with env.AI.toMarkdown (free for documents) and decodes text files; 8 MB cap; never throws (null = unreadable). Used by texting.ts lookAt (a texted file, 6,000 chars into the turn), fetch_url (a PDF or Office link, in parts) and gmail_attachment / outlook_attachment. Contents are always framed as information, never instructions.
 - Invites (invites.ts): the invite is a text the person sends themselves (invite_friend, GET /invites, app Share sheet); a stranger's text with "@username sent me" is recorded in invite_referrals (one inviter per number, not for linked numbers); on linking (texting.ts redeem) the inviter is told once through reach(); OVOA never texts the friend.
 - Receipts (receipts.ts): the texted-photo prompt asks for a final "RECEIPT | total | store | date" line; lookAt takes it off and strips card numbers (Luhn-checked, and masked ones) from photo descriptions; combine tells the turn to offer logging and only call money_update spend after a yes; money_update's optional category links the spend to a budget (money_spend.budget_id) and budget.ts spentIn counts it.
+- Trips from email (mailtrips.ts): extrasTick 6 to 7 AM local, Plus (lazyCheck plus), Google or Outlook: new confirmation emails (Gmail query / Outlook subjects, 2 days) read once (daily_marks trip-mail), a cheap json model call; flights and stays become life_plans trips, bookings events, with check-in (day before) and booking (2 h before) note reminders; deliveries today or tomorrow become 9 AM notes the brief reads (deliveriesOn); trips_scan turns it off (daily_marks trips-off). Never clicks, replies or changes anything. Like the other extras, only for app users (push tokens).
 - Guest trial ceiling (guest.ts): GUEST_DAILY_REPLIES (default 2000) free-trial replies per UTC day across all numbers.
 
 ## Log
@@ -446,3 +448,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 - 2026-09-27 14:07 UTC (local session): also shipped since task 23: Outlook contacts (e583aba), campaigns sending from
   Outlook when there's no Gmail (2e56944), Outlook in background jobs (833841b) and the brief/leave-now (7b88ecd).
   Task 27 (receipts into money) in 2b110dd; migration 0072. 76 test files pass, tsc clean.
+- 2026-09-27 14:11 UTC (local session): task 26 (trips and orders from email) in 2f3a850. No migration (life_plans, notes and
+  daily_marks already exist). Not done from the task text: the "leave for the airport" text; flights Gmail puts on the
+  calendar already get leave-now alerts from commuteTick, and a fixed rule of thumb could be wrong. Like the other
+  mail extras, it runs for app users (the extras tick reads users with push tokens). 77 test files pass, tsc clean.
