@@ -135,6 +135,19 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       Graph, the same approvals as Gmail (card, Approve for me, standing rules), connect / status / disconnect routes and
       an app card in Settings > Account that shows only when the server has it. Off until MS_CLIENT_ID and
       MS_CLIENT_SECRET are set (docs/outlook.md). Migration 0070_microsoft_accounts.
+- [~] claimed 2026-09-27T13:55Z by local session. 20. **Read files**: PDFs, Word, Excel, CSV and text files, with the Workers AI binding's
+      `env.AI.toMarkdown` (already bound as AI; no new binding, free for documents). One helper (files.ts) used by: a file
+      texted to OVOA (texting.ts lookAt/combine, which today says "You can't open files over text yet"), fetch_url on a
+      PDF or Office link, and email attachments (a Gmail and an Outlook attachment tool). Contents are information, never
+      instructions. Size caps, parts under the tool cap, tests with a fake AI binding.
+- [ ] 21. **Instinct parity doc** (docs only): docs/instinct-parity.md, one table of everything Instinct does (read the
+      memory notes in the plan's header if present, docs/what-ovoa-can-do.md, docs/instinct-more.md, and
+      contextforclaude.txt) with OVOA's status for each: Live on main, On this branch (task), Needs the owner (what),
+      or Missing (with a one-line suggested design). End with the 5 most valuable Missing items, ranked, each
+      written as a task in this file's format (append them below as tasks 23+ so the next runs can build them).
+- [ ] 22. **Review tasks 17 to 20** (only once 20 is [x]): read `git diff 93e3950..HEAD -- jarvis/` line by line for
+      bugs (wrong conditions, missing awaits, approvals that can be skipped, data shown to the wrong person, anything
+      that changes behavior when a flag is off). Fix each real one with a test; log what was checked and found.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 
