@@ -178,7 +178,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       money.ts the way money_update does, and it counts against a matching budget (budget.ts) for the period. Never
       stores card digits from the photo (strip anything that looks like a card or account number before saving).
       Tests through texting.ts receive with a fake image description.
-- [ ] 28. **Voice-note replies** (from task 21): off unless var `TEXT_VOICE_REPLIES=1`. When a person's text was a voice
+- [~] claimed 2026-09-27T14:11Z by local session. 28. **Voice-note replies** (from task 21): off unless var `TEXT_VOICE_REPLIES=1`. When a person's text was a voice
       memo, OVOA also sends its reply as audio: the existing Deepgram voice (voice.ts) through the model gate and
       spend caps, the file served from a Worker route by a random token that expires after 1 hour (stored in
       D1 with a size cap, deleted by the nightly purge), sent as Sendblue media_url after the text. Text replies are
