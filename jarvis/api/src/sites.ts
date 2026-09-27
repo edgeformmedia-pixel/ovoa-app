@@ -637,6 +637,8 @@ type SiteRow = {
   share_to: string | null;
   share_for: string | null;
   shared_at: number | null;
+  /** When they asked for it to be in the gallery on ovoa.ai/websites; null when it isn't. */
+  showcased_at: number | null;
 };
 
 type BuildRow = {
@@ -670,7 +672,7 @@ export const SITES_BUDGET_MS = 10 * 60_000;
 export const DELETED_KEEP_DAYS = 30;
 
 const SITE_COLUMNS =
-  "id, user_id, slug, name, client, brief, html, title, status, version, created_at, updated_at, published_at, deleted_at, owner_username, path, kind, share_to, share_for, shared_at";
+  "id, user_id, slug, name, client, brief, html, title, status, version, created_at, updated_at, published_at, deleted_at, owner_username, path, kind, share_to, share_for, shared_at, showcased_at";
 
 const siteById = (db: D1Database, id: string) => db.prepare(`SELECT ${SITE_COLUMNS} FROM sites WHERE id = ?`).bind(id).first<SiteRow>();
 
@@ -913,10 +915,13 @@ export function iconSvg(name: string) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="32" fill="#141414"/><text x="32" y="43" font-family="Helvetica,Arial,sans-serif" font-size="32" font-weight="700" text-anchor="middle" fill="#fff">${letter}</text></svg>`;
 }
 
-/** At the foot of every page: who made it, and where to report it. Styled inline so the page's own CSS can't hide it by accident. */
+/**
+ * At the foot of every page: who made it, and where to report it. Styled inline so the page's own CSS can't hide it by accident.
+ * The link goes to the page about websites by text, with no ?ref=: on ovoa.ai, ref is an affiliate's code.
+ */
 function badge(host: string) {
   const subject = encodeURIComponent(`Report: ${host}`);
-  return `<div style="all:initial;display:block;text-align:center;padding:18px 12px 22px;font:12px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#7a7a7a;background:transparent"><a href="https://ovoa.ai/?ref=site" style="color:#7a7a7a;text-decoration:none">Made with <b style="color:#3a3a3a">OVOA</b></a> <span aria-hidden="true">&middot;</span> <a href="mailto:support@ovoa.ai?subject=${subject}" style="color:#7a7a7a">Report this site</a></div>`;
+  return `<div style="all:initial;display:block;text-align:center;padding:18px 12px 22px;font:12px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#7a7a7a;background:transparent"><a href="https://ovoa.ai/websites" style="color:#7a7a7a;text-decoration:none">Made with <b style="color:#3a3a3a">OVOA</b></a> <span aria-hidden="true">&middot;</span> <a href="mailto:support@ovoa.ai?subject=${subject}" style="color:#7a7a7a">Report this site</a></div>`;
 }
 
 /** The field a person never sees and a bot fills in: a message with it filled is thanked for and dropped. */
@@ -1454,12 +1459,12 @@ function specs(domain: string): ToolSpec[] {
     {
       name: "site_manage",
       description:
-        "Takes one of their websites offline, puts it back, moves it to a new address, or deletes it (a deleted site can be put back for 30 days). Only when they ask.",
+        "Takes one of their websites offline, puts it back, moves it to a new address, or deletes it (a deleted site can be put back for 30 days). showcase puts it in the public gallery of sites made with OVOA on ovoa.ai/websites (its name, description and link), unshowcase takes it out. Only when they ask; for a client's site, check first that the client is fine with it.",
       parameters: {
         type: "object",
         properties: {
           site: { type: "string", description: "Which website: its name or address" },
-          action: { type: "string", enum: ["take_down", "put_back", "move", "delete"] },
+          action: { type: "string", enum: ["take_down", "put_back", "move", "delete", "showcase", "unshowcase"] },
           project: { type: "string", description: "For move: the new project name under their username (<username>/<project>)" },
           subdomain: { type: "string", description: "For move, only when they want an address of its own: the new <name>" },
         },
@@ -1572,12 +1577,12 @@ export function sitesAssistant(env: Env, userId: string, timeZone: string) {
     if (name === "site_list") {
       const { results } = await db
         .prepare(
-          `SELECT s.id, s.name, s.slug, s.client, s.status, s.updated_at, s.deleted_at,
+          `SELECT s.id, s.name, s.slug, s.client, s.status, s.updated_at, s.deleted_at, s.showcased_at,
                   (SELECT COUNT(*) FROM site_leads l WHERE l.site_id = s.id) AS leads
              FROM sites s WHERE s.user_id = ? ORDER BY s.updated_at DESC`,
         )
         .bind(userId)
-        .all<{ id: string; name: string; slug: string; client: string | null; status: string; updated_at: number; deleted_at: number | null; leads: number }>();
+        .all<{ id: string; name: string; slug: string; client: string | null; status: string; updated_at: number; deleted_at: number | null; showcased_at: number | null; leads: number }>();
       if (!results.length) return { sites: 0, note: `None yet. You can build one with site_build, at <name>.${domain}.` };
       // What's asked for and not built yet, so it's never said to be on the site already.
       const { results: waiting } = await db
@@ -1596,6 +1601,7 @@ export function sitesAssistant(env: Env, userId: string, timeZone: string) {
           status: s.deleted_at ? "deleted (can be put back)" : s.status,
           ...(pending.length && { notOnTheSiteYet: pending }),
           ...(s.client && { forClient: s.client }),
+          ...(s.showcased_at && { inGallery: true }),
           updated: when(s.updated_at),
           messagesLast14Days: s.leads,
         });
@@ -1642,8 +1648,22 @@ export function sitesAssistant(env: Env, userId: string, timeZone: string) {
         await db.prepare("UPDATE sites SET status = 'live', deleted_at = NULL, updated_at = ? WHERE id = ?").bind(now, found.id).run();
         return { live: found.name, link: await siteLink(env, found.slug) };
       }
+      if (action === "showcase") {
+        if (found.kind !== "site") return { error: "Only websites go in the gallery, not games." };
+        if (found.status !== "live") return { error: "It isn't live, so it can't be in the gallery. Offer to put it back up first." };
+        await db.prepare("UPDATE sites SET showcased_at = ? WHERE id = ?").bind(now, found.id).run();
+        return {
+          inGallery: found.name,
+          gallery: "https://ovoa.ai/websites",
+          note: "Say it's in the Made with OVOA gallery on ovoa.ai/websites (its name, description and link), and it comes out whenever they ask.",
+        };
+      }
+      if (action === "unshowcase") {
+        await db.prepare("UPDATE sites SET showcased_at = NULL WHERE id = ?").bind(found.id).run();
+        return { outOfGallery: found.name, note: "Say it's out of the gallery; the site itself stays up." };
+      }
       if (action === "delete") {
-        await db.prepare("UPDATE sites SET status = 'offline', deleted_at = ?, updated_at = ? WHERE id = ?").bind(now, now, found.id).run();
+        await db.prepare("UPDATE sites SET status = 'offline', deleted_at = ?, updated_at = ?, showcased_at = NULL WHERE id = ?").bind(now, now, found.id).run();
         return { deleted: found.name, note: `Say it's taken down and deleted, and can be put back within ${DELETED_KEEP_DAYS} days if they change their mind.` };
       }
       if (action === "move") {
@@ -1679,7 +1699,7 @@ export function sitesAssistant(env: Env, userId: string, timeZone: string) {
           note: `The old address, ${siteAddress(env, found.slug).slice("https://".length)}, stops working now. Say so.`,
         };
       }
-      return { error: "action must be take_down, put_back, move or delete" };
+      return { error: "action must be take_down, put_back, move, delete, showcase or unshowcase" };
     }
 
     return { error: `Unknown tool ${name}` };
@@ -1761,3 +1781,38 @@ export const sitePreview = new Hono<{ Bindings: Env; Variables: Vars }>();
 
 sitePreview.all("/s/:slug{[a-z0-9-]{1,63}}/*", (c) => serveSite(c.req.raw, c.env, c.executionCtx as ExecutionContext, c.req.param("slug"), true));
 sitePreview.all("/s/:slug{[a-z0-9-]{1,63}}", (c) => serveSite(c.req.raw, c.env, c.executionCtx as ExecutionContext, c.req.param("slug"), true));
+
+/** A page's own <meta name="description">, as plain text. Pure. */
+export function pageDescription(html: string | null): string | null {
+  const tag = html?.match(/<meta\b[^>]*\bname\s*=\s*["']description["'][^>]*>/i)?.[0];
+  const raw = tag?.match(/\bcontent\s*=\s*"([^"]*)"|\bcontent\s*=\s*'([^']*)'/i);
+  const text = (raw?.[1] ?? raw?.[2] ?? "")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return null;
+  return text.length > 180 ? `${text.slice(0, 177).replace(/\s+\S*$/, "")}…` : text;
+}
+
+/**
+ * The "Made with OVOA" gallery (ovoa.ai/websites asks for it): the live
+ * websites whose owners asked for them to be shown (site_manage showcase),
+ * newest first. Only what anyone can already see on the site itself: its name,
+ * its description and its address. Never games.
+ */
+export async function showcaseSites(env: Pick<Env, "DB" | "SITES_DOMAIN">) {
+  const { results } = await env.DB.prepare(
+    `SELECT name, slug, html FROM sites
+      WHERE showcased_at IS NOT NULL AND status = 'live' AND deleted_at IS NULL AND kind = 'site'
+      ORDER BY showcased_at DESC LIMIT 24`,
+  ).all<{ name: string; slug: string; html: string | null }>();
+  return results.map((s) => ({ name: s.name, url: siteAddress(env, s.slug), description: pageDescription(s.html) }));
+}
+
+sitePreview.get("/sites/showcase", async (c) =>
+  c.json({ sites: await showcaseSites(c.env) }, 200, { "cache-control": "public, max-age=300" }),
+);

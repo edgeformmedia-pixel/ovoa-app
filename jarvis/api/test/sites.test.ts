@@ -29,8 +29,10 @@ import {
   descriptionOf,
   indexPage,
   labelTaken,
+  pageDescription,
   pathProblem,
   pickSite,
+  showcaseSites,
   relativeLinks,
   resolveSite,
   siteAddress,
@@ -186,6 +188,12 @@ eq("a change is added", briefWith("A pizza shop.", "Open till 2am Fridays."), "A
 }
 
 eq("the site tools are known", ["site_build", "site_change", "site_list", "site_leads", "site_manage"].every(isSiteTool), true);
+
+// ---------- The gallery's description of a site ----------
+eq("a page's description, as text", pageDescription(`<head><meta name="description" content="Wood-fired pizza &amp; &quot;late&quot; hours"></head>`), 'Wood-fired pizza & "late" hours');
+eq("whichever order its attributes are in", pageDescription(`<meta content='Cakes in Doral' name='description'>`), "Cakes in Doral");
+eq("none when it has none", pageDescription(`<title>x</title>`), null);
+eq("kept short", (pageDescription(`<meta name="description" content="${"word ".repeat(80)}">`) ?? "").length <= 180, true);
 
 // ---------- Projects under a username: addresses and links ----------
 
@@ -468,6 +476,26 @@ async function main() {
   eq("deleted", (await call("site_manage", { site: "tonys-hialeah", action: "delete" })).deleted, "Tony's Pizza");
   eq("but kept 30 days, and its name with it", one<{ status: string; deleted: number }>("SELECT status, deleted_at IS NOT NULL AS deleted FROM sites WHERE id = ?", siteId), { status: "offline", deleted: 1 });
   eq("so it can be put back", (await call("site_manage", { site: "tonys-hialeah", action: "put_back" })).live, "Tony's Pizza");
+
+  // ---------- The Made with OVOA gallery ----------
+  eq("no site is in the gallery until its owner asks", await showcaseSites(env), []);
+  eq("asked, it goes in", (await call("site_manage", { site: "tonys-hialeah", action: "showcase" })).inGallery, "Tony's Pizza");
+  const shown = await showcaseSites(env);
+  eq("with its name and its own address", shown.map((s) => [s.name, s.url]), [["Tony's Pizza", "https://tonys-hialeah.ovoa.ai"]]);
+  eq("the list says so", ((await call("site_list", {})).sites as { name: string; inGallery?: boolean }[]).find((s) => s.name === "Tony's Pizza")?.inGallery, true);
+  await call("site_manage", { site: "tonys-hialeah", action: "take_down" });
+  eq("an offline site isn't shown", await showcaseSites(env), []);
+  await call("site_manage", { site: "tonys-hialeah", action: "put_back" });
+  eq("back up, it's shown again", (await showcaseSites(env)).length, 1);
+  eq("taken out when they ask", (await call("site_manage", { site: "tonys-hialeah", action: "unshowcase" })).outOfGallery, "Tony's Pizza");
+  eq("and gone from the gallery", await showcaseSites(env), []);
+  await call("site_manage", { site: "tonys-hialeah", action: "take_down" });
+  eq("an offline site can't go in", String((await call("site_manage", { site: "tonys-hialeah", action: "showcase" })).error).includes("isn't live"), true);
+  await call("site_manage", { site: "tonys-hialeah", action: "put_back" });
+  await call("site_manage", { site: "tonys-hialeah", action: "showcase" });
+  await call("site_manage", { site: "tonys-hialeah", action: "delete" });
+  await call("site_manage", { site: "tonys-hialeah", action: "put_back" });
+  eq("deleting takes it out for good, even if it's put back", await showcaseSites(env), []);
 
   // ---------- Projects under a username ----------
   const needs = await call("site_build", { name: "Sam's Bakery", about: "Bread and cakes in Doral." });
