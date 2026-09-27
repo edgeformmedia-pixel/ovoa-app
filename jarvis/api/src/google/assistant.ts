@@ -1,3 +1,4 @@
+import { approverFor } from "../approvers";
 import { noDashes } from "../sentences";
 import { Hono } from "hono";
 import { DEFER, type CallTool, type ToolSpec } from "../llm";
@@ -386,7 +387,16 @@ export async function approveAction(
   if (!row || row.created_at < Date.now() - PENDING_TTL_MS) return null;
 
   let content: string;
-  if (isPhoneTool(row.tool)) {
+  const other = approverFor(row.tool);
+  if (other) {
+    // A block's own action (approvers.ts): a form the browser submits, a campaign.
+    try {
+      content = await other(env, userId, JSON.parse(row.args) as Record<string, unknown>, row.summary);
+    } catch (err) {
+      console.error("approved action failed", err);
+      content = `That didn't work: ${err instanceof Error ? err.message : "unknown error"}`;
+    }
+  } else if (isPhoneTool(row.tool)) {
     // The app already made the change on the phone; this just records how it went.
     const detail = String(opts.phoneResult?.detail ?? "").slice(0, 300);
     content = opts.phoneResult?.ok
