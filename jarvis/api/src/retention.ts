@@ -362,6 +362,8 @@ export const TABLES = {
   guest_daily: "delete",
   // Their own saved lists (lists.ts): theirs until they delete them.
   user_lists: "keep",
+  // Their vault (vault.ts): encrypted details they chose to keep.
+  vault_items: "keep",
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",

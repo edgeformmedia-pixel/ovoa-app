@@ -90,7 +90,7 @@ import { healthDays } from "./healthdays";
 import { isPeopleTool, people, peopleAssistant } from "./people";
 import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "./rhythm";
 import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
-import { blocksAssistant, isBlockTool } from "./blocks";
+import { blockRoutes, blocksAssistant, isBlockTool } from "./blocks";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
 import { appAssistant, appFor, describeScreen, isAppTool, myApps, type MadeApp } from "./myapps";
@@ -3568,6 +3568,7 @@ authed.route("/", textingRoutes(textTurn));
 authed.route("/", siteRoutes);
 authed.route("/", usernameRoutes);
 authed.route("/", networkRoutes);
+authed.route("/", blockRoutes);
 
 app.route("/", authed);
 
