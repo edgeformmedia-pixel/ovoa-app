@@ -10,7 +10,7 @@ import { Hono } from "hono";
 import { sha256 } from "../src/auth";
 import { encrypt } from "../src/crypto";
 import { approveAction } from "../src/google/assistant";
-import { microsoftAssistant, microsoftAuthed, microsoftPublic, outlookEvents } from "../src/microsoft";
+import { hasOutlook, microsoftAssistant, microsoftAuthed, microsoftPublic, outlookEvents, sendOutlookMail } from "../src/microsoft";
 import { addRule, kindOfTool } from "../src/rules";
 import type { Env, Vars } from "../src/types";
 
@@ -207,6 +207,13 @@ async function main() {
   eq("revoked: reconnect", revoked.error.includes("reconnect Microsoft"), true);
   eq("and forgotten", sqlite.prepare("SELECT COUNT(*) AS n FROM microsoft_accounts WHERE user_id = 'alex'").get(), { n: 0 });
   tokenAnswer = { status: 200, body: { access_token: "fresh2", expires_in: 3600, refresh_token: "r2", scope: "Mail.Send" } };
+
+  // An approved campaign's email (campaigns.ts) goes out from Outlook for someone without Gmail.
+  eq("hasOutlook", [await hasOutlook(on, "sam"), await hasOutlook(on, "nobody"), await hasOutlook(off, "sam")], [true, false, false]);
+  calls.length = 0;
+  await sendOutlookMail(on, "sam", { to: "kim@example.com", subject: "Hi Kim", body: "Is the unit open?" });
+  const campaignMail = JSON.parse(graphCalls().find((c) => c.url.endsWith("/sendMail"))?.body ?? "{}") as { message?: { subject: string; toRecipients: unknown[] } };
+  eq("a campaign email from Outlook", [campaignMail.message?.subject, campaignMail.message?.toRecipients], ["Hi Kim", [{ emailAddress: { address: "kim@example.com" } }]]);
 
   // The morning brief's calendar (rhythm.ts): Outlook events as instants, like Google's.
   calls.length = 0;

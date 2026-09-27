@@ -149,6 +149,18 @@ async function main() {
   const card = sam.pending[0]!.summary;
   eq("card says count, cost and daytime", [card.includes("email 9 people"), card.includes("Estimated cost"), card.includes("daytime")], [true, true, true]);
   eq("card shows the first one filled in, no dashes", [card.includes("Hey Kim, is the unit still open?"), /[–—]/.test(card)], [true, false]);
+  eq("with no mailbox connected, the card says Gmail as before", card.includes("from your Gmail"), true);
+  // Someone with Outlook and no Gmail (microsoft.ts): the card says where it really sends from.
+  sqlite
+    .prepare("INSERT INTO microsoft_accounts (user_id, email, scopes, refresh_token_enc, connected_at) VALUES ('alex', 'alex@outlook.com', 'Mail.Send', 'x', 0)")
+    .run();
+  const withOutlook = { ...env, MS_CLIENT_ID: "cid", MS_CLIENT_SECRET: "s" } as unknown as Env;
+  const alexOutlook = blocksAssistant(withOutlook, "alex", "UTC");
+  await alexOutlook.callTool("campaign_start", { mode: "email", title: "Hi", subject: "Hi", instructions: "Hi {name}", items: [{ name: "Kim", email: "kim@example.com" }] });
+  eq("Outlook only: the card says Outlook", alexOutlook.pending[0]?.summary.includes("from your Outlook"), true);
+  await alexOutlook.callTool("campaign_stop", {});
+  sqlite.prepare("DELETE FROM campaigns WHERE user_id = 'alex'").run();
+  sqlite.prepare("DELETE FROM microsoft_accounts WHERE user_id = 'alex'").run();
   eq("proposed, not running", status(id), "proposed");
   eq("cron doesn't see it yet", await campaignsWaiting(env), false);
   // Even forced to running without an approval, the cron won't touch it.

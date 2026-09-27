@@ -19,6 +19,7 @@ import { registerApprover } from "./approvers";
 import { parkAction, validTimeZone } from "./google/assistant";
 import { googleAccessToken, listGoogleAccounts } from "./google/oauth";
 import { toolsByName } from "./google/tools";
+import { hasOutlook, sendOutlookMail } from "./microsoft";
 import { readList } from "./lists";
 import { isModelRefused, type CallTool, type ToolSpec } from "./llm";
 import { shareWithConnection } from "./network";
@@ -80,13 +81,27 @@ export type CampaignIo = {
   now: () => number;
 };
 
-async function sendFromGmail(env: Env, userId: string, mail: { to: string; subject: string; body: string }) {
+async function gmailAccount(env: Env, userId: string) {
   const accounts = await listGoogleAccounts(env.DB, userId);
   const canMail = (a: (typeof accounts)[number]) => a.scopes.some((s) => s.includes("gmail") || s.includes("mail.google.com"));
-  const account = accounts.find((a) => a.isDefault && canMail(a)) ?? accounts.find(canMail);
-  if (!account) throw new Error("No Google account with Gmail is connected.");
-  const ctx = { token: await googleAccessToken(env, userId, account.id), timeZone: "UTC" };
-  await toolsByName.get("gmail_send")!.run(ctx, mail);
+  return accounts.find((a) => a.isDefault && canMail(a)) ?? accounts.find(canMail) ?? null;
+}
+
+/** Which mailbox an email campaign sends from: Gmail when they have it, else Outlook (microsoft.ts). */
+async function mailbox(env: Env, userId: string): Promise<"Gmail" | "Outlook" | null> {
+  if (await gmailAccount(env, userId)) return "Gmail";
+  return (await hasOutlook(env, userId)) ? "Outlook" : null;
+}
+
+async function sendFromMailbox(env: Env, userId: string, mail: { to: string; subject: string; body: string }) {
+  const account = await gmailAccount(env, userId);
+  if (account) {
+    const ctx = { token: await googleAccessToken(env, userId, account.id), timeZone: "UTC" };
+    await toolsByName.get("gmail_send")!.run(ctx, mail);
+    return;
+  }
+  if (await hasOutlook(env, userId)) return sendOutlookMail(env, userId, mail);
+  throw new Error("No Google account with Gmail is connected.");
 }
 
 async function researchOnWeb(env: Env, userId: string, query: string, today: string) {
@@ -97,7 +112,7 @@ async function researchOnWeb(env: Env, userId: string, query: string, today: str
 }
 
 export const realIo: CampaignIo = {
-  sendEmail: sendFromGmail,
+  sendEmail: sendFromMailbox,
   research: researchOnWeb,
   tellFriend: shareWithConnection,
   push,
@@ -212,12 +227,12 @@ export function checkPlan(args: Record<string, unknown>, items: Item[] | null): 
 }
 
 /** The approval card: what will happen, how many, how much, and the first one filled in. */
-export function approvalSummary(plan: Plan) {
+export function approvalSummary(plan: Plan, via: "Gmail" | "Outlook" = "Gmail") {
   const n = plan.items.length;
   const first = plan.items[0]!;
   const what =
     plan.mode === "email"
-      ? `email ${n} ${n === 1 ? "person" : "people"} from your Gmail, up to ${EMAILS_PER_DAY} a day`
+      ? `email ${n} ${n === 1 ? "person" : "people"} from your ${via}, up to ${EMAILS_PER_DAY} a day`
       : plan.mode === "friends"
         ? `send a note to ${n} of your OVOA friends`
         : `look up ${n} ${n === 1 ? "thing" : "things"} on the web`;
@@ -263,7 +278,7 @@ export async function startCampaign(env: Env, userId: string, args: Record<strin
   ];
   for (let i = 0; i < statements.length; i += 100) await db.batch(statements.slice(i, i + 100));
 
-  const summary = approvalSummary(plan);
+  const summary = approvalSummary(plan, plan.mode === "email" ? ((await mailbox(env, userId)) ?? "Gmail") : "Gmail");
   const action = await parkAction(env, userId, CAMPAIGN_RUN, { campaignId: id }, summary, false);
   await db.prepare("UPDATE campaigns SET action_id = ? WHERE id = ?").bind(action.id, id).run();
   return { action, result: { status: "waiting_for_user_approval", campaignId: id, items: plan.items.length, note: "Nothing has been sent. The user sees an Approve button with the count and cost; it runs only after they approve." } };
@@ -531,7 +546,7 @@ const TOOLS: ToolSpec[] = [
   {
     name: "campaign_start",
     description:
-      "Proposes one job over many items: the same email to many people (mode email, from their Gmail), the same lookup for many things (mode research), or a note to many of their OVOA friends (mode friends). It asks for ONE approval showing the count and cost, then runs in the background in the daytime. instructions (and subject for email) use {field} placeholders from each item. Items: a list of objects (email needs an email field, friends a username field), or list = the name of a saved list.",
+      "Proposes one job over many items: the same email to many people (mode email, from their Gmail, or Outlook if that is what they have), the same lookup for many things (mode research), or a note to many of their OVOA friends (mode friends). It asks for ONE approval showing the count and cost, then runs in the background in the daytime. instructions (and subject for email) use {field} placeholders from each item. Items: a list of objects (email needs an email field, friends a username field), or list = the name of a saved list.",
     parameters: {
       type: "object",
       properties: {

@@ -209,6 +209,16 @@ async function attachmentsOf(env: Env, userId: string, id: string): Promise<Atta
   return value.filter((a) => !a["@odata.type"] || a["@odata.type"] === "#microsoft.graph.fileAttachment");
 }
 
+/** Sends one email from their Outlook, already approved (a campaign, campaigns.ts). */
+export async function sendOutlookMail(env: Env, userId: string, mail: { to: string; subject: string; body: string }) {
+  await run(env, userId, "UTC", "outlook_send", { to: mail.to, subject: mail.subject, body: mail.body });
+}
+
+/** Whether they have Outlook connected (and it's switched on). */
+export async function hasOutlook(env: Env, userId: string) {
+  return microsoftOn(env) && !!(await microsoftAccount(env.DB, userId).catch(() => null));
+}
+
 /**
  * Their Outlook events between two instants, for the morning brief (rhythm.ts):
  * start as an ISO instant, or a date alone for an all-day event, the shape
