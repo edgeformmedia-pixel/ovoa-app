@@ -390,11 +390,12 @@ export function gamePrompt(url: string, change = false) {
     ONLINE_PLAY,
     [
       "Rules for the page:",
-      "- The game they asked for, with its real rules. For two named players: on one phone, taking turns (pass-and-play), unless they asked for separate phones (ovoaRoom). For one player: against a simple computer opponent when the game has one, plus pass-and-play.",
+      "- The game they asked for, with its real rules. For two or more players: each on their own phone through ovoaRoom (above), with a 'play on this phone' option too. For one player: against a simple computer opponent when the game has one.",
       "- Use their names and what the owner told you about them to make it personal. Never invent private facts about them.",
       "- All code inline: one <style> and one <script> (plain JavaScript, no modules, no libraries). No external scripts, images, fonts or files except Google Fonts. Use emoji, CSS and inline SVG for visuals.",
       "- No network at all except ovoaRoom: no fetch, XMLHttpRequest, your own WebSocket, forms, links that submit anything, or trackers. No cookies, localStorage or sessionStorage (they are blocked, so code that uses them breaks). Keep the game's state in JavaScript variables.",
       "- Mobile first: big tap targets, fits a 375px phone without scrolling sideways, works on a laptop. A clear start screen with the rules in one or two sentences, a score, and a way to play again.",
+      "- Check your script before you finish: every getElementById/querySelector finds an element that's on the page, every button is wired, nothing runs before the element it uses exists, and no leftover code from an older version. One error stops the whole game.",
       "- Kind and fun, nothing sexual, cruel or embarrassing. Keep the file under 40 KB.",
     ].join("\n"),
     "If what was asked is sexual, hateful, harassing, or would collect passwords, money or personal data, write only one line starting with \"REFUSED:\" and the reason.",
@@ -430,7 +431,7 @@ export function cleanGameHtml(html: string) {
 
 /** How the game maker makes a game online (gameroom.ts ROOM_SCRIPT, already on the page). */
 const ONLINE_PLAY = [
-  "A shared server, if the game needs one: the page already has window.ovoaRoom (don't define it or load anything for it). Everyone who has the game open, on any phone, is in the same room. Use it only when the game calls for it (they asked to play on separate phones or online, a shared scoreboard, live reactions); a game that works on one phone doesn't need it.",
+  "A shared server, if the game needs one: the page already has window.ovoaRoom (don't define it or load anything for it). Everyone who has the game open, on any phone, is in the same room. Use it whenever more than one person plays (the brief names two players, or they said online, separate phones, with a friend), and for anything shared (a scoreboard, live reactions). Only a game for one person alone doesn't need it.",
   "- ovoaRoom.on(\"ready\", ({ seat, players, state }) => ...) when this phone joins (and again after a reconnect). seat is this phone's number, 0 for the first in, 1 for the next; players is [{ id, seat }] of everyone here now; state is the last shared state or null.",
   "- ovoaRoom.on(\"players\", (players) => ...) when someone joins or leaves. ovoaRoom.on(\"status\", (online) => ...) when this phone's connection drops or comes back.",
   "- ovoaRoom.setState(obj): the whole game state (board, whose turn, scores, seats' names) after every move; everyone else gets on(\"state\", (obj, fromSeat) => ...), and it's what a phone joining late or reloading gets in ready. Keep it small (under 10 KB of JSON).",

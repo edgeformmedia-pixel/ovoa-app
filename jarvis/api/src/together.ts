@@ -150,7 +150,7 @@ function specs(): ToolSpec[] {
           with: { type: "string", description: "Who they'll play with, as they said it: \"my girlfriend\", \"Maria\", \"@maria\". Leave out when it's just for them." },
           idea: {
             type: "string",
-            description: "The game they want, and everything that makes it theirs: the kind of game, inside jokes, things they both like, the mood. Only what they said or you know.",
+            description: "The game they want, and everything that makes it theirs: the kind of game, inside jokes, things they both like, the mood. Only what they said or you know. Don't add how it's played (pass-and-play, one phone): games with two players are played online, each on their own phone, unless they said otherwise.",
           },
           name: { type: "string", description: "A short title for the game, e.g. \"Thomas vs Maria: Movie Night Quiz\"" },
         },
