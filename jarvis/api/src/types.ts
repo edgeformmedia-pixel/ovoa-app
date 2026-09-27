@@ -115,6 +115,8 @@ export type Env = {
   SENDBLUE_API_BASE?: string;
   /** "1": CARD also asks Sendblue to share OVOA's iMessage name and photo (keywords.ts). The profile is set once in Sendblue first. */
   SENDBLUE_CONTACT_SHARING?: string;
+  /** "1": OVOA answers in iMessage groups when asked by name and everyone there is the sender's Friend (textgroups.ts). Off by default. */
+  TEXT_GROUPS?: string;
   /**
    * The websites OVOA builds (sites.ts, docs/sites.md) live at <name>.SITES_DOMAIN:
    * "ovoa.ai" unless set. SITES_WILDCARD says whether that domain's wildcard DNS

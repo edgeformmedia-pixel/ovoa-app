@@ -5,6 +5,7 @@ import { allowed, tooMany } from "./limits";
 import type { CallTool, ToolSpec } from "./llm";
 import { CONTACT_CARD_PATH } from "./contactcard";
 import { answerKeyword, keywordOf } from "./keywords";
+import { answerGroup, type GroupWrite, groupsOn } from "./textgroups";
 import { guestText, type Turn as GuestTurn } from "./guest";
 import { appFor, describeScreen, type MadeApp } from "./myapps";
 import { describeImage, transcribeAudio } from "./llm";
@@ -183,6 +184,9 @@ export type Inbound = {
   outbound: boolean;
   /** Said in a group chat. */
   group: boolean;
+  /** Sendblue's id for that group, and everyone in it (textgroups.ts). */
+  groupId?: string;
+  participants?: string[];
   /** Came as SMS, not iMessage. */
   sms: boolean;
   /** They opted out of texts from this line (Sendblue). */
@@ -218,6 +222,8 @@ export function parseInbound(raw: unknown): Inbound | null {
     mediaUrl: /^https:\/\/\S+$/.test(str(b.media_url)) ? str(b.media_url).slice(0, 1000) : null,
     outbound: b.is_outbound === true,
     group: str(b.group_id) !== "" || participants > 2 || str(b.message_type).toLowerCase() === "group",
+    ...(str(b.group_id) ? { groupId: str(b.group_id).slice(0, 200) } : {}),
+    ...(Array.isArray(b.participants) ? { participants: (b.participants as unknown[]).map(str).filter(isHandle).slice(0, 32) } : {}),
     sms: str(b.service).toLowerCase() === "sms",
     optedOut: b.opted_out === true,
   };
@@ -733,6 +739,8 @@ export type Deps = {
   debounceMs?: number;
   /** Tests: writes a guest's free-trial reply instead of the model (guest.ts). */
   guestWrite?: (turns: GuestTurn[]) => Promise<string>;
+  /** Tests: writes OVOA's group answer instead of the model (textgroups.ts). */
+  groupWrite?: GroupWrite;
 };
 
 const TROUBLE = "Sorry, something went wrong on my side. Try again in a minute.";
@@ -937,13 +945,31 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
   const m = parseInbound(raw);
   if (!m) return { outcome: "not a text" };
   if (m.outbound) return { outcome: "outbound" };
-  // Never in a group: the others there never agreed to OVOA reading them.
-  if (m.group) return { outcome: "group" };
+  // Never in a group: the others there never agreed to OVOA reading them. The
+  // one exception is textgroups.ts (TEXT_GROUPS on): asked by name, among Friends.
+  if (m.group && (!groupsOn(env) || !m.groupId)) return { outcome: "group" };
   if (m.optedOut) return { outcome: "opted out" };
   const db = env.DB;
   const now = Date.now();
   const link = await linkByPhone(db, m.from);
   const codes = linkCodesIn(m.content);
+
+  if (m.group && m.groupId) {
+    if (!(await record(db, m, "group", null, now))) return { outcome: "duplicate" };
+    const g = { groupId: m.groupId, from: m.from, line: m.line, content: m.content, participants: m.participants ?? [] };
+    // A task that needs their own accounts goes to their private thread, as if they'd texted it 1:1.
+    const privately = async (_userId: string, task: string) => {
+      if (!link) return;
+      const direct: Inbound = { ...m, handle: `${m.handle}#1on1`, group: false, media: false, mediaUrl: null, content: `[From your group chat] ${task}` };
+      const queued = await queue(env, ctx, direct, link, Date.now(), deps, true);
+      if (queued.work) await queued.work;
+    };
+    const work = answerGroup(env, g, privately, Date.now(), deps.groupWrite).then(
+      (outcome) => void say("text", { outcome, user: link?.user_id }),
+      (err) => void console.error("ovoa.err group text", err),
+    );
+    return { outcome: "group", work };
+  }
 
   if (m.sms) {
     if (!(await record(db, m, "sms", null, now))) return { outcome: "duplicate" };

@@ -227,6 +227,8 @@ export const RULES: Rule[] = [
   { name: "text_inbox", table: "text_inbox", where: "received_at < ?", args: (c) => [c.now - TEXT_INBOX_DAYS * DAY_MS] },
   { name: "text_guests", table: "text_guests", where: "updated_at < ?", args: (c) => [c.now - TEXT_GUEST_DAYS * DAY_MS] },
   // The free trial's daily count (guest.ts): a number per day, nothing about anyone.
+  // Group lines that named OVOA and its answers (textgroups.ts).
+  { name: "text_groups", table: "text_groups", where: "updated_at < ?", args: (c) => [c.cutoff], key: ["group_id"] },
   { name: "guest_daily", table: "guest_daily", where: "day < ?", args: (c) => [c.countsDay], key: ["day"] },
   // Which texts OVOA sent first, for the day's cap (reach.ts): kinds and times, no words.
   { name: "text_outbox", table: "text_outbox", where: "sent_at < ?", args: (c) => [c.cutoff] },
@@ -360,6 +362,7 @@ export const TABLES = {
   text_outbox: "delete",
   text_guests: "delete",
   guest_daily: "delete",
+  text_groups: "delete",
   // Their own saved lists (lists.ts): theirs until they delete them.
   user_lists: "keep",
   // Their vault (vault.ts): encrypted details they chose to keep.
