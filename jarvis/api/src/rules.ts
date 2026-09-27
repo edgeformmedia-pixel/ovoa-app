@@ -99,7 +99,7 @@ export async function addRule(db: D1Database, userId: string, kindIn: unknown, r
 
 export async function listRules(db: D1Database, userId: string) {
   const { results } = await db
-    .prepare("SELECT id, kind, recipient, label, created_at FROM approval_rules WHERE user_id = ? ORDER BY created_at")
+    .prepare("SELECT id, kind, recipient, label, created_at FROM approval_rules WHERE user_id = ? ORDER BY created_at, rowid")
     .bind(userId)
     .all<RuleRow>();
   return results.map((r) => ({ id: r.id, kind: r.kind, recipient: r.recipient || "anyone", label: r.label }));
