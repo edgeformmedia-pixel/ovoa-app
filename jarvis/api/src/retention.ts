@@ -247,6 +247,16 @@ export const RULES: Rule[] = [
   at("updated_at", "ovoa_threads"),
   at("created_at", "ovoa_messages"),
   at("created_at", "ovoa_approvals"),
+  // ---- Plans, budgets, games (plans_life.ts, budget.ts, together.ts) ----
+  // A plan that's over (done, cancelled, or its last day passed) goes 14 days later; an active one is theirs.
+  {
+    name: "life_plans",
+    table: "life_plans",
+    where: "(status <> 'active' AND updated_at < ?1) OR (status = 'active' AND COALESCE(ends_on, starts_on, '9999') < ?2)",
+    args: (c) => [c.cutoff, c.cutoffDay],
+  },
+  // What was bought against a budget: a month's total reads from the 1st, so the counts' window.
+  { name: "purchases", table: "purchases", where: "created_at < ?", args: (c) => [c.counts] },
   at("last_seen", "error_events"),
   at("last_at", "engine_stats"),
   at("last_at", "cron_ticks"),
@@ -356,6 +366,10 @@ export const TABLES = {
   ovoa_threads: "delete",
   ovoa_messages: "delete",
   ovoa_approvals: "delete",
+  life_plans: "mixed",
+  spend_budgets: "keep",
+  purchases: "delete",
+  ovoa_suggestions: "keep",
 } as const satisfies Record<string, "keep" | "delete" | "mixed" | "expires" | "index">;
 
 /** Tables whose purge is a step of its own rather than a rule. */

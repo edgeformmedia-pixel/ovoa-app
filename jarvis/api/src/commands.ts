@@ -39,6 +39,11 @@ export const FORBIDDEN_FOR_COMMANDS = new Set([
   "ovoa_perms",
   "username_set",
   "username_change",
+  // A game goes to another person's OVOA; a budget and a purchase are spending (docs/instinct-more.md).
+  "game_make",
+  "budget_set",
+  "purchase_propose",
+  "purchase_confirm",
 ]);
 
 export async function enqueueCommand(env: Env, userId: string, text: string, source: CommandSource, reason?: string) {

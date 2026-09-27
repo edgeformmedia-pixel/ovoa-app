@@ -65,6 +65,8 @@ export const TYPED_CORE = new Set([
   "routine_add",
   "routine_confirm",
   "person_lookup",
+  // A plan mentioned in passing ("I'm in SF next month") names no tool (lifeplans.ts).
+  "plan_add",
   // Standing work and the day.
   "agent_schedule",
   "web_search",
@@ -201,6 +203,23 @@ const SYNONYMS: Record<string, string[]> = {
   connections: ["ovoa", "connections"],
   connected: ["ovoa", "connections"],
   ovoas: ["ovoa"],
+  // Plans, games, budgets (docs/instinct-more.md).
+  trip: ["plan"],
+  trips: ["plan"],
+  travel: ["plan"],
+  traveling: ["plan"],
+  travelling: ["plan"],
+  flight: ["plan"],
+  flights: ["plan"],
+  vacation: ["plan"],
+  visiting: ["plan"],
+  games: ["game"],
+  play: ["game"],
+  budget: ["budget", "purchase"],
+  book: ["purchase", "budget"],
+  buy: ["purchase", "budget"],
+  purchase: ["purchase", "budget"],
+  pay: ["purchase", "budget"],
 };
 
 /** Words that say a request repeats, so it's a routine (namedTools). */

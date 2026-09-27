@@ -143,6 +143,10 @@ Times are epoch ms unless noted. "14 d" means deleted 14 days after the column n
 | ovoa_threads | delete | 14 d after `updated_at`: one exchange between two OVOAs; its messages and approvals go with it | |
 | ovoa_messages | delete | 14 d after `created_at`: what one OVOA said to another, which is also the log (`ovoa_log`) | |
 | ovoa_approvals | delete | 14 d after `created_at`: what waited for an owner's yes | |
+| life_plans | mixed | an active plan stays; one done or cancelled goes 14 d after `updated_at`, an active one 14 d after its last day | docs/instinct-more.md |
+| spend_budgets | keep | a budget they set | |
+| purchases | delete | 35 d after `created_at` (a month's spending reads from the 1st) | |
+| ovoa_suggestions | keep | when OVOA last offered an idea on its own (one row per kind) | |
 
 ## What changed from before
 

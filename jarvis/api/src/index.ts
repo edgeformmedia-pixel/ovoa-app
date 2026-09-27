@@ -43,6 +43,9 @@ import {
   sitesTick,
   SITES_BUDGET_MS,
 } from "./sites";
+import { budgetAssistant, budgetContext, isBudgetTool } from "./budget";
+import { isLifePlanTool, lifePlansAssistant, plansTick } from "./lifeplans";
+import { isTogetherTool, togetherAssistant, togetherTick } from "./together";
 import { isNetworkTool, networkAssistant, networkContext, networkRoutes, networkTick, networkWaiting, NETWORK_BUDGET_MS } from "./network";
 import { isUsernameTool, usernameAssistant, usernameRoutes } from "./usernames";
 import { contextAssistant, isContextTool, recordBlock, type BlockSource } from "./context";
@@ -1566,6 +1569,14 @@ async function runTurn(
   // Their @username, and their OVOA talking to other people's (usernames.ts, network.ts).
   const usernameTools = usernameAssistant(env, userId);
   const networkTools = networkAssistant(env, userId, timeZone);
+  // Games for two, plans followed up, budgets whose purchases wait for a YES (docs/instinct-more.md).
+  const togetherTools = togetherAssistant(env, userId);
+  const planTools = lifePlansAssistant(env, userId, timeZone);
+  const budgetTools = budgetAssistant(env, userId, timeZone);
+  const waitingBuys = fromAgent ? { prompt: "", carry: [] as string[] } : await budgetContext(env, userId).catch((err) => {
+    console.error("budget: couldn't read the turn's context", err);
+    return { prompt: "", carry: [] as string[] };
+  });
   // Who they're connected to and what waits for their yes: one read, and nothing
   // in the prompt for the many who have none of it. Not for the agent's commands.
   const network = fromAgent ? { prompt: "", carry: [] as string[] } : await networkContext(env, userId, timeZone).catch((err) => {
@@ -1656,6 +1667,9 @@ async function runTurn(
     ...siteTools.tools,
     ...usernameTools.tools,
     ...networkTools.tools,
+    ...togetherTools.tools,
+    ...planTools.tools,
+    ...budgetTools.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -1686,6 +1700,9 @@ async function runTurn(
     sites: { tools: siteTools.tools, prompt: siteTools.prompt },
     usernames: { tools: usernameTools.tools, prompt: usernameTools.prompt },
     network: { tools: networkTools.tools, prompt: networkTools.prompt },
+    together: { tools: togetherTools.tools, prompt: togetherTools.prompt },
+    plans: { tools: planTools.tools, prompt: planTools.prompt },
+    budget: { tools: budgetTools.tools, prompt: budgetTools.prompt },
     transcripts: {
       tools: transcriptTools.tools,
       prompt: settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : "",
@@ -1721,6 +1738,12 @@ async function runTurn(
     if (spec && !tools.some((t) => t.name === name) && allTools.some((t) => t.name === name)) tools.push(spec);
   }
   if (network.carry.length && !belt.carriedGuides.includes(guides.network)) belt.carriedGuides.push(guides.network);
+  // A prepared purchase is answered with purchase_confirm, and "yes" names no tool.
+  for (const name of waitingBuys.carry) {
+    const spec = budgetTools.tools.find((t) => t.name === name);
+    if (spec && !tools.some((t) => t.name === name) && allTools.some((t) => t.name === name)) tools.push(spec);
+  }
+  if (waitingBuys.carry.length && !belt.carriedGuides.includes(guides.budget)) belt.carriedGuides.push(guides.budget);
   const carriedTools = tools.length;
   const guided = (guide: ToolGuide) => (belt.carriedGuides.includes(guide) ? guide.prompt : "");
 
@@ -1787,6 +1810,10 @@ async function runTurn(
     ["usernames", guided(guides.usernames)],
     ["network", guided(guides.network)],
     ["ovoas", network.prompt],
+    ["together", guided(guides.together)],
+    ["plans", guided(guides.plans)],
+    ["budget", guided(guides.budget)],
+    ["purchases", waitingBuys.prompt],
     ["transcripts", guided(guides.transcripts)],
     ["command", fromAgent
       ? [
@@ -1925,6 +1952,12 @@ async function runTurn(
                                     ? usernameTools.callTool
                                   : isNetworkTool(name)
                                     ? networkTools.callTool
+                                  : isTogetherTool(name)
+                                    ? togetherTools.callTool
+                                  : isLifePlanTool(name)
+                                    ? planTools.callTool
+                                  : isBudgetTool(name)
+                                    ? budgetTools.callTool
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name
@@ -3690,6 +3723,9 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
       await part("rhythm", rhythmTick(env, slice));
       await part("extras", extrasTick(env, slice));
       await part("money", moneyTick(env, slice));
+      // A plan's one follow-up on its day, and now and then a game offered for two (lifeplans.ts, together.ts).
+      await part("plans", plansTick(env, slice));
+      await part("together", togetherTick(env, slice));
       await release(env, "slow", slow);
     } else decided.slowBusy = 1;
     await sitesLane;

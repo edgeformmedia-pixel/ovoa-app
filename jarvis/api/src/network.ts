@@ -1254,3 +1254,13 @@ networkRoutes.post("/ovoa/approvals/:id", async (c) => {
   const r = await decide(c.env, c.var.userId, c.req.param("id"), parsed.data.decision, parsed.data);
   return c.json(r, "error" in r ? 400 : 200);
 });
+
+/**
+ * Passes a short text (a link) to a connection's OVOA, as ovoa_ask share would,
+ * with every limit of the connection's: for what the owner asked for in their
+ * own turn and that finished later (a game OVOA made for the two of them,
+ * sites.ts gameReady). Never for anything a background run thought of.
+ */
+export function shareWithConnection(env: Env, userId: string, username: string, text: string, timeZone: string) {
+  return ask(env, userId, { username, kind: "share", text }, timeZone);
+}

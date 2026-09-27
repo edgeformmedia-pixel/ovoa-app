@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { tell } from "./agent";
+import { shareWithConnection } from "./network";
 import { reservedAddress, sendEmail } from "./emailauth";
 import { allowed } from "./limits";
 import { generateText, isModelRefused, type CallTool, type ToolSpec } from "./llm";
@@ -190,7 +191,7 @@ async function freeSlug(db: D1Database, base: string) {
 }
 
 /** The first free project path under `username` from `base`: itself, then base-2 to base-9. */
-async function freePath(db: D1Database, username: string, base: string) {
+export async function freePath(db: D1Database, username: string, base: string) {
   for (let i = 1; i <= 9; i++) {
     const path = i === 1 ? base : `${base.slice(0, SLUG_MAX - 2).replace(/-+$/, "")}-${i}`;
     if (pathProblem(path)) continue;
@@ -370,6 +371,117 @@ export function changePrompt(url: string) {
   ].join("\n\n");
 }
 
+// ---------- Games (together.ts, 2026-09-26) ----------
+//
+// "Make a game for me and my girlfriend": a small two-player page, built by the
+// same lane as a website. It's the one kind of page here that runs script, so
+// it's served as its own sandbox (GAME_POLICY): an opaque origin, so no cookies
+// or storage of ovoa.ai's; inline script only; no network at all (connect-src,
+// form-action and every source 'none' but inline and data:); never framed.
+
+/** The designer's instructions for a game at `url` (or a change to one). */
+export function gamePrompt(url: string, change = false) {
+  return [
+    change
+      ? `You are OVOA's game maker, changing a small game you made. It is published at ${url}. You get the page as it is and the change asked for: write the whole page again with that change made and the rest kept.`
+      : `You are OVOA's game maker. You make one small, polished, playable game for two people who are close (a couple, friends, family), from what one of them asked for. It is published at ${url}.`,
+    "Write one HTML5 document and nothing else: start with <!doctype html> and end with </html>. No Markdown, no code fences, no commentary.",
+    [
+      "Rules for the page:",
+      "- Two players on one phone, taking turns (pass-and-play), unless they asked for something else that works the same way: a quiz about each other, would-you-rather, a drawing or guessing game, tic-tac-toe with a twist, a memory game, trivia about things they like.",
+      "- Use their names and what the owner told you about them to make it personal. Never invent private facts about them.",
+      "- All code inline: one <style> and one <script> (plain JavaScript, no modules, no libraries). No external scripts, images, fonts or files except Google Fonts. Use emoji, CSS and inline SVG for visuals.",
+      "- No network at all: no fetch, XMLHttpRequest, WebSocket, forms, links that submit anything, or trackers. No cookies, localStorage or sessionStorage (they are blocked, so code that uses them breaks). Keep the game's state in JavaScript variables.",
+      "- Mobile first: big tap targets, fits a 375px phone without scrolling sideways, works on a laptop. A clear start screen with the rules in one or two sentences, a score, and a way to play again.",
+      "- Kind and fun, nothing sexual, cruel or embarrassing. Keep the file under 40 KB.",
+    ].join("\n"),
+    "If what was asked is sexual, hateful, harassing, or would collect passwords, money or personal data, write only one line starting with \"REFUSED:\" and the reason.",
+  ].join("\n\n");
+}
+
+/**
+ * A game's page cleaned before it's kept: its inline script stays (it's a game),
+ * but nothing that reaches outside the page does: external scripts, frames,
+ * plugins, forms, redirects, base URLs, style sheets from anywhere but Google
+ * Fonts, script links. GAME_POLICY would block all of it anyway. Pure.
+ */
+export function cleanGameHtml(html: string) {
+  let h = html;
+  h = h.replace(/<script\b[^>]*\bsrc\s*=[^>]*>(?:[\s\S]*?<\/script\s*>)?/gi, "");
+  h = h.replace(/<(meta)\b[^>]*http-equiv[^>]*>/gi, "");
+  h = h.replace(/<base\b[^>]*>/gi, "");
+  h = h.replace(/<(object|embed|applet|frameset|frame|portal|iframe)\b[\s\S]*?(?:<\/\1\s*>|\/?>)/gi, "");
+  h = h.replace(/<\/?form\b[^>]*>/gi, "");
+  h = h.replace(/<link\b[^>]*>/gi, (tag) => (/href\s*=\s*["']https:\/\/fonts\.(googleapis|gstatic)\.com\//i.test(tag) ? tag : ""));
+  h = h.replace(/<input\b[^>]*>/gi, (tag) => {
+    const attr = (name: string) => new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i").exec(tag);
+    const value = (m: RegExpExecArray | null) => m?.[2] ?? m?.[3] ?? m?.[4] ?? null;
+    return secretInput(value(attr("type")), value(attr("name")), value(attr("autocomplete"))) ? "" : tag;
+  });
+  h = h.replace(/<[a-z][a-z0-9-]*\b[^>]*>/gi, (tag) =>
+    tag.replace(/\s([a-z:-]+)\s*=\s*("([^"]*)"|'([^']*)')/gi, (attr, name: string, _q, dq?: string, sq?: string) =>
+      URL_ATTRS.has(name.toLowerCase()) && SCRIPT_URL.test(dq ?? sq ?? "") ? "" : attr,
+    ),
+  );
+  return relativeLinks(h);
+}
+
+/** A game runs its own inline script, in a sandbox with no origin and no network. */
+export const GAME_POLICY = [
+  "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation",
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src https://fonts.gstatic.com data:",
+  "img-src data: blob:",
+  "media-src data: blob:",
+  "connect-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+/**
+ * A finished game: the owner gets the link, and the other player's OVOA gets it
+ * too when theirs is connected (network.ts, within that connection's limits),
+ * once. The owner asked for exactly this in their own turn (together.ts).
+ */
+async function gameReady(env: Env, site: SiteRow, link: string, change: boolean) {
+  const db = env.DB;
+  if (change) {
+    await tell(env, site.user_id, { kind: "done", title: `${site.name} is updated`, body: `Done, ${site.name} is updated: ${link}`, waiting: true });
+    return;
+  }
+  const other = site.share_for ?? "them";
+  let line: string;
+  if (site.share_to && !site.shared_at) {
+    const zone = await db.prepare("SELECT time_zone FROM settings WHERE user_id = ?").bind(site.user_id).first<{ time_zone: string | null }>();
+    const me = await db.prepare("SELECT name FROM users WHERE id = ?").bind(site.user_id).first<{ name: string }>();
+    const first = me?.name.split(" ")[0] || "Your person";
+    const sent = await shareWithConnection(
+      env,
+      site.user_id,
+      site.share_to,
+      `${first} had their OVOA make a game for the two of you, "${site.name}": ${link}`,
+      zone?.time_zone ?? "UTC",
+    ).catch((err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }));
+    await db.prepare("UPDATE sites SET shared_at = ? WHERE id = ?").bind(Date.now(), site.id).run();
+    line =
+      "error" in sent
+        ? `I couldn't pass it to ${other}'s OVOA just now (${sent.error}), so send ${other} the link yourself.`
+        : `I sent it to ${other}'s OVOA too, so ${other} gets it by text.`;
+    say("game", { outcome: "error" in sent ? "share failed" : "shared", user: site.user_id });
+  } else {
+    line = `${other} isn't connected to you on OVOA, so forward ${other} this link.`;
+  }
+  await tell(env, site.user_id, {
+    kind: "done",
+    title: `${site.name} is ready`,
+    body: `Your game for you and ${other} is ready: ${link}\n\n${line} Tell me anything to change in it.`,
+    waiting: true,
+  });
+}
+
 /** The model's answer as a page, a refusal, or what was wrong with it. Pure. */
 export function pageFrom(raw: string): { html: string } | { refused: string } | { error: string } {
   let text = raw.trim();
@@ -502,6 +614,12 @@ type SiteRow = {
   /** A project under a username (thomas.ovoa.ai/<path>); both null for a flat site. */
   owner_username: string | null;
   path: string | null;
+  /** 'site', or 'game': a small two-player page for them and someone (together.ts), the only kind that runs script. */
+  kind: string;
+  /** A game's other player: their @username when their OVOAs are connected (the link goes to their OVOA), and their name. */
+  share_to: string | null;
+  share_for: string | null;
+  shared_at: number | null;
 };
 
 type BuildRow = {
@@ -535,7 +653,7 @@ export const SITES_BUDGET_MS = 10 * 60_000;
 export const DELETED_KEEP_DAYS = 30;
 
 const SITE_COLUMNS =
-  "id, user_id, slug, name, client, brief, html, title, status, version, created_at, updated_at, published_at, deleted_at, owner_username, path";
+  "id, user_id, slug, name, client, brief, html, title, status, version, created_at, updated_at, published_at, deleted_at, owner_username, path, kind, share_to, share_for, shared_at";
 
 const siteById = (db: D1Database, id: string) => db.prepare(`SELECT ${SITE_COLUMNS} FROM sites WHERE id = ?`).bind(id).first<SiteRow>();
 
@@ -547,7 +665,7 @@ export function briefWith(brief: string, change: string) {
   return [first, ...all].join("\n\nLater they asked: ").slice(0, BRIEF_MAX + 2_000);
 }
 
-async function queueBuild(db: D1Database, site: Pick<SiteRow, "id" | "user_id">, kind: BuildRow["kind"], request: string) {
+export async function queueBuild(db: D1Database, site: Pick<SiteRow, "id" | "user_id">, kind: BuildRow["kind"], request: string) {
   const id = crypto.randomUUID();
   await db
     .prepare("INSERT INTO site_builds (id, site_id, user_id, kind, request, status, created_at) VALUES (?, ?, ?, ?, ?, 'queued', ?)")
@@ -567,10 +685,21 @@ async function runBuild(env: Env, build: BuildRow) {
     return;
   }
   const url = `${siteAddress(env, site.slug)}/`;
+  const game = site.kind === "game";
   // A change to a site that never got a page is built from its whole brief instead.
   const change = build.kind === "change" && !!site.html;
   const text = change
     ? [`The page as it is now:\n${site.html}`, `What they want changed:\n${build.request}`].join("\n\n")
+    : game
+      ? [
+          "Make the game.",
+          `Name: ${site.name}`,
+          site.share_for ? `The two players: the owner and ${site.share_for}.` : "",
+          `What the owner asked for:
+${site.brief}`,
+        ]
+          .filter(Boolean)
+          .join("\n")
     : [
         "Build the website.",
         `Name: ${site.name}`,
@@ -583,9 +712,9 @@ async function runBuild(env: Env, build: BuildRow) {
   const started = Date.now();
   const raw = await generateText(env, {
     model: env.CHAT_MODEL,
-    system: change ? changePrompt(url) : createPrompt(url),
+    system: game ? gamePrompt(url, change) : change ? changePrompt(url) : createPrompt(url),
     turns: [{ role: "user", text }],
-    usage: { userId: site.user_id, purpose: change ? "site change" : "site build" },
+    usage: { userId: site.user_id, purpose: game ? "game build" : change ? "site change" : "site build" },
     maxTokens: BUILD_TOKENS,
     fast: true,
   });
@@ -604,7 +733,7 @@ async function runBuild(env: Env, build: BuildRow) {
     });
     return;
   }
-  const html = cleanSiteHtml(page.html);
+  const html = game ? cleanGameHtml(page.html) : cleanSiteHtml(page.html);
   await db.batch([
     db
       .prepare(
@@ -616,6 +745,7 @@ async function runBuild(env: Env, build: BuildRow) {
   ]);
   say("site", { outcome: change ? "changed" : "built", user: site.user_id, site: site.slug, chars: html.length, ms: now - started });
   const link = await siteLink(env, site.slug);
+  if (game) return gameReady(env, site, link, change);
   const offline = site.status === "offline";
   await tell(env, site.user_id, {
     kind: "done",
@@ -855,6 +985,37 @@ function present(html: string, o: { preview: boolean; host: string; base: string
   return rewriter.transform(new Response(html, { headers: headers(o.preview) }));
 }
 
+/** A game as it's served: its own sandbox (GAME_POLICY), never indexed, with the badge; anything reaching outside the page removed again. */
+function presentGame(html: string, host: string) {
+  const rewriter = new HTMLRewriter()
+    .on("script[src], iframe, object, embed, applet, frame, frameset, portal, base, meta[http-equiv], form", {
+      element(e) {
+        if (e.tagName === "form") e.removeAndKeepContent();
+        else e.remove();
+      },
+    })
+    .on("link", {
+      element(e) {
+        if (!/^https:\/\/fonts\.(googleapis|gstatic)\.com\//.test(e.getAttribute("href") ?? "")) e.remove();
+      },
+    })
+    .on("body", {
+      element(e) {
+        e.append(badge(host), { html: true });
+      },
+    });
+  return rewriter.transform(
+    new Response(html, {
+      headers: {
+        ...headers(true),
+        "content-security-policy": GAME_POLICY,
+        "cache-control": "no-store",
+        "x-robots-tag": "noindex, nofollow",
+      },
+    }),
+  );
+}
+
 const htmlResponse = (status: number, body: string, preview: boolean, extra: Record<string, string> = {}) =>
   new Response(body, { status, headers: { ...headers(preview, "text/html; charset=utf-8", "no-store"), ...extra } });
 
@@ -971,7 +1132,7 @@ async function tellOwner(env: Env, site: Pick<SiteRow, "user_id" | "name">, host
   });
 }
 
-type Served = Pick<SiteRow, "id" | "user_id" | "slug" | "name" | "html" | "status" | "updated_at">;
+type Served = Pick<SiteRow, "id" | "user_id" | "slug" | "name" | "html" | "status" | "updated_at" | "kind">;
 /** A project on a username's page: its name, its line, where it is. */
 export type Listed = { name: string; line: string; path: string };
 
@@ -1000,7 +1161,7 @@ export async function resolveSite(
   const domain = siteDomain(env);
   const host = `${label}.${domain}`;
   const top = preview ? `/s/${label}` : "";
-  const cols = "id, user_id, slug, name, html, status, updated_at";
+  const cols = "id, user_id, slug, name, html, status, updated_at, kind";
   const flat = await db.prepare(`SELECT ${cols} FROM sites WHERE slug = ? AND deleted_at IS NULL`).bind(label).first<Served>();
   if (flat) return { kind: "site", site: flat, home: host, base: top, path };
   const user = await db.prepare("SELECT id FROM users WHERE username = ?").bind(label).first<{ id: string }>();
@@ -1010,7 +1171,7 @@ export async function resolveSite(
       const { results } = await db
         .prepare(
           `SELECT name, title, html, path FROM sites
-            WHERE owner_username = ? AND path IS NOT NULL AND status = 'live' AND html IS NOT NULL AND deleted_at IS NULL
+            WHERE owner_username = ? AND path IS NOT NULL AND kind = 'site' AND status = 'live' AND html IS NOT NULL AND deleted_at IS NULL
             ORDER BY published_at`,
         )
         .bind(label)
@@ -1129,6 +1290,12 @@ export async function serveSite(request: Request, env: Env, ctx: ExecutionContex
       return htmlResponse(503, plainPage(`${site.name} is on its way`, ["This website is being built right now. Check back in a few minutes."]), preview, { "retry-after": "120" });
     }
     if (!live) return htmlResponse(404, plainPage(`${site.name} is offline`, ["This website isn't available right now."]), preview);
+    if (site.kind === "game") {
+      if (path === "/index.html") return Response.redirect(`${url.origin}${base}/`, 301);
+      if (path !== "/") return htmlResponse(404, plainPage("Page not found", [`${site.name} has one page, and this isn't it.`], `${base}/`), preview);
+      if (method !== "GET" && method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD" } });
+      return presentGame(site.html!, host);
+    }
     if (path === "/sitemap.xml" && base === top) {
       const lastmod = new Date(site.updated_at).toISOString().slice(0, 10);
       return new Response(
