@@ -90,6 +90,7 @@ export const ROUTE_TIERS: RouteRule[] = [
   { method: "*", path: /^\/me(\/password|\/plan\/refresh)?$/, tier: "free", why: "the account and its settings" },
   { method: "POST", path: /^\/me\/email\/(code|verify)$/, tier: "free", why: "proving the account's address with the emailed code" },
   { method: "POST", path: /^\/me\/consent$/, tier: "free", why: "agreeing to AI (taking it back is a DELETE)" },
+  { method: "POST", path: /^\/me\/terms$/, tier: "free", why: "agreeing to the Terms (no app without them)" },
   { method: "*", path: /^\/(device\/state|capabilities)$/, tier: "free", why: "what the phone and band have" },
   { method: "POST", path: /^\/buzz\/test$/, tier: "free", why: "band buzz test, no model" },
   { method: "*", path: /^\/push\/token$/, tier: "free", why: "push registration" },
