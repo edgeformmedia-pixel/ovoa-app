@@ -28,7 +28,7 @@ Status words:
 | Contact card with its logo | Live on main | contactcard.ts; CARD keyword on this branch (task 5); Sendblue contact sharing needs `SENDBLUE_CONTACT_SHARING=1` |
 | STOP / START / HELP on its number | On this branch (task 5) | keywords.ts, do_not_contact |
 | Answers in group chats when named | On this branch (task 9) | Off until `TEXT_GROUPS=1`; Sendblue group sending may need a plan change |
-| Replies with a voice note (typical) | Missing | Only when they sent a voice memo: speak the reply with the existing Deepgram voice, host the audio behind a short-lived link, send as media_url; off unless a var is set (task 28) |
+| Replies with a voice note (typical) | On this branch (task 28) + Needs the owner (`TEXT_VOICE_REPLIES=1`) | voicereply.ts: only when they sent a voice memo, after the text |
 | **Texting first** | | |
 | Texts you first: brief, reminders, nudges | Live on main | reach.ts, 12 a day, quiet hours, "stop texting me first" |
 | Follows up on dropped threads | Live on main | agent.ts followUpDropped |
@@ -38,8 +38,8 @@ Status words:
 | Gmail and Google Calendar | Live on main | Sending waits for YES |
 | Outlook and Microsoft 365 | On this branch (task 19) + Needs the owner (Entra app, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`) | docs/outlook.md |
 | Reads email attachments | On this branch (task 20) | gmail_attachment, outlook_attachment |
-| Trips and orders found in your email (flight check-in, leave for the airport, a delivery today) (typical) | Missing | Read-only scan of confirmation emails into life_plans with the right reminders (task 26) |
-| Schedules with people who aren't on it, by email (typical) | Missing | Offer times from the calendar, park the email for YES, read the reply, park the invite (task 25) |
+| Trips and orders found in your email (flight check-in, a delivery today) (typical) | On this branch (task 26) | mailtrips.ts: read-only morning scan, Plus; "stop reading my email for trips" |
+| Schedules with people who aren't on it, by email (typical) | On this branch (task 25) | meetings.ts: 3 times in one email you approve, the invite after their pick with your YES |
 | **Doing things** | | |
 | Looks things up live | Live on main | web.ts (Z.ai search first) |
 | Reads a whole page or link | On this branch (task 1) | fetchurl.ts |
@@ -53,7 +53,7 @@ Status words:
 | Makes a game for two people | Live on main | together.ts |
 | Keeps lists across steps | On this branch (task 3) | lists.ts |
 | Shared lists with a partner or friend (typical) | Missing | A list shared with a Friend at Partner or Best friend level, both OVOAs read and add (task 24) |
-| Receipts into money: text a photo of a receipt and it's counted (typical) | Missing | lookAt already reads receipts; hand the amount and merchant to money.ts as a spend entry (task 27) |
+| Receipts into money: text a photo of a receipt and it's counted (typical) | On this branch (task 27) | receipts.ts: offered, logged on yes, counts against a budget |
 | **Many at once** | | |
 | One approval, many targets (emails, research, friends) | On this branch (task 6) | Off until `CAMPAIGNS=1` |
 | Standing approvals ("don't ask before emailing my wife") | On this branch (task 8) | rules.ts; never money |

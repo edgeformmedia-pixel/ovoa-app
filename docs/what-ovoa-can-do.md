@@ -21,6 +21,8 @@ live when it's merged and deployed; "Switch" says what turns it on.
 - **Outlook and Microsoft 365** mail and calendar, the same way: *"what's in my Outlook inbox"*, *"put lunch
   Friday on my Outlook calendar"*. Sending and inviting wait for your OK. (New. Switch: register the app with
   Microsoft, docs/outlook.md)
+- **Voice notes back**: text it a voice memo and the answer comes as text and then as a voice note too.
+  (New. Switch: `TEXT_VOICE_REPLIES=1`)
 - **Reminders, alarms, to-dos, notes, routines**: *"remind me to call mom Sunday at 5"*, *"every weekday
   at 7 wake me up"*. (Live)
 - **Morning brief** and a nightly summary of your day. (Live)
@@ -28,6 +30,14 @@ live when it's merged and deployed; "Switch" says what turns it on.
   *"stop texting me first"* to turn it off. (Live)
 - **Money, food, health**: budgets and bills, *"I had a burrito"* food memory, sleep and workouts from the
   Band and Apple Health. (Live)
+- **Receipts**: text a photo of a receipt and it offers to log it; say yes and it counts against your budget
+  (*"that was groceries"*). Card numbers on the photo are never kept. (New)
+- **Trips and deliveries from your email**: a flight confirmation becomes a trip with a check-in reminder the
+  day before, a dinner booking gets a reminder, and a package arriving today is in your morning brief. Read-only.
+  *"stop reading my email for trips"* turns it off. (New, Plus)
+- **Find a time with anyone**: *"find a time with dana@x.com next week for coffee"*. It checks your calendar,
+  offers three times in one email you approve, reads Dana's reply, and asks before sending the invite. (New, Plus
+  for reading replies)
 
 ## Getting things done
 
