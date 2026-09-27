@@ -68,7 +68,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       and future campaigns check it. Optionally call Sendblue's contact sharing API (POST
       /api/v2/contact-sharing/profile then /share, headers sb-api-key-id / sb-api-secret-key, body fromNumber,
       firstName, photoUrl / fromNumber, toNumber; only works in an existing 1:1 iMessage chat) behind a flag. Tests.
-- [~] claimed 2026-09-27T11:56Z by scheduled session. 6. **Campaigns (one approval, many targets)**: `campaign_start` proposes a plan (mode `email` | `research` |
+- [x] 6. **Campaigns (one approval, many targets)**: `campaign_start` proposes a plan (mode `email` | `research` |
       `friends`, title, instructions with `{field}` placeholders, items) as ONE pending action showing count and
       estimated cost. The approval is what runs it: after approval, the 2-minute cron works through a few items per
       tick, only inside the user's daytime hours, and only for campaigns with an approved action id. Caps in code:
@@ -121,11 +121,19 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   3. Move `jarvis/api/optional/browser-puppeteer.ts` to `src/` and add `import "./browser-puppeteer";` to the top of index.ts.
   4. The library adds Node's types: in src/llm.ts (around line 1264) change `clearTimeout(timer)` to
      `clearTimeout(timer ?? undefined)` so `npx tsc` passes. Then run npm test + both smoke scripts, then deploy.
+- Task 6 (campaigns): apply migration `0064_campaigns.sql`. Off until the var `CAMPAIGNS=1` is set (then the tools are
+  offered and the cron's new campaigns lane works approved ones; unsetting it pauses every campaign). Email mode needs a
+  connected Google account with Gmail send. Design choices worth a look: email is the approved template filled per item
+  (no model rewrite, so what's approved is what's sent); friends mode uses network.ts shareWithConnection (kind share),
+  so each friend still goes through the network's own limits; daytime = 8 AM to 9 PM local and outside quiet hours.
+  Also: browser.ts parks its submit approval but doesn't hand it to the app in the reply; blocksAssistant now returns
+  a `pending` list (index.ts adds it to pendingActions) that the browser block could push into too.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
 
 - Web agent, part 1 (fetchurl.ts): fetch_url reads a public page by link (public http(s) only, redirects re-checked, 3 MB cap, parts under the 6,000-char tool cap, 6 reads a reply); offered with web_search; a pasted link or "link/article" preloads it.
+- Campaigns (campaigns.ts, off unless CAMPAIGNS=1): campaign_start parks ONE approval (count, cost, first item filled in); only approving it sets approved_at, and the cron's campaigns lane works 5 items per campaign per tick in the owner's daytime; caps in code: research 500 items, email 200 sent per rolling 24h from their Gmail, friends 50 through the OVOA network; do_not_contact numbers skipped; one summary message + push when done; /campaigns routes with a formula-safe CSV.
 
 ## Log
 
@@ -146,3 +154,6 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - 2026-09-27 12:01 UTC (local session): shared hook approvers.ts (3058635), then task 7 done in a1d13eb: browser agent + fake-driver
   tests (66 test files pass, tsc clean). Branch bundles with wrangler --dry-run; with the adapter, nodejs_compat and the
   binding it also bundles (3 MB). Installing the library breaks tsc at llm.ts:1264 (Node types), noted for the owner.
+- 2026-09-27 12:05 UTC (scheduled session): task 6 done in b804e26. Campaigns + tests (campaigns.test.ts); 67 test files
+  pass, tsc clean. Rebased over task 7 (merged the blocks.ts conflict by hand). origin/main unchanged since 16c2deb.
+  Needs the owner: migration 0064 and the CAMPAIGNS=1 var (see Needs the owner).
