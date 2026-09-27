@@ -83,7 +83,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       that submits a form, buys, books or posts first creates a pending action describing exactly what it will do.
       Code must compile and all tools must be absent when `env.BROWSER` is missing; test with a fake browser driver.
       Do NOT add the binding to wrangler.jsonc; write the exact snippet under "Needs the owner".
-- [~] claimed 2026-09-27T12:01Z by local session. 8. **Approval rules**: saved rules like "don't ask before emailing my wife" or "book anything under $50" (per
+- [x] 8. **Approval rules**: saved rules like "don't ask before emailing my wife" or "book anything under $50" (per
       recipient, per tool, per amount), checked before creating a pending action; `rule_add` / `rule_list` /
       `rule_remove` tools and authed routes. Never bypass: money over budget limits, Full-access danger items,
       agent-started turns, anything in FORBIDDEN_ALONE. Tests.
@@ -128,6 +128,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   so each friend still goes through the network's own limits; daytime = 8 AM to 9 PM local and outside quiet hours.
   Also: browser.ts parks its submit approval but doesn't hand it to the app in the reply; blocksAssistant now returns
   a `pending` list (index.ts adds it to pendingActions) that the browser block could push into too.
+- Task 8: apply migration `0065_approval_rules.sql`. Money is deliberately NOT a rule kind: purchases (budget.ts) always wait for a YES.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -157,3 +158,4 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - 2026-09-27 12:05 UTC (scheduled session): task 6 done in b804e26. Campaigns + tests (campaigns.test.ts); 67 test files
   pass, tsc clean. Rebased over task 7 (merged the blocks.ts conflict by hand). origin/main unchanged since 16c2deb.
   Needs the owner: migration 0064 and the CAMPAIGNS=1 var (see Needs the owner).
+- 2026-09-27 12:09 UTC (local session): task 8 done (migration renamed to 0065 in the rebase). Approval rules; 67 test files pass, tsc clean; full local smoke 427/6, identical to untouched main.
