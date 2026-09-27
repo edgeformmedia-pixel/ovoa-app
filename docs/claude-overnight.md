@@ -202,6 +202,13 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       test/texting-smoke.mjs on fresh state with CAMPAIGNS=1, TEXT_GROUPS=1, INBOUND_CODES=1, TEXT_VOICE_REPLIES=1,
       SENDBLUE_CONTACT_SHARING=1 and MS_CLIENT_ID/MS_CLIENT_SECRET set (dummy values; nothing reaches a real
       service). Same pass bar as task 31. Fix anything a switch breaks.
+- [ ] 38. **Watching screen**: page watches (watches.ts) can only be seen and stopped in chat. Add GET /watches and
+      DELETE /watches/:id (the owner's only; DELETE free in plans.ts like the other removals) and an app screen under
+      Settings, "When it acts for you", listing each watch (what it looks for, the page, how often, until when, last
+      seen) with a Stop button. Tests for the routes (another person's watch is 404); typecheck the app.
+- [~] claimed 2026-09-27T16:15Z by local session. 39. **Cancel a meeting offer**: a meet_cancel tool ("stop waiting for Dana's reply") and
+      GET /meetings, DELETE /meetings/:id, plus an app screen listing offers waiting on a reply or an approval, with
+      Cancel. Cancelling an offer that's still waiting for approval also removes its pending action. Tests.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 - [x] 25. **Scheduling with people not on OVOA** (from task 21): "find a time with dana@x.com next week". OVOA reads the
