@@ -148,7 +148,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - [x] 22. **Review tasks 17 to 20** (only once 20 is [x]): read `git diff 93e3950..HEAD -- jarvis/` line by line for
       bugs (wrong conditions, missing awaits, approvals that can be skipped, data shown to the wrong person, anything
       that changes behavior when a flag is off). Fix each real one with a test; log what was checked and found.
-- [~] claimed 2026-09-27T13:50Z by local session. 23. **Invite a friend** (Instinct's app has it; OVOA had nothing): an invite is a text the person sends
+- [x] 23. **Invite a friend** (Instinct's app has it; OVOA had nothing): an invite is a text the person sends
       from their own phone ("text OVOA at ... and say @tigh sent you", with a tap-to-text link); OVOA never texts the
       friend. A stranger's text naming "@tigh sent me" is remembered (one inviter per number); when that number links an
       account the inviter is told once. invite_friend tool, GET /invites, an app screen with the Share sheet. Rewards
@@ -188,6 +188,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 | 17 | Smoke suites match main's current behavior | ba73df0 |
 | 19 | Outlook and Microsoft 365 mail and calendar, off until the owner sets two secrets (microsoft.ts) | 35d1336 |
 | 22 | Review of 17 to 20: six fixes, plus reclaimed accounts lose what the squatter left | eb5ad82, cfa268a |
+| 23 | Invite a friend: invite_friend, GET /invites, app screen; credited when the friend links (invites.ts) | dcf5b08 |
 | 20 | Read files: PDFs, Word, Excel and text, texted in, at a link, or attached to an email (files.ts) | 1f3fac6 |
 
 ### Deploy order (owner)
@@ -195,7 +196,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 1. Review and merge `claude/overnight` into main (no conflicts with main as of 16c2deb).
 2. `cd jarvis/api && npm run db:migrate` BEFORE deploying: applies 0060 to 0069 (guest_daily, user_lists, vault,
    do_not_contact, campaigns, approval_rules, text_groups, site_sessions, inbound_codes, page_watches) and 0070
-   (microsoft_accounts). The new code
+   (microsoft_accounts) and 0071 (invite_referrals). The new code
    reads these tables (the watches cron lane runs for everyone), so migrate first. The 0057 to 0059 gap is on purpose.
 3. `wrangler deploy`. With no new vars set, behavior changes are: fetch_url, lists, vault (uses the existing
    TOKEN_ENC_KEY), reading files (uses the existing AI binding), keywords + do-not-contact, approval rules, signed-in sites API, page watchers, the guest daily
@@ -278,6 +279,8 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   /auth/email/signup), its texting link and link codes are now cleared along with Google, Outlook, approval rules,
   signed-in sites and vault items. Before, a squatter's linked phone kept texting the account after the owner took it
   back. The real owner links their phone again. Revert that one line (TAKEN_BACK in index.ts) if that's unwanted.
+- Task 23 (invites): apply migration `0071_invite_referrals.sql`. No switch. Rewards for inviting (free days, a plan
+  upgrade) are the owner's call; the joined count per person is there to build one on.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -295,6 +298,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 - Page watchers (watches.ts): watch_add / watch_list / watch_remove, hourly or daily, max 10 active; the 2-minute cron reads due pages with fetchurl.ts and a cheap model call through the model gate (Plus with consent); tells the owner via reach.ts; never acts.
 - Outlook (microsoft.ts, off unless MS_CLIENT_ID and MS_CLIENT_SECRET): one Microsoft account per person in microsoft_accounts (tokens encrypted, refresh token rotated); outlook_ tools through Graph; outlook_send and outlook_calendar_create with guests park like Gmail's (approvers.ts), rules.ts covers them as email and calendar; FORBIDDEN_FOR_COMMANDS and FORBIDDEN_ALONE include outlook_send; oauth_states shared with Google, Microsoft's states start "ms_".
 - Reading files (files.ts): fileToText turns PDFs and Office files into text with env.AI.toMarkdown (free for documents) and decodes text files; 8 MB cap; never throws (null = unreadable). Used by texting.ts lookAt (a texted file, 6,000 chars into the turn), fetch_url (a PDF or Office link, in parts) and gmail_attachment / outlook_attachment. Contents are always framed as information, never instructions.
+- Invites (invites.ts): the invite is a text the person sends themselves (invite_friend, GET /invites, app Share sheet); a stranger's text with "@username sent me" is recorded in invite_referrals (one inviter per number, not for linked numbers); on linking (texting.ts redeem) the inviter is told once through reach(); OVOA never texts the friend.
 - Guest trial ceiling (guest.ts): GUEST_DAILY_REPLIES (default 2000) free-trial replies per UTC day across all numbers.
 
 ## Log
@@ -379,3 +383,8 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   including a new check that nothing a squatter planted survives the takeover; texting smoke all passed (after task
   20); 74 test files pass; tsc clean in api and app. Checked and fine per the reviewer: OAuth state/PKCE, no tokens in
   logs or parked args, approvals scoped to their user, Graph ids encoded, zero extra reads with Outlook off.
+- 2026-09-27 13:45 UTC (local session): task 23 (invite a friend) in dcf5b08. invites.ts + migration 0071; texting.ts gets two
+  hooks (noteInvite on a stranger's text, which reads nothing unless the text says "@x sent me"; inviteJoined after a
+  link). App: Settings > Other people's OVOAs > Invite a friend (React Native's own Share, no new library).
+  test/invites.test.ts runs the texting path end to end (stranger names Maya, links, Maya told once, the friend is
+  only ever answered). 75 test files pass, tsc clean in api and app.

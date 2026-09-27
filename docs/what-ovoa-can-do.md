@@ -69,6 +69,9 @@ live when it's merged and deployed; "Switch" says what turns it on.
   for all of us?"*. In a group it never shares anyone's private stuff; anything that needs your accounts it
   handles with you 1:1. (New. Switch: `TEXT_GROUPS=1`)
 
+- **Invite a friend**: Settings > Invite a friend, or *"how do I invite my brother?"*. You send the text yourself;
+  when they join you hear about it. OVOA never messages your friends for you. (New)
+
 ## For creators
 
 - **"Text JAKE to OVOA"**: make a text-in code with up to 5 questions. Everyone who texts it gets your
