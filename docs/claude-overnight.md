@@ -53,7 +53,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       Tools `vault_lookup` / `vault_save`; refuse card numbers, bank or routing numbers, SSNs, passwords, one-time
       codes. Never write values to action_log or logs. Authed routes GET/POST/PATCH/DELETE `/vault`. Friends and
       friend OVOAs never get vault items. Absent (tools not offered) if TOKEN_ENC_KEY is missing. Tests.
-- [~] claimed 2026-09-27T11:26Z by local session. 5. **Texting keywords + do-not-contact**: on the iMessage line (`texting.ts`), handle whole-message STOP /
+- [x] 5. **Texting keywords + do-not-contact**: on the iMessage line (`texting.ts`), handle whole-message STOP /
       START / HELP / CARD without changing any existing reply or the YES/NO approval words (a bare "stop" while an
       approval is waiting must still mean NO; decide carefully and test both). CARD resends the existing contact
       card (`contactcard.ts`). New `do_not_contact` table; STOP from any number adds it, START removes it; `reach.ts`
@@ -102,6 +102,10 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   `GUEST_DAILY_REPLIES` (default 2000 free-trial AI replies per UTC day across all numbers; "0" pauses the trial).
 - Task 3: apply migration `0061_user_lists.sql` (normal db:migrate).
 - Task 4: apply migration `0062_vault.sql`. Uses the existing TOKEN_ENC_KEY secret; no new secret.
+- Task 5: apply migration `0063_do_not_contact.sql`. Optional var `SENDBLUE_CONTACT_SHARING=1` makes CARD also call
+  Sendblue's contact sharing; first set OVOA's iMessage profile once in Sendblue (POST /api/v2/contact-sharing/profile
+  with fromNumber, firstName "OVOA", photoUrl to a public PNG/JPEG of the logo).
+- test/texting-smoke.mjs has 6 stale expectations on main itself (same 6 on this branch; pre-free-trial behavior).
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -121,3 +125,6 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   expectations in test/smoke.sh after main's plan changes, not regressions. Left alone (main's area); flagged for the owner.
   Note: earlier log times said 11:20/11:45 UTC; real times were about 10:55-11:10 UTC.
 - 2026-09-27 11:26 UTC (local session): task 4 done in b75d794. Vault + /vault routes; 64 test files pass, tsc clean.
+- 2026-09-27 11:53 UTC (local session): task 5 done in 418f751. Keywords + do-not-contact; 65 test files pass, tsc clean.
+  Texting smoke (test/texting-smoke.mjs, fresh local state): branch 6 failed, untouched main 16c2deb the SAME 6
+  (stranger told how to link, message counts from before the free trial). Not regressions; flagged for the owner.
