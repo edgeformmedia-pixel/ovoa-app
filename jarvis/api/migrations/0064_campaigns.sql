@@ -9,6 +9,8 @@ CREATE TABLE campaigns (
   title         TEXT NOT NULL,
   instructions  TEXT NOT NULL,
   subject       TEXT,
+  -- Email campaigns: the mailbox the approval card named ('Gmail' or 'Outlook'); only that one sends.
+  mailbox       TEXT,
   status        TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'running', 'done', 'stopped')),
   action_id     TEXT,
   approved_at   INTEGER,

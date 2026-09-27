@@ -100,6 +100,22 @@ async function mailboxOf(env: Env, userId: string): Promise<Mailbox | null> {
   return null;
 }
 
+/** The offer email's words. Pure. */
+export function offerBody(myName: string, theirName: string, minutes: number, slots: number[], timeZone: string) {
+  return noDashes(
+    [
+      `Hi${theirName ? ` ${theirName}` : ""},`,
+      "",
+      `${myName === "I" ? "I'm" : `${myName} is`} free at any of these (${minutes} minutes):`,
+      ...slots.map((s, i) => `${i + 1}. ${slotLine(s, timeZone)}`),
+      "",
+      "Just reply with the one that works, and I'll send an invite.",
+      "",
+      myName === "I" ? "Thanks!" : `Thanks!\n${myName}`,
+    ].join("\n"),
+  );
+}
+
 /** "Mon, Nov 2 at 9:00 AM EST": each time with its own zone, since a week can cross a clock change. Pure. */
 export const slotLine = (at: number, timeZone: string) => `${slotWords(at, timeZone)} ${zoneName(timeZone, at)}`;
 
@@ -156,6 +172,20 @@ async function sendOffer(env: Env, m: MeetingRow, now = Date.now()) {
 registerApprover(OFFER, async (env, userId, args) => {
   const m = await env.DB.prepare("SELECT * FROM meetings WHERE id = ? AND user_id = ? AND status = 'offered'").bind(String(args.meetingId ?? ""), userId).first<MeetingRow>();
   if (!m) return "That didn't work: the times offered are gone. Ask me again.";
+  // Approved late: only the times still at least 2 hours away go, and the email says just those.
+  const now = Date.now();
+  const all = JSON.parse(m.slots) as number[];
+  const left = all.filter((s) => s >= now + 2 * 3_600_000);
+  if (!left.length) {
+    await env.DB.prepare("UPDATE meetings SET status = 'expired' WHERE id = ?").bind(m.id).run();
+    return "That didn't work: the times I offered have passed. Ask me again and I'll find new ones.";
+  }
+  if (left.length < all.length) {
+    const me = await env.DB.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string | null }>();
+    const body = offerBody((me?.name ?? "").trim().split(/\s+/)[0] || "I", m.name ?? "", m.minutes, left, m.time_zone);
+    await env.DB.prepare("UPDATE meetings SET slots = ?, body = ? WHERE id = ?").bind(JSON.stringify(left), body, m.id).run();
+    Object.assign(m, { slots: JSON.stringify(left), body });
+  }
   await sendOffer(env, m);
   return `Done: sent ${m.name ?? m.email} the times. I'll tell you when they pick one.`;
 });
@@ -213,18 +243,7 @@ export function meetingsAssistant(env: Env, userId: string, timeZone: string, on
     const theirName = String(args.name ?? "").trim().split(/\s+/)[0]?.replace(/[^\p{L}'-]/gu, "").slice(0, 30) || "";
     const title = noDashes(String(args.title ?? "").trim().slice(0, 60)) || (theirName ? `Meeting with ${theirName}` : "Meeting");
     const subject = `${title}: a few times that work`;
-    const body = noDashes(
-      [
-        `Hi${theirName ? ` ${theirName}` : ""},`,
-        "",
-        `${myName === "I" ? "I'm" : `${myName} is`} free at any of these (${minutes} minutes):`,
-        ...slots.map((s, i) => `${i + 1}. ${slotLine(s, timeZone)}`),
-        "",
-        "Just reply with the one that works, and I'll send an invite.",
-        "",
-        myName === "I" ? "Thanks!" : `Thanks!\n${myName}`,
-      ].join("\n"),
-    );
+    const body = offerBody(myName, theirName, minutes, slots, timeZone);
 
     const id = crypto.randomUUID();
     await db

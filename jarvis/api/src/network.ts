@@ -457,6 +457,8 @@ async function applyStep(db: D1Database, row: Connection | null, a: string, b: s
       db.prepare("UPDATE ovoa_threads SET status = 'dropped', updated_at = ? WHERE connection_id = ? AND status = 'open'").bind(now, id),
       db.prepare("UPDATE ovoa_messages SET status = 'dropped', detail = 'disconnected' WHERE status IN ('queued', 'waiting') AND thread_id IN (SELECT id FROM ovoa_threads WHERE connection_id = ?)").bind(id),
       db.prepare("UPDATE ovoa_approvals SET status = 'lapsed', decided_at = ? WHERE status = 'pending' AND thread_id IN (SELECT id FROM ovoa_threads WHERE connection_id = ?)").bind(now, id),
+      // Lists shared between them (lists.ts): a reconnect doesn't quietly open them again.
+      db.prepare("DELETE FROM list_shares WHERE (owner_id = ?1 AND friend_id = ?2) OR (owner_id = ?2 AND friend_id = ?1)").bind(a, b),
     );
   }
   await db.batch(statements);

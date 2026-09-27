@@ -85,6 +85,8 @@ async function main() {
     .run(groceryBudget.id, Date.now(), Date.now());
   const again = (await moneyTools.callTool("money_update", { kind: "spend", amount: 80, what: "Instacart", category: "groceries" })) as { countedAgainst?: string; note?: string };
   eq("its receipt isn't counted again", [again.countedAgainst, typeof again.note], [undefined, "string"]);
+  const next = (await moneyTools.callTool("money_update", { kind: "spend", amount: 80, what: "Whole Foods", category: "groceries" })) as { countedAgainst?: string };
+  eq("but that purchase is matched once: the next $80 receipt counts", typeof next.countedAgainst, "string");
 
   console.log(fails ? `\n${fails} failed` : "\nall passed");
   if (fails) process.exit(1);

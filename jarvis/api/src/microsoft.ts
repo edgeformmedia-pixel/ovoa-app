@@ -65,12 +65,20 @@ export async function microsoftAccount(db: D1Database, userId: string): Promise<
   return row ? { email: row.email, name: row.name, connectedAt: row.connected_at } : null;
 }
 
+/** The scopes to refresh with: those granted, plus offline_access. Pure. */
+export function refreshScopes(granted: string) {
+  const list = granted.split(/\s+/).filter(Boolean);
+  if (!list.length) return MS_SCOPES.join(" ");
+  if (!list.some((s) => s.toLowerCase().endsWith("offline_access"))) list.push("offline_access");
+  return list.join(" ");
+}
+
 /** A valid access token, refreshed when needed. Microsoft hands back a new refresh token each time; it's kept. */
 export async function microsoftAccessToken(env: Env, userId: string): Promise<string> {
   const row = await env.DB
-    .prepare("SELECT email, refresh_token_enc, access_token_enc, access_expires_at FROM microsoft_accounts WHERE user_id = ?")
+    .prepare("SELECT email, scopes, refresh_token_enc, access_token_enc, access_expires_at FROM microsoft_accounts WHERE user_id = ?")
     .bind(userId)
-    .first<{ email: string; refresh_token_enc: string; access_token_enc: string | null; access_expires_at: number | null }>();
+    .first<{ email: string; scopes: string; refresh_token_enc: string; access_token_enc: string | null; access_expires_at: number | null }>();
   if (!row) throw new MicrosoftNotConnected();
   if (row.access_token_enc && row.access_expires_at && row.access_expires_at > Date.now() + 60_000) {
     return decrypt(env.TOKEN_ENC_KEY, row.access_token_enc);
@@ -78,7 +86,9 @@ export async function microsoftAccessToken(env: Env, userId: string): Promise<st
   const { ok, body } = await tokenRequest(env, {
     grant_type: "refresh_token",
     refresh_token: await decrypt(env.TOKEN_ENC_KEY, row.refresh_token_enc),
-    scope: MS_SCOPES.join(" "),
+    // What they agreed to when they connected: asking for a scope added since (People.Read) would be refused
+    // and cost them the connection. A new scope arrives when they reconnect.
+    scope: refreshScopes(row.scopes),
   });
   if (!ok) {
     // Revoked, expired, a changed password, or removed by the person.

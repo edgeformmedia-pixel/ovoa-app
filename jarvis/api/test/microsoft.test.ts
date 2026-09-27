@@ -207,6 +207,7 @@ async function main() {
   calls.length = 0;
   await alex.callTool("outlook_search", { query: "x" });
   eq("refreshed", [calls[0]?.url.endsWith("/token"), graphCalls()[0]?.headers.authorization], [true, "Bearer fresh"]);
+  eq("asking only for what was granted", new URLSearchParams(calls[0]!.body).get("scope"), "Mail.Send offline_access");
   const kept = sqlite.prepare("SELECT refresh_token_enc FROM microsoft_accounts WHERE user_id = 'alex'").get() as { refresh_token_enc: string };
   const { decrypt } = await import("../src/crypto");
   eq("the rotated refresh token is stored", await decrypt(KEY, kept.refresh_token_enc), "rotated");

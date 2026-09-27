@@ -93,6 +93,25 @@ async function main() {
   ]);
   const approved = await approveAction(env, "sam", card.id);
   eq("approved: sent from their Gmail", [approved?.content.startsWith("Done: sent Dana the times"), sent.length], [true, 1]);
+
+  // Approved late: only the times still ahead go.
+  const lateTurn = blocksAssistant(env, "sam", TZ);
+  await lateTurn.callTool("meet_propose", { email: "late@x.com" });
+  const lateRow = sqlite.prepare("SELECT id, slots FROM meetings WHERE email = 'late@x.com'").get() as { id: string; slots: string };
+  const lateSlots = JSON.parse(lateRow.slots) as number[];
+  sqlite.prepare("UPDATE meetings SET slots = ? WHERE id = ?").run(JSON.stringify([Date.now() - 3_600_000, ...lateSlots.slice(1)]), lateRow.id);
+  await approveAction(env, "sam", lateTurn.pending[0]!.id);
+  const lateSent = JSON.parse(sent.at(-1)!) as { raw?: string };
+  const lateBody = sqlite.prepare("SELECT body, slots FROM meetings WHERE id = ?").get(lateRow.id) as { body: string; slots: string };
+  eq("a passed time is dropped from the email", [(JSON.parse(lateBody.slots) as number[]).length, lateBody.body.includes("3. ")], [lateSlots.length - 1, false]);
+  eq("and it went", typeof lateSent.raw, "string");
+  const stale = blocksAssistant(env, "sam", TZ);
+  await stale.callTool("meet_propose", { email: "stale@x.com" });
+  sqlite.prepare("UPDATE meetings SET slots = ? WHERE email = 'stale@x.com'").run(JSON.stringify([Date.now() - 3_600_000]));
+  const staleDone = await approveAction(env, "sam", stale.pending[0]!.id);
+  eq("all passed: nothing goes, it says so", [staleDone?.content.includes("have passed"), status("stale@x.com")], [true, "expired"]);
+  sqlite.prepare("DELETE FROM meetings WHERE email IN ('late@x.com', 'stale@x.com')").run();
+  sent.length = 1;
   eq("and now watched", status("dana@x.com"), "waiting");
 
   // A standing rule for someone, from their one account: it just goes.

@@ -68,12 +68,14 @@ const NIGHT = Date.parse("2026-09-28T06:00:00Z");
 
 let clock = NOON;
 const sent: { to: string; subject: string; body: string }[] = [];
+const vias = new Set<string>();
 const told: string[] = [];
 const pushes: string[] = [];
 let researchRefuses = false;
 const io: CampaignIo = {
-  sendEmail: async (_e, _u, mail) => {
+  sendEmail: async (_e, _u, mail, via) => {
     if (mail.to === "broken@example.com") throw new Error("Gmail said no");
+    vias.add(String(via));
     sent.push(mail);
   },
   research: async (_e, _u, query) => {
@@ -158,6 +160,7 @@ async function main() {
   const alexOutlook = blocksAssistant(withOutlook, "alex", "UTC");
   await alexOutlook.callTool("campaign_start", { mode: "email", title: "Hi", subject: "Hi", instructions: "Hi {name}", items: [{ name: "Kim", email: "kim@example.com" }] });
   eq("Outlook only: the card says Outlook", alexOutlook.pending[0]?.summary.includes("from your Outlook"), true);
+  eq("and the campaign keeps that mailbox", (sqlite.prepare("SELECT mailbox FROM campaigns WHERE user_id = 'alex'").get() as { mailbox: string }).mailbox, "Outlook");
   await alexOutlook.callTool("campaign_stop", {});
   sqlite.prepare("DELETE FROM campaigns WHERE user_id = 'alex'").run();
   sqlite.prepare("DELETE FROM microsoft_accounts WHERE user_id = 'alex'").run();
@@ -292,6 +295,8 @@ async function main() {
   // Gone with the account.
   sqlite.prepare("DELETE FROM users WHERE id = 'sam'").run();
   eq("gone with the account", (sqlite.prepare("SELECT COUNT(*) AS n FROM campaign_items WHERE campaign_id <> 'c-alex'").get() as { n: number }).n, 0);
+
+  eq("every email went from the mailbox its card named", [...vias], ["Gmail"]);
 
   console.log(fails ? `${fails} failed` : "all passed");
   process.exit(fails ? 1 : 0);

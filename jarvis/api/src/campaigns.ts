@@ -63,6 +63,7 @@ export type CampaignRow = {
   title: string;
   instructions: string;
   subject: string | null;
+  mailbox: string | null;
   status: "proposed" | "running" | "done" | "stopped";
   action_id: string | null;
   approved_at: number | null;
@@ -74,7 +75,8 @@ export type CampaignRow = {
 
 /** What the tick uses to reach the outside world. Swapped for fakes in the tests. */
 export type CampaignIo = {
-  sendEmail: (env: Env, userId: string, mail: { to: string; subject: string; body: string }) => Promise<void>;
+  /** `via`: the mailbox the approval named; null for a campaign from before that was kept. */
+  sendEmail: (env: Env, userId: string, mail: { to: string; subject: string; body: string }, via?: "Gmail" | "Outlook" | null) => Promise<void>;
   research: (env: Env, userId: string, query: string, today: string) => Promise<string>;
   tellFriend: (env: Env, userId: string, username: string, text: string, timeZone: string) => Promise<unknown>;
   push: (env: Env, userId: string, message: PushMessage) => Promise<number>;
@@ -93,8 +95,14 @@ async function mailbox(env: Env, userId: string): Promise<"Gmail" | "Outlook" | 
   return (await hasOutlook(env, userId)) ? "Outlook" : null;
 }
 
-async function sendFromMailbox(env: Env, userId: string, mail: { to: string; subject: string; body: string }) {
+async function sendFromMailbox(env: Env, userId: string, mail: { to: string; subject: string; body: string }, via: "Gmail" | "Outlook" | null = null) {
+  // Only from the mailbox they approved: connecting or removing one later never moves the campaign to another.
+  if (via === "Outlook") {
+    if (!(await hasOutlook(env, userId))) throw new Error("Outlook isn't connected any more.");
+    return sendOutlookMail(env, userId, mail);
+  }
   const account = await gmailAccount(env, userId);
+  if (via === "Gmail" && !account) throw new Error("Gmail isn't connected any more.");
   if (account) {
     const ctx = { token: await googleAccessToken(env, userId, account.id), timeZone: "UTC" };
     await toolsByName.get("gmail_send")!.run(ctx, mail);
@@ -268,17 +276,18 @@ export async function startCampaign(env: Env, userId: string, args: Record<strin
   if ((active?.n ?? 0) >= MAX_ACTIVE) return { error: `They already have ${MAX_ACTIVE} campaigns waiting or running. Stop one first (campaign_stop).` };
 
   const id = crypto.randomUUID();
+  const via = plan.mode === "email" ? ((await mailbox(env, userId)) ?? "Gmail") : null;
   const statements = [
     db
       .prepare(
-        "INSERT INTO campaigns (id, user_id, mode, title, instructions, subject, status, item_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?)",
+        "INSERT INTO campaigns (id, user_id, mode, title, instructions, subject, mailbox, status, item_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?)",
       )
-      .bind(id, userId, plan.mode, plan.title, plan.instructions, plan.subject || null, plan.items.length, now, now),
+      .bind(id, userId, plan.mode, plan.title, plan.instructions, plan.subject || null, via, plan.items.length, now, now),
     ...plan.items.map((item, idx) => db.prepare("INSERT INTO campaign_items (campaign_id, idx, data) VALUES (?, ?, ?)").bind(id, idx, JSON.stringify(item))),
   ];
   for (let i = 0; i < statements.length; i += 100) await db.batch(statements.slice(i, i + 100));
 
-  const summary = approvalSummary(plan, plan.mode === "email" ? ((await mailbox(env, userId)) ?? "Gmail") : "Gmail");
+  const summary = approvalSummary(plan, via ?? "Gmail");
   const action = await parkAction(env, userId, CAMPAIGN_RUN, { campaignId: id }, summary, false);
   await db.prepare("UPDATE campaigns SET action_id = ? WHERE id = ?").bind(action.id, id).run();
   return { action, result: { status: "waiting_for_user_approval", campaignId: id, items: plan.items.length, note: "Nothing has been sent. The user sees an Approve button with the count and cost; it runs only after they approve." } };
@@ -355,7 +364,7 @@ async function workItem(env: Env, io: CampaignIo, c: Due, idx: number, item: Ite
   try {
     if (c.mode === "email") {
       const mail = { to: String(item.email).trim(), subject: noDashes(render(c.subject ?? "", item)).slice(0, 200), body: text };
-      await io.sendEmail(env, c.user_id, mail);
+      await io.sendEmail(env, c.user_id, mail, (c.mailbox as "Gmail" | "Outlook" | null) ?? null);
       await setItem(db, c.id, idx, "done", `Sent to ${mail.to}`, now);
       await logAction(db, c.user_id, kindForTool("gmail_send")!, describeToolCall("gmail_send", mail), "approval", c.id).catch(() => {});
     } else if (c.mode === "research") {

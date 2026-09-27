@@ -106,12 +106,20 @@ export async function budgetForSpend(db: D1Database, userId: string, category: s
   return b ? { id: b.id, category: b.category } : null;
 }
 
-/** An approved purchase in that budget for about the same amount lately: the receipt for it, already counted. */
-export async function alreadyCounted(db: D1Database, budgetId: string, cents: number, now = Date.now()) {
-  return !!(await db
-    .prepare("SELECT 1 AS ok FROM purchases WHERE budget_id = ? AND status = 'approved' AND ABS(price_cents - ?) <= ? AND decided_at > ? LIMIT 1")
+/**
+ * An approved purchase in that budget for about the same amount lately that no
+ * receipt has been matched to yet: the receipt for it, already counted. Its id,
+ * or null. Each purchase is matched once (money_spend.purchase_id).
+ */
+export async function alreadyCounted(db: D1Database, budgetId: string, cents: number, now = Date.now()): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT id FROM purchases WHERE budget_id = ? AND status = 'approved' AND ABS(price_cents - ?) <= ? AND decided_at > ?
+         AND id NOT IN (SELECT purchase_id FROM money_spend WHERE purchase_id IS NOT NULL) ORDER BY decided_at DESC LIMIT 1`,
+    )
     .bind(budgetId, cents, Math.max(100, Math.round(cents * 0.05)), now - 30 * 86_400_000)
-    .first());
+    .first<{ id: string }>();
+  return row?.id ?? null;
 }
 
 async function spentIn(db: D1Database, b: Budget, now: number, timeZone: string) {

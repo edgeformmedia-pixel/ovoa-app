@@ -672,13 +672,13 @@ export function moneyAssistant(env: Env, userId: string, timeZone: string, { voi
       if (kind === "spend") {
         const found = await budgetForSpend(db, userId, String(args.category ?? ""));
         // The receipt for a purchase OVOA already counted against that budget isn't counted twice.
-        const twice = found ? await alreadyCounted(db, found.id, cents) : false;
+        const twice = found ? await alreadyCounted(db, found.id, cents) : null;
         const budget = twice ? null : found;
         // When it was spent: the receipt's day (noon there), or now.
         const when = validDay(args.date) && String(args.date) < today() ? atLocalTime(String(args.date), 12 * 60, timeZone) : Date.now();
         await db
-          .prepare("INSERT INTO money_spend (id, user_id, ts, amount_cents, what, created_at, budget_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(crypto.randomUUID(), userId, when, cents, typeof args.what === "string" ? withoutCardNumbers(args.what).slice(0, 120) : null, Date.now(), budget?.id ?? null)
+          .prepare("INSERT INTO money_spend (id, user_id, ts, amount_cents, what, created_at, budget_id, purchase_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(crypto.randomUUID(), userId, when, cents, typeof args.what === "string" ? withoutCardNumbers(args.what).slice(0, 120) : null, Date.now(), budget?.id ?? null, twice)
           .run();
         await db.prepare("UPDATE money_accounts SET balance_cents = balance_cents - ?, updated_at = ? WHERE user_id = ? AND kind = 'checking'").bind(cents, Date.now(), userId).run();
         return {
