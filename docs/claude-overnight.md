@@ -168,7 +168,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - [x] 30. **Docs catch-up**: docs/instinct-parity.md (tasks 24 to 28 now On this branch), docs/what-ovoa-can-do.md
       (receipts, trips from email, voice-note replies, meetings, shared lists, Outlook contacts), the final report's
       phone test plan (one step each), and docs/outlook.md if anything changed. Docs only.
-- [ ] 31. **Full local smoke, both suites, fresh state**: run test/smoke.sh and test/texting-smoke.mjs as their headers
+- [~] claimed 2026-09-27T15:19Z by local session. 31. **Full local smoke, both suites, fresh state**: run test/smoke.sh and test/texting-smoke.mjs as their headers
       say (fresh --persist-to, local only) and record the counts. The only allowed failure is "the server wants the
       second wording". If the auth rate limit trips on a fast machine, re-run after a minute and say so. Fix anything
       else the branch broke, with a test.
