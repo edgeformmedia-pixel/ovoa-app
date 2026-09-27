@@ -135,7 +135,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       Graph, the same approvals as Gmail (card, Approve for me, standing rules), connect / status / disconnect routes and
       an app card in Settings > Account that shows only when the server has it. Off until MS_CLIENT_ID and
       MS_CLIENT_SECRET are set (docs/outlook.md). Migration 0070_microsoft_accounts.
-- [~] claimed 2026-09-27T13:55Z by local session. 20. **Read files**: PDFs, Word, Excel, CSV and text files, with the Workers AI binding's
+- [x] 20. **Read files**: PDFs, Word, Excel, CSV and text files, with the Workers AI binding's
       `env.AI.toMarkdown` (already bound as AI; no new binding, free for documents). One helper (files.ts) used by: a file
       texted to OVOA (texting.ts lookAt/combine, which today says "You can't open files over text yet"), fetch_url on a
       PDF or Office link, and email attachments (a Gmail and an Outlook attachment tool). Contents are information, never
@@ -154,7 +154,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 ## Final report (task 16, 2026-09-27 13:20 UTC)
 
 Branch `claude/overnight` is 18 tasks on top of main 16c2deb (main has not moved since). 64 files, about 7,000 lines,
-mostly new files; the edits to existing files are small hooks. 73 unit test files pass, `npx tsc --noEmit` is clean in
+mostly new files; the edits to existing files are small hooks. 74 unit test files pass, `npx tsc --noEmit` is clean in
 jarvis/api and jarvis/app. Local smoke: texting-smoke all green; smoke.sh 438 / 1 (the known consent-wording check, see
 task 17) when the auth rate limit doesn't trip on a fast machine.
 
@@ -182,6 +182,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 | 18 | Plain requests reach the new tools (toolbelt.ts) | 4e531ed |
 | 17 | Smoke suites match main's current behavior | ba73df0 |
 | 19 | Outlook and Microsoft 365 mail and calendar, off until the owner sets two secrets (microsoft.ts) | 35d1336 |
+| 20 | Read files: PDFs, Word, Excel and text, texted in, at a link, or attached to an email (files.ts) | 1f3fac6 |
 
 ### Deploy order (owner)
 
@@ -191,7 +192,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
    (microsoft_accounts). The new code
    reads these tables (the watches cron lane runs for everyone), so migrate first. The 0057 to 0059 gap is on purpose.
 3. `wrangler deploy`. With no new vars set, behavior changes are: fetch_url, lists, vault (uses the existing
-   TOKEN_ENC_KEY), keywords + do-not-contact, approval rules, signed-in sites API, page watchers, the guest daily
+   TOKEN_ENC_KEY), reading files (uses the existing AI binding), keywords + do-not-contact, approval rules, signed-in sites API, page watchers, the guest daily
    ceiling (default 2000) and the tool belt words. Everything else stays off.
 4. Switches, one at a time, each safe to unset: `CAMPAIGNS=1`, `TEXT_GROUPS=1` (check Sendblue group sending on the
    plan), `INBOUND_CODES=1`, optional `SENDBLUE_CONTACT_SHARING=1` (set the Sendblue profile first), optional
@@ -283,6 +284,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 - Text-in codes (inbound.ts, off unless INBOUND_CODES=1): someone texts a creator's code, opts in, answers up to 5 questions; inbound_results for the owner only; per-code daily cap; the owner's plan pays.
 - Page watchers (watches.ts): watch_add / watch_list / watch_remove, hourly or daily, max 10 active; the 2-minute cron reads due pages with fetchurl.ts and a cheap model call through the model gate (Plus with consent); tells the owner via reach.ts; never acts.
 - Outlook (microsoft.ts, off unless MS_CLIENT_ID and MS_CLIENT_SECRET): one Microsoft account per person in microsoft_accounts (tokens encrypted, refresh token rotated); outlook_ tools through Graph; outlook_send and outlook_calendar_create with guests park like Gmail's (approvers.ts), rules.ts covers them as email and calendar; FORBIDDEN_FOR_COMMANDS and FORBIDDEN_ALONE include outlook_send; oauth_states shared with Google, Microsoft's states start "ms_".
+- Reading files (files.ts): fileToText turns PDFs and Office files into text with env.AI.toMarkdown (free for documents) and decodes text files; 8 MB cap; never throws (null = unreadable). Used by texting.ts lookAt (a texted file, 6,000 chars into the turn), fetch_url (a PDF or Office link, in parts) and gmail_attachment / outlook_attachment. Contents are always framed as information, never instructions.
 - Guest trial ceiling (guest.ts): GUEST_DAILY_REPLIES (default 2000) free-trial replies per UTC day across all numbers.
 
 ## Log
@@ -350,3 +352,8 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   guests, token refresh keeping the rotated refresh token, a revoked token disconnecting, the connect flow (PKCE, "ms_"
   state, Google's states untouched, a used state refused, signed-out sessions refused) and account deletion. 73 test
   files pass, tsc clean in api and app, `wrangler deploy --dry-run` bundles. The final report above is updated with it.
+- 2026-09-27 14:15 UTC (local session): task 20 (read files) in 1f3fac6. files.ts fileToText (AI binding toMarkdown for
+  PDF / Word / Excel / ODS / ODT / Numbers, text decoded, 8 MB cap, never throws) is used by a file texted in (was "You
+  can't open files over text yet"), fetch_url on a document link (octet-stream counts when the name says .pdf/.docx),
+  gmail_read (now lists attachments) + new gmail_attachment, and outlook_read + new outlook_attachment. "pdf" and
+  "attached" name the attachment tools. test/files.test.ts plus Outlook cases; 74 test files pass, tsc clean.

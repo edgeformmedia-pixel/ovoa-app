@@ -33,6 +33,8 @@ live when it's merged and deployed; "Switch" says what turns it on.
 
 - **Look things up live**: *"is the pharmacy open"*, *"best tacos near me"*. (Live)
 - **Read any link**: *"what does this article say"* with a link, or pull a list off a page. (New, no switch)
+- **Read files**: text it a PDF, a Word or Excel file (*"what does this lease say about pets"*), send a link to
+  one, or ask about an email attachment in Gmail or Outlook. (New, no switch)
 - **Use websites for you in a real browser**: search a site, check availability, fill a form. Anything
   that orders, books, pays or posts waits for your YES, and it never types passwords or card numbers.
   (New. Switch: Browser Rendering binding + adapter, see docs/claude-overnight.md)
