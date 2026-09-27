@@ -91,7 +91,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       only when mentioned by name, only if everyone else in the group is the sender's Friend, never shares private
       details there, and sends approvals to the person privately. Group replies via Sendblue send-group-message.
       Everything else about groups stays ignored as today. Tests with a fake Sendblue.
-- [~] claimed 2026-09-27T12:17Z by local session. 10. **Logins without passwords** (design doc + first slice, only if task 7 landed): per-user saved browser
+- [x] 10. **Logins without passwords** (design doc + first slice, only if task 7 landed): per-user saved browser
       session created by the user logging in themselves through a live-view link; OVOA never sees the password.
 - [ ] 11. **Server-side calls** (design doc only; needs owner: Twilio or similar is a new paid provider): how OVOA
       would call a business for the user (AI voice that says it's an AI, approval first, per-call cap), reusing the
@@ -129,6 +129,8 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   (Fixed since: the browser block now pushes its submit approvals into blocksAssistant's `pending` list too.)
 - Task 8: apply migration `0065_approval_rules.sql`. Money is deliberately NOT a rule kind: purchases (budget.ts) always wait for a YES.
 - Task 9: apply migration `0066_text_groups.sql`; set var `TEXT_GROUPS=1` to turn group answers on (off = groups ignored as before). Sendblue group sending may need enabling on the Sendblue plan.
+- Task 10: apply migration `0067_site_sessions.sql`. The app screen (docs/logins-without-passwords.md) needs a new native library
+  (@react-native-cookies/cookies) and a dev build: owner decision.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -161,3 +163,4 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - 2026-09-27 12:09 UTC (local session): task 8 done (migration renamed to 0065 in the rebase). Approval rules; 67 test files pass, tsc clean; full local smoke 427/6, identical to untouched main.
 - 2026-09-27 12:12 UTC (local session): rebased over task 6, migration clash resolved (approval_rules is 0065), browser approvals now handed to the app via blocks pending (thanks to the task 6 note). 68 test files pass.
 - 2026-09-27 12:17 UTC (local session): task 9 done in aaa18d5. Group chats; 69 test files pass, tsc clean; texting smoke 6 failed, identical to untouched main.
+- 2026-09-27 12:20 UTC (local session): task 10 done in d39d49d. Server side + design doc; 70 test files pass, tsc clean.
