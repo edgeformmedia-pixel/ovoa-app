@@ -1,5 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useRouter, usePathname, type Href } from "expo-router";
+import { router as nav, useRouter, usePathname, type Href } from "expo-router";
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Animated,
@@ -257,6 +257,12 @@ export function DrawerHost({
   // the state from here rather than from `open`.
   const openRef = useRef(false);
   const startX = useRef(0);
+  // Swipe right from the edge means "back" while there is somewhere to go back
+  // to (a pushed screen, or the previous menu screen), and "menu" only once
+  // there isn't: however deep you are, swiping keeps going back until the
+  // menu opens. Decided when the drag starts, not per frame.
+  const backing = useRef(false);
+  const backDrag = useRef(new Animated.Value(0)).current;
 
   const settle = useCallback(
     (to: 0 | 1) =>
@@ -297,7 +303,9 @@ export function DrawerHost({
           if (drawerLocked()) return false;
           const sideways = Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5;
           if (!sideways) return false;
-          return openRef.current ? g.dx < 0 : startX.current <= EDGE && g.dx > 0;
+          const take = openRef.current ? g.dx < 0 : startX.current <= EDGE && g.dx > 0;
+          if (take) backing.current = !openRef.current && nav.canGoBack();
+          return take;
         },
         // Once the drawer has the drag, nothing else may take it. The default
         // answer is yes, which lets the ScrollView underneath ask for the
@@ -312,23 +320,36 @@ export function DrawerHost({
         // And on iOS, stop the scroll view scrolling underneath the gesture.
         onShouldBlockNativeResponder: () => true,
         onPanResponderMove: (_e, g) => {
+          if (backing.current) return void backDrag.setValue(clamp(g.dx, 0, width));
           const from = openRef.current ? panelWidth : 0;
           progress.setValue(clamp((from + g.dx) / panelWidth, 0, 1));
         },
         onPanResponderRelease: (_e, g) => {
+          if (backing.current) {
+            backing.current = false;
+            const go = Math.abs(g.vx) > FLICK ? g.vx > 0 : g.dx > width * 0.3;
+            if (go && nav.canGoBack()) nav.back();
+            Animated.spring(backDrag, { toValue: 0, useNativeDriver: true, damping: 24, stiffness: 260 }).start();
+            return;
+          }
           const from = openRef.current ? panelWidth : 0;
           const at = clamp((from + g.dx) / panelWidth, 0, 1);
           void settle((Math.abs(g.vx) > FLICK ? g.vx > 0 : at > SNAP) ? 1 : 0);
         },
-        onPanResponderTerminate: () => void settle(openRef.current ? 1 : 0),
+        onPanResponderTerminate: () => {
+          backing.current = false;
+          Animated.spring(backDrag, { toValue: 0, useNativeDriver: true }).start();
+          void settle(openRef.current ? 1 : 0);
+        },
       }),
-    [panelWidth, progress, settle],
+    [panelWidth, progress, settle, backDrag, width],
   );
 
   return (
     <DrawerContext.Provider value={handle}>
       <View style={styles.host} {...pan.panHandlers}>
-        {children}
+        {/* Follows the finger on a back swipe, then springs home as the screen changes. */}
+        <Animated.View style={{ flex: 1, transform: [{ translateX: backDrag }] }}>{children}</Animated.View>
 
         <Animated.View pointerEvents={open ? "auto" : "none"} style={[styles.scrim, { opacity: progress }]}>
           <Pressable style={styles.fill} onPress={handle.close} accessibilityLabel="Close menu" />

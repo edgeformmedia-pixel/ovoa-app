@@ -2,6 +2,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import type { ComponentProps, ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { router, usePathname } from "expo-router";
 import { useDrawer } from "../lib/drawer";
 import { colors, numeric, radius, space, type } from "../lib/theme";
 import { CountUp, PressScale } from "./motion";
@@ -46,16 +47,21 @@ export function IconTile({ name, tone, size = 30 }: { name: IconName; tone: Tone
 export function TopBar({ title, when, right }: { title?: string; when?: string; right?: ReactNode }) {
   const drawer = useDrawer();
   const insets = useSafeAreaInsets();
+  // Same rule as the edge swipe (components/Drawer.tsx): a back arrow while
+  // there is a screen to go back to, the menu once there isn't. Read on every
+  // navigation so it flips as soon as the history does.
+  usePathname();
+  const back = router.canGoBack();
   return (
     <View style={[styles.topbar, { paddingTop: insets.top + space.s3 }]}>
       <Pressable
-        onPress={drawer.open}
+        onPress={back ? () => router.back() : drawer.open}
         hitSlop={10}
         style={styles.burger}
         accessibilityRole="button"
-        accessibilityLabel="Open menu"
+        accessibilityLabel={back ? "Back" : "Open menu"}
       >
-        <Ionicons name="menu" size={24} color={colors.ink} />
+        <Ionicons name={back ? "chevron-back" : "menu"} size={24} color={colors.ink} />
       </Pressable>
       {!!title && <Text style={styles.topTitle}>{title}</Text>}
       <View style={{ flex: 1 }} />

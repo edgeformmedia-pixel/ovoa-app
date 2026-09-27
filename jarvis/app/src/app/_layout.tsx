@@ -179,7 +179,7 @@ function RootStack() {
         <Stack.Screen name="live" options={{ ...pushed, title: "Live" }} />
         <Stack.Screen name="create" options={{ ...pushed, title: "Create an app" }} />
         {/* A made app on its own screen: its own header, its own colour. */}
-        <Stack.Screen name="made/[id]" />
+        <Stack.Screen name="made/[id]" options={{ gestureEnabled: false }} />
         <Stack.Screen name="made/edit" options={{ ...pushed, title: "Edit app" }} />
       </Stack.Protected>
       {/* A step of its own, and also opened from the app: from a locked AI
@@ -238,6 +238,9 @@ const pushed = {
   headerStyle: { backgroundColor: colors.paper },
   headerTintColor: colors.ink,
   headerShadowVisible: false,
+  // The drawer's edge swipe does back everywhere (components/Drawer.tsx);
+  // iOS's own would go back twice on the same swipe.
+  gestureEnabled: false,
   headerTitleStyle: { ...type.head, color: colors.ink },
 } as const;
 

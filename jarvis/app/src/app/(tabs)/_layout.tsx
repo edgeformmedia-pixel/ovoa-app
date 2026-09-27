@@ -66,6 +66,9 @@ export default function TabsLayout() {
   return (
     <Tabs
       tabBar={() => null}
+      // Back retraces the screens opened from the menu, so the edge swipe and
+      // the TopBar's back arrow walk back through them before the menu opens.
+      backBehavior="history"
       screenOptions={{
         headerShown: false,
         sceneStyle: { backgroundColor: colors.paper },
