@@ -667,3 +667,8 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   merge. Final report refreshed: 111 files, 12567 insertions, 77 deletions vs 16c2deb; main 9b33d3d noted in the
   summary and deploy step 1; a duplicated task 33 row removed from the shipped table. Every numbered task is now [x].
   Needs the owner: nothing new.
+- 2026-09-27 18:02 UTC (local session): trial merge of main's new 9b33d3d (site showcase, migration 0057) into the
+  branch, not committed (git merge --no-commit, then --abort): merges cleanly, tsc clean. The run showed rules.test.ts
+  failing on a same-millisecond tie (rules added through the new approval step listed out of order); fixed in 49bff2e
+  (ORDER BY created_at, rowid), five runs clean. Also llm.test.ts's first-word-deadline check failed once in that run:
+  main's own timing test (llm.ts and llm.test.ts are unchanged on this branch), clean three times alone.
