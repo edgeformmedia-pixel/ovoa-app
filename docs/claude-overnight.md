@@ -199,10 +199,11 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 
 ## Final report (task 16, 2026-09-27 13:20 UTC)
 
-Branch `claude/overnight` is 18 tasks on top of main 16c2deb (main has not moved since). 64 files, about 7,000 lines,
-mostly new files; the edits to existing files are small hooks. 74 unit test files pass, `npx tsc --noEmit` is clean in
-jarvis/api and jarvis/app. Local smoke: texting-smoke all green; smoke.sh 438 / 1 (the known consent-wording check, see
-task 17) when the auth rate limit doesn't trip on a fast machine.
+Branch `claude/overnight` is on top of main 16c2deb (main has not moved since): as of 14:30 UTC, 99 files and about
+10,700 lines, mostly new files; the edits to existing files are small hooks. 79 unit test files pass, `npx tsc --noEmit`
+is clean in jarvis/api and jarvis/app. Local smoke on fresh state: texting-smoke all green; smoke.sh 439 / 1 (the known
+consent-wording check, see task 17) when the auth rate limit doesn't trip on a fast machine. Three independent reviews
+(tasks 22 and the two after it) found 22 real issues, all fixed with tests.
 
 ### What shipped (commits)
 
