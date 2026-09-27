@@ -168,7 +168,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - [x] 30. **Docs catch-up**: docs/instinct-parity.md (tasks 24 to 28 now On this branch), docs/what-ovoa-can-do.md
       (receipts, trips from email, voice-note replies, meetings, shared lists, Outlook contacts), the final report's
       phone test plan (one step each), and docs/outlook.md if anything changed. Docs only.
-- [~] claimed 2026-09-27T15:19Z by local session. 31. **Full local smoke, both suites, fresh state**: run test/smoke.sh and test/texting-smoke.mjs as their headers
+- [x] 31. **Full local smoke, both suites, fresh state**: run test/smoke.sh and test/texting-smoke.mjs as their headers
       say (fresh --persist-to, local only) and record the counts. The only allowed failure is "the server wants the
       second wording". If the auth rate limit trips on a fast machine, re-run after a minute and say so. Fix anything
       else the branch broke, with a test.
@@ -550,3 +550,6 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   passed; Outlook refreshes ask for the granted scopes plus offline_access, so adding People.Read can't cost anyone
   their connection. Migrations 0064 and 0072 changed in place (not applied anywhere yet). 80 test files pass, tsc
   clean in api and app.
+- 2026-09-27 15:24 UTC (local session): task 31 at 7f752c6, fresh --persist-to for each: smoke.sh 439 / 1 (only "the server
+  wants the second wording", as expected until 10f1fd2 reaches main); scheduled tick errors=0; texting-smoke.mjs all
+  28 passed. The auth rate limit didn't trip this time.
