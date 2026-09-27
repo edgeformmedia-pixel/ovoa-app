@@ -10,6 +10,7 @@
 // so the caller checks that first.
 
 import { CONTACT_CARD_PATH } from "./contactcard";
+import { endInboundFor } from "./inbound";
 import type { Env } from "./types";
 
 export type Keyword = "stop" | "start" | "help" | "card";
@@ -97,6 +98,8 @@ export async function answerKeyword(
       .bind(phone, now)
       .run();
     if (userId) await db.prepare("UPDATE text_links SET proactive = 0 WHERE user_id = ?").bind(userId).run();
+    // No more questions from a creator's text-in code either (inbound.ts).
+    await endInboundFor(db, phone, now);
     await out.text(phone, userId ? KEYWORD_REPLIES.stopLinked : KEYWORD_REPLIES.stopGuest);
     return;
   }

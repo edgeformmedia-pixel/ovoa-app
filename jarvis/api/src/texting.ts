@@ -6,6 +6,7 @@ import type { CallTool, ToolSpec } from "./llm";
 import { CONTACT_CARD_PATH } from "./contactcard";
 import { answerKeyword, keywordOf } from "./keywords";
 import { answerGroup, type GroupWrite, groupsOn } from "./textgroups";
+import { inboundOn, inboundText } from "./inbound";
 import { guestText, type Turn as GuestTurn } from "./guest";
 import { appFor, describeScreen, type MadeApp } from "./myapps";
 import { describeImage, transcribeAudio } from "./llm";
@@ -1021,6 +1022,14 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
     // Not linked: the free trial (guest.ts), no account needed.
     if (!(await record(db, m, "guest", null, now))) return { outcome: "duplicate" };
     const out = deps.sender(m.line);
+    // A creator's text-in code, or an answer to its questions (inbound.ts), before the free trial.
+    if (inboundOn(env)) {
+      const handled = await inboundText(env, m.from, m.content, (t) => out.text(m.from, t), now);
+      if (handled) {
+        say("text", { outcome: handled });
+        return { outcome: "inbound" };
+      }
+    }
     const work = guestText(env, m.from, m.content, (t, media) => out.text(m.from, t, media), now, deps.guestWrite).then(
       (outcome) => void say("text", { outcome }),
       (err) => void console.error("ovoa.err guest text", err),

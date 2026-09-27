@@ -117,6 +117,8 @@ export type Env = {
   SENDBLUE_CONTACT_SHARING?: string;
   /** "1": OVOA answers in iMessage groups when asked by name and everyone there is the sender's Friend (textgroups.ts). Off by default. */
   TEXT_GROUPS?: string;
+  /** "1": creators' text-in codes (inbound.ts): people text a code to opt in and answer a few questions. Off by default. */
+  INBOUND_CODES?: string;
   /**
    * The websites OVOA builds (sites.ts, docs/sites.md) live at <name>.SITES_DOMAIN:
    * "ovoa.ai" unless set. SITES_WILDCARD says whether that domain's wildcard DNS

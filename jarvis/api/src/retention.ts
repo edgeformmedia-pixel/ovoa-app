@@ -229,6 +229,8 @@ export const RULES: Rule[] = [
   // The free trial's daily count (guest.ts): a number per day, nothing about anyone.
   // Signed-in sites past their 30 days (sitesessions.ts).
   { name: "site_sessions", table: "site_sessions", where: "expires_at < ?", args: (c) => [c.now], key: ["user_id", "host"] },
+  // Answers to a creator's text-in code (inbound.ts), 14 days after the last one.
+  { name: "inbound_respondents", table: "inbound_respondents", where: "updated_at < ?", args: (c) => [c.cutoff], key: ["code", "phone"] },
   // Group lines that named OVOA and its answers (textgroups.ts).
   { name: "text_groups", table: "text_groups", where: "updated_at < ?", args: (c) => [c.cutoff], key: ["group_id"] },
   { name: "guest_daily", table: "guest_daily", where: "day < ?", args: (c) => [c.countsDay], key: ["day"] },
@@ -378,6 +380,9 @@ export const TABLES = {
   approval_rules: "keep",
   // Signed-in sites they lent the browser (sitesessions.ts): 30 days at most, swept when expired.
   site_sessions: "delete",
+  // Creators' text-in codes (inbound.ts): theirs; the answers to them go after 14 days.
+  inbound_codes: "keep",
+  inbound_respondents: "delete",
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",
