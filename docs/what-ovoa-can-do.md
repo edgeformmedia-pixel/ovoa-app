@@ -36,7 +36,8 @@ live when it's merged and deployed; "Switch" says what turns it on.
   day before, a dinner booking gets a reminder, and a package arriving today is in your morning brief. Read-only.
   *"stop reading my email for trips"* turns it off. (New, Plus)
 - **Find a time with anyone**: *"find a time with dana@x.com next week for coffee"*. It checks your calendar,
-  offers three times in one email you approve, reads Dana's reply, and asks before sending the invite. (New, Plus
+  offers three times in one email you approve, reads Dana's reply, and asks before sending the invite. Stop it
+  anytime (*"stop waiting for Dana"*, or Settings > Meeting offers). (New, Plus
   for reading replies)
 
 ## Getting things done
