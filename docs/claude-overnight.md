@@ -198,7 +198,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       standing rules applied through every path that sends (gmail, outlook, meetings, campaigns), what Friends and
       guests can reach through any new tool, cron lanes sharing leases or double-texting (watches, meetings, trips,
       campaigns, reach pacing), and account deletion/take-back covering every new table. Fix real ones with tests.
-- [~] claimed 2026-09-27T15:30Z by local session. 37. **Smoke with every switch on**: run test/smoke.sh and
+- [x] 37. **Smoke with every switch on**: run test/smoke.sh and
       test/texting-smoke.mjs on fresh state with CAMPAIGNS=1, TEXT_GROUPS=1, INBOUND_CODES=1, TEXT_VOICE_REPLIES=1,
       SENDBLUE_CONTACT_SHARING=1 and MS_CLIENT_ID/MS_CLIENT_SECRET set (dummy values; nothing reaches a real
       service). Same pass bar as task 31. Fix anything a switch breaks.
@@ -597,3 +597,7 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   81 test files pass (llm.test.ts timing flake seen once in a full run, clean alone three times and in the next run).
 - 2026-09-27 15:30 UTC (local session): task 35: a "Start here" list at the top of the final report (merge, migrate, deploy,
   switches, the three owner decisions, the phone test plan, two notes). Docs only.
+- 2026-09-27 15:36 UTC (local session): task 37 at 6eda238, fresh state, with CAMPAIGNS, TEXT_GROUPS, INBOUND_CODES,
+  TEXT_VOICE_REPLIES, SENDBLUE_CONTACT_SHARING and dummy MS_CLIENT_ID/MS_CLIENT_SECRET all set: smoke.sh 439 / 1 (only
+  the consent wording), six scheduled ticks errors=0 (every lane, including campaigns, meetings and watches, ran);
+  texting-smoke.mjs all 28 passed. No switch breaks the existing paths.
