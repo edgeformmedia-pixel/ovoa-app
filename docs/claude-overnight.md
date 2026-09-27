@@ -233,7 +233,12 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 12. With Outlook set up: Settings > Account > Connect Outlook with an Outlook.com account; "what's in my Outlook
     inbox", "email pat@... from Outlook saying hi" (approval card, then it's in Sent Items), "put lunch Friday at noon on
     my Outlook calendar".
-13. Base account: plan screen says 15 replies a day and background work is Plus's (main's own behavior, sanity check).
+13. Text OVOA a PDF (a lease or a menu) and ask about it; send a link to a PDF; ask "what does the attachment in
+    the email from X say" (Gmail, and Outlook if set up).
+14. Settings > Invite a friend > Share: text it from your phone to a second phone that has never texted OVOA; from there
+    text "@yourname sent me", then link that phone to a new account: the first phone hears "... joined OVOA from your
+    invite" and the count goes to 1.
+15. Base account: plan screen says 15 replies a day and background work is Plus's (main's own behavior, sanity check).
 
 ## Needs the owner
 
