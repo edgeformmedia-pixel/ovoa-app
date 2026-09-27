@@ -369,6 +369,8 @@ export const TABLES = {
   // Campaigns and their per-item results (campaigns.ts): theirs, like a saved list; gone with the account.
   campaigns: "keep",
   campaign_items: "keep",
+  // Their standing approvals (rules.ts): theirs until they remove them.
+  approval_rules: "keep",
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",

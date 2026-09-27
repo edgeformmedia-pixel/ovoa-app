@@ -71,7 +71,7 @@ async function main() {
   }
 
   const sam = blocksAssistant(env, "sam", "America/New_York");
-  eq("offered with the lists", sam.tools.map((t) => t.name), ["list_save", "list_read", "list_delete", "vault_lookup", "vault_save", "vault_delete"]);
+  eq("offered", sam.tools.filter((t) => t.name.startsWith("vault_")).map((t) => t.name), ["vault_lookup", "vault_save", "vault_delete"]);
 
   eq("save", await sam.callTool("vault_save", { category: "address", label: "Home address", value: "12 Main St, Austin TX" }), { status: "saved", label: "Home address", category: "address" });
   eq("same label, any case, replaces", await sam.callTool("vault_save", { category: "address", label: "home ADDRESS", value: "40 Oak Ave, Denver CO" }), { status: "updated", label: "Home address", category: "address" });

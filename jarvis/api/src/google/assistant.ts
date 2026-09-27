@@ -1,4 +1,5 @@
 import { approverFor } from "../approvers";
+import type { RuleCheck } from "../rules";
 import { noDashes } from "../sentences";
 import { Hono } from "hono";
 import { DEFER, type CallTool, type ToolSpec } from "../llm";
@@ -97,7 +98,15 @@ const AUTO_RUNNING = {
  * `prompt` is worded for what the turn carries, so it's asked for once the tools
  * are chosen (phone.ts PhonePromptOptions); `voice` is a spoken turn.
  */
-export function phoneAssistant(env: Env, userId: string, caps: PhoneCaps, autoApprove: boolean, voice = false) {
+export function phoneAssistant(
+  env: Env,
+  userId: string,
+  caps: PhoneCaps,
+  autoApprove: boolean,
+  voice = false,
+  /** Standing approvals (rules.ts); null on turns they never apply to (the agent's own). */
+  rules: RuleCheck | null = null,
+) {
   const pending: PendingAction[] = [];
   const tools = phoneToolSpecs(caps);
   const offered = new Set(tools.map((t) => t.name));
@@ -106,8 +115,9 @@ export function phoneAssistant(env: Env, userId: string, caps: PhoneCaps, autoAp
     const parsed = phoneArgs(name, args);
     if ("error" in parsed) return { error: parsed.error };
     if (isPhoneLookup(name)) return DEFER;
-    pending.push(await parkAction(env, userId, name, parsed.args, phoneSummary(name, parsed.args), autoApprove));
-    return autoApprove ? AUTO_RUNNING : WAITING;
+    const auto = autoApprove || (rules ? await rules(name, parsed.args) : false);
+    pending.push(await parkAction(env, userId, name, parsed.args, phoneSummary(name, parsed.args), auto));
+    return auto ? AUTO_RUNNING : WAITING;
   };
   const prompt = (carries?: (tool: string) => boolean) =>
     [phonePrompt(caps, { voice, carries }), autoApprovePrompt(autoApprove)].filter(Boolean).join("\n");
@@ -217,6 +227,8 @@ export async function googleAssistant(
   userId: string,
   timeZone: string,
   autoApproveSetting: boolean | Promise<boolean>,
+  /** Standing approvals (rules.ts); null on turns they never apply to (the agent's own). */
+  rules: RuleCheck | null = null,
 ) {
   const [accounts, autoApprove] = await Promise.all([listGoogleAccounts(env.DB, userId), autoApproveSetting]);
   const pending: PendingAction[] = [];
@@ -265,7 +277,9 @@ export async function googleAssistant(
       const ctx = await context(env, userId, found.id, timeZone);
       // With "Approve for me" on, risky Google calls run immediately — except
       // sending or inviting from an account OVOA picked itself, which always asks.
-      const summary = autoApprove && !routed ? null : await tool.confirm?.(ctx, toolArgs);
+      // A standing rule ("don't ask before emailing my wife", rules.ts) is Approve for me for that one thing.
+      const standing = !autoApprove && !routed && rules ? await rules(name, toolArgs) : false;
+      const summary = (autoApprove || standing) && !routed ? null : await tool.confirm?.(ctx, toolArgs);
       if (summary) {
         // The id, not the tag: approval happens later, and tags can change in between.
         const parked = { ...toolArgs, account: found.id };

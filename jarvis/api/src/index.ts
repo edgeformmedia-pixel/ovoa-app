@@ -92,6 +92,7 @@ import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "
 import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { blockRoutes, blocksAssistant, isBlockTool } from "./blocks";
 import { campaignsTick, campaignsWaiting } from "./campaigns";
+import { rulesFor } from "./rules";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
 import { appAssistant, appFor, describeScreen, isAppTool, myApps, type MadeApp } from "./myapps";
@@ -1537,7 +1538,7 @@ async function runTurn(
     listMemories(db, userId),
     stepsWanted ? fitnessSummary(db, userId) : "",
     // The agent's commands never skip the approval card, whatever the setting says.
-    googleAssistant(env, userId, timeZone, settingsRead.then((s) => !!s.auto_approve && !fromAgent)),
+    googleAssistant(env, userId, timeZone, settingsRead.then((s) => !!s.auto_approve && !fromAgent), fromAgent ? null : rulesFor(env, userId)),
     getProfile(db, userId),
     // This person's own engine choices, if a developer set any (settings.ts). Cached, so free.
     settingsFor(env, userId),
@@ -1549,7 +1550,7 @@ async function runTurn(
   ]);
   const autoApprove = !!settings.auto_approve && !fromAgent;
   const contextMs = Date.now() - started;
-  const phone = phoneAssistant(env, userId, caps, autoApprove, !!voice);
+  const phone = phoneAssistant(env, userId, caps, autoApprove, !!voice, fromAgent ? null : rulesFor(env, userId));
   const shortcuts = shortcutAssistant(env, userId, autoApprove);
   const timeline = contextAssistant(env, userId, timeZone, !!settings.context_enabled);
   const web = webAssistant(env, userId, timeZone, ctx);
