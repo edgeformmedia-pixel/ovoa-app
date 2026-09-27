@@ -178,7 +178,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       return `guides: ToolGuide[]`, one per block with its tools and prompt) so only the used block's text rides
       along. Test with toolbelt(): preloading list_read carries the lists guide and not the vault/campaigns/meetings
       ones. Behavior otherwise unchanged; all tests pass.
-- [ ] 33. **Prompt budget check**: measure what an ordinary typed turn and an ordinary spoken turn carry before
+- [~] claimed 2026-09-27T15:56Z by scheduled session 33. **Prompt budget check**: measure what an ordinary typed turn and an ordinary spoken turn carry before
       the model's first word (system prompt characters plus tool JSON) on untouched main 16c2deb and on this branch,
       for a user with nothing new switched on and for one with Outlook and every flag on. Ordinary turns must not have
       grown by more than a few hundred characters; if they did, find what (a guide carried when it shouldn't be, a
