@@ -366,6 +366,9 @@ export const TABLES = {
   vault_items: "keep",
   // Numbers that texted STOP (keywords.ts): kept so OVOA never texts them first again.
   do_not_contact: "keep",
+  // Campaigns and their per-item results (campaigns.ts): theirs, like a saved list; gone with the account.
+  campaigns: "keep",
+  campaign_items: "keep",
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",

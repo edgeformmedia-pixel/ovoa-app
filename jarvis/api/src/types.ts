@@ -3,6 +3,8 @@ export type Env = {
   BROWSER?: Fetcher;
   /** Free-trial AI replies across all numbers per UTC day (guest.ts). Default 2000; "0" pauses the trial. */
   GUEST_DAILY_REPLIES?: string;
+  /** "1": campaigns are on (campaigns.ts): the tools are offered and the cron works approved ones. Anything else is off. */
+  CAMPAIGNS?: string;
   DB: D1Database;
   /** A game's online room (gameroom.ts), one per game. */
   GAME_ROOM: DurableObjectNamespace;

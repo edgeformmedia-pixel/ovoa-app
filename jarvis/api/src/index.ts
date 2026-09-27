@@ -91,6 +91,7 @@ import { isPeopleTool, people, peopleAssistant } from "./people";
 import { briefTool, buildMorningBrief, learnAllExpectations, rhythmTick } from "./rhythm";
 import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { blockRoutes, blocksAssistant, isBlockTool } from "./blocks";
+import { campaignsTick, campaignsWaiting } from "./campaigns";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
 import { appAssistant, appFor, describeScreen, isAppTool, myApps, type MadeApp } from "./myapps";
@@ -2024,7 +2025,7 @@ async function runTurn(
       if (!verdict.refused()) ctx.waitUntil(noteEngines(env, attempts));
     });
   spoken?.end();
-  const pendingActions = [...phone.pending, ...shortcuts.pending, ...google.pending];
+  const pendingActions = [...phone.pending, ...shortcuts.pending, ...google.pending, ...blockTools.pending];
   const cooling = coolingEngines();
   // What this reply cost, for the phone's turn log and the latency table.
   const tokens = usages.reduce(
@@ -3719,6 +3720,14 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
       await part("sites", sitesTick(env, Date.now() + SITES_BUDGET_MS));
       await release(env, "sites", sites);
     })();
+    // Campaigns (campaigns.ts): a few items of each approved one, only while one is running.
+    const campaignsLane = (async () => {
+      if (!(await campaignsWaiting(env).catch(() => false))) return;
+      const held = await lease(env, "campaigns", CLOCK_LANE_MS);
+      if (!held) return;
+      await part("campaigns", campaignsTick(env, undefined, Date.now() + 60_000));
+      await release(env, "campaigns", held);
+    })();
     const slow = await lease(env, "slow", SLOW_LANE_MS);
     if (slow) {
       // Each person is swept on one tick in five (sweep.ts).
@@ -3740,6 +3749,7 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
     } else decided.slowBusy = 1;
     await sitesLane;
     await networkLane;
+    await campaignsLane;
   }
 
   const ms = Date.now() - started;

@@ -137,6 +137,9 @@ export const ROUTE_TIERS: RouteRule[] = [
   // Websites are built by a model, from a turn (base, and gated at the model
   // call); listing and deleting the ones you have calls none.
   { method: "GET", path: /^\/sites$/, tier: "free", why: "the websites you have (building one is a turn)" },
+  // Campaigns (campaigns.ts) start from a turn (base); seeing them, their CSV and stopping one call no model.
+  { method: "GET", path: /^\/campaigns(\/[^/]+(\/export\.csv)?)?$/, tier: "free", why: "your campaigns and their results" },
+  { method: "POST", path: /^\/campaigns\/[^/]+\/stop$/, tier: "free", why: "stopping a campaign" },
   // Your @username (usernames.ts): picking, checking and changing it calls no model.
   { method: "*", path: /^\/me\/username(\/check)?$/, tier: "free", why: "your username, and whether one is free" },
   // OVOA to OVOA (network.ts): connecting, permissions, answering what waits for
