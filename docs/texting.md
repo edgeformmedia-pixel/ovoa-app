@@ -99,6 +99,12 @@ reply ("yes", "Tuesday at 3", "no", "tell her it came Monday") is a normal turn:
 waits, with ids, and carries `ovoa_approve` and `ovoa_connect_answer`, so a bare "yes" is enough. These aren't
 parked actions, so the texting channel's own YES shortcut (above) doesn't take them.
 
+## Games for two, plans, budgets (2026-09-26)
+
+"Make a game for me and my girlfriend", "I'm traveling to SF next month", "set a travel budget of $500 a month"
+and "book this" all work by text: docs/instinct-more.md. A prepared purchase waits for their YES in the next
+reply (`purchase_confirm`, carried in the turn like `ovoa_approve`); OVOA never pays, it gives the link.
+
 ## Rules
 
 - **Only iMessage.** An SMS sender can be spoofed, and replies go to the real number, so a spoofed text could

@@ -52,16 +52,9 @@ function d1Execute(statements) {
 
 /** One SELECT's rows. */
 function d1Query(sql) {
-  const dir = mkdtempSync(join(tmpdir(), "ovoa-probe-"));
-  const file = join(dir, "q.sql");
-  writeFileSync(file, `${sql};\n`);
-  try {
-    const out = wrangler(["--json", "--file", file]);
-    const parsed = JSON.parse(out.slice(out.indexOf("[")));
-    return parsed[0]?.results ?? [];
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  const r = spawnSync("npx", ["wrangler", "d1", "execute", "jarvis-db", "--remote", "--json", "--command", JSON.stringify(sql.replace(/\s+/g, " "))], { shell: true, encoding: "utf8", env: process.env });
+  if (r.status !== 0) throw new Error(`wrangler d1 query failed: ${(r.stderr || r.stdout).slice(-400)}`);
+  return JSON.parse(r.stdout.slice(r.stdout.indexOf("[")))[0]?.results ?? [];
 }
 
 let fails = 0;
@@ -161,7 +154,7 @@ try {
   check("and offers a reminder to book", /remind/i.test(trip), "");
   const yes = await text(me.token, "yes, remind me to book");
   const reminders = d1Query(`SELECT text, remind_at FROM notes WHERE user_id = '${me.id}' AND remind_at IS NOT NULL`);
-  check("a dated reminder to book was set", reminders.some((r) => /book/i.test(r.text) && r.remind_at > Date.now()), JSON.stringify(reminders.map((r) => [r.text, new Date(r.remind_at).toISOString()])));
+  check("a dated reminder to book was set", reminders.some((r) => /book/i.test(r.text) && r.remind_at > Date.now()), JSON.stringify(reminders.map((r) => [r.text, new Date(Number(r.remind_at)).toISOString()])));
   check("and it says so", /remind/i.test(yes));
 
   // ---------- 3. A budget, a purchase, a YES ----------
