@@ -177,7 +177,7 @@ export default function Settings() {
     if (!on) return patch({ agentEnabled: false });
     Alert.alert(
       "Let it work on its own?",
-      `${assistantName || "OVOA"} will check things while you're not here — your calendar, what you said you'd do, anything you ask it to watch — and notify you when something matters. It can't message anyone or delete anything without you. Everything it does is logged, and you can turn this off at any time.`,
+      `${assistantName || "OVOA"} will check things while you're not here (your calendar, what you said you'd do, anything you ask it to watch) and notify you when something matters. It can't message anyone or delete anything without you. Everything it does is logged, and you can turn this off at any time.`,
       [
         { text: "Not now", style: "cancel" },
         { text: "Turn on", onPress: () => patch({ agentEnabled: true }) },
@@ -366,7 +366,7 @@ export default function Settings() {
           <>
             <Setting
               label={`Let ${assistantName || "OVOA"} work on its own`}
-              about="It checks things between conversations — what's actually on today, what you said you'd do — and tells you only when it's worth interrupting you. Everything it does is logged."
+              about="It checks things between conversations (what's actually on today, what you said you'd do) and tells you only when it's worth interrupting you. Everything it does is logged."
             >
               <Toggle value={user.settings.agentEnabled} onValueChange={toggleAgent} />
             </Setting>
@@ -502,7 +502,7 @@ export default function Settings() {
         <Sub>Your days</Sub>
         <Setting
           label="Keep a record of my days"
-          about={`What you record gets summarised into a day ${assistantName || "OVOA"} can look things up in — "what did I do Tuesday", "did I ever call Sarah back". Only ever what you chose to record: nothing is captured in the background. A recording's words and summary are kept on OVOA's server until you delete them, and the audio stays on this phone. Everything else about your day is deleted after 14 days, apart from a short summary of each day.`}
+          about={`What you record gets summarised into a day ${assistantName || "OVOA"} can look things up in, like "what did I do Tuesday" or "did I ever call Sarah back". Only ever what you chose to record: nothing is captured in the background. A recording's words and summary are kept on OVOA's server until you delete them, and the audio stays on this phone. Everything else about your day is deleted after 14 days, apart from a short summary of each day.`}
         >
           <Toggle value={user.settings.contextEnabled} onValueChange={toggleContext} />
         </Setting>
@@ -524,7 +524,7 @@ export default function Settings() {
           />
         )}
         <LocationTimeline />
-        <Button label="Transcripts — everything said" onPress={() => router.push("/transcripts" as Href)} />
+        <Button label="Transcripts: everything said" onPress={() => router.push("/transcripts" as Href)} />
 
         <Sub>Chat history</Sub>
         <Button

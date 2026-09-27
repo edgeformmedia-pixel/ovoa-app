@@ -420,7 +420,7 @@ const loginSchema = z.object({
  */
 const SIGNUP_FIELD_ERRORS: Record<string, string> = {
   name: "Enter your name",
-  email: "That email doesn't look right — check it for a typo",
+  email: "That email doesn't look right. Check it for a typo.",
   password: "Password must be at least 8 characters",
 };
 

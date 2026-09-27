@@ -191,6 +191,10 @@ async function main() {
     const bubbles = capture();
     await reach(env, TEXTER, { kind: "brief", text: "Good morning!\n\nDentist at 10.\n\nRain after 3." }, { sender: bubbles.sender, push: io.push } as never);
     eq("a blank line is a new bubble", bubbles.sent.map((s) => s.content), ["Good morning!", "Dentist at 10.", "Rain after 3."]);
+    // No dashes in what OVOA texts first, whoever wrote the words (a leave-now alert, a note).
+    const dashed = capture();
+    await reach(env, TEXTER, { kind: "reminder", text: "Leave in 10 minutes for Dentist at 3:00 PM — about 20 min drive." }, { sender: dashed.sender, push: io.push } as never);
+    eq("no em dash goes out", /[–—]/.test(dashed.sent.at(-1)?.content ?? ""), false);
 
     const proposed = capture();
     sql("INSERT INTO pending_actions (id, user_id, tool, args, summary, created_at) VALUES ('p1', ?, 'gmail_send', '{}', 'Send email to Sam', ?)", TEXTER, now);

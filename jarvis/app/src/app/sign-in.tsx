@@ -108,7 +108,7 @@ export default function SignIn() {
     if (makesAccount && !name.trim()) bad.name = "Enter your name";
     if (!finishing) {
       if (!email.trim()) bad.email = "Enter your email";
-      else if (!LOOKS_LIKE_EMAIL.test(email.trim())) bad.email = "That email doesn't look right — check it for a typo";
+      else if (!LOOKS_LIKE_EMAIL.test(email.trim())) bad.email = "That email doesn't look right. Check it for a typo.";
     }
     if (!password) bad.password = finishing ? "Pick a password" : "Enter your password";
     else if (makesAccount && password.length < 8) bad.password = "Password must be at least 8 characters";

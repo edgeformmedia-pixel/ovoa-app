@@ -1,5 +1,6 @@
 import { onDoNotContact } from "./keywords";
 import { say } from "./obs";
+import { noDashes } from "./sentences";
 import { push, type PushMessage } from "./push";
 import { bubbles, linkOf, sendblue, setApprovals, textingReady, waitingLine, type Sender } from "./texting";
 import type { Env } from "./types";
@@ -165,7 +166,8 @@ export async function reach(env: Env, userId: string, r: Reach, io: ReachIo = {}
       say("text", { outcome: "first: over the day's texts", user: userId, kind: r.kind });
       return notify();
     }
-    const texts = bubbles(r.text);
+    // No dashes in what OVOA texts (the owner's rule), whoever wrote the words: replies are cleaned the same way.
+    const texts = bubbles(noDashes(r.text));
     if (!texts.length) return notify();
     const approvals = (r.approvals ?? []).filter(Boolean);
     if (approvals.length) texts.push(waitingLine(approvals.map(() => ({ summary: "" }))));
