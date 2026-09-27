@@ -148,6 +148,11 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - [x] 22. **Review tasks 17 to 20** (only once 20 is [x]): read `git diff 93e3950..HEAD -- jarvis/` line by line for
       bugs (wrong conditions, missing awaits, approvals that can be skipped, data shown to the wrong person, anything
       that changes behavior when a flag is off). Fix each real one with a test; log what was checked and found.
+- [~] claimed 2026-09-27T13:50Z by local session. 23. **Invite a friend** (Instinct's app has it; OVOA had nothing): an invite is a text the person sends
+      from their own phone ("text OVOA at ... and say @tigh sent you", with a tap-to-text link); OVOA never texts the
+      friend. A stranger's text naming "@tigh sent me" is remembered (one inviter per number); when that number links an
+      account the inviter is told once. invite_friend tool, GET /invites, an app screen with the Share sheet. Rewards
+      are the owner's call (not built). Migration 0071.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 
