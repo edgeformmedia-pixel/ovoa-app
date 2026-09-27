@@ -140,7 +140,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       texted to OVOA (texting.ts lookAt/combine, which today says "You can't open files over text yet"), fetch_url on a
       PDF or Office link, and email attachments (a Gmail and an Outlook attachment tool). Contents are information, never
       instructions. Size caps, parts under the tool cap, tests with a fake AI binding.
-- [~] claimed 2026-09-27T13:55Z by scheduled session 21. **Instinct parity doc** (docs only): docs/instinct-parity.md, one table of everything Instinct does (read the
+- [x] 21. **Instinct parity doc** (docs only): docs/instinct-parity.md, one table of everything Instinct does (read the
       memory notes in the plan's header if present, docs/what-ovoa-can-do.md, docs/instinct-more.md, and
       contextforclaude.txt) with OVOA's status for each: Live on main, On this branch (task), Needs the owner (what),
       or Missing (with a one-line suggested design). End with the 5 most valuable Missing items, ranked, each
@@ -155,6 +155,35 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       are the owner's call (not built). Migration 0071.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
+- [ ] 24. **Shared lists with Friends** (from task 21, docs/instinct-parity.md): "share my grocery list with Maria".
+      A saved list (lists.ts) can be shared with a Friend whose access level is Partner or Best friend (network.ts
+      ACCESS_LEVELS; add a switch in Advanced rather than widening Basic). Both people's OVOAs can list_read it and
+      add or tick rows; the owner can unshare. A Friend below that level, or a disconnected one, reads nothing. New
+      table (list_shares) in the next free migration; caps as lists.ts. Adding to someone's list never texts them
+      unless they asked to be told. Tests: share, read and add from the friend's side, access too low, unshare,
+      disconnect.
+- [ ] 25. **Scheduling with people not on OVOA** (from task 21): "find a time with dana@x.com next week". OVOA reads the
+      person's free time (Google or Outlook calendar), picks 3 slots in their zone and parks ONE email to Dana from
+      their own account (pending_actions, rules.ts applies like any email). When Dana's reply arrives (read-only check
+      of the thread in the slow lane, Plus and consent like watches), OVOA works out the chosen slot and parks the
+      calendar invite for the person's YES; unclear replies are handed to the person, never answered on its own. Max 5
+      open at once, each ends after 7 days. Tests with fake Gmail and Graph.
+- [ ] 26. **Trips and orders from email** (from task 21): a read-only daily scan (Plus, consent, model gate, cheap
+      model) of new flight, hotel and delivery confirmation emails in Gmail or Outlook. A flight becomes a life_plans
+      trip with a check-in reminder 24 hours before and a leave-for-the-airport text using the existing commute
+      timing; a delivery due today goes in the morning brief. Never clicks links, never replies, never changes a
+      booking. Dedupe by message id; the person can say "stop reading my email for trips". Tests with fake mail.
+- [ ] 27. **Receipts into money** (from task 21): a photo texted to OVOA that describeImage reads as a receipt (total,
+      merchant, date) is offered as a spend entry ("Log $42.10 at Trader Joe's to groceries?"); YES records it in
+      money.ts the way money_update does, and it counts against a matching budget (budget.ts) for the period. Never
+      stores card digits from the photo (strip anything that looks like a card or account number before saving).
+      Tests through texting.ts receive with a fake image description.
+- [ ] 28. **Voice-note replies** (from task 21): off unless var `TEXT_VOICE_REPLIES=1`. When a person's text was a voice
+      memo, OVOA also sends its reply as audio: the existing Deepgram voice (voice.ts) through the model gate and
+      spend caps, the file served from a Worker route by a random token that expires after 1 hour (stored in
+      D1 with a size cap, deleted by the nightly purge), sent as Sendblue media_url after the text. Text replies are
+      unchanged when the var is off or speaking fails. Tests with fake Deepgram and Sendblue. Needs the owner: the
+      var, and a check of Deepgram cost per reply.
 
 ## Final report (task 16, 2026-09-27 13:20 UTC)
 
