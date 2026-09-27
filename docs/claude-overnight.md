@@ -98,7 +98,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       Deepgram/voice pieces that exist. No code that needs keys.
 - [x] 12. **App screens** (jarvis/app, Expo SDK 57, read its docs first): Vault, Campaigns, Approval rules, only for
       API parts that landed. Typecheck the app. Never trigger Codemagic.
-- [ ] 13. **Page watchers** ("tell me when tickets drop", "watch this price"): tools `watch_add` (url, what to look
+- [~] claimed 2026-09-27T12:33Z by local session. 13. **Page watchers** ("tell me when tickets drop", "watch this price"): tools `watch_add` (url, what to look
       for in plain words, how often: hourly | daily, until when, max 10 active per person), `watch_list`, `watch_remove`;
       a new table; the existing 2-minute cron checks due watches with fetch_url (fetchurl.ts) and a cheap model call
       comparing the page to the last check against "what to look for"; when it's met, OVOA tells them (reach.ts: a text
@@ -115,6 +115,14 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - [x] 15. **What OVOA can do (owner doc)**: write docs/capabilities.md: a plain list of everything OVOA can do now
       (existing features plus this branch's), grouped for a person, each with one example text, and what is off until
       a switch or key (with the switch). No em dashes. Useful for the site and influencer briefs.
+- [ ] 17. **Green smoke suites**: `test/smoke.sh` and `test/texting-smoke.mjs` each have 6 failures on main itself (see the
+      log): expectations written before main's own later changes (Base 15 replies a day and the Plus tier, strangers
+      getting the free trial instead of "how to link", message counts). Update ONLY those expectations to main's
+      current intended behavior, reading the commits that changed it (git log -S on the strings) to be sure; never
+      loosen a check that guards something real. EXCEPT "the server wants the second wording": that one fails because
+      commit 10f1fd2 (branch backup/local-consent-2026-09-24, the consent version bump) never reached main. Leave it
+      failing and note it. Run both suites locally (see their headers; `wrangler dev --local`, fresh --persist-to),
+      record before/after counts in the log.
 - [ ] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 
