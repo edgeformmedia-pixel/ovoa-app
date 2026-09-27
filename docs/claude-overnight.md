@@ -53,7 +53,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       Tools `vault_lookup` / `vault_save`; refuse card numbers, bank or routing numbers, SSNs, passwords, one-time
       codes. Never write values to action_log or logs. Authed routes GET/POST/PATCH/DELETE `/vault`. Friends and
       friend OVOAs never get vault items. Absent (tools not offered) if TOKEN_ENC_KEY is missing. Tests.
-- [ ] 5. **Texting keywords + do-not-contact**: on the iMessage line (`texting.ts`), handle whole-message STOP /
+- [~] claimed 2026-09-27T11:26Z by local session. 5. **Texting keywords + do-not-contact**: on the iMessage line (`texting.ts`), handle whole-message STOP /
       START / HELP / CARD without changing any existing reply or the YES/NO approval words (a bare "stop" while an
       approval is waiting must still mean NO; decide carefully and test both). CARD resends the existing contact
       card (`contactcard.ts`). New `do_not_contact` table; STOP from any number adds it, START removes it; `reach.ts`
