@@ -4,6 +4,7 @@ import { approveAction, type PendingAction } from "./google/assistant";
 import { allowed, tooMany } from "./limits";
 import type { CallTool, ToolSpec } from "./llm";
 import { CONTACT_CARD_PATH } from "./contactcard";
+import { answerKeyword, keywordOf } from "./keywords";
 import { guestText, type Turn as GuestTurn } from "./guest";
 import { appFor, describeScreen, type MadeApp } from "./myapps";
 import { describeImage, transcribeAudio } from "./llm";
@@ -951,6 +952,16 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
       await settle(db, m.handle, "sms_told");
     }
     return { outcome: "sms" };
+  }
+
+  // STOP / START / HELP / CARD as the whole message (keywords.ts). A bare "stop"
+  // while an approval is waiting stays that approval's NO, as it always was.
+  const keyword = keywordOf(m.content);
+  if (keyword && !(keyword === "stop" && link && waitingApprovals(link, now).length)) {
+    if (!(await record(db, m, `keyword_${keyword}`, null, now))) return { outcome: "duplicate" };
+    await answerKeyword(env, keyword, m.from, link?.user_id ?? null, deps.sender(m.line), m.line, now);
+    say("text", { outcome: `keyword ${keyword}`, user: link?.user_id });
+    return { outcome: `keyword ${keyword}` };
   }
 
   if (codes.length) {

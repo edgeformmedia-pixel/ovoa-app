@@ -109,6 +109,8 @@ export type Env = {
   SENDBLUE_WEBHOOK_SECRET?: string;
   /** Where Sendblue's API is: https://api.sendblue.co unless a local test points it at a fake one. */
   SENDBLUE_API_BASE?: string;
+  /** "1": CARD also asks Sendblue to share OVOA's iMessage name and photo (keywords.ts). The profile is set once in Sendblue first. */
+  SENDBLUE_CONTACT_SHARING?: string;
   /**
    * The websites OVOA builds (sites.ts, docs/sites.md) live at <name>.SITES_DOMAIN:
    * "ovoa.ai" unless set. SITES_WILDCARD says whether that domain's wildcard DNS

@@ -1,3 +1,4 @@
+import { onDoNotContact } from "./keywords";
 import { say } from "./obs";
 import { push, type PushMessage } from "./push";
 import { bubbles, linkOf, sendblue, setApprovals, textingReady, waitingLine, type Sender } from "./texting";
@@ -153,6 +154,8 @@ export async function reach(env: Env, userId: string, r: Reach, io: ReachIo = {}
     if (!textingReady(env)) return notify();
     const link = await linkOf(env.DB, userId);
     if (!link || link.proactive === 0) return notify();
+    // They texted STOP (keywords.ts): never first by text again, notifications only.
+    if (await onDoNotContact(env.DB, link.phone)) return notify();
     // Paced like a person (paceVerdict): held ones wait in the app, with no notification either.
     if (paceVerdict(r.kind, !!r.asked, await paceState(env.DB, userId, now), now) === "hold") {
       say("text", { outcome: "first: held for pacing", user: userId, kind: r.kind });

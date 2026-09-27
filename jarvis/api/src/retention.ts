@@ -364,6 +364,8 @@ export const TABLES = {
   user_lists: "keep",
   // Their vault (vault.ts): encrypted details they chose to keep.
   vault_items: "keep",
+  // Numbers that texted STOP (keywords.ts): kept so OVOA never texts them first again.
+  do_not_contact: "keep",
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",
