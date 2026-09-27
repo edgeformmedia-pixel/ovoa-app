@@ -178,7 +178,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       return `guides: ToolGuide[]`, one per block with its tools and prompt) so only the used block's text rides
       along. Test with toolbelt(): preloading list_read carries the lists guide and not the vault/campaigns/meetings
       ones. Behavior otherwise unchanged; all tests pass.
-- [~] claimed 2026-09-27T15:56Z by scheduled session 33. **Prompt budget check**: measure what an ordinary typed turn and an ordinary spoken turn carry before
+- [x] 33. **Prompt budget check**: measure what an ordinary typed turn and an ordinary spoken turn carry before
       the model's first word (system prompt characters plus tool JSON) on untouched main 16c2deb and on this branch,
       for a user with nothing new switched on and for one with Outlook and every flag on. Ordinary turns must not have
       grown by more than a few hundred characters; if they did, find what (a guide carried when it shouldn't be, a
@@ -280,6 +280,7 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 | 25 | Scheduling with people not on OVOA: meet_propose, the meetings lane (meetings.ts) | 7235355 |
 | 24 | Shared lists with Friends (lists.ts, list_shares; by the scheduled session) | 3025f69 |
 | 20 | Read files: PDFs, Word, Excel and text, texted in, at a link, or attached to an email (files.ts) | 1f3fac6 |
+| 33 | Prompt budget: scripts/prompt-budget.mjs; ordinary turns back to main's size (fetch_url's guide rides only with it) | 5a52fff |
 
 ### Deploy order (owner)
 
@@ -614,3 +615,17 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   hand-off (handle #1on1) leaves waiting approvals alone; list-add notices at most once an hour per list; rhythmTick
   knows who has Outlook, so commuteTick doesn't write marks for everyone. 81 test files pass; smoke 439 / 1 with the
   take-back check extended to lists and watches.
+- 2026-09-27 16:13 UTC (scheduled session): task 33 in 5a52fff. origin/main had no new commits. New scripts/prompt-budget.mjs
+  (`node scripts/prompt-budget.mjs [api dir]`) bundles with `wrangler deploy --dry-run`, applies migrations locally and
+  runs the worker in Miniflare with every outbound fetch answered 503 and no AI binding, so no model or service is
+  reached; it reads the ovoa.prompt log line (sections + tool JSON, logged before the model runs) for two Plus users
+  (plain; and every switch on + Outlook connected) sending "hey, how's it going?" and a dinner question, typed and
+  spoken. Main 16c2deb: typed 7428 system + 13582 tools = 21010 (ask: 22782); spoken 4683 + 5911 = 10594 (ask: 12366).
+  Branch before: typed +265 (web guide +121, tool JSON +144), spoken +121. Causes: the web guide's fetch_url line rode
+  with web_search on every turn; money_update's new category field (receipts, task 27) is in the typed core. Fixed:
+  web.ts gives web_search and fetch_url separate guides (a link still preloads fetch_url and its line; agent.ts runs
+  keep both) and the field's description is shorter. Branch after: system prompts equal to main's, spoken turns
+  identical, typed turns +109 characters of tool JSON; the everything-on user's ordinary turns equal the plain user's
+  (an "outlook inbox" check row proves Outlook was connected: microsoft guide 414 chars rides only then). Tests in
+  toolbelt.test.ts; 81 test files pass (llm.test.ts timing flake once, clean alone and on the re-run), tsc clean in
+  api and app. Needs the owner: nothing.
