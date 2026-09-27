@@ -10,7 +10,7 @@ import { Hono } from "hono";
 import { sha256 } from "../src/auth";
 import { encrypt } from "../src/crypto";
 import { approveAction } from "../src/google/assistant";
-import { microsoftAssistant, microsoftAuthed, microsoftPublic } from "../src/microsoft";
+import { microsoftAssistant, microsoftAuthed, microsoftPublic, outlookEvents } from "../src/microsoft";
 import { addRule, kindOfTool } from "../src/rules";
 import type { Env, Vars } from "../src/types";
 
@@ -201,6 +201,13 @@ async function main() {
   eq("revoked: reconnect", revoked.error.includes("reconnect Microsoft"), true);
   eq("and forgotten", sqlite.prepare("SELECT COUNT(*) AS n FROM microsoft_accounts WHERE user_id = 'alex'").get(), { n: 0 });
   tokenAnswer = { status: 200, body: { access_token: "fresh2", expires_in: 3600, refresh_token: "r2", scope: "Mail.Send" } };
+
+  // The morning brief's calendar (rhythm.ts): Outlook events as instants, like Google's.
+  calls.length = 0;
+  eq("brief: Outlook events, in UTC", (await outlookEvents(on, "sam", 0, 86_400_000)).map((e) => [e.title, e.start, e.account]), [["Standup", "2026-09-28T09:00:00Z", "sam@contoso.com"]]);
+  eq("asked for in UTC (no time zone preference)", graphCalls().at(-1)?.headers.prefer.includes("outlook.timezone"), false);
+  eq("brief: nothing, and no read, while it's off", await outlookEvents({ ...off, DB: throwingDb } as Env, "sam", 0, 1), []);
+  eq("brief: nothing for someone not connected", await outlookEvents(on, "nobody", 0, 1), []);
 
   // Connecting from the app.
   const token = "session-token";

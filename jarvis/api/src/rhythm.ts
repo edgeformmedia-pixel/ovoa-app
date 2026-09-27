@@ -11,6 +11,7 @@ import { push } from "./push";
 import { reach } from "./reach";
 import { addDays, atLocalTime, buckets, clock, clockFromMinutes, dayRange, localMinutes, localWeekday } from "./time";
 import { moneyBriefLine } from "./money";
+import { outlookEvents } from "./microsoft";
 import { listTodos } from "./todos";
 import type { Env } from "./types";
 import { inSlice, type Slice } from "./sweep";
@@ -102,6 +103,8 @@ async function upcomingEvents(env: Env, userId: string, from: number, to: number
       console.error("rhythm: couldn't read a calendar", err);
     }
   }
+  // Outlook's too, for people who use it (microsoft.ts): nothing, and no read, while it's off.
+  events.push(...(await outlookEvents(env, userId, from, to)));
   return events.sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
 }
 

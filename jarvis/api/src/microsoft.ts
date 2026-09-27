@@ -204,6 +204,38 @@ async function attachmentsOf(env: Env, userId: string, id: string): Promise<Atta
   return value.filter((a) => !a["@odata.type"] || a["@odata.type"] === "#microsoft.graph.fileAttachment");
 }
 
+/**
+ * Their Outlook events between two instants, for the morning brief (rhythm.ts):
+ * start as an ISO instant, or a date alone for an all-day event, the shape
+ * Google's calendar_list_events gives. Empty when Outlook is off or not
+ * connected. Never throws.
+ */
+export async function outlookEvents(env: Env, userId: string, from: number, to: number) {
+  if (!microsoftOn(env)) return [];
+  try {
+    const account = await microsoftAccount(env.DB, userId);
+    if (!account) return [];
+    // No time zone asked for: Graph answers in UTC, which is what the Z says.
+    const { value = [] } = await graph<{ value?: { id?: string; subject?: string; start?: { dateTime?: string }; isAllDay?: boolean; location?: { displayName?: string } }[] }>(
+      env,
+      userId,
+      `/me/calendarView?startDateTime=${encodeURIComponent(new Date(from).toISOString())}&endDateTime=${encodeURIComponent(new Date(to).toISOString())}&$top=15&$orderby=${encodeURIComponent("start/dateTime")}&$select=id,subject,start,isAllDay,location`,
+    );
+    return value
+      .filter((e) => e.start?.dateTime)
+      .map((e) => ({
+        id: e.id ?? "",
+        title: e.subject ?? "",
+        start: e.isAllDay ? e.start!.dateTime!.slice(0, 10) : `${e.start!.dateTime!.slice(0, 19)}Z`,
+        ...(e.location?.displayName && { location: e.location.displayName }),
+        account: account.email,
+      }));
+  } catch (err) {
+    console.error("outlookEvents failed", err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
 /** Reads and does. Sending and inviting come here only once approved (or covered). */
 async function run(env: Env, userId: string, timeZone: string, name: string, args: Record<string, unknown>): Promise<unknown> {
   if (name === "outlook_search") {
