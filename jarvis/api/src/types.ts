@@ -1,5 +1,7 @@
 export type Env = {
   DB: D1Database;
+  /** A game's online room (gameroom.ts), one per game. */
+  GAME_ROOM: DurableObjectNamespace;
   /** Gemini, the second engine (llm.ts), and web search grounding (web.ts). */
   GEMINI_API_KEY?: string;
   /**

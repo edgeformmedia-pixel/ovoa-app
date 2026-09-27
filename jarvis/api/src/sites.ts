@@ -7,6 +7,7 @@ import { generateText, isModelRefused, type CallTool, type ToolSpec } from "./ll
 import { recordError, say } from "./obs";
 import type { Env, Vars } from "./types";
 import { suggestUsername } from "./usernames";
+import { ROOM_SCRIPT } from "./roomscript";
 
 // Websites OVOA builds and hosts (Instinct, 2026-09-26; docs/sites.md).
 //
@@ -386,12 +387,13 @@ export function gamePrompt(url: string, change = false) {
       ? `You are OVOA's game maker, changing a small game you made. It is published at ${url}. You get the page as it is and the change asked for: write the whole page again with that change made and the rest kept.`
       : `You are OVOA's game maker. You make one small, polished, playable game from what someone asked for: a classic (Connect 4, checkers, tic-tac-toe...) or something new, just for them or for two people who are close. It is published at ${url}.`,
     "Write one HTML5 document and nothing else: start with <!doctype html> and end with </html>. No Markdown, no code fences, no commentary.",
+    ONLINE_PLAY,
     [
       "Rules for the page:",
-      "- The game they asked for, with its real rules. For two named players: on one phone, taking turns (pass-and-play), or anything that works the same way (a quiz about each other, would-you-rather, a guessing game). For one player: against a simple computer opponent when the game has one, plus pass-and-play.",
+      "- The game they asked for, with its real rules. For two named players: on one phone, taking turns (pass-and-play), unless they asked for separate phones (ovoaRoom). For one player: against a simple computer opponent when the game has one, plus pass-and-play.",
       "- Use their names and what the owner told you about them to make it personal. Never invent private facts about them.",
       "- All code inline: one <style> and one <script> (plain JavaScript, no modules, no libraries). No external scripts, images, fonts or files except Google Fonts. Use emoji, CSS and inline SVG for visuals.",
-      "- No network at all: no fetch, XMLHttpRequest, WebSocket, forms, links that submit anything, or trackers. No cookies, localStorage or sessionStorage (they are blocked, so code that uses them breaks). Keep the game's state in JavaScript variables.",
+      "- No network at all except ovoaRoom: no fetch, XMLHttpRequest, your own WebSocket, forms, links that submit anything, or trackers. No cookies, localStorage or sessionStorage (they are blocked, so code that uses them breaks). Keep the game's state in JavaScript variables.",
       "- Mobile first: big tap targets, fits a 375px phone without scrolling sideways, works on a laptop. A clear start screen with the rules in one or two sentences, a score, and a way to play again.",
       "- Kind and fun, nothing sexual, cruel or embarrassing. Keep the file under 40 KB.",
     ].join("\n"),
@@ -426,7 +428,17 @@ export function cleanGameHtml(html: string) {
   return relativeLinks(h);
 }
 
-/** A game runs its own inline script, in a sandbox with no origin and no network. */
+/** How the game maker makes a game online (gameroom.ts ROOM_SCRIPT, already on the page). */
+const ONLINE_PLAY = [
+  "A shared server, if the game needs one: the page already has window.ovoaRoom (don't define it or load anything for it). Everyone who has the game open, on any phone, is in the same room. Use it only when the game calls for it (they asked to play on separate phones or online, a shared scoreboard, live reactions); a game that works on one phone doesn't need it.",
+  "- ovoaRoom.on(\"ready\", ({ seat, players, state }) => ...) when this phone joins (and again after a reconnect). seat is this phone's number, 0 for the first in, 1 for the next; players is [{ id, seat }] of everyone here now; state is the last shared state or null.",
+  "- ovoaRoom.on(\"players\", (players) => ...) when someone joins or leaves. ovoaRoom.on(\"status\", (online) => ...) when this phone's connection drops or comes back.",
+  "- ovoaRoom.setState(obj): the whole game state (board, whose turn, scores, seats' names) after every move; everyone else gets on(\"state\", (obj, fromSeat) => ...), and it's what a phone joining late or reloading gets in ready. Keep it small (under 10 KB of JSON).",
+  "- ovoaRoom.send(obj) / on(\"message\", (obj, fromSeat) => ...) for passing things that aren't state (an emoji reaction, 'play again?').",
+  "- When you use it for turns: give seats their roles (e.g. seat 0 goes first), only let a phone act on its own turn, show who's here and, while alone, that the other player needs this link. Draw the screen from the state so every phone shows the same thing.",
+].join("\n");
+
+/** A game runs its own inline script, in a sandbox with no origin; its one connection is its own room (gameroom.ts). */
 export const GAME_POLICY = [
   "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation",
   "default-src 'none'",
@@ -989,9 +1001,21 @@ function present(html: string, o: { preview: boolean; host: string; base: string
   return rewriter.transform(new Response(html, { headers: headers(o.preview) }));
 }
 
-/** A game as it's served: its own sandbox (GAME_POLICY), never indexed, with the badge; anything reaching outside the page removed again. */
-function presentGame(html: string, host: string) {
+/** GAME_POLICY with the one connection a game has: its room at `room` (wss://host/base/room). Pure. */
+export function gamePolicy(room: string) {
+  return GAME_POLICY.replace("connect-src 'none'", `connect-src ${room}`);
+}
+
+/** A game as it's served: its own sandbox (gamePolicy), never indexed, with the badge and ovoaRoom; anything reaching outside the page removed again. */
+function presentGame(html: string, host: string, room: string) {
+  let helper = false;
   const rewriter = new HTMLRewriter()
+    .on("head", {
+      element(e) {
+        e.prepend(ROOM_SCRIPT, { html: true });
+        helper = true;
+      },
+    })
     .on("script[src], iframe, object, embed, applet, frame, frameset, portal, base, meta[http-equiv], form", {
       element(e) {
         if (e.tagName === "form") e.removeAndKeepContent();
@@ -1005,6 +1029,7 @@ function presentGame(html: string, host: string) {
     })
     .on("body", {
       element(e) {
+        if (!helper) e.prepend(ROOM_SCRIPT, { html: true });
         e.append(badge(host), { html: true });
       },
     });
@@ -1012,7 +1037,7 @@ function presentGame(html: string, host: string) {
     new Response(html, {
       headers: {
         ...headers(true),
-        "content-security-policy": GAME_POLICY,
+        "content-security-policy": gamePolicy(room),
         "cache-control": "no-store",
         "x-robots-tag": "noindex, nofollow",
       },
@@ -1295,10 +1320,15 @@ export async function serveSite(request: Request, env: Env, ctx: ExecutionContex
     }
     if (!live) return htmlResponse(404, plainPage(`${site.name} is offline`, ["This website isn't available right now."]), preview);
     if (site.kind === "game") {
+      const room = `${url.protocol === "http:" ? "ws" : "wss"}://${url.host}${base}/room`;
+      if (path === "/room") {
+        if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return new Response("A game room takes a WebSocket.", { status: 426 });
+        return env.GAME_ROOM.get(env.GAME_ROOM.idFromName(site.id)).fetch(request);
+      }
       if (path === "/index.html") return Response.redirect(`${url.origin}${base}/`, 301);
       if (path !== "/") return htmlResponse(404, plainPage("Page not found", [`${site.name} has one page, and this isn't it.`], `${base}/`), preview);
       if (method !== "GET" && method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD" } });
-      return presentGame(site.html!, host);
+      return presentGame(site.html!, host, room);
     }
     if (path === "/sitemap.xml" && base === top) {
       const lastmod = new Date(site.updated_at).toISOString().slice(0, 10);

@@ -3749,6 +3749,8 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
  * Both handlers sit behind the MAINTENANCE switch (maintenance.ts), which
  * answers every request 503 and skips every tick while data is being moved.
  */
+export { GameRoom } from "./gameroom";
+
 export default withMaintenance({
   // <name>.ovoa.ai is a website OVOA built (sites.ts), served before anything
   // else; everything else, api.ovoa.ai included, is the API.

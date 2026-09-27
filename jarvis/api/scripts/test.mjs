@@ -39,6 +39,16 @@ try {
       format: "esm",
       outfile: bundle,
       logLevel: "error",
+      // The Workers runtime's own module (gameroom.ts): a stand-in, as tests only load it.
+      plugins: [
+        {
+          name: "cloudflare-workers",
+          setup(b) {
+            b.onResolve({ filter: /^cloudflare:workers$/ }, () => ({ path: "cloudflare:workers", namespace: "stub" }));
+            b.onLoad({ filter: /.*/, namespace: "stub" }, () => ({ contents: "export class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }" }));
+          },
+        },
+      ],
     });
     console.log(`\n── ${file} ${"─".repeat(Math.max(0, 60 - file.length))}`);
     try {

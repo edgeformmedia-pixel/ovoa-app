@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { bookingAdvice, lifePlansAssistant, plansTick, usefulQuestion } from "../src/lifeplans";
 import { budgetAssistant, budgetContext, fits, linkProblem, periodStart } from "../src/budget";
 import { namesFor, relationIn, resolvePartner, togetherAssistant, togetherTick } from "../src/together";
-import { cleanGameHtml, forgetWildcard, GAME_POLICY, gamePrompt, sitesTick } from "../src/sites";
+import { cleanGameHtml, forgetWildcard, GAME_POLICY, gamePolicy, gamePrompt, sitesTick } from "../src/sites";
 import { networkTick } from "../src/network";
 import { FORBIDDEN_FOR_COMMANDS } from "../src/commands";
 import { READ_ALONE, WRITE_ON_ACT } from "../src/agent";
@@ -44,6 +44,8 @@ eq("my girlfriend Ana", namesFor("girlfriend", ["Going to dinner with my girlfri
   eq("the button stays", html.includes("<button>Go</button>"), true);
 }
 eq("the game policy is a sandbox", GAME_POLICY.startsWith("sandbox allow-scripts "), true);
+eq("a game can reach its own room and nothing else", gamePolicy("wss://t.ovoa.ai/g/room").includes("connect-src wss://t.ovoa.ai/g/room;") && !gamePolicy("x").includes("connect-src 'none'"), true);
+eq("the game maker knows the shared server is there, not required", /ovoaRoom/.test(gamePrompt("https://x/")) && /Use it only when the game calls for it/.test(gamePrompt("https://x/")), true);
 eq("with no same-origin", GAME_POLICY.includes("allow-same-origin"), false);
 eq("and no network", GAME_POLICY.includes("connect-src 'none'") && GAME_POLICY.includes("form-action 'none'"), true);
 eq("the game maker is told there's no network or storage", /No network at all/.test(gamePrompt("https://x/")) && /localStorage/.test(gamePrompt("https://x/")), true);

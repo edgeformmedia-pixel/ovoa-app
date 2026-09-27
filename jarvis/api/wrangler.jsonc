@@ -144,6 +144,9 @@
     // A website's contact form (src/sites.ts), per sender's address.
     { "name": "RL_FORM", "namespace_id": "1105", "simple": { "limit": 5, "period": 60 } }
   ],
+  // A game's online room (src/gameroom.ts): one per game, relaying moves between phones.
+  "durable_objects": { "bindings": [{ "name": "GAME_ROOM", "class_name": "GameRoom" }] },
+  "migrations": [{ "tag": "game-rooms-1", "new_sqlite_classes": ["GameRoom"] }],
   "d1_databases": [
     {
       "binding": "DB",
