@@ -123,6 +123,13 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       commit 10f1fd2 (branch backup/local-consent-2026-09-24, the consent version bump) never reached main. Leave it
       failing and note it. Run both suites locally (see their headers; `wrangler dev --local`, fresh --persist-to),
       record before/after counts in the log.
+- [ ] 18. **Discoverability of the new tools**: the tool belt (toolbelt.ts) only carries a handful of tools per turn and
+      brings others in by words (SYNONYMS, namedTools). Make sure plain requests reach the new blocks without a
+      more_tools round: "let me know when", "notify me when", "keep an eye on" (watch_add), "save my address / my
+      frequent flyer number" (vault_save), "email all of these" (campaign_start), "text JAKE" style creator asks
+      (inbound_create), "don't ask me before" (rule_add), "open that site / book it on the site" (browser_open when on).
+      Add SYNONYMS entries (without stealing words existing tools rely on: run test/toolbelt.test.ts and add cases), and
+      a short test per phrase with namedTools against the real catalogue.
 - [ ] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 
