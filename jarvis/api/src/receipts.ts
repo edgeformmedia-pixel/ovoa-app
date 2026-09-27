@@ -45,5 +45,5 @@ export function withoutCardNumbers(text: string): string {
 /** What the turn is told about a receipt it was sent (texting.ts combine). Pure. */
 export function receiptOffer(r: Receipt): string {
   const amount = `$${(r.cents / 100).toFixed(2)}`;
-  return `[It looks like a receipt: ${amount} at ${r.merchant}${r.date ? ` on ${r.date}` : ""}. Offer to log it as spending, in a few words with the amount and the place. Only after they say yes, call money_update with kind "spend", amount ${(r.cents / 100).toFixed(2)}, what "${r.merchant}", and a category (groceries, dinners, travel...) if it's clear, so it counts against a matching budget.]`;
+  return `[It looks like a receipt: ${amount} at ${r.merchant}${r.date ? ` on ${r.date}` : ""}. Offer to log it as spending, in a few words with the amount and the place. Only after they say yes, call money_update with kind "spend", amount ${(r.cents / 100).toFixed(2)}, what "${r.merchant}"${r.date ? `, date "${r.date}"` : ""}, and a category (groceries, dinners, travel...) if it's clear, so it counts against a matching budget.]`;
 }

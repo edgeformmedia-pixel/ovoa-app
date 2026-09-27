@@ -93,11 +93,25 @@ function budgetFor(budgets: Budget[], category: string) {
   );
 }
 
-/** The budget spending in a category counts against, or null (money.ts money_update spend). */
+/**
+ * The budget spending in a category counts against, or null (money.ts
+ * money_update spend). Only one for that category: a general "anything" budget
+ * isn't filled by everything they happen to mention.
+ */
 export async function budgetForSpend(db: D1Database, userId: string, category: string): Promise<{ id: string; category: string } | null> {
-  if (!category.trim()) return null;
-  const b = budgetFor(await budgetsOf(db, userId), category);
+  const c = norm(category);
+  if (!c) return null;
+  const budgets = await budgetsOf(db, userId);
+  const b = budgets.find((x) => norm(x.category) === c) ?? budgets.find((x) => norm(x.category).includes(c) || c.includes(norm(x.category)));
   return b ? { id: b.id, category: b.category } : null;
+}
+
+/** An approved purchase in that budget for about the same amount lately: the receipt for it, already counted. */
+export async function alreadyCounted(db: D1Database, budgetId: string, cents: number, now = Date.now()) {
+  return !!(await db
+    .prepare("SELECT 1 AS ok FROM purchases WHERE budget_id = ? AND status = 'approved' AND ABS(price_cents - ?) <= ? AND decided_at > ? LIMIT 1")
+    .bind(budgetId, cents, Math.max(100, Math.round(cents * 0.05)), now - 30 * 86_400_000)
+    .first());
 }
 
 async function spentIn(db: D1Database, b: Budget, now: number, timeZone: string) {

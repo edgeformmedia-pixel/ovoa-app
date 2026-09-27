@@ -214,7 +214,8 @@ export const RULES: Rule[] = [
   at("used_at", "food_catalog"),
 
   // ---- Counts, and the server's own records ----
-  { name: "daily_marks", table: "daily_marks", where: "at < ?", args: (c) => [c.counts] },
+  // Not their "stop reading my email for trips" (mailtrips.ts): that one lasts until they turn it back on.
+  { name: "daily_marks", table: "daily_marks", where: "at < ? AND kind != 'trips-off'", args: (c) => [c.counts] },
   {
     name: "usage_daily",
     table: "usage_daily",

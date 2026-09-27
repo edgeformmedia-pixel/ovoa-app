@@ -11,8 +11,12 @@ CREATE TABLE meetings (
   via           TEXT NOT NULL CHECK (via IN ('gmail', 'outlook')),
   account_id    TEXT,
   time_zone     TEXT NOT NULL,
-  status        TEXT NOT NULL CHECK (status IN ('waiting', 'picked', 'handed', 'expired')),
+  -- offered: the email waits for their YES; waiting: sent, watching for the reply.
+  status        TEXT NOT NULL CHECK (status IN ('offered', 'waiting', 'picked', 'handed', 'expired', 'failed')),
+  subject       TEXT NOT NULL,
+  body          TEXT NOT NULL,
   created_at    INTEGER NOT NULL,
+  sent_at       INTEGER,
   expires_at    INTEGER NOT NULL,
   next_check_at INTEGER NOT NULL
 );

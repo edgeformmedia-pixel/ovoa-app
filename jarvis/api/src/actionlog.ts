@@ -48,6 +48,7 @@ const TOOL_KINDS: Record<string, string> = {
   gmail_send: "email_send",
   gmail_create_draft: "email_draft",
   outlook_send: "email_send",
+  meeting_offer: "email_send",
   outlook_calendar_create: "event",
   calendar_create_event: "event",
   calendar_update_event: "event_change",

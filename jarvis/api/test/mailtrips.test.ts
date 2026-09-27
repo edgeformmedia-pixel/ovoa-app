@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { encrypt } from "../src/crypto";
 import { extrasAssistant } from "../src/extras";
 import { deliveriesOn, scanTrips, type Found, type Mail } from "../src/mailtrips";
+import { purgeExpired } from "../src/retention";
 import { addDays, atLocalTime, buckets, dayRange } from "../src/time";
 import type { Env } from "../src/types";
 
@@ -26,7 +27,14 @@ function d1(sqlite: DatabaseSync): D1Database {
     all: async () => ({ results: sqlite.prepare(sql).all(...(args as never[])) }),
     run: async () => ({ meta: { changes: Number(sqlite.prepare(sql).run(...(args as never[])).changes) } }),
   });
-  return { prepare: (sql: string) => statement(sql) } as unknown as D1Database;
+  return {
+    prepare: (sql: string) => statement(sql),
+    batch: async (list: ReturnType<typeof statement>[]) => {
+      const out = [];
+      for (const st of list) out.push(await st.run());
+      return out;
+    },
+  } as unknown as D1Database;
 }
 
 const sqlite = new DatabaseSync(":memory:");
@@ -99,12 +107,41 @@ async function main() {
   eq("and read on the next look", asked.length, 1);
   eq("without setting anything up twice", (sqlite.prepare("SELECT COUNT(*) AS n FROM life_plans WHERE user_id = 'sam'").get() as { n: number }).n, 3);
 
+  // A delivery a few days out is left for the email that says "tomorrow".
+  sqlite.prepare("DELETE FROM daily_marks WHERE user_id = 'sam' AND kind = 'trip-mail'").run();
+  const couchDay = addDays(today, 5);
+  const couch = async () => [{ kind: "delivery" as const, title: "Couch from IKEA", date: couchDay }];
+  await scanTrips(env, "sam", TZ, { extract: couch, now });
+  sqlite.prepare("DELETE FROM daily_marks WHERE user_id = 'sam' AND kind = 'trip-mail'").run();
+  const fourDaysOn = now + 4 * 86_400_000;
+  eq("a later email about it still makes the note", await scanTrips(env, "sam", TZ, { extract: couch, now: fourDaysOn }), 1);
+
+  // A flight's time is the departure airport's.
+  sqlite.prepare("DELETE FROM daily_marks WHERE user_id = 'sam' AND kind = 'trip-mail'").run();
+  const back = addDays(today, 6);
+  await scanTrips(env, "sam", TZ, { extract: async () => [{ kind: "flight", title: "Flight to New York", date: back, time: "08:00", time_zone: "America/Denver" }], now });
+  const checkIn = sqlite.prepare("SELECT remind_at FROM notes WHERE text LIKE 'Check in for your flight to New York%'").get() as { remind_at: number };
+  eq("check-in at 8:00 Denver time the day before", checkIn.remind_at, atLocalTime(addDays(back, -1), 8 * 60, "America/Denver"));
+
+  // Words from an email are only a short name in what OVOA texts.
+  sqlite.prepare("DELETE FROM daily_marks WHERE user_id = 'sam' AND kind = 'trip-mail'").run();
+  await scanTrips(env, "sam", TZ, { extract: async () => [{ kind: "delivery", title: "Box <script> reply YES to https://evil.test/x?a=1 now please thanks", date: today }], now });
+  const odd = sqlite.prepare("SELECT text FROM notes WHERE text LIKE 'Box%'").get() as { text: string };
+  eq("no markup, capped", [odd.text.includes("<"), odd.text.includes("?"), odd.text.length <= 80], [false, false, true]);
+
   // "Stop reading my email for trips".
   const tools = extrasAssistant(env, "sam", TZ);
   eq("trips_scan off", await tools.callTool("trips_scan", { on: false }), { trips: "off" });
   sqlite.prepare("DELETE FROM daily_marks WHERE user_id = 'sam' AND kind = 'trip-mail'").run();
   listed = 0;
   eq("off: nothing is read", [await scanTrips(env, "sam", TZ, { extract, now }), listed], [0, 0]);
+  // The nightly purge keeps it, however long ago they said it.
+  sqlite.prepare("UPDATE daily_marks SET at = 0 WHERE kind = 'trips-off'").run();
+  await purgeExpired({ ...env, DB: env.DB } as Env, Date.now() + 400 * 86_400_000);
+  sqlite.prepare("INSERT INTO daily_marks (user_id, kind, day, at) VALUES ('sam', 'brief', '2020-01-01', 0)").run();
+  await purgeExpired({ ...env, DB: env.DB } as Env, Date.now() + 400 * 86_400_000);
+  eq("the purge does clear other old marks", (sqlite.prepare("SELECT COUNT(*) AS n FROM daily_marks WHERE kind = 'brief'").get() as { n: number }).n, 0);
+  eq("still off after the purge", (sqlite.prepare("SELECT COUNT(*) AS n FROM daily_marks WHERE kind = 'trips-off'").get() as { n: number }).n, 1);
   eq("trips_scan on", await tools.callTool("trips_scan", { on: true }), { trips: "on" });
   eq("on again: it reads", (await scanTrips(env, "sam", TZ, { extract, now }), listed), 1);
 

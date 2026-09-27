@@ -68,6 +68,24 @@ async function main() {
   const plain = (await moneyTools.callTool("money_update", { kind: "spend", amount: 5, what: "coffee" })) as { countedAgainst?: string };
   eq("without a category, nothing is counted against a budget", plain.countedAgainst, undefined);
 
+  // The receipt's own day.
+  await moneyTools.callTool("money_update", { kind: "spend", amount: 12, what: "Deli", date: "2026-01-05" });
+  const deli = sqlite.prepare("SELECT ts FROM money_spend WHERE what = 'Deli'").get() as { ts: number };
+  eq("logged on the receipt's day", new Date(deli.ts).toISOString().slice(0, 10), "2026-01-05");
+
+  // A general budget isn't filled by everything with a category.
+  await budget.callTool("budget_set", { category: "anything", amount: 1000, period: "month" });
+  const shoes = (await moneyTools.callTool("money_update", { kind: "spend", amount: 60, what: "Shoes", category: "clothes" })) as { countedAgainst?: string };
+  eq("no clothes budget: not counted against 'anything'", shoes.countedAgainst, undefined);
+
+  // The receipt for a purchase OVOA already counted isn't counted twice.
+  const groceryBudget = sqlite.prepare("SELECT id FROM spend_budgets WHERE category = 'groceries'").get() as { id: string };
+  sqlite
+    .prepare("INSERT INTO purchases (id, user_id, budget_id, what, merchant, url, price_cents, status, created_at, decided_at) VALUES ('p1', 'sam', ?, 'Groceries', 'Instacart', 'https://x.test', 8000, 'approved', ?, ?)")
+    .run(groceryBudget.id, Date.now(), Date.now());
+  const again = (await moneyTools.callTool("money_update", { kind: "spend", amount: 80, what: "Instacart", category: "groceries" })) as { countedAgainst?: string; note?: string };
+  eq("its receipt isn't counted again", [again.countedAgainst, typeof again.note], [undefined, "string"]);
+
   console.log(fails ? `\n${fails} failed` : "\nall passed");
   if (fails) process.exit(1);
 }

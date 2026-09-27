@@ -9,6 +9,7 @@
 // unclear is handed to them. OVOA never answers Dana on its own. At most 5 open
 // at once, each ends after 7 days. Reading replies is Plus, like watches.
 
+import { registerApprover } from "./approvers";
 import { parkAction, type PendingAction } from "./google/assistant";
 import { googleAccessToken, listGoogleAccounts } from "./google/oauth";
 import { toolsByName } from "./google/tools";
@@ -28,6 +29,8 @@ const DAY_START = 9 * 60;
 const DAY_END = 17 * 60;
 const STEP = 30;
 const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+/** The parked offer email (pending_actions tool). */
+export const OFFER = "meeting_offer";
 
 export type Busy = [number, number];
 
@@ -85,22 +88,27 @@ function localStamp(at: number, timeZone: string) {
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
 }
 
-type Mailbox = { via: "gmail"; accountId: string; token: () => Promise<string> } | { via: "outlook" };
+/** Where the offer is sent from. `only`: it's their one account, so OVOA didn't pick between accounts (rules.ts). */
+type Mailbox = ({ via: "gmail"; accountId: string } | { via: "outlook" }) & { only: boolean };
 
 async function mailboxOf(env: Env, userId: string): Promise<Mailbox | null> {
   const accounts = await listGoogleAccounts(env.DB, userId).catch(() => []);
   const google = accounts.find((a) => a.isDefault && a.scopes.some((s) => s.includes("calendar"))) ?? accounts.find((a) => a.scopes.some((s) => s.includes("calendar")));
-  if (google) return { via: "gmail", accountId: google.id, token: () => googleAccessToken(env, userId, google.id) };
-  if (await hasOutlook(env, userId)) return { via: "outlook" };
+  const outlook = await hasOutlook(env, userId);
+  if (google) return { via: "gmail", accountId: google.id, only: accounts.length === 1 && !outlook };
+  if (outlook) return { via: "outlook", only: true };
   return null;
 }
+
+/** "Mon, Nov 2 at 9:00 AM EST": each time with its own zone, since a week can cross a clock change. Pure. */
+export const slotLine = (at: number, timeZone: string) => `${slotWords(at, timeZone)} ${zoneName(timeZone, at)}`;
 
 /** Their busy times between two instants, from the calendar their mailbox belongs to. */
 async function busyTimes(env: Env, userId: string, box: Mailbox, from: number, to: number): Promise<Busy[]> {
   if (box.via === "outlook") return outlookBusy(env, userId, from, to);
   const res = await fetch("https://www.googleapis.com/calendar/v3/freeBusy", {
     method: "POST",
-    headers: { authorization: `Bearer ${await box.token()}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${await googleAccessToken(env, userId, box.accountId)}`, "content-type": "application/json" },
     body: JSON.stringify({ timeMin: new Date(from).toISOString(), timeMax: new Date(to).toISOString(), items: [{ id: "primary" }] }),
   });
   if (!res.ok) throw new Error(`Google free/busy ${res.status}`);
@@ -120,10 +128,37 @@ type MeetingRow = {
   account_id: string | null;
   time_zone: string;
   status: string;
+  subject: string;
+  body: string;
   created_at: number;
+  sent_at: number | null;
   expires_at: number;
   next_check_at: number;
 };
+
+/**
+ * Sends a meeting's offer email from their account and starts watching for the
+ * reply. Only once it's gone: an offer they said NO to is never watched.
+ */
+async function sendOffer(env: Env, m: MeetingRow, now = Date.now()) {
+  const mail = { to: m.email, subject: m.subject, body: m.body };
+  if (m.via === "gmail") {
+    if (!m.account_id) throw new Error("Its Google account is gone.");
+    await toolsByName.get("gmail_send")!.run({ token: await googleAccessToken(env, m.user_id, m.account_id), timeZone: m.time_zone }, mail);
+  } else await sendOutlookMail(env, m.user_id, mail);
+  await env.DB
+    .prepare("UPDATE meetings SET status = 'waiting', sent_at = ?, next_check_at = ?, expires_at = ? WHERE id = ?")
+    .bind(now, now + CHECK_EVERY_MS, now + OPEN_DAYS * 86_400_000, m.id)
+    .run();
+}
+
+/** The offer's approval (pending_actions): sends it, from their own account. */
+registerApprover(OFFER, async (env, userId, args) => {
+  const m = await env.DB.prepare("SELECT * FROM meetings WHERE id = ? AND user_id = ? AND status = 'offered'").bind(String(args.meetingId ?? ""), userId).first<MeetingRow>();
+  if (!m) return "That didn't work: the times offered are gone. Ask me again.";
+  await sendOffer(env, m);
+  return `Done: sent ${m.name ?? m.email} the times. I'll tell you when they pick one.`;
+});
 
 const TOOLS: ToolSpec[] = [
   {
@@ -154,7 +189,10 @@ export function meetingsAssistant(env: Env, userId: string, timeZone: string, on
     if (name !== "meet_propose") return { error: `Unknown tool ${name}` };
     const email = String(args.email ?? "").trim().toLowerCase();
     if (!EMAIL.test(email)) return { error: "I need their email address." };
-    const open = await db.prepare("SELECT COUNT(*) AS n FROM meetings WHERE user_id = ? AND status = 'waiting'").bind(userId).first<{ n: number }>();
+    const open = await db
+      .prepare("SELECT COUNT(*) AS n FROM meetings WHERE user_id = ? AND (status = 'waiting' OR (status = 'offered' AND created_at > ?))")
+      .bind(userId, Date.now() - 86_400_000)
+      .first<{ n: number }>();
     if ((open?.n ?? 0) >= MAX_OPEN) return { error: `They already have ${MAX_OPEN} times waiting on replies. Let one finish first.` };
     const box = await mailboxOf(env, userId);
     if (!box) return { error: "It needs their Google or Outlook calendar and email. Ask them to connect one in Settings." };
@@ -174,14 +212,13 @@ export function meetingsAssistant(env: Env, userId: string, timeZone: string, on
     const myName = (me?.name ?? "").trim().split(/\s+/)[0] || "I";
     const theirName = String(args.name ?? "").trim().split(/\s+/)[0]?.replace(/[^\p{L}'-]/gu, "").slice(0, 30) || "";
     const title = noDashes(String(args.title ?? "").trim().slice(0, 60)) || (theirName ? `Meeting with ${theirName}` : "Meeting");
-    const zone = zoneName(timeZone, slots[0]!);
     const subject = `${title}: a few times that work`;
     const body = noDashes(
       [
         `Hi${theirName ? ` ${theirName}` : ""},`,
         "",
-        `${myName === "I" ? "I'm" : `${myName} is`} free at any of these (${minutes} minutes, ${zone}):`,
-        ...slots.map((s, i) => `${i + 1}. ${slotWords(s, timeZone)}`),
+        `${myName === "I" ? "I'm" : `${myName} is`} free at any of these (${minutes} minutes):`,
+        ...slots.map((s, i) => `${i + 1}. ${slotLine(s, timeZone)}`),
         "",
         "Just reply with the one that works, and I'll send an invite.",
         "",
@@ -192,26 +229,30 @@ export function meetingsAssistant(env: Env, userId: string, timeZone: string, on
     const id = crypto.randomUUID();
     await db
       .prepare(
-        `INSERT INTO meetings (id, user_id, email, name, title, minutes, slots, via, account_id, time_zone, status, created_at, expires_at, next_check_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, ?)`,
+        `INSERT INTO meetings (id, user_id, email, name, title, minutes, slots, via, account_id, time_zone, status, subject, body, created_at, expires_at, next_check_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?, ?, ?, ?, ?)`,
       )
-      .bind(id, userId, email, theirName || null, title, minutes, JSON.stringify(slots), box.via, box.via === "gmail" ? box.accountId : null, timeZone, now, now + OPEN_DAYS * 86_400_000, now + CHECK_EVERY_MS)
+      .bind(id, userId, email, theirName || null, title, minutes, JSON.stringify(slots), box.via, box.via === "gmail" ? box.accountId : null, timeZone, subject, body, now, now + OPEN_DAYS * 86_400_000, now + OPEN_DAYS * 86_400_000)
       .run();
+    const row = (await db.prepare("SELECT * FROM meetings WHERE id = ?").bind(id).first<MeetingRow>())!;
 
+    // A standing rule for them (rules.ts) sends it now, but only from their one account: never one OVOA chose between.
     const tool = box.via === "gmail" ? "gmail_send" : "outlook_send";
-    const mail = { to: email, subject, body };
-    const standing = await ruleAllows(db, userId, tool, mail).catch(() => false);
+    const standing = box.only && (await ruleAllows(db, userId, tool, { to: email }).catch(() => false));
     if (standing) {
-      if (box.via === "gmail") await toolsByName.get("gmail_send")!.run({ token: await box.token(), timeZone }, mail);
-      else await sendOutlookMail(env, userId, mail);
-      return { sent: true, to: email, times: slots.map((s) => slotWords(s, timeZone)), note: "Sent (a standing rule covers them). Say you'll let them know when they pick." };
+      try {
+        await sendOffer(env, row, now);
+      } catch (err) {
+        await db.prepare("UPDATE meetings SET status = 'failed' WHERE id = ?").bind(id).run();
+        return { error: `The email didn't send: ${err instanceof Error ? err.message : "unknown error"}` };
+      }
+      return { sent: true, to: email, times: slots.map((s) => slotLine(s, timeZone)), note: "Sent (a standing rule covers them). Say you'll let them know when they pick." };
     }
     const summary = `Send an email from your ${box.via === "gmail" ? "Gmail" : "Outlook"} to ${email}\nSubject: ${subject}\n\n${body}`;
-    const args2 = box.via === "gmail" ? { ...mail, account: box.accountId } : { ...mail, timeZone };
-    onPark(await parkAction(env, userId, tool, args2, summary, false));
+    onPark(await parkAction(env, userId, OFFER, { meetingId: id }, summary, false));
     return {
       status: "waiting_for_user_approval",
-      times: slots.map((s) => slotWords(s, timeZone)),
+      times: slots.map((s) => slotLine(s, timeZone)),
       note: "The email offering these times is waiting for their approval (it has NOT been sent). Once it's sent, OVOA watches for the reply and asks them before sending the invite.",
     };
   };
@@ -228,11 +269,11 @@ export type Reply = { id: string; text: string };
 
 /** The newest reply from them since the email went out, or null. */
 async function replyFrom(env: Env, m: MeetingRow): Promise<Reply | null> {
-  if (m.via === "outlook") return outlookMailFrom(env, m.user_id, m.email, m.created_at);
+  if (m.via === "outlook") return outlookMailFrom(env, m.user_id, m.email, m.sent_at ?? m.created_at);
   if (!m.account_id) return null;
   const ctx = { token: await googleAccessToken(env, m.user_id, m.account_id), timeZone: m.time_zone };
   const found = (await toolsByName.get("gmail_search")!.run(ctx, { query: `from:${m.email} newer_than:8d`, maxResults: 5 })) as { id: string; date?: string }[];
-  const fresh = found.filter((f) => Date.parse(f.date ?? "") > m.created_at).sort((a, b) => Date.parse(b.date ?? "") - Date.parse(a.date ?? ""))[0];
+  const fresh = found.filter((f) => Date.parse(f.date ?? "") > (m.sent_at ?? m.created_at)).sort((a, b) => Date.parse(b.date ?? "") - Date.parse(a.date ?? ""))[0];
   if (!fresh) return null;
   const read = (await toolsByName.get("gmail_read")!.run(ctx, { messageId: fresh.id })) as { body?: string };
   return { id: fresh.id, text: String(read.body ?? "").slice(0, 1500) };
@@ -286,7 +327,8 @@ export async function meetingsTick(env: Env, io: MeetingsIo = {}) {
       const who = m.name ?? m.email;
       if (!choice) {
         await db.prepare("UPDATE meetings SET status = 'handed' WHERE id = ?").bind(m.id).run();
-        const line = `${who} replied about ${m.title}: "${reply.text.replace(/\s+/g, " ").trim().slice(0, 200)}". Want me to answer, or offer other times?`;
+        // Their words aren't repeated here: this text is saved as OVOA's own, and an email's text is never that.
+        const line = `${who} replied about ${m.title} but didn't clearly pick one of the times. Want me to read you their email?`;
         await tell(env, m.user_id, { kind: "meeting", text: line, push: { title: `${who} replied`, body: line.slice(0, 180) } });
         done.handed++;
         continue;
@@ -296,7 +338,8 @@ export async function meetingsTick(env: Env, io: MeetingsIo = {}) {
       const tool = m.via === "gmail" ? "calendar_create_event" : "outlook_calendar_create";
       const eventArgs =
         m.via === "gmail"
-          ? { title: m.title, start: localStamp(start, m.time_zone), end: localStamp(end, m.time_zone), attendees: [m.email], account: m.account_id }
+          ? // An instant, not a local time: it's approved later, perhaps from a phone in another zone.
+            { title: m.title, start: new Date(start).toISOString(), end: new Date(end).toISOString(), attendees: [m.email], account: m.account_id }
           : { subject: m.title, start: localStamp(start, m.time_zone), end: localStamp(end, m.time_zone), attendees: [m.email], timeZone: m.time_zone };
       const summary = `Add "${m.title}" ${slotWords(start, m.time_zone)} and invite ${m.email}`;
       const action = await parkAction(env, m.user_id, tool, eventArgs, summary, false);

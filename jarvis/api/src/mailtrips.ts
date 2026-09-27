@@ -19,10 +19,28 @@ import { generateText } from "./llm";
 import { hasOutlook, recentOutlookMail } from "./microsoft";
 import { addNote } from "./notes";
 import { addDays, atLocalTime, buckets } from "./time";
+
+/** An IANA zone Intl knows. Pure. */
+function validZone(zone: string) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone });
+    return /\//.test(zone);
+  } catch {
+    return false;
+  }
+}
 import type { Env } from "./types";
 
 export type Mail = { id: string; from?: string; subject?: string; snippet?: string };
-export type Found = { kind: "flight" | "stay" | "reservation" | "delivery"; title: string; date: string; time?: string | null; place?: string | null };
+export type Found = {
+  kind: "flight" | "stay" | "reservation" | "delivery";
+  title: string;
+  date: string;
+  time?: string | null;
+  place?: string | null;
+  /** The zone the time is in (the departure airport's, the restaurant's), when the email says where. */
+  time_zone?: string | null;
+};
 
 const GMAIL_QUERY =
   'newer_than:2d subject:(flight OR itinerary OR "boarding pass" OR reservation OR booking OR confirmation OR confirmed OR "check-in" OR hotel OR delivery OR delivered OR shipped OR "out for delivery" OR arriving OR "on its way")';
@@ -85,6 +103,7 @@ const SCHEMA = {
           date: { type: "string", description: "YYYY-MM-DD: departure, check-in, the booking's day, or the delivery day." },
           time: { type: "string", description: "HH:MM local, when the email says." },
           place: { type: "string", description: "Where: the city flown to, the hotel, the restaurant." },
+          time_zone: { type: "string", description: "IANA zone of the place the time is local to (the departure airport, the restaurant), e.g. America/Denver." },
         },
         required: ["kind", "title", "date"],
       },
@@ -134,15 +153,20 @@ export async function scanTrips(
   for (const f of found) {
     const date = String(f.date ?? "");
     if (!DAY.test(date) || date < today) continue;
-    const title = clean(f.title, 80);
+    // Words from an email end up in texts OVOA sends: a short name, nothing more.
+    const title = clean(f.title, 60).replace(/[^\p{L}\p{N} '&.,:()/-]/gu, "").trim();
     if (!title) continue;
     const time = TIME.test(String(f.time ?? "")) ? String(f.time) : null;
     const place = clean(f.place, 80) || null;
     // Once per thing, however many emails mention it.
+    // A delivery further out is left for a later email ("arriving tomorrow"), unmarked.
+    if (f.kind === "delivery" && date > addDays(today, 1)) continue;
+    // Once per thing, however many emails mention it.
     if (!(await mark(db, userId, "trip-found", `${f.kind}|${title.toLowerCase()}|${date}`))) continue;
+    // A flight's or a booking's time is the airport's or the restaurant's, not necessarily theirs.
+    const zone = f.time_zone && validZone(String(f.time_zone)) ? String(f.time_zone) : timeZone;
 
     if (f.kind === "delivery") {
-      if (date > addDays(today, 1)) continue;
       await addNote(db, userId, { text: `${title}, arriving ${date === today ? "today" : "tomorrow"}`, tags: ["delivery"], remindAt: atLocalTime(date, 9 * 60, timeZone), source: "mail" });
       made++;
       continue;
@@ -157,10 +181,10 @@ export async function scanTrips(
       .run();
     if (f.kind === "flight") {
       // Check-in opens about a day ahead: at the same time the day before, or 9 AM the day before.
-      const checkIn = atLocalTime(addDays(date, -1), time ? minutesOf(time) : 9 * 60, timeZone);
+      const checkIn = atLocalTime(addDays(date, -1), time ? minutesOf(time) : 9 * 60, time ? zone : timeZone);
       if (checkIn > now) await addNote(db, userId, { text: `Check in for your ${title.toLowerCase().startsWith("flight") ? title.charAt(0).toLowerCase() + title.slice(1) : title}${time ? ` (leaves ${time})` : ""}`, tags: ["todo", "trip"], remindAt: checkIn, source: "mail" });
     } else if (f.kind === "reservation" && time) {
-      const before = atLocalTime(date, minutesOf(time), timeZone) - 2 * 3_600_000;
+      const before = atLocalTime(date, minutesOf(time), zone) - 2 * 3_600_000;
       if (before > now) await addNote(db, userId, { text: `${title} at ${time}${place ? `, ${place}` : ""}`, tags: ["trip"], remindAt: before, source: "mail" });
     }
     await logAction(db, userId, "reminder", `Found in email: ${title} (${date})`, "system").catch(() => undefined);

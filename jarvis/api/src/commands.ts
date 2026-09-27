@@ -23,6 +23,8 @@ export type CommandSource = "agent" | "system";
 export const FORBIDDEN_FOR_COMMANDS = new Set([
   "gmail_send",
   "outlook_send",
+  // Offers times to someone by email (meetings.ts): a standing rule could send it.
+  "meet_propose",
   "gmail_trash",
   "drive_trash",
   "calendar_delete_event",

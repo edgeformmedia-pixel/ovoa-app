@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { logAction } from "./actionlog";
-import { budgetForSpend } from "./budget";
+import { alreadyCounted, budgetForSpend } from "./budget";
 import { validTimeZone } from "./google/assistant";
 import { withoutCardNumbers } from "./receipts";
 import type { CallTool, ToolSpec } from "./llm";
 import { push } from "./push";
 import { reach } from "./reach";
-import { addDays, buckets } from "./time";
+import { addDays, atLocalTime, buckets } from "./time";
 import type { Env, Vars } from "./types";
 import { inSlice, type Slice } from "./sweep";
 
@@ -670,13 +670,22 @@ export function moneyAssistant(env: Env, userId: string, timeZone: string, { voi
         };
       }
       if (kind === "spend") {
-        const budget = await budgetForSpend(db, userId, String(args.category ?? ""));
+        const found = await budgetForSpend(db, userId, String(args.category ?? ""));
+        // The receipt for a purchase OVOA already counted against that budget isn't counted twice.
+        const twice = found ? await alreadyCounted(db, found.id, cents) : false;
+        const budget = twice ? null : found;
+        // When it was spent: the receipt's day (noon there), or now.
+        const when = validDay(args.date) && String(args.date) < today() ? atLocalTime(String(args.date), 12 * 60, timeZone) : Date.now();
         await db
           .prepare("INSERT INTO money_spend (id, user_id, ts, amount_cents, what, created_at, budget_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(crypto.randomUUID(), userId, Date.now(), cents, typeof args.what === "string" ? withoutCardNumbers(args.what).slice(0, 120) : null, Date.now(), budget?.id ?? null)
+          .bind(crypto.randomUUID(), userId, when, cents, typeof args.what === "string" ? withoutCardNumbers(args.what).slice(0, 120) : null, Date.now(), budget?.id ?? null)
           .run();
         await db.prepare("UPDATE money_accounts SET balance_cents = balance_cents - ?, updated_at = ? WHERE user_id = ? AND kind = 'checking'").bind(cents, Date.now(), userId).run();
-        return { saved: `spent ${money(cents)}`, ...(budget && { countedAgainst: `the ${budget.category} budget (budget_status has what's left)` }) };
+        return {
+          saved: `spent ${money(cents)}`,
+          ...(budget && { countedAgainst: `the ${budget.category} budget (budget_status has what's left)` }),
+          ...(twice && found && { note: `It matches a purchase already counted against the ${found.category} budget, so it isn't counted again.` }),
+        };
       }
       if (kind === "income") {
         const cadence = String(args.cadence ?? "");
