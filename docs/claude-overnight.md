@@ -96,9 +96,9 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - [x] 11. **Server-side calls** (design doc only; needs owner: Twilio or similar is a new paid provider): how OVOA
       would call a business for the user (AI voice that says it's an AI, approval first, per-call cap), reusing the
       Deepgram/voice pieces that exist. No code that needs keys.
-- [ ] 12. **App screens** (jarvis/app, Expo SDK 57, read its docs first): Vault, Campaigns, Approval rules, only for
+- [~] claimed 2026-09-27T12:21Z by local session. 12. **App screens** (jarvis/app, Expo SDK 57, read its docs first): Vault, Campaigns, Approval rules, only for
       API parts that landed. Typecheck the app. Never trigger Codemagic.
-- [ ] 13. **Final report**: update this file: what shipped (commits), what needs the owner (bindings, libraries,
+- [ ] 13. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 
 ## Needs the owner
