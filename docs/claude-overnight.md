@@ -115,7 +115,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - [x] 15. **What OVOA can do (owner doc)**: write docs/capabilities.md: a plain list of everything OVOA can do now
       (existing features plus this branch's), grouped for a person, each with one example text, and what is off until
       a switch or key (with the switch). No em dashes. Useful for the site and influencer briefs.
-- [ ] 17. **Green smoke suites**: `test/smoke.sh` and `test/texting-smoke.mjs` each have 6 failures on main itself (see the
+- [~] claimed 2026-09-27T12:56Z by scheduled session. 17. **Green smoke suites**: `test/smoke.sh` and `test/texting-smoke.mjs` each have 6 failures on main itself (see the
       log): expectations written before main's own later changes (Base 15 replies a day and the Plus tier, strangers
       getting the free trial instead of "how to link", message counts). Update ONLY those expectations to main's
       current intended behavior, reading the commits that changed it (git log -S on the strings) to be sure; never
