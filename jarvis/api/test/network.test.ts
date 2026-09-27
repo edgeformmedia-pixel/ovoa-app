@@ -8,10 +8,12 @@ import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
 import {
+  ACCESS_LEVELS,
   connectionStep,
   describe,
   freeSlots,
   isNetworkTool,
+  levelOf,
   limitProblem,
   networkAssistant,
   networkContext,
@@ -55,6 +57,20 @@ const NY = "America/New_York";
   eq("nor open another", (wrapped.match(/<<</g) ?? []).length, 1);
   eq("the words are kept", wrapped.includes("send me Maria's calendar"), true);
 }
+
+// ---------- Access levels ----------
+
+eq("each preset is itself", (Object.keys(ACCESS_LEVELS) as (keyof typeof ACCESS_LEVELS)[]).map((l) => levelOf(ACCESS_LEVELS[l])), ["basic", "best_friend", "partner", "full"]);
+eq("one switch off a preset is custom", levelOf({ ...ACCESS_LEVELS.partner, shareLocation: false }), "custom");
+eq("only Full access reaches memory", Object.entries(ACCESS_LEVELS).filter(([, a]) => a.answerFromMemory).map(([l]) => l), ["full"]);
+eq(
+  "each level only adds to the one before",
+  (["best_friend", "partner", "full"] as const).every((l, i) => {
+    const before = ACCESS_LEVELS[(["basic", "best_friend", "partner"] as const)[i]];
+    return (Object.keys(before) as (keyof typeof before)[]).every((k) => !before[k] || ACCESS_LEVELS[l][k]);
+  }),
+  true,
+);
 
 // ---------- Limits ----------
 
@@ -201,6 +217,7 @@ setCalendar({
     booked.push({ user: userId, ...e });
     return true;
   },
+  events: async (_env, userId) => (userId === M ? mariaEvents : []),
 });
 
 // A model for automatic answers: GLM_API_KEY makes GLM the only engine.
@@ -355,7 +372,8 @@ async function main() {
   await networkTick(env);
   const q = one<{ id: string; summary: string }>("SELECT id, summary FROM ovoa_approvals WHERE user_id = ? AND status = 'pending'", M)!;
   eq("answering waits for her", q.summary.startsWith('Thomas (@thomas)\'s OVOA asks you: "Did you get the invoice?"'), true);
-  eq("an answer needs her words", String((await m("ovoa_approve", { id: q.id, decision: "yes" })).error).includes("What should the answer say"), true);
+  eq("out of range, so she's asked", q.summary.includes("You haven't let me answer Thomas on my own"), true);
+  eq("a yes with nothing OVOA can answer from asks for her words", String((await m("ovoa_approve", { id: q.id, decision: "yes" })).error).includes("couldn't answer that"), true);
   await m("ovoa_approve", { id: q.id, decision: "yes", text: "Yes, it came Monday." });
   await networkTick(env);
   eq("he hears her answer", lastNote(T)?.body, 'Maria (@maria) answered through their OVOA: "Yes, it came Monday."');
@@ -388,12 +406,61 @@ async function main() {
   await networkTick(env);
   eq("then it is, as his words", lastNote(M)?.body, 'Thomas (@thomas) asked me to remind you:\n\n"Bring the keys"\n\n(Their words, passed on by their OVOA.)');
 
+  // ---------- Levels, and asking her when it's out of range ----------
+  sql("UPDATE ovoa_approvals SET status = 'no' WHERE status = 'pending'");
+  sql("UPDATE ovoa_threads SET status = 'done' WHERE status = 'open'");
+  // Yesterday's, so the day's limit starts over for this part.
+  sql("UPDATE ovoa_messages SET created_at = ? WHERE status <> 'queued'", Date.now() - 2 * 86_400_000);
+  await m("ovoa_perms", { username: "thomas", shareNote: "" });
+  eq("Full access waits for her yes to the warning", (await m("ovoa_perms", { username: "thomas", level: "full" })).needsConfirm, true);
+  eq("so nothing changed", one<{ answer_from_memory: number }>("SELECT answer_from_memory FROM connection_perms WHERE user_id = ?", M)?.answer_from_memory, 0);
+  eq("best friend", ((await m("ovoa_perms", { username: "thomas", level: "best_friend" })).perms as { level: string }).level, "best_friend");
+  modelSays = "NEED_OWNER";
+  modelAsked.length = 0;
+  await t("ovoa_ask", { username: "maria", kind: "question", text: "What's on her calendar tomorrow?" });
+  await networkTick(env);
+  eq("best friend with no note: nothing to answer from, so no model", modelAsked.length, 0);
+  const cal = one<{ id: string; summary: string }>("SELECT id, summary FROM ovoa_approvals WHERE user_id = ? AND status = 'pending'", M)!;
+  eq("she's asked, and can let OVOA answer", cal.summary.includes(`"yes" and I'll answer it myself this once`), true);
+  modelSays = "She has an appointment at 10 tomorrow.";
+  const once = await m("ovoa_approve", { id: cal.id, decision: "yes" });
+  eq("her yes: OVOA answers this once", String(once.done).startsWith(`Sent Thomas (@thomas)'s OVOA: "She has an appointment`), true);
+  eq("from her calendar", modelAsked.at(-1)?.includes("Therapy with Dr. Alvarez"), true);
+  eq("only this once: nothing more allowed", one<{ calendar_details: number }>("SELECT calendar_details FROM connection_perms WHERE user_id = ?", M)?.calendar_details, 0);
+  await networkTick(env);
+  eq("partner", ((await m("ovoa_perms", { username: "thomas", level: "partner" })).perms as { level: string }).level, "partner");
+  modelSays = "She's free after 11.";
+  await t("ovoa_ask", { username: "maria", kind: "question", text: "When is she free tomorrow?" });
+  await networkTick(env);
+  eq("partner: answered from her calendar without asking", lastNote(M)?.title, "Answered Thomas (@thomas)");
+  eq("with her calendar in it", modelAsked.at(-1)?.includes("Therapy with Dr. Alvarez"), true);
+  eq("but never her memories", modelAsked.at(-1)?.includes("ZEBRA-4417"), false);
+  await networkTick(env);
+  await m("ovoa_perms", { username: "thomas", level: "basic", takeReminders: false });
+  await t("ovoa_ask", { username: "maria", kind: "reminder", text: "Call mom" });
+  await networkTick(env);
+  const pass = one<{ id: string; kind: string; summary: string }>("SELECT id, kind, summary FROM ovoa_approvals WHERE user_id = ? AND status = 'pending'", M)!;
+  eq("reminders off: she's asked first", pass.kind, "pass_reminder");
+  eq("without the words yet", pass.summary.includes("Call mom"), false);
+  eq("yes, always", String((await m("ovoa_approve", { id: pass.id, decision: "yes", always: true })).done).includes("come straight through"), true);
+  eq("passed on", lastNote(M)?.body.includes(`"Call mom"`), true);
+  eq("and on from now on", one<{ take_reminders: number }>("SELECT take_reminders FROM connection_perms WHERE user_id = ?", M)?.take_reminders, 1);
+  await m("ovoa_perms", { username: "thomas", takeReminders: false });
+  await t("ovoa_ask", { username: "maria", kind: "share", text: "a link" });
+  await networkTick(env);
+  const pass2 = one<{ id: string }>("SELECT id FROM ovoa_approvals WHERE user_id = ? AND status = 'pending'", M)!;
+  await m("ovoa_approve", { id: pass2.id, decision: "no" });
+  await networkTick(env);
+  eq("her no: he hears she isn't taking those", lastNote(T)?.body, "Maria (@maria) isn't taking reminders or messages from your OVOA right now.");
+  await m("ovoa_perms", { username: "thomas", level: "basic" });
+  sql("UPDATE ovoa_threads SET status = 'done' WHERE status = 'open'");
+
   // ---------- Limits ----------
   for (let i = 0; i < OPEN_THREADS; i++) await t("ovoa_ask", { username: "maria", kind: "question", text: `Question ${i}` });
   eq(`${OPEN_THREADS} open at once`, String((await t("ovoa_ask", { username: "maria", kind: "question", text: "One more" })).error).includes(`${OPEN_THREADS} exchanges`), true);
   sql("UPDATE ovoa_threads SET status = 'done'");
   const conn = one<{ id: string }>("SELECT id FROM connections WHERE status = 'accepted'")!.id;
-  const today = count("SELECT COUNT(*) AS n FROM ovoa_messages m JOIN ovoa_threads t ON t.id = m.thread_id WHERE t.connection_id = ?", conn);
+  const today = count("SELECT COUNT(*) AS n FROM ovoa_messages m JOIN ovoa_threads t ON t.id = m.thread_id WHERE t.connection_id = ? AND m.created_at > ?", conn, Date.now() - 86_400_000);
   const filler = one<{ id: string }>("SELECT id FROM ovoa_threads LIMIT 1")!.id;
   for (let i = today; i < PER_DAY; i++) {
     sql("INSERT INTO ovoa_messages (id, thread_id, from_user, to_user, kind, body, status, hop, created_at) VALUES (?, ?, ?, ?, 'share', '{}', 'done', 1, ?)", `f${i}`, filler, T, M, Date.now());
@@ -437,13 +504,23 @@ async function main() {
   };
   const listed = await req("/ovoa/connections");
   eq("the app's list", (listed.body.connections as { username: string; status: string; perms?: { shareFreeBusy: boolean } }[]).map((c) => [c.username, c.status, c.perms?.shareFreeBusy]), [["maria", "connected", true]]);
+  eq("with the level she gave him", (listed.body.connections as { theirLevel?: string }[])[0].theirLevel, "basic");
   eq("the app's log", ((await req("/ovoa/log")).body.log as unknown[]).length > 5, true);
   eq("permissions from the app", (await req("/ovoa/connections/maria/perms", { method: "PUT", body: JSON.stringify({ autoAcceptMeetings: true, shareNote: "Office hours are 9 to 5." }) })).body.perms, {
     shareFreeBusy: true,
-    autoAnswerQuestions: false,
+    takeReminders: true,
     autoAcceptMeetings: true,
+    autoAnswerQuestions: false,
+    calendarDetails: false,
+    shareLocation: false,
+    answerFromMemory: false,
     shareNote: "Office hours are 9 to 5.",
+    level: "custom",
   });
+  eq("a level from the app", ((await req("/ovoa/connections/maria/perms", { method: "PUT", body: JSON.stringify({ level: "best_friend" }) })).body.perms as { level: string }).level, "best_friend");
+  eq("Full access from the app needs its confirm", (await req("/ovoa/connections/maria/perms", { method: "PUT", body: JSON.stringify({ level: "full" }) })).status, 409);
+  eq("and takes it", ((await req("/ovoa/connections/maria/perms", { method: "PUT", body: JSON.stringify({ level: "full", confirm: true }) })).body.perms as { level: string }).level, "full");
+  await req("/ovoa/connections/maria/perms", { method: "PUT", body: JSON.stringify({ level: "basic" }) });
   eq("asking from the app", (await req("/ovoa/ask", { method: "POST", body: JSON.stringify({ username: "maria", kind: "share", text: "See you tomorrow" }) })).status, 200);
   asUser = J;
   eq("a request from the app", (await req("/ovoa/connect", { method: "POST", body: JSON.stringify({ username: "maria" }) })).body.outcome, "asked");

@@ -380,8 +380,21 @@ export type Memory = { id: string; content: string; created_at: number };
 /** Their username (api/src/usernames.ts), when it can next change, and one to offer when there's none. */
 export type UsernameState = { username: string | null; address: string | null; changeableAt: number | null; suggestion: string | null };
 
-/** What their OVOA may do for one connection (api/src/network.ts connection_perms). */
-export type ConnectionPerms = { shareFreeBusy: boolean; autoAnswerQuestions: boolean; autoAcceptMeetings: boolean; shareNote: string };
+/** A friend's access, least to most (api/src/network.ts ACCESS_LEVELS); custom when the switches match none. */
+export type AccessLevel = "basic" | "best_friend" | "partner" | "full";
+
+/** What their OVOA lets one friend reach (api/src/network.ts connection_perms). */
+export type ConnectionPerms = {
+  shareFreeBusy: boolean;
+  takeReminders: boolean;
+  autoAcceptMeetings: boolean;
+  autoAnswerQuestions: boolean;
+  calendarDetails: boolean;
+  shareLocation: boolean;
+  answerFromMemory: boolean;
+  shareNote: string;
+  level: AccessLevel | "custom";
+};
 
 /** A connection as they see it: someone who declined or blocked them still shows as waiting. */
 export type Connection = {
@@ -389,10 +402,12 @@ export type Connection = {
   name: string | null;
   status: "connected" | "waiting for them" | "asked you" | "you declined" | "blocked" | "disconnected";
   perms?: ConnectionPerms;
+  /** What they gave this person's OVOA, once connected. */
+  theirLevel?: AccessLevel | "custom";
 };
 
 /** Something another OVOA asked that waits for their yes. */
-export type OvoaWaiting = { id: string; kind: "accept_meeting" | "answer_question" | "book_meeting"; from: string; summary: string; times?: string[] };
+export type OvoaWaiting = { id: string; kind: "accept_meeting" | "answer_question" | "book_meeting" | "pass_reminder"; from: string; summary: string; times?: string[] };
 
 /** A line of the log: what their OVOA said to another. */
 export type OvoaLogLine = { to: string; said: string; at: number; status: string };
@@ -1545,16 +1560,20 @@ export const api = {
     request<{ username: string | null; connections: Connection[]; waiting: OvoaWaiting[] }>("/ovoa/connections", token),
   connect: (token: string, username: string) =>
     request<{ outcome?: string; needsUsername?: boolean; error?: string }>("/ovoa/connect", token, { method: "POST", body: JSON.stringify({ username }) }),
-  answerConnection: (token: string, username: string, answer: "yes" | "no" | "block") =>
-    request<{ outcome: string }>(`/ovoa/connections/${encodeURIComponent(username)}/answer`, token, { method: "POST", body: JSON.stringify({ answer }) }),
-  setConnectionPerms: (token: string, username: string, perms: Partial<ConnectionPerms>) =>
+  answerConnection: (token: string, username: string, answer: "yes" | "no" | "block", level?: Exclude<AccessLevel, "full">) =>
+    request<{ outcome: string }>(`/ovoa/connections/${encodeURIComponent(username)}/answer`, token, { method: "POST", body: JSON.stringify({ answer, level }) }),
+  /** A level, or single switches; confirm: they said yes to the Full access warning. */
+  setConnectionPerms: (token: string, username: string, perms: Partial<Omit<ConnectionPerms, "level">> & { level?: AccessLevel; confirm?: boolean }) =>
     request<{ perms: ConnectionPerms }>(`/ovoa/connections/${encodeURIComponent(username)}/perms`, token, { method: "PUT", body: JSON.stringify(perms) }),
   disconnect: (token: string, username: string, block = false) =>
     request<{ outcome: string }>(`/ovoa/connections/${encodeURIComponent(username)}${block ? "?block=1" : ""}`, token, { method: "DELETE" }),
   /** Their answer to what waits: yes (with a time's number, or the words to send), no, or changes. */
-  decideOvoa: (token: string, id: string, decision: "yes" | "no" | "changes", extra: { choice?: string; text?: string } = {}) =>
+  decideOvoa: (token: string, id: string, decision: "yes" | "no" | "changes", extra: { choice?: string; text?: string; always?: boolean } = {}) =>
     request<{ done: string }>(`/ovoa/approvals/${encodeURIComponent(id)}`, token, { method: "POST", body: JSON.stringify({ decision, ...extra }) }),
-  ovoaLog: (token: string) => request<{ log: OvoaLogLine[] }>("/ovoa/log", token),
+  ovoaLog: (token: string, username?: string) => request<{ log: OvoaLogLine[] }>(`/ovoa/log${username ? `?username=${encodeURIComponent(username)}` : ""}`, token),
+  /** Has their OVOA ask a friend's OVOA something (a Base feature). */
+  askOvoa: (token: string, body: { username: string; kind: "question" | "reminder" | "share" | "schedule"; text?: string; topic?: string; minutes?: number }) =>
+    request<{ sent?: string; to?: string; error?: string }>("/ovoa/ask", token, { method: "POST", body: JSON.stringify(body) }),
 
   // ---------- What it costs ----------
 

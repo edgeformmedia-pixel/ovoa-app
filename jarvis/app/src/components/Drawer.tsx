@@ -47,9 +47,9 @@ const OVERHANG = 24;
 export type NavItem = { label: string; href: Href; icon: IconName; tone: Tone };
 
 /**
- * The menu (2026-09-23): Talk and Apps at the top, the apps you've added
- * listed under Apps, and Settings, which holds the account too, pinned at the
- * bottom. Nothing else ever joins them. A new account has nothing under Apps
+ * The menu (2026-09-23): Talk, Apps and Friends (2026-09-27) at the top, the
+ * apps you've added listed under Apps, and Settings, which holds the account
+ * too, pinned at the bottom. Nothing else joins them without the user asking. A new account has nothing under Apps
  * until it adds something (lib/addons.ts). On the free plan there's no Talk
  * row at all, only Apps and Settings (the user, 2026-09-24); the AI add-ons
  * under Apps carry a lock there. Before consent, Talk says "Agree to use AI".
@@ -57,6 +57,8 @@ export type NavItem = { label: string; href: Href; icon: IconName; tone: Tone };
 export const TOP: NavItem[] = [
   { label: "Talk", href: "/chat", icon: "mic", tone: "teal" },
   { label: "Apps", href: "/apps" as Href, icon: "apps-outline", tone: "violet" },
+  // Friends (2026-09-27, the user): whose OVOAs yours talks to, and what each may reach.
+  { label: "Friends", href: "/friends" as Href, icon: "people-outline", tone: "pink" },
 ];
 
 /** The rows that are for Base users: shown to everyone, with a lock when the plan (or consent) doesn't reach them. */
