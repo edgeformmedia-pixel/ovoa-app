@@ -21,10 +21,10 @@ export type RuleKind = (typeof RULE_KINDS)[number];
 
 /** Which tools each kind covers. Deletes are absent on purpose. */
 const TOOLS_BY_KIND: Record<RuleKind, string[]> = {
-  email: ["gmail_send", "phone_email_compose"],
+  email: ["gmail_send", "outlook_send", "phone_email_compose"],
   text: ["phone_message_compose"],
   call: ["phone_call"],
-  calendar: ["calendar_create_event", "calendar_update_event", "phone_calendar_create_event", "phone_calendar_update_event"],
+  calendar: ["calendar_create_event", "outlook_calendar_create", "calendar_update_event", "phone_calendar_create_event", "phone_calendar_update_event"],
 };
 
 export const kindOfTool = (tool: string): RuleKind | null =>

@@ -47,6 +47,8 @@ export const MINUTES_SAVED: Record<string, number> = {
 const TOOL_KINDS: Record<string, string> = {
   gmail_send: "email_send",
   gmail_create_draft: "email_draft",
+  outlook_send: "email_send",
+  outlook_calendar_create: "event",
   calendar_create_event: "event",
   calendar_update_event: "event_change",
   phone_calendar_create_event: "event",

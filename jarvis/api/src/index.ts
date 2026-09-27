@@ -52,6 +52,7 @@ import { contextAssistant, isContextTool, recordBlock, type BlockSource } from "
 import { fitness, fitnessSummary } from "./fitness";
 import { actions, googleAssistant, phoneAssistant, validTimeZone } from "./google/assistant";
 import { googleAuthed, googlePublic } from "./google/oauth";
+import { isMicrosoftTool, microsoftAssistant, microsoftAuthed, microsoftPublic } from "./microsoft";
 import {
   AI_UNREACHABLE,
   chatWithTools,
@@ -374,6 +375,7 @@ app.onError(async (err, c) => {
 app.get("/", (c) => c.json({ ok: true, service: "jarvis-api" }));
 
 app.route("/", googlePublic);
+app.route("/", microsoftPublic);
 // The link in the confirmation email: no session, the token is the proof (verify.ts).
 app.route("/", verifyLinkRoutes);
 // Texts to OVOA's number, from Sendblue: no session, the webhook secret is the proof (texting.ts).
@@ -1527,6 +1529,14 @@ async function runTurn(
   // googleAssistant needs auto-approve from the settings, but only once a tool
   // runs, so its own read goes out at the same time.
   const settingsRead = getSettings(db, userId);
+  // Outlook (microsoft.ts), started alongside: with it off this is no read at all.
+  const microsoftRead = microsoftAssistant(
+    env,
+    userId,
+    timeZone,
+    settingsRead.then((s) => !!s.auto_approve && !fromAgent),
+    fromAgent ? null : rulesFor(env, userId),
+  );
   const [settings, user, history, memories, activity, google, profile, mine, food, place, app] = await Promise.all([
     settingsRead,
     db.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string }>(),
@@ -1567,6 +1577,7 @@ async function runTurn(
   const extraTools = extrasAssistant(env, userId, timeZone);
   // Saved lists and the other general building blocks (blocks.ts).
   const blockTools = blocksAssistant(env, userId, timeZone);
+  const microsoft = await microsoftRead;
   const alarmTools = alarmAssistant(env, userId, timeZone, { voice: !!voice });
   const moneyTools = moneyAssistant(env, userId, timeZone, { voice: !!voice });
   const foodTools = foodAssistant(env, userId, timeZone, { voice: !!voice, level: food.level });
@@ -1677,6 +1688,7 @@ async function runTurn(
     ...planTools.tools,
     ...budgetTools.tools,
     ...blockTools.tools,
+    ...microsoft.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -1711,6 +1723,7 @@ async function runTurn(
     plans: { tools: planTools.tools, prompt: planTools.prompt },
     budget: { tools: budgetTools.tools, prompt: budgetTools.prompt },
     blocks: { tools: blockTools.tools, prompt: blockTools.prompt },
+    microsoft: { tools: microsoft.tools, prompt: microsoft.prompt },
     transcripts: {
       tools: transcriptTools.tools,
       prompt: settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : "",
@@ -1970,6 +1983,8 @@ async function runTurn(
                                     ? budgetTools.callTool
                                   : isBlockTool(name)
                                     ? blockTools.callTool
+                                  : isMicrosoftTool(name)
+                                    ? microsoft.callTool
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name
@@ -2027,7 +2042,7 @@ async function runTurn(
       if (!verdict.refused()) ctx.waitUntil(noteEngines(env, attempts));
     });
   spoken?.end();
-  const pendingActions = [...phone.pending, ...shortcuts.pending, ...google.pending, ...blockTools.pending];
+  const pendingActions = [...phone.pending, ...shortcuts.pending, ...google.pending, ...blockTools.pending, ...microsoft.pending];
   // The turn is over: close its browser session, if it opened one (browser.ts).
   ctx.waitUntil(blockTools.close());
   const cooling = coolingEngines();
@@ -3567,6 +3582,7 @@ authed.route("/", people);
 authed.route("/", alarms);
 authed.route("/", fitness);
 authed.route("/", googleAuthed);
+authed.route("/", microsoftAuthed);
 authed.route("/", actions);
 authed.route("/", voice);
 authed.route("/", textingRoutes(textTurn));

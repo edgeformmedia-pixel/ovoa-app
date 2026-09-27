@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { GoogleConnection } from "./GoogleConnection";
+import { MicrosoftConnection } from "./MicrosoftConnection";
 import { YourPlan } from "./Plan";
 import { UsernameRow } from "./UsernameRow";
 import { Btn, Row } from "./ui";
@@ -124,6 +125,8 @@ export function AccountSection({ google }: { /** Show the Google accounts (not o
           <GoogleConnection token={token} />
         </>
       )}
+      {/* Shows itself only once the server is set up for Microsoft. */}
+      <MicrosoftConnection token={token} headerStyle={styles.sub} />
 
       <Text style={styles.sub}>Session</Text>
       <Btn label="Sign out" onPress={signOut} style={styles.btn} />

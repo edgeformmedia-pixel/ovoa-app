@@ -54,6 +54,9 @@ export type Env = {
   MEMORY_MODEL: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET?: string;
+  /** Outlook and Microsoft 365 (microsoft.ts): both set turns it on. See docs/outlook.md. */
+  MS_CLIENT_ID?: string;
+  MS_CLIENT_SECRET?: string;
   TOKEN_ENC_KEY: string;
   /** "on" answers every request 503 and skips the crons while data moves between accounts (maintenance.ts). */
   MAINTENANCE?: string;

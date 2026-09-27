@@ -88,7 +88,7 @@ const MESSAGE_CHARS = 400;
 const AGENT_COMMANDS_PER_HOUR = 10;
 
 /** Outbound communication and deletion. Never available to an autonomous turn. */
-const FORBIDDEN_ALONE = new Set(["gmail_send", "gmail_trash", "drive_trash", "calendar_delete_event"]);
+const FORBIDDEN_ALONE = new Set(["gmail_send", "outlook_send", "gmail_trash", "drive_trash", "calendar_delete_event"]);
 
 export type JobKind = "once" | "daily" | "weekly" | "interval";
 export type Notify = "always" | "ifuseful" | "never";

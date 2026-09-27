@@ -46,6 +46,7 @@ import type { Env, Vars } from "./types";
 //   GET  /                        health check
 //   POST /auth/*                  sign up, sign in, email codes, Google
 //   GET  /google/callback         OAuth return
+//   GET  /microsoft/callback      OAuth return (microsoft.ts)
 //   GET  /shortcuts/file/:t/:name signed shortcut download
 //   POST /logs                    phone logs
 //   *    /debug/*                 DEBUG_KEY only (engines, usage, ticks, plan, verify)
@@ -127,6 +128,7 @@ export const ROUTE_TIERS: RouteRule[] = [
   { method: "GET", path: /^\/transcripts\/(day\/[^/]+|lines|search)$/, tier: "free", why: "reading your transcripts" },
   { method: "*", path: /^\/context\/commitments(\/[^/]+)?$/, tier: "free", why: "what you said you'd do, and marking it done" },
   { method: "*", path: /^\/google\/(status|connect|callback|accounts\/[^/]+)$/, tier: "free", why: "connecting Google and managing its accounts" },
+  { method: "*", path: /^\/microsoft\/(status|connect|callback)$/, tier: "free", why: "connecting Outlook" },
   { method: "GET", path: /^\/actions$/, tier: "free", why: "the actions waiting for your OK" },
   { method: "POST", path: /^\/actions\/[^/]+\/approve$/, tier: "free", why: "approving one: it runs as written, no model" },
   { method: "POST", path: /^\/siri\/key$/, tier: "free", why: "making the Siri key (asking through it is base)" },

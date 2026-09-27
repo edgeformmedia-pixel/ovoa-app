@@ -302,6 +302,7 @@ export const TABLES = {
   emergency_contacts: "keep",
   safety_events: "delete",
   google_accounts: "keep",
+  microsoft_accounts: "keep",
   oauth_states: "expires",
   pending_actions: "delete",
   paused_turns: "delete",

@@ -22,6 +22,7 @@ export type CommandSource = "agent" | "system";
  */
 export const FORBIDDEN_FOR_COMMANDS = new Set([
   "gmail_send",
+  "outlook_send",
   "gmail_trash",
   "drive_trash",
   "calendar_delete_event",

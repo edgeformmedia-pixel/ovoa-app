@@ -657,6 +657,11 @@ export type GoogleAccount = {
   connectedAt: number;
 };
 /** The top-level fields describe the default account; `accounts` has all of them. */
+/** Outlook / Microsoft 365 (api/src/microsoft.ts). `available` is false until the server is set up for it. */
+export type MicrosoftStatus =
+  | { available: boolean; connected: false }
+  | { available: true; connected: true; email: string; name: string | null; connectedAt: number };
+
 export type GoogleStatus =
   | { connected: false; accounts: GoogleAccount[] }
   | { connected: true; email: string; name: string | null; scopes: string[]; connectedAt: number; accounts: GoogleAccount[] };
@@ -1295,6 +1300,11 @@ export const api = {
   ) =>
     request<{ event: SafetyEvent }>("/safety-events", token, { method: "POST", body: JSON.stringify(event) }),
   safetyEvents: (token: string) => request<{ events: SafetyEvent[] }>("/safety-events", token),
+
+  microsoftStatus: (token: string) => request<MicrosoftStatus>("/microsoft/status", token),
+  microsoftConnectUrl: (token: string, returnUrl: string) =>
+    request<{ url: string }>("/microsoft/connect", token, { method: "POST", body: JSON.stringify({ returnUrl }) }),
+  microsoftDisconnect: (token: string) => request("/microsoft", token, { method: "DELETE" }),
 
   googleStatus: (token: string) => request<GoogleStatus>("/google/status", token),
   /** `accountId` reconnects that account instead of adding another one. */

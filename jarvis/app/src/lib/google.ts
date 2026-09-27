@@ -19,6 +19,17 @@ export async function connectGoogle(token: string, accountId?: string): Promise<
   return { ok: false, message: String(params.message ?? "Couldn't connect to Google") };
 }
 
+/** The same for Outlook / Microsoft 365: one account, connecting again replaces it. */
+export async function connectMicrosoft(token: string): Promise<ConnectResult> {
+  const returnUrl = Linking.createURL("microsoft-callback");
+  const { url } = await api.microsoftConnectUrl(token, returnUrl);
+  const result = await WebBrowser.openAuthSessionAsync(url, returnUrl);
+  if (result.type !== "success") return { ok: false, cancelled: true, message: "Cancelled" };
+  const params = Linking.parse(result.url).queryParams ?? {};
+  if (params.microsoft === "connected") return { ok: true };
+  return { ok: false, message: String(params.message ?? "Couldn't connect to Microsoft") };
+}
+
 export const GOOGLE_APPS = ["Gmail", "Calendar", "Drive", "Sheets", "Docs", "Tasks", "Contacts"];
 
 /**
