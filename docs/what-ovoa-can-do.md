@@ -69,7 +69,8 @@ live when it's merged and deployed; "Switch" says what turns it on.
   (from your own Gmail, 200 a day max), *"look up the hours of every place on my list"*, *"tell my friends
   the party moved to 8"*. Runs in the daytime, shows progress in the app, stop anytime.
   (New. Switch: `CAMPAIGNS=1`)
-- **Standing approvals**: *"you don't have to ask before emailing my wife"*. Deleting and money always ask.
+- **Standing approvals**: *"you don't have to ask before emailing my wife"*. You approve the rule once (or add it
+  in Settings); deleting and money always ask.
   (New)
 
 ## Friends and other OVOAs
