@@ -193,6 +193,15 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       list (at most 12 lines): the three things to decide, the one command to run before deploying (migrations),
       which switches to try first, and where the phone test plan is. Plain words, no jargon beyond names of
       switches. Docs only.
+- [ ] 36. **Whole-branch review, interactions** (after 33): read `git diff 16c2deb..HEAD -- jarvis/` looking at how
+      the features meet: approvals from several blocks in one turn (pending lists, the texting YES that approves all),
+      standing rules applied through every path that sends (gmail, outlook, meetings, campaigns), what Friends and
+      guests can reach through any new tool, cron lanes sharing leases or double-texting (watches, meetings, trips,
+      campaigns, reach pacing), and account deletion/take-back covering every new table. Fix real ones with tests.
+- [~] claimed 2026-09-27T15:30Z by local session. 37. **Smoke with every switch on**: run test/smoke.sh and
+      test/texting-smoke.mjs on fresh state with CAMPAIGNS=1, TEXT_GROUPS=1, INBOUND_CODES=1, TEXT_VOICE_REPLIES=1,
+      SENDBLUE_CONTACT_SHARING=1 and MS_CLIENT_ID/MS_CLIENT_SECRET set (dummy values; nothing reaches a real
+      service). Same pass bar as task 31. Fix anything a switch breaks.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 - [x] 25. **Scheduling with people not on OVOA** (from task 21): "find a time with dana@x.com next week". OVOA reads the
