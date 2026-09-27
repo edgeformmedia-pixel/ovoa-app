@@ -388,3 +388,6 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   link). App: Settings > Other people's OVOAs > Invite a friend (React Native's own Share, no new library).
   test/invites.test.ts runs the texting path end to end (stranger names Maya, links, Maya told once, the friend is
   only ever answered). 75 test files pass, tsc clean in api and app.
+- 2026-09-27 13:51 UTC (local session): 833841b: agent.ts runs (background jobs) get the Outlook tools minus FORBIDDEN_ALONE
+  (the reviewer's gap note), prompt included, parked invites handed on like Google's. Full smoke with MS_CLIENT_ID and
+  MS_CLIENT_SECRET set on the local worker: 439 / 1 (the known consent wording); scheduled ticks errors=0.
