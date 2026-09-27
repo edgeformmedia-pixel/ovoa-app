@@ -214,6 +214,21 @@ export async function sendOutlookMail(env: Env, userId: string, mail: { to: stri
   await run(env, userId, "UTC", "outlook_send", { to: mail.to, subject: mail.subject, body: mail.body });
 }
 
+/** Their newest Outlook inbox mail, for the morning's look for trips (mailtrips.ts). Never throws. */
+export async function recentOutlookMail(env: Env, userId: string, max = 25) {
+  try {
+    const { value = [] } = await graph<{ value?: { id: string; subject?: string; from?: Address; receivedDateTime?: string; bodyPreview?: string }[] }>(
+      env,
+      userId,
+      `/me/mailFolders/inbox/messages?$top=${Math.min(50, max)}&$orderby=${encodeURIComponent("receivedDateTime desc")}&$select=id,subject,from,receivedDateTime,bodyPreview`,
+    );
+    return value.map((m) => ({ id: m.id, from: who(m.from), subject: m.subject ?? "", received: m.receivedDateTime, preview: (m.bodyPreview ?? "").slice(0, 300) }));
+  } catch (err) {
+    console.error("recentOutlookMail failed", err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
 /** Whether they have Outlook connected (and it's switched on). */
 export async function hasOutlook(env: Env, userId: string) {
   return microsoftOn(env) && !!(await microsoftAccount(env.DB, userId).catch(() => null));

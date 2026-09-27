@@ -11,6 +11,7 @@ import { push } from "./push";
 import { reach } from "./reach";
 import { addDays, atLocalTime, buckets, clock, clockFromMinutes, dayRange, localMinutes, localWeekday } from "./time";
 import { moneyBriefLine } from "./money";
+import { deliveriesOn } from "./mailtrips";
 import { microsoftOn, outlookEvents } from "./microsoft";
 import { listTodos } from "./todos";
 import type { Env } from "./types";
@@ -137,6 +138,8 @@ export async function buildMorningBrief(env: Env, userId: string, timeZone: stri
     // make the brief something people stop listening to.
     moneyBriefLine(db, userId, timeZone).catch(() => null),
   ]);
+  // A package arriving today, found in their email (mailtrips.ts).
+  const deliveries = await deliveriesOn(db, userId, from, to).catch(() => []);
   const facts = {
     readiness: ready,
     money: cash,
@@ -147,6 +150,7 @@ export async function buildMorningBrief(env: Env, userId: string, timeZone: stri
     medsToday: meds.results.map((m) => `${m.title} at ${(JSON.parse(m.times) as number[]).map(clockFromMinutes).join(" and ")}`),
     topOfList: todos.filter((t) => !t.done).slice(0, 3).map((t) => t.text),
     askedOfYou: favors.results.map((f) => (f.who ? `${f.text} (for ${f.who})` : f.text)),
+    ...(deliveries.length && { deliveries }),
   };
   let text: string;
   try {
@@ -166,6 +170,7 @@ export async function buildMorningBrief(env: Env, userId: string, timeZone: stri
       facts.events.length && `First up: ${facts.events.join(", ")}.`,
       facts.medsToday.length && `Meds: ${facts.medsToday.join("; ")}.`,
       facts.topOfList.length && `On your list: ${facts.topOfList.join(", ")}.`,
+      facts.deliveries?.length && `${facts.deliveries.join(". ")}.`,
       facts.money,
     ]
       .filter(Boolean)

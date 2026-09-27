@@ -14,6 +14,8 @@ import { addDays, atLocalTime, buckets, clock, dayRange, localMinutes, localWeek
 import type { Env } from "./types";
 import { inSlice, type Slice } from "./sweep";
 import { lazyCheck } from "./plans";
+import { scanTrips, setTrips } from "./mailtrips";
+import { microsoftOn } from "./microsoft";
 
 // Phase 5 (F23-F33): the extras. Each is small and each stands on its own;
 // they share a file because they share a tick and a handful of helpers.
@@ -348,10 +350,11 @@ async function meetingPrep(env: Env, userId: string, timeZone: string) {
  */
 export async function extrasTick(env: Env, slice?: Slice) {
   const { results } = await env.DB.prepare(
-    `SELECT s.user_id, s.time_zone, EXISTS (SELECT 1 FROM google_accounts g WHERE g.user_id = s.user_id) AS google
+    `SELECT s.user_id, s.time_zone, EXISTS (SELECT 1 FROM google_accounts g WHERE g.user_id = s.user_id) AS google,
+            EXISTS (SELECT 1 FROM microsoft_accounts m WHERE m.user_id = s.user_id) AS outlook
        FROM settings s WHERE EXISTS (SELECT 1 FROM push_tokens t WHERE t.user_id = s.user_id)`,
-  ).all<{ user_id: string; time_zone: string | null; google: number }>();
-  const done = { followUps: 0, bills: 0, weekly: 0, preps: 0 };
+  ).all<{ user_id: string; time_zone: string | null; google: number; outlook: number }>();
+  const done = { followUps: 0, bills: 0, weekly: 0, preps: 0, trips: 0 };
   for (const r of results) {
     if (!inSlice(r.user_id, slice)) continue;
     const timeZone = validTimeZone(r.time_zone);
@@ -362,11 +365,16 @@ export async function extrasTick(env: Env, slice?: Slice) {
     // Email, calendar and the weekly report are the assistant's: Base's (plans.ts).
     // Asked only when one of them is actually due, so a quiet sweep reads nothing more.
     const covered = lazyCheck(env, r.user_id, "base");
+    const plus = lazyCheck(env, r.user_id, "plus");
     try {
       if (r.google && (await covered())) {
         done.preps += await meetingPrep(env, r.user_id, timeZone);
         if (minute >= 10 * 60 && minute < 11 * 60 && (await mark(env.DB, r.user_id, "followups", day))) done.followUps += await followUps(env, r.user_id);
         if (localWeekday(now, timeZone) === 1 && minute >= 9 * 60 && (await mark(env.DB, r.user_id, "bills", week))) done.bills += await scanBills(env, r.user_id, timeZone);
+      }
+      // Trips and deliveries in the morning's new mail (mailtrips.ts), before the brief: Plus's.
+      if ((r.google || (r.outlook && microsoftOn(env))) && minute >= 6 * 60 && minute < 7 * 60 && (await plus()) && (await mark(env.DB, r.user_id, "trips", day))) {
+        done.trips += await scanTrips(env, r.user_id, timeZone);
       }
       if (localWeekday(now, timeZone) === 0 && minute >= 18 * 60 && (await covered()) && (await mark(env.DB, r.user_id, "weekly", week))) {
         if (await weeklyReport(env, r.user_id, timeZone)) done.weekly++;
@@ -410,6 +418,13 @@ const TOOLS: ToolSpec[] = [
   },
 ];
 
+TOOLS.push({
+  name: "trips_scan",
+  description:
+    "Turns on or off the morning look through their new email for flights, hotel stays, bookings and deliveries (which become trips and reminders). 'stop reading my email for trips' is off.",
+  parameters: { type: "object", properties: { on: { type: "boolean" } }, required: ["on"] },
+});
+
 const NAMES = new Set(TOOLS.map((t) => t.name));
 export const isExtrasTool = (name: string) => NAMES.has(name);
 
@@ -438,6 +453,11 @@ export function extrasAssistant(env: Env, userId: string, timeZone: string) {
       if (!at || at < Date.now()) return { error: "at must be a future local YYYY-MM-DDTHH:MM" };
       await addNote(db, userId, { text: `Text ${who}: ${text}`, tags: ["remind_other", `to:${who.toLowerCase()}`], remindAt: at });
       return { scheduled: true, note: `Say you'll have the text to ${who} ready at ${clock(at, timeZone)}, one tap to send.` };
+    }
+    if (name === "trips_scan") {
+      const on = args.on !== false && String(args.on) !== "false";
+      await setTrips(db, userId, on);
+      return { trips: on ? "on" : "off" };
     }
     return { error: `Unknown tool ${name}` };
   };
