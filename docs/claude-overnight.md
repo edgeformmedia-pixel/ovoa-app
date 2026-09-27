@@ -162,7 +162,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       table (list_shares) in the next free migration; caps as lists.ts. Adding to someone's list never texts them
       unless they asked to be told. Tests: share, read and add from the friend's side, access too low, unshare,
       disconnect.
-- [ ] 25. **Scheduling with people not on OVOA** (from task 21): "find a time with dana@x.com next week". OVOA reads the
+- [~] claimed 2026-09-27T14:15Z by local session. 25. **Scheduling with people not on OVOA** (from task 21): "find a time with dana@x.com next week". OVOA reads the
       person's free time (Google or Outlook calendar), picks 3 slots in their zone and parks ONE email to Dana from
       their own account (pending_actions, rules.ts applies like any email). When Dana's reply arrives (read-only check
       of the thread in the slow lane, Plus and consent like watches), OVOA works out the chosen slot and parks the
