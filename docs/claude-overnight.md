@@ -37,7 +37,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 
 ## Tasks (top to bottom)
 
-- [ ] 1. **fetch_url tool** (web agent, read-only): read a full public web page, JSON or CSV by URL. http(s) only;
+- [~] claimed 2026-09-27T10:56Z by local session. 1. **fetch_url tool** (web agent, read-only): read a full public web page, JSON or CSV by URL. http(s) only;
       refuse private, loopback, link-local and cloud metadata addresses, and re-check after every redirect (max 3);
       15 s timeout; 3 MB cap; HTML to readable text keeping table cells tab-separated and link hrefs; `offset` /
       `maxChars` paging. Offer it next to web_search (see `web.ts`, `toolbelt.ts`). Tests for the address guard,
