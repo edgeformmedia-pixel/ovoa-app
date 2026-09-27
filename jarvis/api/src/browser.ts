@@ -21,7 +21,7 @@
 
 import { registerApprover } from "./approvers";
 import { assertPublicUrl, FetchRefused } from "./fetchurl";
-import { parkAction } from "./google/assistant";
+import { type PendingAction, parkAction } from "./google/assistant";
 import type { CallTool, ToolSpec } from "./llm";
 import type { Env } from "./types";
 
@@ -193,7 +193,7 @@ function describeSteps(steps: Step[], labels: Map<string, string>) {
   return typed.length ? ` after filling in ${[...new Set(typed)].slice(0, 6).join(", ")}` : "";
 }
 
-export function browserAssistant(env: Env, userId: string) {
+export function browserAssistant(env: Env, userId: string, onPark: (action: PendingAction) => void = () => {}) {
   if (!browserReady(env)) return { tools: [] as ToolSpec[], callTool: (async () => ({ error: "The browser isn't set up." })) as CallTool, prompt: "" };
 
   let session: BrowserSession | null = null;
@@ -222,7 +222,8 @@ export function browserAssistant(env: Env, userId: string) {
   const approve = async (el: PageElement, final: Step) => {
     const host = state ? new URL(state.url).hostname : "the site";
     const summary = `On ${host}: ${el.kind === "submit" || el.kind === "button" ? `click "${el.label || "Submit"}"` : "submit the form"}${describeSteps(steps, labels)}`;
-    await parkAction(env, userId, "browser_submit", { steps: [...steps, final], label: el.label, host }, summary, false);
+    // Handed to the app with the reply (blocks.ts pending), so the Approve button shows.
+    onPark(await parkAction(env, userId, "browser_submit", { steps: [...steps, final], label: el.label, host }, summary, false));
     return { ...WAITING, will: summary };
   };
 

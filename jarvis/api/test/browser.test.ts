@@ -168,7 +168,7 @@ async function main() {
   // A turn.
   const log: Log = [];
   setBrowserFactory(fakeFactory(log));
-  const b = blocksAssistant(env, "sam", "UTC");
+  const b = blocksAssistant(env, "sam", "UTC") as ReturnType<typeof blocksAssistant> & { pending: { id: string; summary: string }[] };
   eq("offered", b.tools.filter((t) => t.name.startsWith("browser_")).map((t) => t.name), ["browser_open", "browser_click", "browser_type", "browser_select", "browser_back"]);
   eq("private addresses refused", await b.callTool("browser_open", { url: "http://localhost/admin" }), { error: "That address isn't public." });
   eq("click before open", await b.callTool("browser_click", { id: 1 }), { error: "Open a page first (browser_open)." });
@@ -192,6 +192,7 @@ async function main() {
   const parked = sqlite.prepare("SELECT id, tool, args FROM pending_actions WHERE user_id = 'sam'").get() as { id: string; tool: string; args: string };
   eq("parked as browser_submit", parked.tool, "browser_submit");
   eq("with no card number in it", parked.args.includes("4111"), false);
+  eq("handed to the app with the reply, so the Approve button shows", b.pending.map((p) => p.id), [parked.id]);
 
   // A page that navigates somewhere private is dropped.
   const evil = (await b.callTool("browser_click", { id: 6 })) as { error?: string };

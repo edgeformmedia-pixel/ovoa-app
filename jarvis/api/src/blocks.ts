@@ -21,7 +21,7 @@ export function blocksAssistant(env: Env, userId: string, _timeZone: string) {
   const blocks: Block[] = [
     listsAssistant(env, userId),
     vaultAssistant(env, userId),
-    browserAssistant(env, userId),
+    browserAssistant(env, userId, (action) => pending.push(action)),
     campaignsAssistant(env, userId, (action) => pending.push(action)),
     rulesAssistant(env, userId),
   ];
