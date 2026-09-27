@@ -110,6 +110,11 @@ export function AgentProvider({ children }: { children: ReactNode }) {
         router.push("/chat" as Href);
         return;
       }
+      // "Campaign finished" (api/src/campaigns.ts finishIfDone) opens that campaign's results.
+      if (data.screen === "campaigns" && typeof data.id === "string") {
+        router.push(`/campaign/${data.id}` as Href);
+        return;
+      }
       refresh();
       router.push("/day" as Href);
     });
