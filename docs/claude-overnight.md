@@ -184,6 +184,15 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       grown by more than a few hundred characters; if they did, find what (a guide carried when it shouldn't be, a
       core tool's description) and trim it. Record the numbers in the log. Use a script under jarvis/api/scripts
       that builds the prompt locally without calling any model (no network).
+- [ ] 34. **No dashes, enforced**: add test/nodashes.test.ts that reads every jarvis/api/src file this branch added
+      or changed since 16c2deb (`git diff --name-only 16c2deb -- jarvis/api/src` at test time is fine, or a fixed list)
+      and fails on an em dash (U+2014) or en dash (U+2013) inside a string or template literal (comments are fine).
+      Fix any it finds in user-facing text (texts, emails, cards, notes, tool results the model repeats). Same for
+      jarvis/app/src screens added on this branch.
+- [ ] 35. **Start here for the owner**: at the top of docs/claude-overnight.md's Final report, a short "Start here"
+      list (at most 12 lines): the three things to decide, the one command to run before deploying (migrations),
+      which switches to try first, and where the phone test plan is. Plain words, no jargon beyond names of
+      switches. Docs only.
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 - [x] 25. **Scheduling with people not on OVOA** (from task 21): "find a time with dana@x.com next week". OVOA reads the
