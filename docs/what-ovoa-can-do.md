@@ -68,7 +68,6 @@ live when it's merged and deployed; "Switch" says what turns it on.
 - **Group chats**: add OVOA to an iMessage group with friends and ask it by name: *"ovoa what time works
   for all of us?"*. In a group it never shares anyone's private stuff; anything that needs your accounts it
   handles with you 1:1. (New. Switch: `TEXT_GROUPS=1`)
-
 - **Invite a friend**: Settings > Invite a friend, or *"how do I invite my brother?"*. You send the text yourself;
   when they join you hear about it. OVOA never messages your friends for you. (New)
 
