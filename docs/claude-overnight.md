@@ -672,3 +672,5 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   failing on a same-millisecond tie (rules added through the new approval step listed out of order); fixed in 49bff2e
   (ORDER BY created_at, rowid), five runs clean. Also llm.test.ts's first-word-deadline check failed once in that run:
   main's own timing test (llm.ts and llm.test.ts are unchanged on this branch), clean three times alone.
+- 2026-09-27 18:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main is still 9b33d3d (no
+  new commits since the 18:02 trial merge). Stopped without code changes. Needs the owner: nothing new.
