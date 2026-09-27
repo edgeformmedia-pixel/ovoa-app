@@ -91,7 +91,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       only when mentioned by name, only if everyone else in the group is the sender's Friend, never shares private
       details there, and sends approvals to the person privately. Group replies via Sendblue send-group-message.
       Everything else about groups stays ignored as today. Tests with a fake Sendblue.
-- [ ] 10. **Logins without passwords** (design doc + first slice, only if task 7 landed): per-user saved browser
+- [~] claimed 2026-09-27T12:17Z by local session. 10. **Logins without passwords** (design doc + first slice, only if task 7 landed): per-user saved browser
       session created by the user logging in themselves through a live-view link; OVOA never sees the password.
 - [ ] 11. **Server-side calls** (design doc only; needs owner: Twilio or similar is a new paid provider): how OVOA
       would call a business for the user (AI voice that says it's an AI, approval first, per-call cap), reusing the
