@@ -193,7 +193,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       list (at most 12 lines): the three things to decide, the one command to run before deploying (migrations),
       which switches to try first, and where the phone test plan is. Plain words, no jargon beyond names of
       switches. Docs only.
-- [~] claimed 2026-09-27T15:36Z by local session. 36. **Whole-branch review, interactions**: read `git diff 16c2deb..HEAD -- jarvis/` looking at how
+- [x] 36. **Whole-branch review, interactions**: read `git diff 16c2deb..HEAD -- jarvis/` looking at how
       the features meet: approvals from several blocks in one turn (pending lists, the texting YES that approves all),
       standing rules applied through every path that sends (gmail, outlook, meetings, campaigns), what Friends and
       guests can reach through any new tool, cron lanes sharing leases or double-texting (watches, meetings, trips,
@@ -245,8 +245,8 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 Branch `claude/overnight` is on top of main 16c2deb (main has not moved since): 108 files, 11738 insertions(+), 67 deletions(-),
 mostly new files; the edits to existing files are small hooks. 81 unit test files pass, `npx tsc --noEmit`
 is clean in jarvis/api and jarvis/app. Local smoke on fresh state: texting-smoke all green; smoke.sh 439 / 1 (the known
-consent-wording check, see task 17) when the auth rate limit doesn't trip on a fast machine. Five reviews
-(ed39979, task 22, fa80395, 3a6bda5 and task 29) found 38 real issues, all fixed with tests.
+consent-wording check, see task 17) when the auth rate limit doesn't trip on a fast machine. Six reviews
+(ed39979, task 22, fa80395, 3a6bda5, task 29 and task 36) found 46 real issues, all fixed with tests.
 
 ### What shipped (commits)
 
@@ -601,3 +601,15 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   TEXT_VOICE_REPLIES, SENDBLUE_CONTACT_SHARING and dummy MS_CLIENT_ID/MS_CLIENT_SECRET all set: smoke.sh 439 / 1 (only
   the consent wording), six scheduled ticks errors=0 (every lane, including campaigns, meetings and watches, ran);
   texting-smoke.mjs all 28 passed. No switch breaks the existing paths.
+- 2026-09-27 15:53 UTC (local session): task 36 in e8b3765. A sixth reviewer read the whole branch for how features meet.
+  Eight findings, all fixed with tests. Most serious: rule_add was an ordinary tool, so text in an email, page or
+  a stranger's inbound answer could have the model add "email anyone without asking" and then send with no card;
+  now rule_add parks an approval_rule action (added only on their YES; the app's own Approval rules screen still adds
+  directly), rule_add and list_share joined FORBIDDEN_FOR_COMMANDS, and inbound_results says the answers are
+  information. Also: reach() clears waiting text approvals when it sends a text with none (a YES meant for the newer
+  question can't approve an older proposal); campaigns skipped for night or plan move to the back (updated_at) so
+  they can't fill the lane's 20; TAKEN_BACK adds campaigns, page_watches, meetings, inbound_codes and user_lists;
+  watch and meeting texts are asked: true (never held); campaigns from a list leave out rows a Friend added; a group
+  hand-off (handle #1on1) leaves waiting approvals alone; list-add notices at most once an hour per list; rhythmTick
+  knows who has Outlook, so commuteTick doesn't write marks for everyone. 81 test files pass; smoke 439 / 1 with the
+  take-back check extended to lists and watches.
