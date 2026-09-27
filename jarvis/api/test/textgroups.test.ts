@@ -135,7 +135,7 @@ async function main() {
   answer = { reply: "On it, Sam, I'll text you to confirm.", private_task: "Book a table for 4 at Luca on Saturday at 7" };
   await text(on, SAM, "ovoa book us a table saturday at 7 at luca", everyone);
   eq("group told", groupSends.at(-1)?.content, "On it, Sam, I'll text you to confirm.");
-  eq("the task ran as Sam's own private text", asked, ["[From your group chat] Book a table for 4 at Luca on Saturday at 7"]);
+  eq("the task ran as Sam's own private text, in Sam's own words (never the group's)", asked, ['[From your group chat] Sam asked in the group: "ovoa book us a table saturday at 7 at luca"']);
   eq("and the private reply went 1:1 to Sam", out.sent.filter((s) => s.to === SAM).at(-1)?.content.startsWith("Booked a table request"), true);
   eq("context carries across asks", seen.at(-1)?.includes("Saturday at 7 works for both of you, nice."), true);
 
@@ -143,6 +143,11 @@ async function main() {
   const before = groupSends.length;
   await text(on, SAM, "ovoa you there?", [SAM, ALEX, STRANGER, LINE]);
   eq("a non-friend in the group: nothing sent", groupSends.length, before);
+
+  // No member list from Sendblue: nobody can be checked, so it stays quiet (fails closed).
+  const quietBefore = groupSends.length;
+  await text(on, SAM, "ovoa you there?", []);
+  eq("no participants: nothing sent", groupSends.length, quietBefore);
 
   // An unlinked sender: quiet.
   await text(on, STRANGER, "ovoa hi", [SAM, STRANGER, LINE]);

@@ -140,6 +140,10 @@ export const ROUTE_TIERS: RouteRule[] = [
   // Campaigns (campaigns.ts) start from a turn (base); seeing them, their CSV and stopping one call no model.
   { method: "GET", path: /^\/campaigns(\/[^/]+(\/export\.csv)?)?$/, tier: "free", why: "your campaigns and their results" },
   { method: "POST", path: /^\/campaigns\/[^/]+\/stop$/, tier: "free", why: "stopping a campaign" },
+  // What OVOA keeps for them (vault.ts, sitesessions.ts, rules.ts): seeing it and removing it is
+  // never behind a plan, so someone who drops to free can still take their details back.
+  { method: "GET", path: /^\/(vault|browser\/sites|approval-rules)$/, tier: "free", why: "what OVOA keeps for you" },
+  { method: "DELETE", path: /^\/(vault|browser\/sites|approval-rules)\/[^/]+$/, tier: "free", why: "removing what OVOA keeps for you" },
   // Your @username (usernames.ts): picking, checking and changing it calls no model.
   { method: "*", path: /^\/me\/username(\/check)?$/, tier: "free", why: "your username, and whether one is free" },
   // OVOA to OVOA (network.ts): connecting, permissions, answering what waits for

@@ -4,7 +4,7 @@ import { approveAction, type PendingAction } from "./google/assistant";
 import { allowed, tooMany } from "./limits";
 import type { CallTool, ToolSpec } from "./llm";
 import { CONTACT_CARD_PATH } from "./contactcard";
-import { answerKeyword, keywordOf } from "./keywords";
+import { answerKeyword, keywordOf, linkedKeywordOf, onDoNotContact } from "./keywords";
 import { answerGroup, type GroupWrite, groupsOn } from "./textgroups";
 import { inboundOn, inboundText } from "./inbound";
 import { guestText, type Turn as GuestTurn } from "./guest";
@@ -983,8 +983,13 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
 
   // STOP / START / HELP / CARD as the whole message (keywords.ts). A bare "stop"
   // while an approval is waiting stays that approval's NO, as it always was.
-  const keyword = keywordOf(m.content);
-  if (keyword && !(keyword === "stop" && link && waitingApprovals(link, now).length)) {
+  // Someone linked gets the unambiguous ones only (linkedKeywordOf), and START only after a STOP.
+  const keyword = link ? linkedKeywordOf(m.content) : keywordOf(m.content);
+  const applies =
+    !!keyword &&
+    !(keyword === "stop" && link && waitingApprovals(link, now).length) &&
+    !(keyword === "start" && link && !(await onDoNotContact(db, m.from)));
+  if (keyword && applies) {
     if (!(await record(db, m, `keyword_${keyword}`, null, now))) return { outcome: "duplicate" };
     await answerKeyword(env, keyword, m.from, link?.user_id ?? null, deps.sender(m.line), m.line, now);
     say("text", { outcome: `keyword ${keyword}`, user: link?.user_id });

@@ -57,6 +57,8 @@ for (const id of ["sam", "alex"]) {
   sqlite.prepare("INSERT INTO users (id, email, password_hash, password_salt, name, created_at) VALUES (?, ?, '', '', ?, 0)").run(id, `${id}@example.com`, id);
   sqlite.prepare("INSERT INTO settings (user_id, updated_at, time_zone) VALUES (?, 0, 'America/New_York')").run(id);
 }
+// Sam agreed to AI; Alex never did (the tick checks both, campaigns.ts blockedFor).
+sqlite.prepare("UPDATE users SET ai_consent_at = 1, ai_consent_version = 99 WHERE id = 'sam'").run();
 const env = { DB: d1(sqlite), CAMPAIGNS: "1" } as unknown as Env;
 const off = { DB: d1(sqlite) } as unknown as Env;
 
@@ -258,10 +260,26 @@ async function main() {
 
   // Plans: reading, exporting and stopping are free.
   eq("tiers", [tierForRoute("GET", "/campaigns"), tierForRoute("GET", "/campaigns/x/export.csv"), tierForRoute("POST", "/campaigns/x/stop")], ["free", "free", "free"]);
+  // So is seeing and removing what OVOA keeps (a downgrade never traps it); adding still needs Base.
+  eq(
+    "vault, sites, rules: see and remove free",
+    [tierForRoute("GET", "/vault"), tierForRoute("DELETE", "/vault/x"), tierForRoute("DELETE", "/browser/sites/x.com"), tierForRoute("DELETE", "/approval-rules/x"), tierForRoute("POST", "/vault")],
+    ["free", "free", "free", "free", "base"],
+  );
+
+  // Someone without AI consent (or below Base): an approved email campaign waits instead of sending.
+  sqlite
+    .prepare("INSERT INTO campaigns (id, user_id, mode, title, instructions, subject, status, item_count, created_at, updated_at, approved_at, action_id) VALUES ('c-alex', 'alex', 'email', 'Alex note', 'Hi {name}', 'Hi', 'running', 1, 0, 0, 1, 'a1')")
+    .run();
+  sqlite.prepare("INSERT INTO campaign_items (campaign_id, idx, data) VALUES ('c-alex', 0, ?)").run(JSON.stringify({ name: "Kim", email: "kim@example.com" }));
+  const sentBefore = sent.length;
+  clock = NOON;
+  const blockedTick = await campaignsTick(env, io);
+  eq("no consent: it waits, nothing sent", [blockedTick.blocked, sent.length - sentBefore, (sqlite.prepare("SELECT status FROM campaign_items WHERE campaign_id = 'c-alex'").get() as { status: string }).status], [1, 0, "pending"]);
 
   // Gone with the account.
   sqlite.prepare("DELETE FROM users WHERE id = 'sam'").run();
-  eq("gone with the account", (sqlite.prepare("SELECT COUNT(*) AS n FROM campaign_items").get() as { n: number }).n, 0);
+  eq("gone with the account", (sqlite.prepare("SELECT COUNT(*) AS n FROM campaign_items WHERE campaign_id <> 'c-alex'").get() as { n: number }).n, 0);
 
   console.log(fails ? `${fails} failed` : "all passed");
   process.exit(fails ? 1 : 0);

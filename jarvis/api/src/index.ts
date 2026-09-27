@@ -2028,6 +2028,8 @@ async function runTurn(
     });
   spoken?.end();
   const pendingActions = [...phone.pending, ...shortcuts.pending, ...google.pending, ...blockTools.pending];
+  // The turn is over: close its browser session, if it opened one (browser.ts).
+  ctx.waitUntil(blockTools.close());
   const cooling = coolingEngines();
   // What this reply cost, for the phone's turn log and the latency table.
   const tokens = usages.reduce(

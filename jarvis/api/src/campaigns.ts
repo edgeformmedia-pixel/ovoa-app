@@ -27,6 +27,7 @@ import { noDashes } from "./sentences";
 import { buckets, inQuietHours, localMinutes } from "./time";
 import type { Env, Vars } from "./types";
 import { searchWeb } from "./web";
+import { blockedFor } from "./plans";
 
 /** Campaigns are off unless the CAMPAIGNS var is "1": no tools, and the cron leaves running ones alone. */
 export const campaignsOn = (env: Pick<Env, "CAMPAIGNS">) => env.CAMPAIGNS === "1";
@@ -413,13 +414,19 @@ export async function campaignsTick(env: Env, io: CampaignIo = realIo, deadline 
        WHERE c.status = 'running' AND c.approved_at IS NOT NULL AND c.action_id IS NOT NULL ORDER BY c.updated_at LIMIT 20`,
     )
     .all<Due>();
-  const tally = { worked: 0, skipped: 0, failed: 0, refused: 0, finished: 0, night: 0, capped: 0 };
+  const tally = { worked: 0, skipped: 0, failed: 0, refused: 0, finished: 0, night: 0, capped: 0, blocked: 0 };
   for (const c of results) {
     if (Date.now() > deadline) break;
     const now = io.now();
     const timeZone = validTimeZone(c.time_zone);
     if (!inDaytime(now, timeZone, c.quiet_start, c.quiet_end)) {
       tally.night++;
+      continue;
+    }
+    // The plan and consent still hold, checked here because an email campaign never calls a
+    // model (so the model gate never sees it): below Base or no consent, it waits.
+    if (await blockedFor(env, c.user_id, "base")) {
+      tally.blocked++;
       continue;
     }
     const { results: items } = await db

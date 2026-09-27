@@ -53,7 +53,12 @@ async function main() {
   eq("saving a bank is refused", ((await saveSiteSession(env, "sam", "chase.com", [cookie("s", "chase.com")])) as { error?: string }).error?.startsWith("OVOA doesn't sign into banks"), true);
 
   // Saving: only cookies for that site, encrypted.
-  const saved = await saveSiteSession(env, "sam", "www.OpenTable.com", [cookie("session", ".opentable.com"), cookie("tracker", "ads.example.net"), cookie("pref", "www.opentable.com")]);
+  const saved = await saveSiteSession(env, "sam", "www.OpenTable.com", [
+    cookie("session", ".opentable.com"),
+    cookie("tracker", "ads.example.net"),
+    cookie("pref", "www.opentable.com"),
+    cookie("super", "com"),
+  ]);
   eq("saved, other sites' cookies dropped", "error" in saved ? saved.error : [saved.host, saved.cookies], ["opentable.com", 2]);
   const stored = sqlite.prepare("SELECT cookies_enc FROM site_sessions WHERE user_id = 'sam'").get() as { cookies_enc: string };
   eq("encrypted at rest", stored.cookies_enc.includes("v-session"), false);
@@ -62,6 +67,9 @@ async function main() {
   eq("not for another site", (await cookiesFor(env, "sam", "resy.com")).length, 0);
   eq("not for another person", (await cookiesFor(env, "alex", "opentable.com")).length, 0);
   eq("gone after 30 days", (await cookiesFor(env, "sam", "opentable.com", Date.now() + 31 * 86_400_000)).length, 0);
+
+  const uk = await saveSiteSession(env, "sam", "www.tesco.co.uk", [cookie("s", ".tesco.co.uk"), cookie("psl", "co.uk")]);
+  eq("a public-suffix cookie is dropped", "error" in uk ? uk.error : uk.cookies, 1);
 
   // The browser: loaded before the page opens, and when an approval replays.
   const log: string[] = [];
@@ -105,6 +113,12 @@ async function main() {
   eq("approved", done?.content.startsWith("Done:"), true);
   eq("the replay signed in first, then booked", log, ["cookies session,pref", "goto https://www.opentable.com/r/luca", "click #book", "close"]);
 
+  log.length = 0;
+  await b.close();
+  eq("the turn's browser is closed when the turn ends", log, ["close"]);
+  await b.close();
+  eq("and closing twice is harmless", log, ["close"]);
+
   const alexBrowser = blocksAssistant(env, "alex", "UTC");
   log.length = 0;
   const alexOpened = (await alexBrowser.callTool("browser_open", { url: "https://www.opentable.com/r/luca" })) as { signedIn?: string };
@@ -118,7 +132,7 @@ async function main() {
   });
   app.route("/", blockRoutes);
   const listed = (await (await app.request("/browser/sites", {}, env)).json()) as { sites: { host: string }[] };
-  eq("GET /browser/sites (no cookie values in it)", listed.sites.map((s) => s.host), ["opentable.com"]);
+  eq("GET /browser/sites (no cookie values in it)", listed.sites.map((s) => s.host), ["opentable.com", "tesco.co.uk"]);
   const post = await app.request("/browser/sites", { method: "POST", body: JSON.stringify({ host: "delta.com", cookies: [cookie("dl", ".delta.com")] }), headers: { "content-type": "application/json" } }, env);
   eq("POST /browser/sites", post.status, 201);
   const bank = await app.request("/browser/sites", { method: "POST", body: JSON.stringify({ host: "chase.com", cookies: [cookie("c", "chase.com")] }), headers: { "content-type": "application/json" } }, env);

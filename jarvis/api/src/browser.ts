@@ -197,7 +197,9 @@ function describeSteps(steps: Step[], labels: Map<string, string>) {
 }
 
 export function browserAssistant(env: Env, userId: string, onPark: (action: PendingAction) => void = () => {}) {
-  if (!browserReady(env)) return { tools: [] as ToolSpec[], callTool: (async () => ({ error: "The browser isn't set up." })) as CallTool, prompt: "" };
+  if (!browserReady(env)) {
+    return { tools: [] as ToolSpec[], callTool: (async () => ({ error: "The browser isn't set up." })) as CallTool, prompt: "", close: async () => {} };
+  }
 
   let session: BrowserSession | null = null;
   let page: BrowserPage | null = null;
@@ -300,9 +302,19 @@ export function browserAssistant(env: Env, userId: string, onPark: (action: Pend
     }
   };
 
+  /** Ends this reply's browser, if one was opened (index.ts calls it when the turn is over). */
+  const close = async () => {
+    const open = session as BrowserSession | null;
+    session = null;
+    page = null;
+    state = null;
+    if (open) await open.close().catch(() => {});
+  };
+
   return {
     tools: TOOLS,
     callTool,
+    close,
     prompt: [
       "Browser: to actually use a website for them (search it, check availability or prices, fill in a form), browser_open it, then browser_click / browser_type / browser_select by the element numbers it gives you. To just read a page, use fetch_url.",
       "Anything that commits (place an order, book, pay, send, post, sign up, submit a form) goes to them to approve; say plainly what you set up and that it's waiting for their YES. Never try to log in for them or enter card details.",

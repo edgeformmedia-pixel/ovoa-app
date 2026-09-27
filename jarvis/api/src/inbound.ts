@@ -68,6 +68,16 @@ export async function inboundText(
   const db = env.DB;
   const word = content.trim().toUpperCase().replace(/[.!]+$/, "");
 
+  // Someone partway through a screener is answering it, even with a word that's also a code
+  // ("what's your name?" "Jake"). Checked first.
+  const open = await db
+    .prepare(
+      "SELECT r.*, c.questions, c.active FROM inbound_respondents r JOIN inbound_codes c ON c.code = r.code WHERE r.phone = ? AND r.done_at IS NULL AND r.updated_at > ? ORDER BY r.updated_at DESC LIMIT 1",
+    )
+    .bind(phone, now - STALE_MS)
+    .first<Respondent & { questions: string; active: number }>();
+  if (open && open.active) return answerOpen(db, open, phone, content, send, now);
+
   // A code, alone: opting in.
   if (CODE.test(word)) {
     const code = await db.prepare("SELECT * FROM inbound_codes WHERE code = ? AND active = 1").bind(word).first<CodeRow>();
@@ -91,23 +101,27 @@ export async function inboundText(
           .bind(word, phone, now, now)
           .run();
       } else {
-        await db.prepare("UPDATE inbound_respondents SET updated_at = ? WHERE code = ? AND phone = ?").bind(now, word, phone).run();
+        // An old screener they never finished (open ones are answered above): start it over.
+        await db.prepare("UPDATE inbound_respondents SET step = 0, answers = '[]', updated_at = ? WHERE code = ? AND phone = ?").bind(now, word, phone).run();
       }
       const questions = questionsOf(code);
-      const step = 0;
-      await send(`${code.intro}\n\n${questions[step] ?? ""}`.trim());
+      await send(`${code.intro}\n\n${questions[0] ?? ""}`.trim());
       return "inbound: opted in";
     }
   }
 
+  return null;
+}
+
+async function answerOpen(
+  db: D1Database,
+  open: Respondent & { questions: string; active: number },
+  phone: string,
+  content: string,
+  send: (text: string) => Promise<boolean>,
+  now: number,
+): Promise<string> {
   // An answer to the question they were last asked.
-  const open = await db
-    .prepare(
-      "SELECT r.*, c.questions, c.active FROM inbound_respondents r JOIN inbound_codes c ON c.code = r.code WHERE r.phone = ? AND r.done_at IS NULL AND r.updated_at > ? ORDER BY r.updated_at DESC LIMIT 1",
-    )
-    .bind(phone, now - STALE_MS)
-    .first<Respondent & { questions: string; active: number }>();
-  if (!open || !open.active) return null;
   const questions = questionsOf(open);
   let answers: string[] = [];
   try {

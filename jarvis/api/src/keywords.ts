@@ -38,6 +38,19 @@ export function keywordOf(text: string): Keyword | null {
   return WORDS[t] ?? null;
 }
 
+/**
+ * The keywords that apply to someone with OVOA linked, whose one-word texts are
+ * usually replies ("contact" to "save it as a contact or a note?", "help" to
+ * "stuck?"). Only STOP, START and the exact word CARD; the caller also lets START
+ * through only for a number that texted STOP. Pure.
+ */
+export function linkedKeywordOf(text: string): Keyword | null {
+  const k = keywordOf(text);
+  if (k === "stop" || k === "start") return k;
+  if (k === "card" && /^\s*card[.!\s]*$/i.test(text)) return "card";
+  return null;
+}
+
 export const KEYWORD_REPLIES = {
   stopLinked: "Got it, I won't text you first anymore. You can still text me anytime. Reply START to undo.",
   stopGuest: "Got it, you won't hear from OVOA unless you text first. Reply START to undo.",

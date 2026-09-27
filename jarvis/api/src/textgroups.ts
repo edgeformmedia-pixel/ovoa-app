@@ -152,6 +152,8 @@ export async function answerGroup(
 
   const lines = new Set([g.line, env.SENDBLUE_NUMBER].filter(Boolean) as string[]);
   const others = [...new Set(g.participants)].filter((p) => p !== g.from && !lines.has(p));
+  // Fail closed: with no member list there's no way to know who would read the answer.
+  if (!others.length) return "group: members unknown";
   for (const phone of others) {
     const them = await userByPhone(db, phone);
     if (!them || !(await connected(db, sender.user_id, them.user_id))) return "group: not everyone is a friend";
@@ -173,6 +175,8 @@ export async function answerGroup(
   const reply = noDashes(answer.reply.trim()).slice(0, 1_000);
   if (reply) await sendGroup(env, g.groupId, reply, g.line);
   await remember(db, g.groupId, [...past, { who: first, text: g.content }, ...(reply ? [{ who: "OVOA", text: reply }] : [])], now);
-  if (answer.private_task?.trim()) await privately(sender.user_id, answer.private_task.trim().slice(0, 1_000), first);
+  // What goes to their private thread is their own words, never the model's paraphrase of the
+  // group: other people's lines (kept for context) must not be able to steer the sender's OVOA.
+  if (answer.private_task?.trim()) await privately(sender.user_id, `${first} asked in the group: "${g.content.slice(0, 1_000)}"`, first);
   return answer.private_task ? "group: answered, task handed over" : "group: answered";
 }

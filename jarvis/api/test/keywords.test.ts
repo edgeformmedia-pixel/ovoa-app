@@ -130,6 +130,13 @@ async function main() {
   eq("linked START", await text(LINKED, "START"), "keyword start");
   eq("texting first back on, off the list", [(sqlite.prepare("SELECT proactive FROM text_links WHERE user_id = ?").get(U) as { proactive: number }).proactive, await onDoNotContact(DB, LINKED)], [1, false]);
 
+  // Someone linked: one-word replies stay replies. HELP and CONTACT go to the model, and START
+  // only means something after a STOP.
+  eq("linked 'help' goes to the model", (await text(LINKED, "help")).startsWith("keyword"), false);
+  eq("linked 'contact' goes to the model", (await text(LINKED, "contact")).startsWith("keyword"), false);
+  eq("linked 'start' with no STOP before goes to the model", (await text(LINKED, "start")).startsWith("keyword"), false);
+  eq("a guest still gets HELP", await text(GUEST, "help"), "keyword help");
+
   // A bare "stop" while an approval waits is its NO, not the keyword.
   sqlite.prepare("UPDATE text_links SET approvals = '[\"p1\"]', approvals_at = ? WHERE user_id = ?").run(Date.now(), U);
   const outcome = await text(LINKED, "stop");

@@ -100,6 +100,14 @@ async function main() {
   eq("afterwards it's the free trial again", await text(on, FAN2, "hey what can you do"), "guest");
   eq("texting the code again", [await text(on, FAN2, "JAKE"), last(FAN2)], ["inbound", "You already answered this one, thanks!"]);
 
+  // An answer that's also a code ("what's your name?" "Jake") is an answer, not a restart.
+  await jake.callTool("inbound_create", { code: "NAMES", intro: "Hi!", questions: ["What's your name?", "Where are you?"] });
+  const FAN4 = "+15865550206";
+  await text(on, FAN4, "names");
+  await text(on, FAN4, "Jake");
+  eq("'Jake' was taken as the answer", last(FAN4), "Where are you?");
+  await jake.callTool("inbound_close", { code: "NAMES" });
+
   // STOP ends a screener midway.
   const FAN3 = "+15865550203";
   await text(on, FAN3, "JAKE");
@@ -113,7 +121,12 @@ async function main() {
     [FAN3, true, []],
   ]);
   eq("nobody else can read them", await maya.callTool("inbound_results", { code: "JAKE" }), { error: "They have no code JAKE." });
-  eq("counts per code", await jake.callTool("inbound_results", {}), { codes: [{ code: "JAKE", open: true, started: 2, finished: 2 }] });
+  eq("counts per code", await jake.callTool("inbound_results", {}), {
+    codes: [
+      { code: "JAKE", open: true, started: 2, finished: 2 },
+      { code: "NAMES", open: false, started: 1, finished: 0 },
+    ],
+  });
 
   // A daily cap per code.
   sqlite.prepare("UPDATE inbound_codes SET daily_cap = 2 WHERE code = 'JAKE'").run();
@@ -125,7 +138,7 @@ async function main() {
 
   // Nothing here texts first.
   const texted = new Set(out.sent.map((s) => s.to));
-  eq("only numbers that texted in were ever texted", [...texted].every((to) => [FAN, FAN2, FAN3, "+15865550204", "+15865550205"].includes(to)), true);
+  eq("only numbers that texted in were ever texted", [...texted].every((to) => [FAN, FAN2, FAN3, "+15865550204", "+15865550205", "+15865550206"].includes(to)), true);
 
   console.log(fails ? `\n${fails} failed` : "\nall passed");
   if (fails) process.exit(1);

@@ -21,10 +21,11 @@ type Block = { tools: ToolSpec[]; callTool: CallTool; prompt: string };
 export function blocksAssistant(env: Env, userId: string, _timeZone: string) {
   // Actions a block parked for approval this turn, handed to the app with the reply.
   const pending: PendingAction[] = [];
+  const browser = browserAssistant(env, userId, (action) => pending.push(action));
   const blocks: Block[] = [
     listsAssistant(env, userId),
     vaultAssistant(env, userId),
-    browserAssistant(env, userId, (action) => pending.push(action)),
+    browser,
     campaignsAssistant(env, userId, (action) => pending.push(action)),
     rulesAssistant(env, userId),
     inboundAssistant(env, userId),
@@ -42,6 +43,8 @@ export function blocksAssistant(env: Env, userId: string, _timeZone: string) {
     tools: blocks.flatMap((b) => b.tools),
     callTool,
     pending,
+    /** Frees what a turn opened (the browser session). Call once the turn is over. */
+    close: () => browser.close(),
     prompt: blocks
       .map((b) => b.prompt)
       .filter(Boolean)

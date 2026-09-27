@@ -49,6 +49,9 @@ export function refusedHost(host: string): string | null {
 /** The site a cookie list belongs to: the host they signed into, lowercased, no www. Pure. */
 export const siteOf = (host: string) => host.trim().toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
 
+/** Common two-part public suffixes a cookie must never be set for. */
+const PUBLIC_SUFFIXES = new Set(["co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp", "co.in", "com.br", "com.mx", "co.za", "com.cn", "com.tw", "com.sg", "co.kr"]);
+
 function cleanCookies(value: unknown, host: string): SiteCookie[] | null {
   if (!Array.isArray(value)) return null;
   const site = siteOf(host);
@@ -57,8 +60,10 @@ function cleanCookies(value: unknown, host: string): SiteCookie[] | null {
     if (!raw || typeof raw !== "object") continue;
     const c = raw as Record<string, unknown>;
     const domain = String(c.domain ?? "").toLowerCase().replace(/^\./, "");
-    // Only cookies for this site and its subdomains: nothing that would ride along to other sites.
-    if (!domain || !(domain === site || domain.endsWith(`.${site}`) || site.endsWith(`.${domain}`))) continue;
+    // Only cookies for this site and its subdomains, or a parent domain that is itself a real
+    // site (two labels or more, not a public suffix): nothing that would ride along to other sites.
+    const parentOk = site.endsWith(`.${domain}`) && domain.includes(".") && !PUBLIC_SUFFIXES.has(domain);
+    if (!domain || !(domain === site || domain.endsWith(`.${site}`) || parentOk)) continue;
     if (typeof c.name !== "string" || typeof c.value !== "string") continue;
     out.push({
       name: c.name.slice(0, 256),
