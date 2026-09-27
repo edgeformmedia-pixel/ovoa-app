@@ -6,6 +6,8 @@
 // the model either gives up or guesses, and both are worse than the slow prompt
 // we started with. So these check the words a person would really say.
 
+import { blocksAssistant } from "../src/blocks";
+import { setBrowserFactory } from "../src/browser";
 import { heartAssistant } from "../src/heart";
 import type { ToolSpec } from "../src/llm";
 import { phoneToolSpecs, type PhoneCaps } from "../src/phone";
@@ -226,6 +228,53 @@ const resumed = toolbelt(spokenAll, SPOKEN_CORE, spokenGuides);
 resumed.restore(["phone_reminder_complete", "no_such_tool"]);
 eq("restored by name", has(resumed.tools, "phone_reminder_complete"), true);
 eq("and only what exists", resumed.tools.some((x) => x.name === "no_such_tool"), false);
+
+// The building blocks (blocks.ts), with every flag on, behind the tools that
+// come before them in a real turn and share their words: plain requests name
+// them without a more_tools round (2026-09-27).
+setBrowserFactory(async () => {
+  throw new Error("never opened here");
+});
+const blockEnv = { CAMPAIGNS: "1", INBOUND_CODES: "1", BROWSER: {}, TOKEN_ENC_KEY: "k" } as unknown as Env;
+const withBlocks = [
+  t("gmail_send", "Sends an email."),
+  t("gmail_create_draft", "Drafts an email."),
+  t("phone_email_compose", "Opens an email."),
+  t("site_build", "Builds a website."),
+  t("site_change", "Changes a website."),
+  t("app_open", "Opens one of their apps."),
+  t("game_make", "Makes a game."),
+  t("alarm_list", "Lists alarms."),
+  t("routine_list", "Lists routines."),
+  t("agent_list_jobs", "Lists background jobs."),
+  ...blocksAssistant(blockEnv, "u", "UTC").tools,
+];
+const first = (said: string) => namedTools(withBlocks, said)[0]?.name;
+for (const [said, want] of [
+  ["let me know when tickets drop for the Bon Iver show", "watch_add"],
+  ["notify me when this page changes", "watch_add"],
+  ["keep an eye on the price of this jacket", "watch_add"],
+  ["tell me when the Nike site restocks", "watch_add"],
+  ["stop watching that page", "watch_remove"],
+  ["save my frequent flyer number", "vault_save"],
+  ["save my home address", "vault_save"],
+  ["what's my gym locker code", "vault_lookup"],
+  ["make a text-in code for my fans", "inbound_create"],
+  ["who answered my code", "inbound_results"],
+  ["you can text Sam without checking with me", "rule_add"],
+  ["stop auto approving emails", "rule_remove"],
+  ["go to the site and fill out the form", "browser_type"],
+  ["click the reserve button", "browser_click"],
+  ["show me my lists", "list_read"],
+]) {
+  eq(`"${said}" names ${want} first`, first(said), want);
+}
+eq("'how's the outreach going' brings campaign_status", has(namedTools(withBlocks, "how's the landlord outreach going"), "campaign_status"), true);
+eq("'open opentable' names browser_open", has(namedTools(withBlocks, "open opentable and book a table for 4"), "browser_open"), true);
+eq("'send this email to everyone' still names gmail_send", has(namedTools(withBlocks, "send this email to everyone on my list"), "gmail_send"), true);
+// "lists" names the list family, not every tool that lists something.
+eq("'my lists' doesn't name alarm_list", has(namedTools(withBlocks, "show me my lists"), "alarm_list"), false);
+eq("'list my alarms' still names alarm_list", has(namedTools(withBlocks, "list my alarms"), "alarm_list"), true);
 
 // more_tools is carried by every turn: it stays short.
 eq("more_tools is short", JSON.stringify(toolbelt(spokenAll, SPOKEN_CORE).tools.find((x) => x.name === "more_tools")).length <= 400, true);

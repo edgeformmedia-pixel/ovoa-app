@@ -228,6 +228,71 @@ const SYNONYMS: Record<string, string[]> = {
   buy: ["purchase", "budget"],
   purchase: ["purchase", "budget"],
   pay: ["purchase", "budget"],
+  // The building blocks (blocks.ts), which neither core carries. Without these a
+  // plain "tell me when tickets drop" paid a more_tools round (2026-09-27).
+  // Page watchers (watches.ts).
+  notify: ["watch", "add"],
+  alert: ["watch", "add"],
+  alerts: ["watch", "add"],
+  restock: ["watch", "add"],
+  restocks: ["watch", "add"],
+  restocked: ["watch", "add"],
+  drop: ["watch", "add"],
+  drops: ["watch", "add"],
+  eye: ["watch", "add"],
+  monitor: ["watch", "add"],
+  watching: ["watch"],
+  price: ["watch", "add"],
+  // Their vault (vault.ts): details to fill forms with.
+  passport: ["vault"],
+  flyer: ["vault"],
+  skymiles: ["vault"],
+  loyalty: ["vault"],
+  membership: ["vault"],
+  license: ["vault"],
+  licence: ["vault"],
+  plate: ["vault"],
+  locker: ["vault"],
+  wifi: ["vault"],
+  size: ["vault"],
+  sizes: ["vault"],
+  address: ["vault"],
+  // The same job over many (campaigns.ts).
+  blast: ["campaign"],
+  bulk: ["campaign"],
+  mass: ["campaign"],
+  everyone: ["campaign"],
+  outreach: ["campaign"],
+  newsletter: ["campaign"],
+  // Text-in codes for creators (inbound.ts).
+  fans: ["inbound"],
+  followers: ["inbound"],
+  screener: ["inbound"],
+  survey: ["inbound"],
+  questionnaire: ["inbound"],
+  answered: ["inbound", "results"],
+  responses: ["inbound", "results"],
+  respondents: ["inbound", "results"],
+  applicants: ["inbound"],
+  // Standing approvals (rules.ts): "you can text Sam without checking with me".
+  approve: ["rule"],
+  approving: ["rule"],
+  approval: ["rule"],
+  approvals: ["rule"],
+  permission: ["rule"],
+  checking: ["rule"],
+  // The browser (browser.ts), when it's on: "fill out the form on their site".
+  form: ["browser"],
+  forms: ["browser"],
+  fill: ["browser", "type"],
+  reserve: ["browser"],
+  reservation: ["browser"],
+  checkout: ["browser"],
+  // Generic words, which only break ties: "stop watching that page" is watch_remove,
+  // "stop the JAKE code" is inbound_close.
+  stop: ["remove", "close"],
+  make: ["create"],
+  show: ["read", "list"],
 };
 
 /** Words that say a request repeats, so it's a routine (namedTools). */
@@ -309,6 +374,7 @@ export function namedTools(catalogue: ToolSpec[], request: string, max = 2, pref
   for (const w of words(request)) {
     if (GENERIC.has(w)) {
       generic.add(w);
+      for (const s of SYNONYMS[w] ?? []) if (GENERIC.has(s)) generic.add(s);
       continue;
     }
     asked.add(w);
@@ -321,12 +387,15 @@ export function namedTools(catalogue: ToolSpec[], request: string, max = 2, pref
   const repeating = words(request).some((w) => REPEATING.has(w));
   // "notes" names note_add and "remind" names phone_reminder_create: a word of
   // five letters or more that begins the name's word, or that it begins. Five,
-  // not four: "time" must not name location_timeline.
-  const names = (n: string) => asked.has(n) || (n.length > 3 && [...asked].some((w) => w.length > 4 && (n.startsWith(w) || w.startsWith(n))));
+  // not four: "time" must not name location_timeline. A generic part is only
+  // matched this way when it's the tool's family (its first word): "my lists"
+  // names list_read, not every alarm_list and routine_list in the catalogue.
+  const stem = (n: string) => n.length > 3 && [...asked].some((w) => w.length > 4 && (n.startsWith(w) || w.startsWith(n)));
   return (
     catalogue
       .map((tool) => {
         const parts = words(tool.name);
+        const names = (n: string, i: number) => asked.has(n) || ((i === 0 || !GENERIC.has(n)) && stem(n));
         // A generic word only breaks ties: "cancel my alarm" puts alarm_cancel
         // ahead of alarm_list, and "send" alone names nothing.
         const bonus = repeating && parts.includes("routine") ? 1 : 0;
