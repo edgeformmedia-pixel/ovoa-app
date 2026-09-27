@@ -229,6 +229,30 @@ export async function recentOutlookMail(env: Env, userId: string, max = 25) {
   }
 }
 
+/** Their busy times between two instants, as [start, end] ms: what isn't shown as free (meetings.ts). */
+export async function outlookBusy(env: Env, userId: string, from: number, to: number): Promise<[number, number][]> {
+  const { value = [] } = await graph<{ value?: { start?: { dateTime?: string }; end?: { dateTime?: string }; showAs?: string; isAllDay?: boolean }[] }>(
+    env,
+    userId,
+    `/me/calendarView?startDateTime=${encodeURIComponent(new Date(from).toISOString())}&endDateTime=${encodeURIComponent(new Date(to).toISOString())}&$top=100&$select=start,end,showAs,isAllDay`,
+  );
+  // No time zone asked for, so Graph answers in UTC. An all-day event only counts when it says out of office.
+  return value
+    .filter((e) => e.start?.dateTime && e.end?.dateTime && e.showAs !== "free" && (!e.isAllDay || e.showAs === "oof"))
+    .map((e) => [Date.parse(`${e.start!.dateTime!.slice(0, 19)}Z`), Date.parse(`${e.end!.dateTime!.slice(0, 19)}Z`)]);
+}
+
+/** The newest email from `email` since an instant, with its text (meetings.ts). */
+export async function outlookMailFrom(env: Env, userId: string, email: string, since: number): Promise<{ id: string; text: string } | null> {
+  const found = (await run(env, userId, "UTC", "outlook_search", { query: email, max: 5 })) as { messages?: { id: string; from: string; received?: string }[] };
+  const fresh = (found.messages ?? [])
+    .filter((m) => m.from.toLowerCase().includes(email.toLowerCase()) && Date.parse(m.received ?? "") > since)
+    .sort((a, b) => Date.parse(b.received ?? "") - Date.parse(a.received ?? ""))[0];
+  if (!fresh) return null;
+  const read = (await run(env, userId, "UTC", "outlook_read", { id: fresh.id })) as { body?: string };
+  return { id: fresh.id, text: String(read.body ?? "").slice(0, 1500) };
+}
+
 /** Whether they have Outlook connected (and it's switched on). */
 export async function hasOutlook(env: Env, userId: string) {
   return microsoftOn(env) && !!(await microsoftAccount(env.DB, userId).catch(() => null));

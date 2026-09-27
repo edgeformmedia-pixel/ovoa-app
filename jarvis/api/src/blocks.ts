@@ -10,6 +10,7 @@ import type { PendingAction } from "./google/assistant";
 import type { CallTool, ToolSpec } from "./llm";
 import { inboundAssistant, isInboundTool } from "./inbound";
 import { invitesAssistant, inviteRoutes, isInviteTool } from "./invites";
+import { isMeetingTool, meetingsAssistant } from "./meetings";
 import { isListTool, listsAssistant } from "./lists";
 import type { Env, Vars } from "./types";
 import { isRuleTool, ruleRoutes, rulesAssistant } from "./rules";
@@ -19,7 +20,7 @@ import { isWatchTool, watchesAssistant } from "./watches";
 
 type Block = { tools: ToolSpec[]; callTool: CallTool; prompt: string };
 
-export function blocksAssistant(env: Env, userId: string, _timeZone: string) {
+export function blocksAssistant(env: Env, userId: string, timeZone: string) {
   // Actions a block parked for approval this turn, handed to the app with the reply.
   const pending: PendingAction[] = [];
   const browser = browserAssistant(env, userId, (action) => pending.push(action));
@@ -32,6 +33,7 @@ export function blocksAssistant(env: Env, userId: string, _timeZone: string) {
     inboundAssistant(env, userId),
     watchesAssistant(env, userId),
     invitesAssistant(env, userId),
+    meetingsAssistant(env, userId, timeZone, (action) => pending.push(action)),
   ];
   const owner = new Map<string, Block>();
   for (const block of blocks) for (const tool of block.tools) owner.set(tool.name, block);
@@ -56,7 +58,7 @@ export function blocksAssistant(env: Env, userId: string, _timeZone: string) {
 
 /** Every name a block can offer, whether or not it's switched on for this person. */
 export const isBlockTool = (name: string) =>
-  isListTool(name) || isVaultTool(name) || isBrowserTool(name) || isCampaignTool(name) || isRuleTool(name) || isInboundTool(name) || isWatchTool(name) || isInviteTool(name);
+  isListTool(name) || isVaultTool(name) || isBrowserTool(name) || isCampaignTool(name) || isRuleTool(name) || isInboundTool(name) || isWatchTool(name) || isInviteTool(name) || isMeetingTool(name);
 
 /** The blocks' app routes, mounted once on the signed-in router (index.ts). */
 export const blockRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();

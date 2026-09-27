@@ -95,6 +95,7 @@ import { extrasAssistant, extrasTick, isExtrasTool } from "./extras";
 import { blockRoutes, blocksAssistant, isBlockTool } from "./blocks";
 import { campaignsTick, campaignsWaiting } from "./campaigns";
 import { watchesTick, watchesWaiting } from "./watches";
+import { meetingsTick, meetingsWaiting } from "./meetings";
 import { rulesFor } from "./rules";
 import { relearnAccounts } from "./google/routing";
 import { alarmAssistant, alarms, isAlarmTool, nagTick } from "./alarms";
@@ -3772,6 +3773,14 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
       await part("watches", watchesTick(env));
       await release(env, "watches", held);
     })();
+    // Replies to times offered by email (meetings.ts), about hourly each.
+    const meetingsLane = (async () => {
+      if (!(await meetingsWaiting(env.DB).catch(() => false))) return;
+      const held = await lease(env, "meetings", CLOCK_LANE_MS);
+      if (!held) return;
+      await part("meetings", meetingsTick(env));
+      await release(env, "meetings", held);
+    })();
     const slow = await lease(env, "slow", SLOW_LANE_MS);
     if (slow) {
       // Each person is swept on one tick in five (sweep.ts).
@@ -3795,6 +3804,7 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
     await networkLane;
     await campaignsLane;
     await watchesLane;
+    await meetingsLane;
   }
 
   const ms = Date.now() - started;
