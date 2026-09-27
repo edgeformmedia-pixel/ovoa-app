@@ -488,3 +488,13 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 - 2026-09-27 14:25 UTC (local session): check after tasks 25 to 28 (ff9491a): smoke.sh on fresh local state 439 / 1 (only "the
   server wants the second wording"), scheduled ticks errors=0; texting-smoke.mjs all 28 passed. Task 31 stays open to
   run once more after task 24.
+- 2026-09-27 14:37 UTC (local session): a third reviewer read fa80395..4f48a1a (receipts, trips, voice replies, meetings):
+  eight findings, all fixed with tests in 3a6bda5. Meetings: the row is 'offered' until the offer email is actually sent
+  (a new meeting_offer approval sends it and starts the watching; a NO leaves it unwatched), meet_propose is in
+  FORBIDDEN_FOR_COMMANDS and a standing rule only sends from someone's single account, the unclear-reply text no longer
+  quotes the other person (reach saves it as OVOA's own words), the Google invite is an ISO instant, each offered time
+  carries its own zone abbreviation (DST weeks). Trips: the off switch is exempt from the daily_marks purge, deliveries
+  further out aren't marked (so "arriving tomorrow" still counts), flight and booking times use the email's place zone
+  when the model gives one, titles are cleaned. Receipts: spend takes the receipt's date, only a same-category budget
+  counts it (not "anything"), and one matching an approved purchase in that budget isn't counted twice. Migration 0074
+  changed (new columns and statuses); it isn't applied anywhere yet. 79 test files pass, tsc clean.
