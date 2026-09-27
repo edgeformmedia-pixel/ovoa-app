@@ -98,7 +98,24 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       Deepgram/voice pieces that exist. No code that needs keys.
 - [~] claimed 2026-09-27T12:21Z by local session. 12. **App screens** (jarvis/app, Expo SDK 57, read its docs first): Vault, Campaigns, Approval rules, only for
       API parts that landed. Typecheck the app. Never trigger Codemagic.
-- [ ] 13. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
+- [ ] 13. **Page watchers** ("tell me when tickets drop", "watch this price"): tools `watch_add` (url, what to look
+      for in plain words, how often: hourly | daily, until when, max 10 active per person), `watch_list`, `watch_remove`;
+      a new table; the existing 2-minute cron checks due watches with fetch_url (fetchurl.ts) and a cheap model call
+      comparing the page to the last check against "what to look for"; when it's met, OVOA tells them (reach.ts: a text
+      if they text OVOA, else a push) and the watch ends unless told to keep going. Read-only: a watch never buys,
+      books or sends anything to anyone but its owner. Respect plan tiers the way agent jobs do (check agent.ts for how
+      background work is gated) and count its model calls through the model gate. Tests with a fake fetch.
+- [ ] 14. **Opt-in inbound ("text my AI") for creators**: a person makes a public code (e.g. "JAKE"). Anyone who texts
+      that code to OVOA's line is opted in and gets the owner's short screener (up to 5 questions the owner set), asked
+      one at a time by OVOA in the guest flow (guest.ts / texting.ts receive, before the free trial), answers saved per
+      respondent; the owner can ask "who answered?" (tool) and gets a ranked summary; a respondent can text STOP anytime
+      (keywords.ts). OVOA never texts anyone who didn't text the code first, never shares respondents' numbers with
+      anyone but the owner, caps respondents per code per day (e.g. 1,000), and the owner's plan pays for the model
+      calls. Off unless var INBOUND_CODES=1. Tests through texting.ts receive with a fake sender.
+- [ ] 15. **What OVOA can do (owner doc)**: write docs/capabilities.md: a plain list of everything OVOA can do now
+      (existing features plus this branch's), grouped for a person, each with one example text, and what is off until
+      a switch or key (with the switch). No em dashes. Useful for the site and influencer briefs.
+- [ ] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 
 ## Needs the owner
