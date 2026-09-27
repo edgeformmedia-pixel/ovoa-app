@@ -173,7 +173,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       trip with a check-in reminder 24 hours before and a leave-for-the-airport text using the existing commute
       timing; a delivery due today goes in the morning brief. Never clicks links, never replies, never changes a
       booking. Dedupe by message id; the person can say "stop reading my email for trips". Tests with fake mail.
-- [ ] 27. **Receipts into money** (from task 21): a photo texted to OVOA that describeImage reads as a receipt (total,
+- [~] claimed 2026-09-27T14:00Z by local session. 27. **Receipts into money** (from task 21): a photo texted to OVOA that describeImage reads as a receipt (total,
       merchant, date) is offered as a spend entry ("Log $42.10 at Trader Joe's to groceries?"); YES records it in
       money.ts the way money_update does, and it counts against a matching budget (budget.ts) for the period. Never
       stores card digits from the photo (strip anything that looks like a card or account number before saving).
