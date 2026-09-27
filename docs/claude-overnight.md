@@ -48,7 +48,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       can't run up unbounded cost; over the cap, reply with the existing "Get Base" style text. Tests.
 - [x] 3. **Saved lists**: `list_save` / `list_read` tools backed by a new D1 table (user_id, name, rows JSON, unique
       per user+name, ~5,000 row cap, size cap). Lets OVOA build a list across steps and reuse it later. Tests.
-- [ ] 4. **Vault**: encrypted personal details OVOA uses when booking or filling forms (addresses, loyalty and
+- [~] claimed 2026-09-27T11:23Z by local session. 4. **Vault**: encrypted personal details OVOA uses when booking or filling forms (addresses, loyalty and
       frequent-flyer numbers, sizes, seat preferences, car). AES-GCM via existing `crypto.ts` / `TOKEN_ENC_KEY`.
       Tools `vault_lookup` / `vault_save`; refuse card numbers, bank or routing numbers, SSNs, passwords, one-time
       codes. Never write values to action_log or logs. Authed routes GET/POST/PATCH/DELETE `/vault`. Friends and
