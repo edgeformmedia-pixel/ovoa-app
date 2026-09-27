@@ -112,7 +112,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       (keywords.ts). OVOA never texts anyone who didn't text the code first, never shares respondents' numbers with
       anyone but the owner, caps respondents per code per day (e.g. 1,000), and the owner's plan pays for the model
       calls. Off unless var INBOUND_CODES=1. Tests through texting.ts receive with a fake sender.
-- [~] claimed 2026-09-27T12:31Z by local session. 15. **What OVOA can do (owner doc)**: write docs/capabilities.md: a plain list of everything OVOA can do now
+- [x] 15. **What OVOA can do (owner doc)**: write docs/capabilities.md: a plain list of everything OVOA can do now
       (existing features plus this branch's), grouped for a person, each with one example text, and what is off until
       a switch or key (with the switch). No em dashes. Useful for the site and influencer briefs.
 - [ ] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
@@ -187,3 +187,4 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - 2026-09-27 12:21 UTC (local session): task 11 done in 7fdc0ba (docs/server-calls.md, design only, needs a provider).
 - 2026-09-27 12:31 UTC (local session): task 14 done in 03166e9. Text-in codes; 71 test files pass, tsc clean; texting smoke 6 = main.
 - 2026-09-27 12:32 UTC (local session): task 12 done in 3705128. App screens; app tsc clean (jarvis/app npx tsc --noEmit). Codemagic only builds main, so this branch starts no build.
+- 2026-09-27 12:33 UTC (local session): task 15 done in 9b731e4: docs/what-ovoa-can-do.md (docs/capabilities.md is an older pendant-era note, left alone).
