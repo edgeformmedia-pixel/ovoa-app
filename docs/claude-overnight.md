@@ -115,7 +115,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - [x] 15. **What OVOA can do (owner doc)**: write docs/capabilities.md: a plain list of everything OVOA can do now
       (existing features plus this branch's), grouped for a person, each with one example text, and what is off until
       a switch or key (with the switch). No em dashes. Useful for the site and influencer briefs.
-- [~] claimed 2026-09-27T12:56Z by scheduled session. 17. **Green smoke suites**: `test/smoke.sh` and `test/texting-smoke.mjs` each have 6 failures on main itself (see the
+- [x] 17. **Green smoke suites**: `test/smoke.sh` and `test/texting-smoke.mjs` each have 6 failures on main itself (see the
       log): expectations written before main's own later changes (Base 15 replies a day and the Plus tier, strangers
       getting the free trial instead of "how to link", message counts). Update ONLY those expectations to main's
       current intended behavior, reading the commits that changed it (git log -S on the strings) to be sure; never
@@ -135,7 +135,9 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 
 ## Needs the owner
 
-- test/smoke.sh has 6 stale expectations on main itself (see log 11:30). Update smoke.sh on main when convenient.
+- Smoke suites (task 17): this branch updates test/smoke.sh and test/texting-smoke.mjs to main's current behavior; bring
+  them to main with the branch (or cherry-pick ba73df0 alone). smoke.sh still fails "the server wants the second wording"
+  until 10f1fd2 (consent version bump, branch backup/local-consent-2026-09-24) reaches main.
 
 - Nothing for task 1: fetch_url needs no key, binding or library.
 - Task 2: apply migration `0060_guest_daily.sql` (the normal `npm run db:migrate` before deploy does it). Optional var
@@ -145,7 +147,6 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - Task 5: apply migration `0063_do_not_contact.sql`. Optional var `SENDBLUE_CONTACT_SHARING=1` makes CARD also call
   Sendblue's contact sharing; first set OVOA's iMessage profile once in Sendblue (POST /api/v2/contact-sharing/profile
   with fromNumber, firstName "OVOA", photoUrl to a public PNG/JPEG of the logo).
-- test/texting-smoke.mjs has 6 stale expectations on main itself (same 6 on this branch; pre-free-trial behavior).
 - Task 7, to switch the browser on (checked on this branch: the adapter typechecks against @cloudflare/puppeteer 1.4.0
   and a Worker with it bundles to 3 MB with --dry-run):
   1. `cd jarvis/api && npm i @cloudflare/puppeteer`
@@ -217,3 +218,16 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   generic name part is stem-matched only as a tool's family, so "my lists" names list_read instead of every *_list tool.
   toolbelt.test.ts checks 20 phrases against the real block tools. One full `npm test` run of four had a single file
   fail and three were clean at 72/72; the failing file didn't reproduce (timing flake, not this change's files).
+- 2026-09-27 13:10 UTC (scheduled session): task 17 done in ba73df0. origin/main unchanged since 16c2deb.
+  texting-smoke.mjs: before 6 failed, after all passed (fresh --persist-to). Updated per 45c79b9/6c7cb25: linking sends
+  two texts plus the contact card (now checked to be last), strangers get the free trial (locally the model is missing, so
+  the trial's sorry text, and the text is given back so the next one is answered too), counts +1, unlinked number is a guest.
+  smoke.sh: updated per 3b720e9 (Base 15 replies, features.agent false, agent jobs 402 needing plus; added a Plus step
+  proving 30 replies, every feature, and a 201 job so the guard is still exercised) and 16c2deb (spent replies stop every
+  model call: 429). Before 424 passed / 9 failed, after 408 / 37 with the real config, 438 / 1 without RL_AUTH. The extra
+  failures are NOT expectation problems: this container runs the suite fast enough to pass RL_AUTH's 10 sign-ins per
+  minute per address, and the 429s cascade (Google/Apple sign-in, the retention section's signup). With RL_AUTH removed
+  from a throwaway config copy only "the server wants the second wording" fails, as intended. Owner: on a fast machine
+  the suite may want a pause or a per-run cf-connecting-ip; left alone (not a stale expectation). 72 test files pass.
+  Side note for the owner: guest.ts takes a guest_daily slot before the model call and does not give it back when the
+  model fails (the per-number count is given back). Harmless at the 2000 default; noted, not changed.
