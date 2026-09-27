@@ -153,7 +153,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       friend. A stranger's text naming "@tigh sent me" is remembered (one inviter per number); when that number links an
       account the inviter is told once. invite_friend tool, GET /invites, an app screen with the Share sheet. Rewards
       are the owner's call (not built). Migration 0071.
-- [ ] 24. **Shared lists with Friends** (from task 21, docs/instinct-parity.md): "share my grocery list with Maria".
+- [~] claimed 2026-09-27T14:56Z by scheduled session 24. **Shared lists with Friends** (from task 21, docs/instinct-parity.md): "share my grocery list with Maria".
       A saved list (lists.ts) can be shared with a Friend whose access level is Partner or Best friend (network.ts
       ACCESS_LEVELS; add a switch in Advanced rather than widening Basic). Both people's OVOAs can list_read it and
       add or tick rows; the owner can unshare. A Friend below that level, or a disconnected one, reads nothing. New
