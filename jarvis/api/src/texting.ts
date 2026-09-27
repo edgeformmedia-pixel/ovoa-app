@@ -983,7 +983,7 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
     // Not linked: the free trial (guest.ts), no account needed.
     if (!(await record(db, m, "guest", null, now))) return { outcome: "duplicate" };
     const out = deps.sender(m.line);
-    const work = guestText(env, m.from, m.content, (t) => out.text(m.from, t), now, deps.guestWrite).then(
+    const work = guestText(env, m.from, m.content, (t, media) => out.text(m.from, t, media), now, deps.guestWrite).then(
       (outcome) => void say("text", { outcome }),
       (err) => void console.error("ovoa.err guest text", err),
     );

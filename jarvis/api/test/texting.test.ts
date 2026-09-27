@@ -311,7 +311,8 @@ async function main() {
   // A number nobody linked gets the free trial: FREE AI replies, FREE more for an email, then Base.
   const G = { from_number: "+15865550999" };
   eq("a number nobody linked", await text("hello", deps(), G), "guest");
-  eq("gets an AI reply", out.sent.at(-1)?.content, "guest reply 1");
+  eq("gets an AI reply", out.sent.at(-2)?.content, "guest reply 1");
+  eq("then the contact card", out.sent.at(-1)?.media?.endsWith("/texting/contact.vcf"), true);
   eq("to that number", out.sent.at(-1)?.to, "+15865550999");
   for (let i = 2; i <= FREE; i++) await text(`hi ${i}`, deps(), G);
   eq("the last free reply follows the conversation", out.sent.at(-2)?.content, `guest reply ${FREE}`);

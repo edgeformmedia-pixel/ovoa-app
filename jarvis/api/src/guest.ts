@@ -2,6 +2,7 @@
 // The first FREE texts get real AI replies; then an automated (no AI) text
 // asks for their email, which is worth FREE more; after that an automated
 // text sends them to Base. The counts are per phone number.
+import { CONTACT_CARD_PATH } from "./contactcard";
 import { generateText } from "./llm";
 import { say } from "./obs";
 import type { Env } from "./types";
@@ -46,7 +47,7 @@ export async function guestText(
   env: Env,
   phone: string,
   content: string,
-  send: (text: string) => Promise<boolean>,
+  send: (text: string, media?: string) => Promise<boolean>,
   now = Date.now(),
   /** Writes the AI reply; tests stand in for the model here. */
   write: (turns: Turn[]) => Promise<string> = (turns) =>
@@ -104,6 +105,8 @@ export async function guestText(
   const next = [...history, { role: "user", text }, { role: "model", text: reply }].slice(-HISTORY_TURNS);
   await db.prepare("UPDATE text_guests SET history = ? WHERE phone = ?").bind(JSON.stringify(next), phone).run();
   await send(reply);
+  // Their first reply brings OVOA's contact card, so they can save it with its name and logo.
+  if (used === 1) await send("OVOA", `https://api.ovoa.ai${CONTACT_CARD_PATH}`);
 
   if (used >= limit) {
     await db.prepare("UPDATE text_guests SET told_at = ? WHERE phone = ?").bind(now, phone).run();
