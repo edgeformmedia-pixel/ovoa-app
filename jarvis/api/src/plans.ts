@@ -554,13 +554,23 @@ export function allowanceMessage(a: Allowance, now: number, timeZone: string) {
     : `I've used up today's allowance on your plan, so I'll pick up again ${when}.`;
 }
 
-/** What today (UTC, like usage_daily) has cost this person so far, in micro-dollars. */
-async function spentToday(env: Env, userId: string, now = Date.now()) {
-  const row = await env.DB.prepare("SELECT COALESCE(SUM(est_micro_usd), 0) AS micro FROM usage_daily WHERE user_id = ? AND day = ?")
+/** What today (UTC, like usage_daily) has used so far: answered replies, and cost in micro-dollars. */
+async function usedToday(env: Env, userId: string, now = Date.now()) {
+  const row = await env.DB.prepare(
+    "SELECT COALESCE(SUM(CASE WHEN kind = 'turn' THEN n END), 0) AS turns, COALESCE(SUM(est_micro_usd), 0) AS micro FROM usage_daily WHERE user_id = ? AND day = ?",
+  )
     .bind(userId, new Date(now).toISOString().slice(0, 10))
-    .first<{ micro: number }>();
-  return row?.micro ?? 0;
+    .first<{ turns: number; micro: number }>();
+  return { turns: row?.turns ?? 0, micro: row?.micro ?? 0 };
 }
+
+/**
+ * Whether today is used up, by either measure: the day's replies or its spend.
+ * Once it is, nothing more runs on AI for this person until the reset: not a
+ * text, not a cron job, not a game or a site (2026-09-27, a hard cut-off).
+ */
+const dayUsedUp = (tier: Tier, used: { turns: number; micro: number }) =>
+  used.turns >= ALLOWANCES[tier].replies || used.micro >= spendStopMicro(tier);
 
 /**
  * For work nobody asked for this minute (the cron, a workout summary): null
@@ -575,7 +585,7 @@ export async function blockedFor(env: Env, userId: string, need: Tier): Promise<
     if (!loaded || !atLeast(loaded.plan.tier, need)) return "plan";
     if ((await aiConsentFor(env, userId)) !== "given") return "consent";
     if (isDevEmail(env, loaded.email)) return null;
-    return (await spentToday(env, userId)) < spendStopMicro(loaded.plan.tier) ? null : "allowance";
+    return dayUsedUp(loaded.plan.tier, await usedToday(env, userId)) ? "allowance" : null;
   } catch (err) {
     console.error("ovoa.err plan: couldn't check a plan for background work", err);
     return "plan";
@@ -601,12 +611,12 @@ export function lazyCheck(env: Env, userId: string, need: Tier) {
 // Three questions, in order:
 //
 //   1. The plan. Free never reaches a model: needs_plan.
-//   2. Today's spend, against the plan's line (spendStopMicro): allowance. The
-//      spend only, never the daily replies: those are counted where a turn
-//      starts (index.ts chatTurn), so the reply that uses the last one still
-//      gets its memory update, and a paused turn can still finish. A resumed
-//      turn (GateCall.continuing) isn't asked about the spend at all: it was let
-//      in when it began. Development accounts have no line.
+//   2. Today's allowance, used up by replies (the plan's daily count) or by
+//      spend (spendStopMicro): allowance. Since 2026-09-27 this is a hard
+//      cut-off: once the day's replies are gone, no AI runs for that person at
+//      all (texts, crons, games, sites) until the reset. A resumed turn
+//      (GateCall.continuing) isn't asked: it was let in when it began.
+//      Development accounts have no line.
 //   3. Consent (consent.ts aiConsentFor): needs_consent until they've agreed.
 //
 // The crons ask the same questions first through blockedFor and friends, and
@@ -624,11 +634,11 @@ export async function modelGate(env: Env, call: GateCall, now = Date.now()): Pro
   const loaded = await loadPlan(env, call.userId);
   if (!loaded || !atLeast(loaded.plan.tier, "base")) return "needs_plan";
   if (!call.continuing && !isDevEmail(env, loaded.email)) {
-    const spent = await spentToday(env, call.userId, now).catch((err: unknown) => {
-      console.error("ovoa.err plan: couldn't read today's spend for a model call; letting it through", err);
-      return 0;
+    const used = await usedToday(env, call.userId, now).catch((err: unknown) => {
+      console.error("ovoa.err plan: couldn't read today's usage for a model call; letting it through", err);
+      return { turns: 0, micro: 0 };
     });
-    if (spent >= spendStopMicro(loaded.plan.tier)) {
+    if (dayUsedUp(loaded.plan.tier, used)) {
       say("plan", { outcome: "refused", user: call.userId, why: "allowance", purpose: call.purpose });
       return "allowance";
     }
