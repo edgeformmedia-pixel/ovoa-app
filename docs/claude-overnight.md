@@ -172,6 +172,18 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       say (fresh --persist-to, local only) and record the counts. The only allowed failure is "the server wants the
       second wording". If the auth rate limit trips on a fast machine, re-run after a minute and say so. Fix anything
       else the branch broke, with a test.
+- [ ] 32. **One guide per block**: index.ts hands the building blocks' instructions over as ONE guide
+      (`blocks: { tools: blockTools.tools, prompt: blockTools.prompt }`), so preloading any one block tool (list_read,
+      watch_add...) brings every block's instructions into the prompt. Give each block its own guide (blocks.ts can
+      return `guides: ToolGuide[]`, one per block with its tools and prompt) so only the used block's text rides
+      along. Test with toolbelt(): preloading list_read carries the lists guide and not the vault/campaigns/meetings
+      ones. Behavior otherwise unchanged; all tests pass.
+- [ ] 33. **Prompt budget check**: measure what an ordinary typed turn and an ordinary spoken turn carry before
+      the model's first word (system prompt characters plus tool JSON) on untouched main 16c2deb and on this branch,
+      for a user with nothing new switched on and for one with Outlook and every flag on. Ordinary turns must not have
+      grown by more than a few hundred characters; if they did, find what (a guide carried when it shouldn't be, a
+      core tool's description) and trim it. Record the numbers in the log. Use a script under jarvis/api/scripts
+      that builds the prompt locally without calling any model (no network).
 - [x] 16. **Final report** (ONLY once every task above is [x]; if any is still claimed, log "waiting for N" and stop): update this file: what shipped (commits), what needs the owner (bindings, libraries,
       secrets, migrations to apply, deploy order), proposed contextforclaude.txt lines, and a short phone test plan.
 - [x] 25. **Scheduling with people not on OVOA** (from task 21): "find a time with dana@x.com next week". OVOA reads the
