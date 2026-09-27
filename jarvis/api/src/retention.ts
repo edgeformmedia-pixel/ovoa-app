@@ -383,6 +383,8 @@ export const TABLES = {
   text_groups: "delete",
   // Their own saved lists (lists.ts): theirs until they delete them.
   user_lists: "keep",
+  // Who a list is shared with (lists.ts): goes with the list, the unshare, or either account.
+  list_shares: "keep",
   // Their vault (vault.ts): encrypted details they chose to keep.
   vault_items: "keep",
   // Numbers that texted STOP (keywords.ts): kept so OVOA never texts them first again.

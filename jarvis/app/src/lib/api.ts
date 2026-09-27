@@ -392,6 +392,8 @@ export type ConnectionPerms = {
   calendarDetails: boolean;
   shareLocation: boolean;
   answerFromMemory: boolean;
+  /** Their OVOA may read, add to and tick lists shared with them (api/src/lists.ts). */
+  shareLists: boolean;
   shareNote: string;
   level: AccessLevel | "custom";
 };

@@ -315,6 +315,8 @@ const GENERIC = new Set([
   "read", "write", "run", "start", "stop", "new", "find", "search", "phone", "tool", "tools",
   // invite_friend's words: "invite Sarah to lunch" and "my friend Jake" aren't about inviting anyone to OVOA.
   "invite", "friend",
+  // list_tick's verb: "tickets" must not name it.
+  "tick",
 ]);
 
 /** How many tools one more_tools call is allowed to bring in. */

@@ -6,13 +6,24 @@
 // can't hold that in one turn; this holds it. Plain objects only, capped so one
 // list can't grow without end, and read back in pages under the 6,000-character
 // tool-result cap (llm.ts).
+//
+// Shared lists (2026-09-27): the owner can share a list with a Friend whose
+// access (network.ts, shareLists: Best friend and up, or its own switch under
+// Advanced) allows it. That Friend's OVOA can read it, add rows and tick them;
+// never replace, delete or reshare it. Access is checked on every call, so a
+// lower level or a disconnect shuts it at once. Adding never tells anyone
+// unless the owner asked to be told.
 
 import type { CallTool, ToolSpec } from "./llm";
+import { connectedByUsername, mayShareLists } from "./network";
+import { reach } from "./reach";
 import type { Env } from "./types";
 
 export const MAX_LIST_ROWS = 5_000;
 export const MAX_LIST_BYTES = 1_000_000;
 export const MAX_LISTS = 100;
+/** Friends one list can be shared with. */
+export const MAX_SHARES_PER_LIST = 10;
 const READ_CHARS = 5_000;
 
 type Row = Record<string, unknown>;
@@ -28,6 +39,7 @@ const TOOLS: ToolSpec[] = [
         name: { type: "string", description: "Short name for the list, e.g. 'austin dentists'." },
         rows: { type: "array", items: { type: "object" }, description: "The rows." },
         mode: { type: "string", enum: ["replace", "append"] },
+        from: { type: "string", description: "A Friend's @username, to add to a list they shared with them (append only)." },
       },
       required: ["name", "rows"],
     },
@@ -41,7 +53,47 @@ const TOOLS: ToolSpec[] = [
       properties: {
         name: { type: "string" },
         offset: { type: "number", description: "Row to start from." },
+        from: { type: "string", description: "A Friend's @username, for a list that Friend shared with them." },
       },
+    },
+  },
+  {
+    name: "list_tick",
+    description:
+      "Ticks a row of one of their lists, or of a list a Friend shared with them, as done (or undone with done: false). Name the row by words in it (match) or its position from 0 (index).",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        match: { type: "string", description: "Words in the row, e.g. 'milk'." },
+        index: { type: "number", description: "Position from 0 (offset plus place in rows)." },
+        done: { type: "boolean", description: "Default true." },
+        from: { type: "string", description: "A Friend's @username, for a list that Friend shared with them." },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "list_share",
+    description:
+      "Shares one of their saved lists with a Friend (@username) so both OVOAs can read it, add to it and tick things off. Needs that Friend at Best friend or Partner, or the Share lists switch. tellMe: they want a note when the Friend adds to it.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        username: { type: "string", description: "The Friend's username, e.g. maria" },
+        tellMe: { type: "boolean" },
+      },
+      required: ["name", "username"],
+    },
+  },
+  {
+    name: "list_unshare",
+    description: "Stops sharing one of their lists with a Friend (@username).",
+    parameters: {
+      type: "object",
+      properties: { name: { type: "string" }, username: { type: "string" } },
+      required: ["name", "username"],
     },
   },
   {
@@ -111,8 +163,75 @@ export async function readList(db: D1Database, userId: string, name: string) {
   return row ? { name: row.name, rows: parseRows(row.rows) } : null;
 }
 
-export function listsAssistant(env: Env, userId: string) {
+/** A list someone may reach: their own, or one a Friend shared with them. */
+type Target = { ownerId: string; name: string; share: { from: string; ownerName: string; tellOwner: boolean } | null };
+
+type SharedRow = { owner_id: string; name: string; tell_owner: number; username: string | null; owner_name: string };
+
+/** Lists shared with `friendId` whose owners still allow it (connected, shareLists on). */
+async function sharedWith(db: D1Database, friendId: string, name?: string) {
+  const { results } = await db
+    .prepare(
+      `SELECT s.owner_id, l.name, s.tell_owner, u.username, u.name AS owner_name FROM list_shares s
+         JOIN user_lists l ON l.user_id = s.owner_id AND l.name = s.name
+         JOIN users u ON u.id = s.owner_id
+        WHERE s.friend_id = ?${name ? " AND s.name = ?" : ""} ORDER BY l.updated_at DESC`,
+    )
+    .bind(...(name ? [friendId, name] : [friendId]))
+    .all<SharedRow>();
+  const out: SharedRow[] = [];
+  for (const r of results) if (await mayShareLists(db, r.owner_id, friendId)) out.push(r);
+  return out;
+}
+
+const asTarget = (r: SharedRow): Target => ({
+  ownerId: r.owner_id,
+  name: r.name,
+  share: { from: `@${r.username}`, ownerName: r.owner_name, tellOwner: !!r.tell_owner },
+});
+
+/**
+ * Which list a call means: with `from`, only a list that Friend shared with
+ * them and still allows; without, their own, or else the one shared list by
+ * that name. The same "no list" answer whatever the reason, so nothing about a
+ * Friend's lists shows unless it's shared.
+ */
+async function resolve(db: D1Database, userId: string, listName: string, from: unknown, ownFirst = true): Promise<Target | { error: string }> {
+  const missing = { error: `They have no list called "${listName}".` };
+  const fromName = String(from ?? "").trim();
+  if (fromName) {
+    const friend = await connectedByUsername(db, userId, fromName);
+    if (!friend) return { error: `No list called "${listName}" is shared with them by @${fromName.replace(/^@/, "")}.` };
+    const [row] = await sharedWith(db, userId, listName).then((rs) => rs.filter((r) => r.owner_id === friend.id));
+    return row ? asTarget(row) : { error: `No list called "${listName}" is shared with them by @${friend.username}.` };
+  }
+  if (ownFirst) {
+    const own = await db.prepare("SELECT name FROM user_lists WHERE user_id = ? AND name = ?").bind(userId, listName).first<{ name: string }>();
+    if (own) return { ownerId: userId, name: own.name, share: null };
+  }
+  const shared = await sharedWith(db, userId, listName);
+  if (shared.length === 1) return asTarget(shared[0]!);
+  if (shared.length > 1) return { error: `More than one Friend shared a "${listName}" list with them (${shared.map((r) => `@${r.username}`).join(", ")}). Say whose with from.` };
+  return missing;
+}
+
+/** Tests pass their own way of telling the owner. */
+export type ListsIo = { tell?: (env: Env, ownerId: string, text: string) => Promise<unknown> };
+
+const tellOwner = (env: Env, ownerId: string, text: string) =>
+  reach(env, ownerId, { kind: "list", text, push: { title: "Shared list", body: text, data: { screen: "chat" } } });
+
+export function listsAssistant(env: Env, userId: string, io: ListsIo = {}) {
   const db = env.DB;
+  const tell = io.tell ?? tellOwner;
+
+  /** A Friend added to the owner's list: the owner hears only if they asked to. */
+  const added = async (t: Target, count: number) => {
+    if (!t.share?.tellOwner || !count) return;
+    const me = await db.prepare("SELECT name, username FROM users WHERE id = ?").bind(userId).first<{ name: string; username: string | null }>();
+    const who = me?.name.split(" ")[0] || (me?.username ? `@${me.username}` : "A friend");
+    await tell(env, t.ownerId, `${who} added ${count === 1 ? "something" : `${count} things`} to your ${t.name} list.`);
+  };
 
   const callTool: CallTool = async (name, args) => {
     if (name === "list_save") {
@@ -120,7 +239,20 @@ export function listsAssistant(env: Env, userId: string) {
       const rows = plainRows(args.rows);
       if (!listName) return { error: "name is required" };
       if (!rows) return { error: "rows must be a list of objects" };
-      return saveList(db, userId, listName, rows, args.mode === "append" ? "append" : "replace");
+      const append = args.mode === "append";
+      // A Friend's list, named with from, or the only list by that name when they have none of their own.
+      if (args.from || append) {
+        const t = await resolve(db, userId, listName, args.from);
+        if ("error" in t) {
+          if (args.from) return t;
+        } else if (t.share) {
+          if (!append) return { error: `That list is ${t.share.from}'s. Their OVOA can only add to it (mode append) or tick things off.` };
+          const r = await saveList(db, t.ownerId, t.name, rows, "append");
+          if (!("error" in r)) await added(t, rows.length);
+          return "error" in r ? r : { ...r, sharedBy: t.share.from };
+        }
+      }
+      return saveList(db, userId, listName, rows, append ? "append" : "replace");
     }
     if (name === "list_read") {
       const listName = cleanName(args.name);
@@ -129,9 +261,27 @@ export function listsAssistant(env: Env, userId: string) {
           .prepare("SELECT name, row_count FROM user_lists WHERE user_id = ? ORDER BY updated_at DESC")
           .bind(userId)
           .all<{ name: string; row_count: number }>();
-        return { lists: results.map((r) => ({ name: r.name, rows: r.row_count })) };
+        const shares = await db
+          .prepare("SELECT s.name, u.username FROM list_shares s JOIN users u ON u.id = s.friend_id WHERE s.owner_id = ?")
+          .bind(userId)
+          .all<{ name: string; username: string | null }>();
+        const theirs = await sharedWith(db, userId);
+        const counts = new Map<string, number>();
+        for (const r of theirs) {
+          const c = await db.prepare("SELECT row_count FROM user_lists WHERE user_id = ? AND name = ?").bind(r.owner_id, r.name).first<{ row_count: number }>();
+          counts.set(`${r.owner_id}\n${r.name}`, c?.row_count ?? 0);
+        }
+        const sharedOf = (n: string) => shares.results.filter((s) => s.name.toLowerCase() === n.toLowerCase()).map((s) => `@${s.username}`);
+        return {
+          lists: results.map((r) => ({ name: r.name, rows: r.row_count, ...(sharedOf(r.name).length && { sharedWith: sharedOf(r.name) }) })),
+          ...(theirs.length && {
+            sharedWithThem: theirs.map((r) => ({ name: r.name, from: `@${r.username}`, rows: counts.get(`${r.owner_id}\n${r.name}`) ?? 0 })),
+          }),
+        };
       }
-      const list = await readList(db, userId, listName);
+      const t = await resolve(db, userId, listName, args.from);
+      if ("error" in t) return t;
+      const list = await readList(db, t.ownerId, t.name);
       if (!list) return { error: `They have no list called "${listName}".` };
       const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
       const out: Row[] = [];
@@ -143,7 +293,76 @@ export function listsAssistant(env: Env, userId: string) {
         size += piece;
       }
       const next = offset + out.length;
-      return { name: list.name, total: list.rows.length, offset, nextOffset: next < list.rows.length ? next : null, rows: out };
+      return {
+        name: list.name,
+        ...(t.share && { sharedBy: t.share.from }),
+        total: list.rows.length,
+        offset,
+        nextOffset: next < list.rows.length ? next : null,
+        rows: out,
+      };
+    }
+    if (name === "list_tick") {
+      const listName = cleanName(args.name);
+      if (!listName) return { error: "name is required" };
+      const t = await resolve(db, userId, listName, args.from);
+      if ("error" in t) return t;
+      const list = await readList(db, t.ownerId, t.name);
+      if (!list) return { error: `They have no list called "${listName}".` };
+      const done = args.done !== false;
+      const match = String(args.match ?? "").trim().toLowerCase();
+      let at = -1;
+      if (match) {
+        const hit = (r: Row) => Object.values(r).some((v) => typeof v !== "object" && String(v).toLowerCase().includes(match));
+        // The first match not already ticked that way, else the first match.
+        at = list.rows.findIndex((r) => hit(r) && !!r.done !== done);
+        if (at < 0) at = list.rows.findIndex(hit);
+      } else if (Number.isInteger(args.index)) {
+        at = Number(args.index);
+      }
+      if (at < 0 || at >= list.rows.length) return { error: match ? `Nothing on "${list.name}" matches "${args.match}".` : "Say which row: match or index." };
+      const rows = list.rows.map((r, i) => (i === at ? { ...r, done } : r));
+      const saved = await saveList(db, t.ownerId, t.name, rows, "replace");
+      return "error" in saved ? saved : { name: list.name, ...(t.share && { sharedBy: t.share.from }), index: at, row: rows[at], done };
+    }
+    if (name === "list_share" || name === "list_unshare") {
+      const listName = cleanName(args.name);
+      const own = await db.prepare("SELECT name FROM user_lists WHERE user_id = ? AND name = ?").bind(userId, listName).first<{ name: string }>();
+      if (!own) return { error: `They have no list called "${listName}" of their own to share.` };
+      const friend = await connectedByUsername(db, userId, String(args.username ?? ""));
+      if (name === "list_unshare") {
+        if (!friend) {
+          // Disconnected Friends can still be unshared by username.
+          const gone = await db
+            .prepare("DELETE FROM list_shares WHERE owner_id = ? AND name = ? AND friend_id IN (SELECT id FROM users WHERE username = ?)")
+            .bind(userId, own.name, String(args.username ?? "").trim().replace(/^@/, "").toLowerCase())
+            .run();
+          return gone.meta.changes ? { unshared: own.name } : { error: `"${own.name}" isn't shared with @${String(args.username ?? "").replace(/^@/, "")}.` };
+        }
+        const gone = await db.prepare("DELETE FROM list_shares WHERE owner_id = ? AND name = ? AND friend_id = ?").bind(userId, own.name, friend.id).run();
+        return gone.meta.changes ? { unshared: own.name, with: `@${friend.username}` } : { error: `"${own.name}" isn't shared with @${friend.username}.` };
+      }
+      if (!friend) return { error: `They aren't Friends with @${String(args.username ?? "").replace(/^@/, "")}. Connect first (ovoa_connect).` };
+      if (!(await mayShareLists(db, userId, friend.id))) {
+        return {
+          error: `Their access for @${friend.username} doesn't include lists. Sharing a list needs Best friend or Partner (ovoa_perms level), or the Share lists switch for them (ovoa_perms shareLists: true). Ask them which first.`,
+        };
+      }
+      const count = await db.prepare("SELECT COUNT(*) AS n FROM list_shares WHERE owner_id = ? AND name = ?").bind(userId, own.name).first<{ n: number }>();
+      const already = await db.prepare("SELECT 1 AS y FROM list_shares WHERE owner_id = ? AND name = ? AND friend_id = ?").bind(userId, own.name, friend.id).first();
+      if (!already && (count?.n ?? 0) >= MAX_SHARES_PER_LIST) return { error: `A list can be shared with up to ${MAX_SHARES_PER_LIST} Friends.` };
+      await db
+        .prepare(
+          "INSERT INTO list_shares (owner_id, name, friend_id, tell_owner, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(owner_id, name, friend_id) DO UPDATE SET tell_owner = excluded.tell_owner",
+        )
+        .bind(userId, own.name, friend.id, args.tellMe === true ? 1 : 0, Date.now())
+        .run();
+      return {
+        shared: own.name,
+        with: `@${friend.username}`,
+        tellMe: args.tellMe === true,
+        note: `${friend.name.split(" ")[0] || friend.name}'s OVOA can now read "${own.name}", add to it and tick things off. They aren't messaged about it; say so if they want to let them know (ovoa_ask share).`,
+      };
     }
     if (name === "list_delete") {
       const listName = cleanName(args.name);
@@ -157,6 +376,6 @@ export function listsAssistant(env: Env, userId: string) {
     tools: TOOLS,
     callTool,
     prompt:
-      "Saved lists: when you build up a set of things over several steps (places, people, options, results), keep it with list_save so the next step or the next day can use it (list_read). Say the list's name once so they can ask for it.",
+      "Saved lists: when you build up a set of things over several steps (places, people, options, results), keep it with list_save so the next step or the next day can use it (list_read). Say the list's name once so they can ask for it. A list can be shared with a Friend (list_share); lists Friends shared with them show under sharedWithThem, and you can add to them (list_save mode append) or tick things off (list_tick), never replace or delete them.",
   };
 }

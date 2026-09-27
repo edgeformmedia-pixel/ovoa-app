@@ -70,6 +70,15 @@ The level isn't stored: it's whichever preset the switches match (`levelOf`), el
 reaches memory (Full access, or its switch) needs `confirm` (the app's warning; the model must tell them first).
 Accepting a request can give Basic, Best friend or Partner, never Full.
 
+**Shared lists** (claude/overnight task 24, migration `0075_list_shares.sql`, `lists.ts`): "share my grocery
+list with Maria" (`list_share`, `list_unshare`). The `shareLists` switch (column `share_lists`) is on from Best
+friend up and can be turned on alone under Advanced ("Lists I share"); the migration turns it on for existing
+connections already at Best friend, Partner or Full so their level reads the same. The Friend's OVOA reads the
+list (`list_read`, shown under `sharedWithThem`), adds rows (`list_save` mode append) and ticks them
+(`list_tick`); it never replaces, deletes or reshares it. Access is checked on every call, so a lower level or a
+disconnect shuts it at once. A Friend adding tells the owner only when they shared with `tellMe`. Max 10 Friends
+per list; the row and size caps are the list's own.
+
 **Out of range → the owner is asked, by text or notification** (`tell`, so iMessage for people who text OVOA):
 a question OVOA may not answer on its own (or can't from what's shared), a reminder or share while reminders
 from that friend are off. They answer yes (for a question with no words, OVOA answers it this once from

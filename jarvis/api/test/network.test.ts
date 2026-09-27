@@ -514,6 +514,7 @@ async function main() {
     calendarDetails: false,
     shareLocation: false,
     answerFromMemory: false,
+    shareLists: false,
     shareNote: "Office hours are 9 to 5.",
     level: "custom",
   });

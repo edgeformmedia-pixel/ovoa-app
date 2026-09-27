@@ -101,6 +101,8 @@ export type Access = {
   shareLocation: boolean;
   /** An automatic answer may use what OVOA remembers about them. Dangerous. */
   answerFromMemory: boolean;
+  /** Their OVOA may read, add to and tick the lists the owner shares with them (lists.ts). */
+  shareLists: boolean;
 };
 
 export type Level = "basic" | "best_friend" | "partner" | "full";
@@ -111,10 +113,10 @@ export type Level = "basic" | "best_friend" | "partner" | "full";
  * dangerous everywhere it's offered.
  */
 export const ACCESS_LEVELS: Record<Level, Access> = {
-  basic: { shareFreeBusy: true, takeReminders: true, autoAcceptMeetings: false, autoAnswerQuestions: false, calendarDetails: false, shareLocation: false, answerFromMemory: false },
-  best_friend: { shareFreeBusy: true, takeReminders: true, autoAcceptMeetings: true, autoAnswerQuestions: true, calendarDetails: false, shareLocation: false, answerFromMemory: false },
-  partner: { shareFreeBusy: true, takeReminders: true, autoAcceptMeetings: true, autoAnswerQuestions: true, calendarDetails: true, shareLocation: true, answerFromMemory: false },
-  full: { shareFreeBusy: true, takeReminders: true, autoAcceptMeetings: true, autoAnswerQuestions: true, calendarDetails: true, shareLocation: true, answerFromMemory: true },
+  basic: { shareFreeBusy: true, takeReminders: true, autoAcceptMeetings: false, autoAnswerQuestions: false, calendarDetails: false, shareLocation: false, answerFromMemory: false, shareLists: false },
+  best_friend: { shareFreeBusy: true, takeReminders: true, autoAcceptMeetings: true, autoAnswerQuestions: true, calendarDetails: false, shareLocation: false, answerFromMemory: false, shareLists: true },
+  partner: { shareFreeBusy: true, takeReminders: true, autoAcceptMeetings: true, autoAnswerQuestions: true, calendarDetails: true, shareLocation: true, answerFromMemory: false, shareLists: true },
+  full: { shareFreeBusy: true, takeReminders: true, autoAcceptMeetings: true, autoAnswerQuestions: true, calendarDetails: true, shareLocation: true, answerFromMemory: true, shareLists: true },
 };
 
 export const isLevel = (v: unknown): v is Level => typeof v === "string" && v in ACCESS_LEVELS;
@@ -369,8 +371,9 @@ type Perms = {
   share_location: number;
   take_reminders: number;
   answer_from_memory: number;
+  share_lists: number;
 };
-const PERM_COLUMNS = "share_free_busy, auto_answer_questions, auto_accept_meetings, share_note, calendar_details, share_location, take_reminders, answer_from_memory";
+const PERM_COLUMNS = "share_free_busy, auto_answer_questions, auto_accept_meetings, share_note, calendar_details, share_location, take_reminders, answer_from_memory, share_lists";
 /** Access's switches and the columns they're kept in. */
 const COLUMN_OF: Record<keyof Access, keyof Perms> = {
   shareFreeBusy: "share_free_busy",
@@ -380,6 +383,7 @@ const COLUMN_OF: Record<keyof Access, keyof Perms> = {
   calendarDetails: "calendar_details",
   shareLocation: "share_location",
   answerFromMemory: "answer_from_memory",
+  shareLists: "share_lists",
 };
 type Thread = { id: string; connection_id: string; started_by: string; kind: string; subject: string | null; status: string; hops: number; book: number };
 type Message = { id: string; thread_id: string; from_user: string; to_user: string; kind: Kind; body: string; status: string; hop: number; created_at: number };
@@ -410,6 +414,7 @@ const DEFAULT_PERMS: Perms = {
   share_location: 0,
   take_reminders: 1,
   answer_from_memory: 0,
+  share_lists: 0,
 };
 
 async function permsOf(db: D1Database, connectionId: string, userId: string): Promise<Perms> {
@@ -1029,6 +1034,7 @@ function specs(): ToolSpec[] {
           calendarDetails: { type: "boolean", description: "Answers may use what's in their calendar" },
           shareLocation: { type: "boolean", description: "Answers may say roughly where they are" },
           answerFromMemory: { type: "boolean", description: "Answers may use what OVOA remembers about them. Dangerous: needs confirm" },
+          shareLists: { type: "boolean", description: "Their OVOA may read and add to lists shared with them (on from best_friend up)" },
           shareNote: { type: "string", description: "In their words, what this person may be told. Empty to clear." },
           confirm: { type: "boolean", description: "true only after they said yes to the Full access warning" },
         },
@@ -1450,6 +1456,7 @@ const permsBody = z.object({
   calendarDetails: z.boolean().optional(),
   shareLocation: z.boolean().optional(),
   answerFromMemory: z.boolean().optional(),
+  shareLists: z.boolean().optional(),
   shareNote: z.string().max(1_500).optional(),
   // The app asks "are you sure" before sending this.
   confirm: z.boolean().optional(),
@@ -1505,6 +1512,28 @@ networkRoutes.post("/ovoa/approvals/:id", async (c) => {
   const r = await decide(c.env, c.var.userId, c.req.param("id"), parsed.data.decision, parsed.data);
   return c.json(r, "error" in r ? 400 : 200);
 });
+
+/**
+ * Whether `friendId` may reach the lists `ownerId` shares with them: connected
+ * (accepted, so not ended or blocked) and the owner's access for them has
+ * shareLists on. Checked on every read and write (lists.ts), so lowering the
+ * level or disconnecting takes effect at once.
+ */
+export async function mayShareLists(db: D1Database, ownerId: string, friendId: string) {
+  if (ownerId === friendId) return false;
+  const conn = await pairOf(db, ownerId, friendId);
+  if (!conn || conn.status !== "accepted") return false;
+  return !!(await permsOf(db, conn.id, ownerId)).share_lists;
+}
+
+/** A connected person by @username, or null: for lists.ts to name who a list is shared with. */
+export async function connectedByUsername(db: D1Database, meId: string, username: string) {
+  const name = usernameFrom(username);
+  const other = name ? await personByUsername(db, name) : null;
+  if (!other || other.id === meId) return null;
+  const conn = await pairOf(db, meId, other.id);
+  return conn?.status === "accepted" ? { id: other.id, username: other.username!, name: other.name } : null;
+}
 
 /**
  * Passes a short text (a link) to a connection's OVOA, as ovoa_ask share would,

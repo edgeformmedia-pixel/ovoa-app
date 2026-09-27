@@ -38,7 +38,7 @@ const env = { DB: d1(sqlite) } as unknown as Env;
 async function main() {
   const sam = blocksAssistant(env, "sam", "America/New_York");
   const alex = blocksAssistant(env, "alex", "America/New_York");
-  eq("offered", sam.tools.filter((t) => t.name.startsWith("list_")).map((t) => t.name), ["list_save", "list_read", "list_delete"]);
+  eq("offered", sam.tools.filter((t) => t.name.startsWith("list_")).map((t) => t.name), ["list_save", "list_read", "list_tick", "list_share", "list_unshare", "list_delete"]);
   eq("recognized by name", ["list_save", "list_read", "list_delete", "note_add"].map(isBlockTool), [true, true, true, false]);
 
   const offices = [

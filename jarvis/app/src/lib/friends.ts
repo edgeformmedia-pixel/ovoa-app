@@ -22,7 +22,7 @@ export const LEVELS: { key: AccessLevel; label: string; icon: IconName; tone: To
     icon: "heart-outline",
     tone: "pink",
     blurb: "Books you at free times and answers their questions from your note, without asking.",
-    allows: ["Everything in Basic", "Book you at a free time", "Answer questions from your note"],
+    allows: ["Everything in Basic", "Book you at a free time", "Answer questions from your note", "Lists you share with them"],
   },
   {
     key: "partner",
@@ -53,6 +53,7 @@ export const SWITCHES: { key: Switch; label: string; about: string; danger?: boo
   { key: "autoAnswerQuestions", label: "Answer their questions", about: "From your note and whatever is on below. Anything else comes to you." },
   { key: "calendarDetails", label: "What's on my calendar", about: "Titles, places and times, for answering them." },
   { key: "shareLocation", label: "Roughly where I am", about: "Your phone's last place, for answering them." },
+  { key: "shareLists", label: "Lists I share", about: "Their OVOA can read, add to and tick off the lists you share with them." },
   { key: "answerFromMemory", label: "What OVOA remembers about me", about: "Everything it's learned about you. Only for someone you fully trust.", danger: true },
 ];
 
