@@ -123,7 +123,8 @@ const SYNONYMS: Record<string, string[]> = {
   // "outlook" only names anything for someone with Outlook connected (microsoft.ts).
   email: ["gmail", "mail", "outlook"],
   mail: ["gmail", "email", "outlook"],
-  inbox: ["gmail", "outlook", "search"],
+  // Not "gmail": gmail_search is always carried, and "inbox" alone still means ovoa_inbox without Outlook.
+  inbox: ["outlook", "search"],
   hotmail: ["outlook"],
   text: ["message", "sms"],
   texted: ["message"],
@@ -286,9 +287,6 @@ const SYNONYMS: Record<string, string[]> = {
   reserve: ["browser"],
   reservation: ["browser"],
   checkout: ["browser"],
-  // Invite a friend (invites.ts).
-  refer: ["invite"],
-  referral: ["invite"],
   // Email attachments (files.ts): "what does the PDF she sent say".
   pdf: ["attachment"],
   attached: ["attachment"],
@@ -315,6 +313,8 @@ const STOPWORDS = new Set([
 const GENERIC = new Set([
   "send", "add", "create", "update", "change", "delete", "remove", "list", "get", "set", "log", "save",
   "read", "write", "run", "start", "stop", "new", "find", "search", "phone", "tool", "tools",
+  // invite_friend's words: "invite Sarah to lunch" and "my friend Jake" aren't about inviting anyone to OVOA.
+  "invite", "friend",
 ]);
 
 /** How many tools one more_tools call is allowed to bring in. */

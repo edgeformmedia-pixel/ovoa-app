@@ -11,7 +11,7 @@ import { push } from "./push";
 import { reach } from "./reach";
 import { addDays, atLocalTime, buckets, clock, clockFromMinutes, dayRange, localMinutes, localWeekday } from "./time";
 import { moneyBriefLine } from "./money";
-import { outlookEvents } from "./microsoft";
+import { microsoftOn, outlookEvents } from "./microsoft";
 import { listTodos } from "./todos";
 import type { Env } from "./types";
 import { inSlice, type Slice } from "./sweep";
@@ -104,7 +104,7 @@ async function upcomingEvents(env: Env, userId: string, from: number, to: number
     }
   }
   // Outlook's too, for people who use it (microsoft.ts): nothing, and no read, while it's off.
-  events.push(...(await outlookEvents(env, userId, from, to)));
+  events.push(...(await outlookEvents(env, userId, from, to, timeZone)));
   return events.sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
 }
 
@@ -344,7 +344,8 @@ async function driveSeconds(from: { lat: number; lng: number }, to: { lat: numbe
  * (under a kilometre) gets nothing.
  */
 async function commuteTick(env: Env, u: TickUser) {
-  if (!u.google) return 0;
+  // Outlook's calendar counts too (microsoft.ts); with it off this is Google only, as before.
+  if (!u.google && !microsoftOn(env)) return 0;
   const db = env.DB;
   const now = Date.now();
   const { results: known } = await db

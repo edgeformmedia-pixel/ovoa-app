@@ -15,6 +15,9 @@ import type { CallTool, ToolSpec } from "./llm";
 import { reach, type Reach } from "./reach";
 import type { Env, Vars } from "./types";
 
+/** An account made up to a day before the "@x sent me" text still counts as new (signed up, then texted). */
+const NEW_ACCOUNT_GRACE_MS = 86_400_000;
+
 /** "@tigh sent me", "@tigh invited me", "from @tigh", "via @tigh": the username, lowercased. Pure. */
 export function inviterIn(text: string): string | null {
   const m =
@@ -46,7 +49,13 @@ export async function noteInvite(db: D1Database, phone: string, text: string, no
   try {
     const username = inviterIn(text);
     if (!username) return null;
-    const inviter = await db.prepare("SELECT id, name FROM users WHERE username = ?").bind(username).first<{ id: string; name: string | null }>();
+    // Its holder now, or whoever gave it up (a friend may have an old invite).
+    const inviter =
+      (await db.prepare("SELECT id, name FROM users WHERE username = ?").bind(username).first<{ id: string; name: string | null }>()) ??
+      (await db
+        .prepare("SELECT u.id, u.name FROM usernames_history h JOIN users u ON u.id = h.user_id WHERE h.username = ?")
+        .bind(username)
+        .first<{ id: string; name: string | null }>());
     if (!inviter) return null;
     const linked = await db.prepare("SELECT user_id FROM text_links WHERE phone = ?").bind(phone).first<{ user_id: string }>();
     if (linked) return null;
@@ -73,13 +82,21 @@ export async function inviteJoined(
   tell: (env: Env, userId: string, r: Reach) => Promise<unknown> = reach,
 ): Promise<boolean> {
   try {
+    // Only a new account counts: someone already on OVOA who unlinks and texts
+    // "@x sent me" before linking again didn't join from an invite.
     const row = await env.DB
-      .prepare("UPDATE invite_referrals SET joined_user_id = ?, joined_at = ? WHERE phone = ? AND joined_at IS NULL AND inviter_id != ? RETURNING inviter_id")
-      .bind(userId, now, phone, userId)
+      .prepare(
+        `UPDATE invite_referrals SET joined_user_id = ?1, joined_at = ?2
+         WHERE phone = ?3 AND joined_at IS NULL AND inviter_id != ?1
+           AND (SELECT created_at FROM users WHERE id = ?1) >= invited_at - ?4
+         RETURNING inviter_id`,
+      )
+      .bind(userId, now, phone, NEW_ACCOUNT_GRACE_MS)
       .first<{ inviter_id: string }>();
     if (!row) return false;
     const who = await env.DB.prepare("SELECT name FROM users WHERE id = ?").bind(userId).first<{ name: string | null }>();
-    const first = who?.name?.trim().split(" ")[0] || "A friend you invited";
+    // Their name goes into a text OVOA sends, so only a first name's letters: never a sentence someone typed as a name.
+    const first = (who?.name ?? "").trim().split(/\s+/)[0]!.replace(/[^\p{L}'-]/gu, "").slice(0, 20) || "A friend you invited";
     const line = `${first} just joined OVOA from your invite.`;
     await tell(env, row.inviter_id, { kind: "invite", text: line, push: { title: "Your invite worked", body: line } });
     return true;

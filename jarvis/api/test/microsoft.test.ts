@@ -86,6 +86,17 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
   if (url.includes("/me/people?$search")) {
     return json(200, { value: [{ displayName: "Pat Kim", scoredEmailAddresses: [{ address: "pat@x.com" }], phones: [{ number: "+1 555 0100" }] }] });
   }
+  // The brief's read (outlookEvents asks for 15): all-day events for the day before, the day, and the day after.
+  if (url.includes("/me/calendarView") && url.includes("$top=15")) {
+    return json(200, {
+      value: [
+        { id: "d0", subject: "Yesterday off", isAllDay: true, start: { dateTime: "2026-09-27T00:00:00.0000000" } },
+        { id: "d1", subject: "Standup", start: { dateTime: "2026-09-28T09:00:00.0000000" } },
+        { id: "d2", subject: "Vacation", isAllDay: true, start: { dateTime: "2026-09-28T00:00:00.0000000" } },
+        { id: "d3", subject: "Tomorrow off", isAllDay: true, start: { dateTime: "2026-09-29T00:00:00.0000000" } },
+      ],
+    });
+  }
   if (url.includes("/me/calendarView")) return json(200, { value: [{ subject: "Standup", start: { dateTime: "2026-09-28T09:00:00.0000000" }, end: { dateTime: "2026-09-28T09:15:00.0000000" } }] });
   if (url.endsWith("/me/events")) return json(201, { id: "e1", webLink: "https://outlook.live.com/e1" });
   if (url.endsWith("/me/sendMail") || url.endsWith("/reply")) return new Response(null, { status: 202 });
@@ -217,7 +228,16 @@ async function main() {
 
   // The morning brief's calendar (rhythm.ts): Outlook events as instants, like Google's.
   calls.length = 0;
-  eq("brief: Outlook events, in UTC", (await outlookEvents(on, "sam", 0, 86_400_000)).map((e) => [e.title, e.start, e.account]), [["Standup", "2026-09-28T09:00:00Z", "sam@contoso.com"]]);
+  // Sam's Monday in Chicago: 05:00Z Monday to 05:00Z Tuesday.
+  const monday: [number, number] = [Date.parse("2026-09-28T05:00:00Z"), Date.parse("2026-09-29T05:00:00Z")];
+  eq(
+    "brief: Outlook events, in UTC, and only that day's all-day ones",
+    (await outlookEvents(on, "sam", ...monday, "America/Chicago")).map((e) => [e.title, e.start, e.account]),
+    [
+      ["Standup", "2026-09-28T09:00:00Z", "sam@contoso.com"],
+      ["Vacation", "2026-09-28", "sam@contoso.com"],
+    ],
+  );
   eq("asked for in UTC (no time zone preference)", graphCalls().at(-1)?.headers.prefer.includes("outlook.timezone"), false);
   eq("brief: nothing, and no read, while it's off", await outlookEvents({ ...off, DB: throwingDb } as Env, "sam", 0, 1), []);
   eq("brief: nothing for someone not connected", await outlookEvents(on, "nobody", 0, 1), []);

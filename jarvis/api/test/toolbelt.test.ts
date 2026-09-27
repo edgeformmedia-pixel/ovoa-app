@@ -272,6 +272,9 @@ eq("'how's the outreach going' brings campaign_status", has(namedTools(withBlock
 eq("'open opentable' names browser_open", has(namedTools(withBlocks, "open opentable and book a table for 4"), "browser_open"), true);
 eq("'send this email to everyone' still names gmail_send", has(namedTools(withBlocks, "send this email to everyone on my list"), "gmail_send"), true);
 const mailFiles = [...withBlocks, t("gmail_read", "Reads an email."), t("gmail_attachment", "Reads an attachment.")];
+eq("'invite Sarah to lunch on Friday' isn't an OVOA invite", has(namedTools(withBlocks, "invite Sarah to lunch on Friday"), "invite_friend"), false);
+eq("nor is 'my friend Jake's birthday is tomorrow'", has(namedTools(withBlocks, "my friend Jake's birthday is tomorrow"), "invite_friend"), false);
+eq("without Outlook, 'check my inbox' is still ovoa_inbox", namedTools([...CATALOGUE, t("ovoa_inbox", "Messages from other OVOAs.")], "check my inbox").map((x) => x.name).join(" "), "ovoa_inbox");
 eq("'what does the PDF she sent say' names gmail_attachment", has(namedTools(mailFiles, "what does the PDF she sent say"), "gmail_attachment"), true);
 // Words that are the blocks' in some requests and nobody's in most.
 for (const said of ["what's in my checking account", "what's the price of bitcoin", "what's the address of the restaurant", "what size is my phone"]) {

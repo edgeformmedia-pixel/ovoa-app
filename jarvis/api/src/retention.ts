@@ -236,7 +236,8 @@ export const RULES: Rule[] = [
   // Group lines that named OVOA and its answers (textgroups.ts).
   { name: "text_groups", table: "text_groups", where: "updated_at < ?", args: (c) => [c.cutoff], key: ["group_id"] },
   // Numbers someone invited that never joined (invites.ts); joined ones stay, they're the count.
-  { name: "invite_referrals", table: "invite_referrals", where: "joined_at IS NULL AND invited_at < ?", args: (c) => [c.cutoff], key: ["phone"] },
+  // Kept as long as the free trial keeps the number, since they may join late.
+  { name: "invite_referrals", table: "invite_referrals", where: "joined_at IS NULL AND invited_at < ?", args: (c) => [c.now - TEXT_GUEST_DAYS * DAY_MS], key: ["phone"] },
   { name: "guest_daily", table: "guest_daily", where: "day < ?", args: (c) => [c.countsDay], key: ["day"] },
   // Which texts OVOA sent first, for the day's cap (reach.ts): kinds and times, no words.
   { name: "text_outbox", table: "text_outbox", where: "sent_at < ?", args: (c) => [c.cutoff] },

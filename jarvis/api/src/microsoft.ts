@@ -225,7 +225,7 @@ export async function hasOutlook(env: Env, userId: string) {
  * Google's calendar_list_events gives. Empty when Outlook is off or not
  * connected. Never throws.
  */
-export async function outlookEvents(env: Env, userId: string, from: number, to: number) {
+export async function outlookEvents(env: Env, userId: string, from: number, to: number, timeZone = "UTC") {
   if (!microsoftOn(env)) return [];
   try {
     const account = await microsoftAccount(env.DB, userId);
@@ -236,8 +236,13 @@ export async function outlookEvents(env: Env, userId: string, from: number, to: 
       userId,
       `/me/calendarView?startDateTime=${encodeURIComponent(new Date(from).toISOString())}&endDateTime=${encodeURIComponent(new Date(to).toISOString())}&$top=15&$orderby=${encodeURIComponent("start/dateTime")}&$select=id,subject,start,isAllDay,location`,
     );
+    // An all-day event's date is its own; which UTC hours Graph matched it on isn't. Only
+    // the local days the window covers.
+    const firstDay = buckets(from, timeZone).day;
+    const lastDay = buckets(Math.max(from, to - 1), timeZone).day;
     return value
       .filter((e) => e.start?.dateTime)
+      .filter((e) => !e.isAllDay || (e.start!.dateTime!.slice(0, 10) >= firstDay && e.start!.dateTime!.slice(0, 10) <= lastDay))
       .map((e) => ({
         id: e.id ?? "",
         title: e.subject ?? "",

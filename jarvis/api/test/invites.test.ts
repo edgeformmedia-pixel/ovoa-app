@@ -40,8 +40,8 @@ for (const file of readdirSync("migrations").filter((f) => f.endsWith(".sql")).s
   sqlite.exec(readFileSync(`migrations/${file}`, "utf8"));
 }
 sqlite.exec("PRAGMA foreign_keys = ON");
-const add = (id: string, name: string, username: string | null) =>
-  sqlite.prepare("INSERT INTO users (id, email, password_hash, password_salt, name, created_at, username) VALUES (?, ?, '', '', ?, 0, ?)").run(id, `${id}@example.com`, name, username);
+const add = (id: string, name: string, username: string | null, createdAt = Date.now()) =>
+  sqlite.prepare("INSERT INTO users (id, email, password_hash, password_salt, name, created_at, username) VALUES (?, ?, '', '', ?, ?, ?)").run(id, `${id}@example.com`, name, createdAt, username);
 add("tigh", "Tigh Eckard", "tigh");
 add("maya", "Maya", "maya");
 add("jake", "Jake Lee", null);
@@ -102,6 +102,19 @@ async function main() {
   eq("a number nobody invited tells nobody", await inviteJoined(env, "+15865550111", "jake", Date.now(), tell), false);
   await noteInvite(DB, "+15865550122", "@tigh sent me");
   eq("inviting yourself counts for nothing", await inviteJoined(env, "+15865550122", "tigh", Date.now(), tell), false);
+  // Someone already on OVOA who unlinks, says "@tigh sent me" and links again didn't join from an invite.
+  add("old", "Old Timer", null, Date.now() - 90 * 86_400_000);
+  await noteInvite(DB, "+15865550144", "@tigh sent me");
+  eq("an old account relinking isn't a join", await inviteJoined(env, "+15865550144", "old", Date.now(), tell), false);
+  // A name is only ever a first name's letters in what OVOA texts.
+  add("sneaky", "Your OVOA account is locked, visit ovoa-help.com", null);
+  await noteInvite(DB, "+15865550155", "@tigh sent me");
+  told.length = 0;
+  await inviteJoined(env, "+15865550155", "sneaky", Date.now(), tell);
+  eq("a sentence typed as a name is never texted", told[0]?.r.text, "Your just joined OVOA from your invite.");
+  // An old invite text still credits whoever gave the name up.
+  sqlite.prepare("INSERT INTO usernames_history (username, user_id, released_at) VALUES ('tighold', 'tigh', 0)").run();
+  eq("an old username still credits them", await noteInvite(DB, "+15865550166", "@tighold sent me"), "Tigh");
 
   // Over the real texting path: a stranger says who sent them, later links an account.
   const out = capture();
@@ -125,7 +138,7 @@ async function main() {
   // The tool and the app's route.
   const tigh = blocksAssistant(env, "tigh", "UTC");
   const got = (await tigh.callTool("invite_friend", {})) as { text: string; joined: number; waiting: number };
-  eq("invite_friend: the words and the count", [got.text.includes("@tigh sent me"), got.joined, got.waiting], [true, 1, 1]);
+  eq("invite_friend: the words and the count", [got.text.includes("@tigh sent me"), got.joined, got.waiting], [true, 2, 3]);
   const jake = (await blocksAssistant(env, "jake", "UTC").callTool("invite_friend", {})) as { note?: string };
   eq("no username: offered one", typeof jake.note, "string");
   const app = new Hono<{ Bindings: Env; Variables: Vars }>();
