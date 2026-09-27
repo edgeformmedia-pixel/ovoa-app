@@ -37,7 +37,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 
 ## Tasks (top to bottom)
 
-- [~] claimed 2026-09-27T10:56Z by local session. 1. **fetch_url tool** (web agent, read-only): read a full public web page, JSON or CSV by URL. http(s) only;
+- [x] 1. **fetch_url tool** (web agent, read-only): read a full public web page, JSON or CSV by URL. http(s) only;
       refuse private, loopback, link-local and cloud metadata addresses, and re-check after every redirect (max 3);
       15 s timeout; 3 MB cap; HTML to readable text keeping table cells tab-separated and link hrefs; `offset` /
       `maxChars` paging. Offer it next to web_search (see `web.ts`, `toolbelt.ts`). Tests for the address guard,
@@ -95,14 +95,15 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 
 ## Needs the owner
 
-(fill in as tasks land)
+- Nothing for task 1: fetch_url needs no key, binding or library.
 
 ## Proposed contextforclaude.txt
 
-(fill in as tasks land)
+- Web agent, part 1 (fetchurl.ts): fetch_url reads a public page by link (public http(s) only, redirects re-checked, 3 MB cap, parts under the 6,000-char tool cap, 6 reads a reply); offered with web_search; a pasted link or "link/article" preloads it.
 
 ## Log
 
 - 2026-09-27 11:00 UTC: branch created from origin/main 16c2deb; baseline tsc clean, 60 test files pass.
 - 2026-09-27 11:05 UTC: plan rewritten from a full gap audit of 16c2deb (texting exists; no page reader, browser,
   vault, campaigns, keywords, do-not-contact, group chats, server calls; guest trial skips the model gate).
+- 2026-09-27 11:20 UTC (local session): task 1 done in f0c2cce. fetch_url + tests (fetchurl.test.ts); 61 test files pass, tsc clean. origin/main unchanged since 16c2deb.
