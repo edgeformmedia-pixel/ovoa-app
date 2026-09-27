@@ -115,7 +115,12 @@ try {
   await json(`/ovoa/connections/${asker.username}/answer`, answerer.token, { method: "POST", body: JSON.stringify({ answer: "yes" }) });
   const mine = await json("/ovoa/connections", asker.token);
   check("connected", mine.connections.some((c) => c.username === answerer.username && c.status === "connected"), JSON.stringify(mine.connections));
-  check("free/busy shared by default, nothing automatic", JSON.stringify(mine.connections[0]?.perms) === JSON.stringify({ shareFreeBusy: true, autoAnswerQuestions: false, autoAcceptMeetings: false, shareNote: "" }));
+  const perms = mine.connections[0]?.perms ?? {};
+  check(
+    "Basic by default: free/busy and reminders, nothing automatic",
+    perms.level === "basic" && perms.shareFreeBusy && perms.takeReminders && !perms.autoAnswerQuestions && !perms.autoAcceptMeetings && !perms.calendarDetails && !perms.shareLocation && !perms.answerFromMemory,
+    JSON.stringify(perms),
+  );
 
   // 2. A scheduling request, through the lane: the answering one picks, it comes back.
   const day = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
