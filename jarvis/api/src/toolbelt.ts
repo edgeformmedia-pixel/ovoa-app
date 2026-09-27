@@ -283,6 +283,9 @@ const SYNONYMS: Record<string, string[]> = {
   reserve: ["browser"],
   reservation: ["browser"],
   checkout: ["browser"],
+  // Invite a friend (invites.ts).
+  refer: ["invite"],
+  referral: ["invite"],
   // Email attachments (files.ts): "what does the PDF she sent say".
   pdf: ["attachment"],
   attached: ["attachment"],

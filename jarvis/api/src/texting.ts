@@ -7,6 +7,7 @@ import { CONTACT_CARD_PATH } from "./contactcard";
 import { answerKeyword, keywordOf, linkedKeywordOf, onDoNotContact } from "./keywords";
 import { answerGroup, type GroupWrite, groupsOn } from "./textgroups";
 import { inboundOn, inboundText } from "./inbound";
+import { inviteJoined, noteInvite } from "./invites";
 import { guestText, type Turn as GuestTurn } from "./guest";
 import { appFor, describeScreen, type MadeApp } from "./myapps";
 import { describeImage, transcribeAudio } from "./llm";
@@ -1015,6 +1016,8 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
       const out = deps.sender(m.line);
       for (const t of await welcome(db, userId)) await out.text(m.from, t);
       await out.text(m.from, "OVOA", `https://api.ovoa.ai${CONTACT_CARD_PATH}`);
+      // Whoever invited this number hears they joined (invites.ts).
+      ctx.waitUntil(inviteJoined(env, m.from, userId, now));
       return { outcome: "linked" };
     }
     if (!link) {
@@ -1036,6 +1039,8 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
     // Not linked: the free trial (guest.ts), no account needed.
     if (!(await record(db, m, "guest", null, now))) return { outcome: "duplicate" };
     const out = deps.sender(m.line);
+    // "@tigh sent me": remembered, so Tigh hears if they join (invites.ts). No read unless it says so.
+    await noteInvite(db, m.from, m.content, now);
     // A creator's text-in code, or an answer to its questions (inbound.ts), before the free trial.
     if (inboundOn(env)) {
       const handled = await inboundText(env, m.from, m.content, (t) => out.text(m.from, t), now);

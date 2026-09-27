@@ -354,6 +354,7 @@ export default function Settings() {
         {/* Other people's OVOAs (api/src/network.ts): who yours can talk to, and what each may do. */}
         <Sub>Other people's OVOAs</Sub>
         <Button label="Friends" onPress={() => router.push("/friends" as Href)} />
+        <Button label="Invite a friend" onPress={() => router.push("/invite" as Href)} />
 
         <Sub>Background work</Sub>
         {!can.agent ? (

@@ -235,6 +235,8 @@ export const RULES: Rule[] = [
   { name: "inbound_respondents", table: "inbound_respondents", where: "updated_at < ?", args: (c) => [c.cutoff], key: ["code", "phone"] },
   // Group lines that named OVOA and its answers (textgroups.ts).
   { name: "text_groups", table: "text_groups", where: "updated_at < ?", args: (c) => [c.cutoff], key: ["group_id"] },
+  // Numbers someone invited that never joined (invites.ts); joined ones stay, they're the count.
+  { name: "invite_referrals", table: "invite_referrals", where: "joined_at IS NULL AND invited_at < ?", args: (c) => [c.cutoff], key: ["phone"] },
   { name: "guest_daily", table: "guest_daily", where: "day < ?", args: (c) => [c.countsDay], key: ["day"] },
   // Which texts OVOA sent first, for the day's cap (reach.ts): kinds and times, no words.
   { name: "text_outbox", table: "text_outbox", where: "sent_at < ?", args: (c) => [c.cutoff] },
@@ -303,6 +305,7 @@ export const TABLES = {
   safety_events: "delete",
   google_accounts: "keep",
   microsoft_accounts: "keep",
+  invite_referrals: "mixed",
   oauth_states: "expires",
   pending_actions: "delete",
   paused_turns: "delete",

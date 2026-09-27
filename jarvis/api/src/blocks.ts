@@ -9,6 +9,7 @@ import { campaignRoutes, campaignsAssistant, isCampaignTool } from "./campaigns"
 import type { PendingAction } from "./google/assistant";
 import type { CallTool, ToolSpec } from "./llm";
 import { inboundAssistant, isInboundTool } from "./inbound";
+import { invitesAssistant, inviteRoutes, isInviteTool } from "./invites";
 import { isListTool, listsAssistant } from "./lists";
 import type { Env, Vars } from "./types";
 import { isRuleTool, ruleRoutes, rulesAssistant } from "./rules";
@@ -30,6 +31,7 @@ export function blocksAssistant(env: Env, userId: string, _timeZone: string) {
     rulesAssistant(env, userId),
     inboundAssistant(env, userId),
     watchesAssistant(env, userId),
+    invitesAssistant(env, userId),
   ];
   const owner = new Map<string, Block>();
   for (const block of blocks) for (const tool of block.tools) owner.set(tool.name, block);
@@ -54,7 +56,7 @@ export function blocksAssistant(env: Env, userId: string, _timeZone: string) {
 
 /** Every name a block can offer, whether or not it's switched on for this person. */
 export const isBlockTool = (name: string) =>
-  isListTool(name) || isVaultTool(name) || isBrowserTool(name) || isCampaignTool(name) || isRuleTool(name) || isInboundTool(name) || isWatchTool(name);
+  isListTool(name) || isVaultTool(name) || isBrowserTool(name) || isCampaignTool(name) || isRuleTool(name) || isInboundTool(name) || isWatchTool(name) || isInviteTool(name);
 
 /** The blocks' app routes, mounted once on the signed-in router (index.ts). */
 export const blockRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -62,3 +64,4 @@ blockRoutes.route("/", vaultRoutes);
 blockRoutes.route("/", campaignRoutes);
 blockRoutes.route("/", ruleRoutes);
 blockRoutes.route("/", siteSessionRoutes);
+blockRoutes.route("/", inviteRoutes);
