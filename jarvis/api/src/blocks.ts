@@ -8,6 +8,7 @@ import { browserAssistant, isBrowserTool } from "./browser";
 import { campaignRoutes, campaignsAssistant, isCampaignTool } from "./campaigns";
 import type { PendingAction } from "./google/assistant";
 import type { CallTool, ToolSpec } from "./llm";
+import type { ToolGuide } from "./toolbelt";
 import { inboundAssistant, isInboundTool } from "./inbound";
 import { invitesAssistant, inviteRoutes, isInviteTool } from "./invites";
 import { isMeetingTool, meetingsAssistant } from "./meetings";
@@ -49,6 +50,11 @@ export function blocksAssistant(env: Env, userId: string, timeZone: string) {
     pending,
     /** Frees what a turn opened (the browser session). Call once the turn is over. */
     close: () => browser.close(),
+    /**
+     * Each block's instructions with its own tools (toolbelt.ts ToolGuide), so a
+     * turn that uses one block carries only that block's text, not all of them.
+     */
+    guides: blocks.filter((b) => b.tools.length && b.prompt).map((b): ToolGuide => ({ tools: b.tools, prompt: b.prompt })),
     prompt: blocks
       .map((b) => b.prompt)
       .filter(Boolean)

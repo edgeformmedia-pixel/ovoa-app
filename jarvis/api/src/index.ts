@@ -1739,7 +1739,6 @@ async function runTurn(
     together: { tools: togetherTools.tools, prompt: togetherTools.prompt },
     plans: { tools: planTools.tools, prompt: planTools.prompt },
     budget: { tools: budgetTools.tools, prompt: budgetTools.prompt },
-    blocks: { tools: blockTools.tools, prompt: blockTools.prompt },
     microsoft: { tools: microsoft.tools, prompt: microsoft.prompt },
     transcripts: {
       tools: transcriptTools.tools,
@@ -1750,7 +1749,7 @@ async function runTurn(
   // turn needs them: the tool JSON is read before the first word, and on the
   // wrist that reading was most of the wait (toolbelt.ts). Typed turns carry a
   // wider handful (2026-09-22; they used to carry everything).
-  const belt = toolbelt(allTools, voice ? SPOKEN_CORE : TYPED_CORE, Object.values(guides));
+  const belt = toolbelt(allTools, voice ? SPOKEN_CORE : TYPED_CORE, [...Object.values(guides), ...blockTools.guides]);
   const tools = belt.tools;
   // Tools the request names outright ("cancel my alarm") ride along from the
   // start, so the ordinary case never pays a round trip to ask for them.
@@ -1855,6 +1854,9 @@ async function runTurn(
     ["budget", guided(guides.budget)],
     ["purchases", waitingBuys.prompt],
     ["transcripts", guided(guides.transcripts)],
+    // The building blocks (blocks.ts), each block's instructions only when its tools are carried.
+    ["blocks", blockTools.guides.map(guided).filter(Boolean).join("\n")],
+    ["microsoft", guided(guides.microsoft)],
     ["command", fromAgent
       ? [
           "This request was not typed by the user. Your own background agent queued it for the phone to run, because it needs something only the phone has (Reminders, the phone's calendar).",

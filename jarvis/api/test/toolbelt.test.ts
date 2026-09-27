@@ -298,6 +298,16 @@ eq("without Outlook, 'check my email' is Gmail as before", namedTools(CATALOGUE,
 eq("'my lists' doesn't name alarm_list", has(namedTools(withBlocks, "show me my lists"), "alarm_list"), false);
 eq("'list my alarms' still names alarm_list", has(namedTools(withBlocks, "list my alarms"), "alarm_list"), true);
 
+// Each block brings only its own instructions (blocks.ts guides): "show me my lists" carries the
+// lists guide, not the vault's, the campaigns' or the meetings'.
+const blockParts = blocksAssistant(blockEnv, "u", "UTC");
+eq("a guide per block", blockParts.guides.length >= 8, true);
+const listsBelt = toolbelt(blockParts.tools, TYPED_CORE, blockParts.guides);
+listsBelt.preload("show me my lists");
+const carried = listsBelt.carriedGuides.map((g) => g.tools[0]?.name);
+eq("preloading a list tool carries the lists guide", carried.includes("list_save"), true);
+eq("and no other block's", carried.filter((n) => n !== "list_save").length, 0);
+
 // more_tools is carried by every turn: it stays short.
 eq("more_tools is short", JSON.stringify(toolbelt(spokenAll, SPOKEN_CORE).tools.find((x) => x.name === "more_tools")).length <= 400, true);
 
