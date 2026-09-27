@@ -26,7 +26,7 @@ import type { Env, Vars } from "./types";
 
 export const microsoftOn = (env: Env) => !!env.MS_CLIENT_ID && !!env.MS_CLIENT_SECRET;
 
-export const MS_SCOPES = ["offline_access", "openid", "email", "profile", "User.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.ReadWrite"];
+export const MS_SCOPES = ["offline_access", "openid", "email", "profile", "User.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.ReadWrite", "People.Read"];
 
 const LOGIN = "https://login.microsoftonline.com/common/oauth2/v2.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
@@ -148,6 +148,11 @@ const TOOLS: ToolSpec[] = [
       properties: { id: { type: "string", description: "The email's id." }, name: { type: "string", description: "Leave out for the first one." }, offset: { type: "number" } },
       required: ["id"],
     },
+  },
+  {
+    name: "outlook_contacts_search",
+    description: "Finds people in their Outlook / Microsoft 365 contacts and the people they email most, by name or email.",
+    parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
   },
   {
     name: "outlook_send",
@@ -307,6 +312,22 @@ async function run(env: Env, userId: string, timeZone: string, name: string, arg
       }),
     });
     return { sent: true };
+  }
+  if (name === "outlook_contacts_search") {
+    const query = String(args.query ?? "").replace(/["\\]/g, " ").trim();
+    if (!query) return { error: "query is required" };
+    const { value = [] } = await graph<{ value?: { displayName?: string; scoredEmailAddresses?: { address?: string }[]; phones?: { number?: string }[] }[] }>(
+      env,
+      userId,
+      `/me/people?$search=${encodeURIComponent(`"${query}"`)}&$top=10&$select=displayName,scoredEmailAddresses,phones`,
+    );
+    return {
+      people: value.map((p) => ({
+        name: p.displayName ?? "",
+        emails: (p.scoredEmailAddresses ?? []).map((e) => e.address).filter(Boolean),
+        phones: (p.phones ?? []).map((n) => n.number).filter(Boolean),
+      })),
+    };
   }
   if (name === "outlook_calendar_events") {
     const first = DAY.test(String(args.start_day ?? "")) ? String(args.start_day) : buckets(Date.now(), timeZone).day;

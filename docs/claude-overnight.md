@@ -277,7 +277,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
 - Task 13: apply migration `0069_page_watches.sql`. No switch: watch tools are on for everyone; checks run only for Plus with consent.
 - Task 19 (Outlook): apply migration `0070_microsoft_accounts.sql`. To switch on, register an app in Microsoft Entra
   (any org + personal accounts, redirect `https://api.ovoa.ai/microsoft/callback`, delegated Graph permissions
-  offline_access openid email profile User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite) and set the secrets
+  offline_access openid email profile User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite People.Read) and set the secrets
   `MS_CLIENT_ID` and `MS_CLIENT_SECRET`. Step by step in docs/outlook.md. The client secret expires (Azure's maximum is
   2 years), so put a reminder in to renew it.
 - Behavior change on main's own code (task 22, cfa268a): when an unproven account is taken back (disown, and the claim in

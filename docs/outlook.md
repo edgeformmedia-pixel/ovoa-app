@@ -14,6 +14,7 @@ read anything extra.
 | `outlook_search` | newest inbox mail, or a search | no |
 | `outlook_read` | one email in full, with its attachments listed | no |
 | `outlook_attachment` | reads a PDF, Word, Excel or text attachment | no |
+| `outlook_contacts_search` | their Outlook contacts and the people they email most | no |
 | `outlook_send` | a new email, or a reply (`reply_to`) | yes, unless Approve for me is on or a standing rule covers everyone it goes to |
 | `outlook_calendar_events` | the calendar for 1 to 14 days | no |
 | `outlook_calendar_create` | a new event, in their time zone | only when it has guests (they get invitations) |
@@ -43,8 +44,8 @@ One Microsoft account per person. Connecting again replaces it.
    - Redirect URI: **Web**, `https://api.ovoa.ai/microsoft/callback`.
 2. Under **Certificates & secrets**, add a client secret and copy its **Value**. It expires, so put a reminder in for 30 days before.
 3. Under **API permissions > Microsoft Graph > Delegated**, add `offline_access`,
-   `openid`, `email`, `profile`, `User.Read`, `Mail.ReadWrite`, `Mail.Send` and
-   `Calendars.ReadWrite`. None of these need admin consent for personal accounts.
+   `openid`, `email`, `profile`, `User.Read`, `Mail.ReadWrite`, `Mail.Send`,
+   `Calendars.ReadWrite` and `People.Read`. None of these need admin consent for personal accounts.
    Some work tenants require their own admin to approve third-party apps, and
    those users will see a message saying so.
 4. Set the two values on the Worker:

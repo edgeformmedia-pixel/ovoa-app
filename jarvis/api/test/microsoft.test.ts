@@ -83,6 +83,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
     return json(200, { subject: "Quick favor", from: { emailAddress: { address: "pat@x.com" } }, replyTo: [{ emailAddress: { address: "evil@x.com" } }] });
   }
   if (url.includes("/me/messages/m1?$select=subject,from")) return json(200, { subject: "Lease", from: { emailAddress: { name: "Pat", address: "pat@x.com" } } });
+  if (url.includes("/me/people?$search")) {
+    return json(200, { value: [{ displayName: "Pat Kim", scoredEmailAddresses: [{ address: "pat@x.com" }], phones: [{ number: "+1 555 0100" }] }] });
+  }
   if (url.includes("/me/calendarView")) return json(200, { value: [{ subject: "Standup", start: { dateTime: "2026-09-28T09:00:00.0000000" }, end: { dateTime: "2026-09-28T09:15:00.0000000" } }] });
   if (url.endsWith("/me/events")) return json(201, { id: "e1", webLink: "https://outlook.live.com/e1" });
   if (url.endsWith("/me/sendMail") || url.endsWith("/reply")) return new Response(null, { status: 202 });
@@ -108,7 +111,7 @@ async function main() {
 
   await connect("sam", Date.now() + 3_600_000);
   const sam = await microsoftAssistant(on, "sam", "America/New_York", false, null);
-  eq("connected: the outlook tools", sam.tools.map((t) => t.name), ["outlook_search", "outlook_read", "outlook_attachment", "outlook_send", "outlook_calendar_events", "outlook_calendar_create"]);
+  eq("connected: the outlook tools", sam.tools.map((t) => t.name), ["outlook_search", "outlook_read", "outlook_attachment", "outlook_contacts_search", "outlook_send", "outlook_calendar_events", "outlook_calendar_create"]);
   eq("the prompt names the account", sam.prompt.includes("sam@contoso.com"), true);
 
   // Reading.
@@ -130,6 +133,9 @@ async function main() {
     { error: "Scan.pdf is too big to read (over 8 MB)." },
     false,
   ]);
+
+  eq("contacts", await sam.callTool("outlook_contacts_search", { query: "Pat" }), { people: [{ name: "Pat Kim", emails: ["pat@x.com"], phones: ["+1 555 0100"] }] });
+  eq("contacts need a query", await sam.callTool("outlook_contacts_search", { query: " " }), { error: "query is required" });
 
   const events = (await sam.callTool("outlook_calendar_events", { start_day: "2026-09-28", days: 2 })) as { events: { title: string; start: string }[] };
   eq("calendar", events.events, [{ title: "Standup", start: "2026-09-28T09:00", end: "2026-09-28T09:15" }]);
