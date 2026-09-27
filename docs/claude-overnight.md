@@ -123,7 +123,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       commit 10f1fd2 (branch backup/local-consent-2026-09-24, the consent version bump) never reached main. Leave it
       failing and note it. Run both suites locally (see their headers; `wrangler dev --local`, fresh --persist-to),
       record before/after counts in the log.
-- [ ] 18. **Discoverability of the new tools**: the tool belt (toolbelt.ts) only carries a handful of tools per turn and
+- [x] 18. **Discoverability of the new tools**: the tool belt (toolbelt.ts) only carries a handful of tools per turn and
       brings others in by words (SYNONYMS, namedTools). Make sure plain requests reach the new blocks without a
       more_tools round: "let me know when", "notify me when", "keep an eye on" (watch_add), "save my address / my
       frequent flyer number" (vault_save), "email all of these" (campaign_start), "text JAKE" style creator asks
@@ -210,3 +210,10 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   private turn; screener answers equal to a code restarted it; keyword replies hijacked linked users' one-word answers;
   deleting vault/sites/rules needed a paid plan; email campaigns didn't re-check plan/consent; browser sessions weren't
   closed per turn; public-suffix cookies accepted. 72 test files pass; both smokes at main's baseline.
+- 2026-09-27 13:20 UTC (local session): task 18 done in 4e531ed. toolbelt.ts SYNONYMS gained words for watches (notify,
+  alert, restock, drop, eye, price...), the vault (passport, flyer, loyalty, locker, address...), campaigns (blast, bulk,
+  outreach...), text-in codes (fans, answered, survey...), rules (approve, permission, checking) and the browser (form,
+  fill, reserve, checkout). Generic words may now carry generic synonyms (stop -> remove/close, tie-breaks only), and a
+  generic name part is stem-matched only as a tool's family, so "my lists" names list_read instead of every *_list tool.
+  toolbelt.test.ts checks 20 phrases against the real block tools. One full `npm test` run of four had a single file
+  fail and three were clean at 72/72; the failing file didn't reproduce (timing flake, not this change's files).
