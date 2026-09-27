@@ -48,7 +48,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       can't run up unbounded cost; over the cap, reply with the existing "Get Base" style text. Tests.
 - [x] 3. **Saved lists**: `list_save` / `list_read` tools backed by a new D1 table (user_id, name, rows JSON, unique
       per user+name, ~5,000 row cap, size cap). Lets OVOA build a list across steps and reuse it later. Tests.
-- [~] claimed 2026-09-27T11:23Z by local session. 4. **Vault**: encrypted personal details OVOA uses when booking or filling forms (addresses, loyalty and
+- [x] 4. **Vault**: encrypted personal details OVOA uses when booking or filling forms (addresses, loyalty and
       frequent-flyer numbers, sizes, seat preferences, car). AES-GCM via existing `crypto.ts` / `TOKEN_ENC_KEY`.
       Tools `vault_lookup` / `vault_save`; refuse card numbers, bank or routing numbers, SSNs, passwords, one-time
       codes. Never write values to action_log or logs. Authed routes GET/POST/PATCH/DELETE `/vault`. Friends and
@@ -101,6 +101,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - Task 2: apply migration `0060_guest_daily.sql` (the normal `npm run db:migrate` before deploy does it). Optional var
   `GUEST_DAILY_REPLIES` (default 2000 free-trial AI replies per UTC day across all numbers; "0" pauses the trial).
 - Task 3: apply migration `0061_user_lists.sql` (normal db:migrate).
+- Task 4: apply migration `0062_vault.sql`. Uses the existing TOKEN_ENC_KEY secret; no new secret.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -119,3 +120,4 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   gives the SAME 427 / 6 (consent wording 1 vs 2, Base 15 vs 20 replies, Plus tier, a 429 vs 503). Those 6 are stale
   expectations in test/smoke.sh after main's plan changes, not regressions. Left alone (main's area); flagged for the owner.
   Note: earlier log times said 11:20/11:45 UTC; real times were about 10:55-11:10 UTC.
+- 2026-09-27 11:26 UTC (local session): task 4 done in b75d794. Vault + /vault routes; 64 test files pass, tsc clean.
