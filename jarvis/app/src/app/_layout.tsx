@@ -181,12 +181,6 @@ function RootStack() {
         {/* A made app on its own screen: its own header, its own colour. */}
         <Stack.Screen name="made/[id]" options={{ gestureEnabled: false }} />
         <Stack.Screen name="made/edit" options={{ ...pushed, title: "Edit app" }} />
-        {/* Settings, Assistant, "When it acts for you". */}
-        <Stack.Screen name="vault" options={{ ...pushed, title: "Vault" }} />
-        <Stack.Screen name="approval-rules" options={{ ...pushed, title: "Approval rules" }} />
-        <Stack.Screen name="signed-in-sites" options={{ ...pushed, title: "Signed-in sites" }} />
-        <Stack.Screen name="campaigns" options={{ ...pushed, title: "Campaigns" }} />
-        <Stack.Screen name="campaign/[id]" options={{ ...pushed, title: "Campaign" }} />
       </Stack.Protected>
       {/* A step of its own, and also opened from the app: from a locked AI
           screen ("Agree to use AI") and from Settings → AI and your data.

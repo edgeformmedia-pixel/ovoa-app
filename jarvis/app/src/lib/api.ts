@@ -412,45 +412,6 @@ export type OvoaWaiting = { id: string; kind: "accept_meeting" | "answer_questio
 /** A line of the log: what their OVOA said to another. */
 export type OvoaLogLine = { to: string; said: string; at: number; status: string };
 
-/** The vault's sections (api/src/vault.ts VAULT_CATEGORIES). */
-export type VaultCategory = "address" | "travel" | "loyalty" | "sizes" | "vehicle" | "other";
-
-/** One saved detail, decrypted for its owner only (api/src/vault.ts). */
-export type VaultItem = { id: string; category: VaultCategory; label: string; value: string; updatedAt: number };
-
-export type CampaignMode = "email" | "research" | "friends";
-export type CampaignStatus = "waiting_for_approval" | "running" | "done" | "stopped";
-export type CampaignItemStatus = "pending" | "working" | "done" | "skipped" | "failed";
-
-/** A campaign as GET /campaigns lists it (api/src/campaigns.ts view). */
-export type Campaign = {
-  id: string;
-  mode: CampaignMode;
-  title: string;
-  status: CampaignStatus;
-  /** How many targets it has. */
-  items: number;
-  createdAt: number;
-  approvedAt: number | null;
-  finishedAt: number | null;
-};
-
-/** One campaign with its counts and a page of its items (GET /campaigns/:id, 100 at a time). */
-export type CampaignDetail = Campaign & {
-  instructions: string;
-  subject: string | null;
-  counts: Record<CampaignItemStatus, number>;
-  offset: number;
-  results: { idx: number; data: Record<string, unknown>; status: CampaignItemStatus; result: string | null }[];
-};
-
-/** A standing approval (api/src/rules.ts): one kind of action, for one recipient or "anyone". */
-export type RuleKind = "email" | "text" | "call" | "calendar";
-export type ApprovalRule = { id: string; kind: RuleKind; recipient: string; label: string };
-
-/** A site they signed into and lent to OVOA's browser (api/src/sitesessions.ts). Never the cookies. */
-export type SignedInSite = { host: string; since: number; expiresAt: number; lastUsed: number | null };
-
 export type StepDay = { day: string; steps: number };
 
 // ---------- Health (api/src/healthdays.ts) ----------
@@ -952,9 +913,7 @@ export async function request<T>(path: string, token: string | null, init: Reque
   // both stay out. A *failed* reply holds neither, and is the only thing in
   // device_logs that can tell a typo from a person who never had an account —
   // which is why 123 401s across 38 devices told us nothing (2026-09-21).
-  // The vault is the same both ways: an address or a loyalty number going up,
-  // every saved detail coming back, and none of it belongs in a bug report.
-  const secret = path.startsWith("/auth/") || path.startsWith("/me/password") || path.startsWith("/vault");
+  const secret = path.startsWith("/auth/") || path.startsWith("/me/password");
   devlog("req", `${method} ${path}`, secret ? undefined : redacted(init.body as string | undefined));
   const started = Date.now();
   // Never wait forever: a request frozen while iOS suspended the app would
@@ -1615,62 +1574,6 @@ export const api = {
   /** Has their OVOA ask a friend's OVOA something (a Base feature). */
   askOvoa: (token: string, body: { username: string; kind: "question" | "reminder" | "share" | "schedule"; text?: string; topic?: string; minutes?: number }) =>
     request<{ sent?: string; to?: string; error?: string }>("/ovoa/ask", token, { method: "POST", body: JSON.stringify(body) }),
-
-  // ---------- The vault (api/src/vault.ts) ----------
-
-  /** Everything saved, decrypted. 503 (no code) while the server has no key to encrypt with. */
-  vault: (token: string) => request<{ items: VaultItem[]; categories: VaultCategory[] }>("/vault", token),
-  /** Adds one, or replaces the one with the same label (any case). 400 with the reason when it won't hold it. */
-  saveVaultItem: (token: string, item: { category: VaultCategory; label: string; value: string }) =>
-    request<{ id: string; category: VaultCategory; label: string; updatedAt: number }>("/vault", token, {
-      method: "POST",
-      body: JSON.stringify(item),
-    }),
-  /** Only what changed. 409 when another item already has the new label. */
-  updateVaultItem: (token: string, id: string, patch: Partial<{ category: VaultCategory; label: string; value: string }>) =>
-    request<{ id: string; label: string; updatedAt: number }>(`/vault/${encodeURIComponent(id)}`, token, {
-      method: "PATCH",
-      body: JSON.stringify(patch),
-    }),
-  deleteVaultItem: (token: string, id: string) => request(`/vault/${encodeURIComponent(id)}`, token, { method: "DELETE" }),
-
-  // ---------- Campaigns (api/src/campaigns.ts) ----------
-
-  campaigns: (token: string) => request<{ campaigns: Campaign[] }>("/campaigns", token),
-  /** One campaign, its counts, and up to 100 of its items from `offset`. */
-  campaign: (token: string, id: string, offset = 0) =>
-    request<CampaignDetail>(`/campaigns/${encodeURIComponent(id)}${offset ? `?offset=${offset}` : ""}`, token),
-  /** Stops one that's running, or cancels one still waiting for approval. What's done stays done. */
-  stopCampaign: (token: string, id: string) => request<{ ok: true }>(`/campaigns/${encodeURIComponent(id)}/stop`, token, { method: "POST" }),
-  /** Every item and its result as CSV text. Not JSON, so it can't go through request(). */
-  campaignCsv: async (token: string, id: string) => {
-    const path = `/campaigns/${encodeURIComponent(id)}/export.csv`;
-    devlog("req", `GET ${path}`);
-    const res = await fetch(`${API_URL}${path}`, { headers: { authorization: `Bearer ${token}` } });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      devlog("err", `${res.status} GET ${path}`, body);
-      noteDeadSession(res.status, token, body?.error);
-      throw new ApiError(errorText(body, res.status), res.status, {}, null, noteCoded(body));
-    }
-    return res.text();
-  },
-
-  // ---------- Standing approvals (api/src/rules.ts) ----------
-
-  approvalRules: (token: string) => request<{ rules: ApprovalRule[] }>("/approval-rules", token),
-  /** No recipient means anyone. Adding one that exists already is a quiet no-op on the server. */
-  addApprovalRule: (token: string, kind: RuleKind, recipient?: string) =>
-    request<{ kind: RuleKind; recipient: string; label: string }>("/approval-rules", token, {
-      method: "POST",
-      body: JSON.stringify({ kind, recipient }),
-    }),
-  removeApprovalRule: (token: string, id: string) => request(`/approval-rules/${encodeURIComponent(id)}`, token, { method: "DELETE" }),
-
-  // ---------- Signed-in sites (api/src/sitesessions.ts, docs/logins-without-passwords.md) ----------
-
-  signedInSites: (token: string) => request<{ sites: SignedInSite[] }>("/browser/sites", token),
-  removeSignedInSite: (token: string, host: string) => request(`/browser/sites/${encodeURIComponent(host)}`, token, { method: "DELETE" }),
 
   // ---------- What it costs ----------
 
