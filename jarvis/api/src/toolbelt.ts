@@ -187,6 +187,12 @@ const SYNONYMS: Record<string, string[]> = {
   meal: ["food"],
   calories: ["food"],
   calorie: ["food"],
+  // Reading one page (fetchurl.ts): "what does this link say", a pasted https:// address.
+  link: ["url"],
+  links: ["url"],
+  article: ["url"],
+  https: ["url"],
+  http: ["url"],
   // Websites (sites.ts): "a website for my client", "change the hours on Tony's site".
   website: ["site"],
   websites: ["site"],
