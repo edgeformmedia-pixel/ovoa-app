@@ -120,8 +120,11 @@ export const SPOKEN_CORE = new Set([
  * rots; this one only has to cover the words a person actually says out loud.
  */
 const SYNONYMS: Record<string, string[]> = {
-  email: ["gmail", "mail"],
-  mail: ["gmail", "email"],
+  // "outlook" only names anything for someone with Outlook connected (microsoft.ts).
+  email: ["gmail", "mail", "outlook"],
+  mail: ["gmail", "email", "outlook"],
+  inbox: ["gmail", "outlook", "search"],
+  hotmail: ["outlook"],
   text: ["message", "sms"],
   texted: ["message"],
   spreadsheet: ["sheets"],

@@ -280,6 +280,17 @@ for (const said of ["what's in my checking account", "what's the price of bitcoi
 // A verb form of a generic name part still breaks the tie: "searching" and note_search.
 const noting = [t("note_add", "Adds a note."), t("note_list", "Lists notes."), t("note_search", "Searches notes."), t("gmail_search", "Searches mail.")];
 eq("'searching for my notes' puts note_search first", namedTools(noting, "searching for my notes about the trip")[0]?.name, "note_search");
+// Outlook, for someone who has it connected (microsoft.ts).
+const outlook = [
+  ...CATALOGUE,
+  t("outlook_search", "Searches Outlook mail."),
+  t("outlook_send", "Sends from Outlook."),
+  t("outlook_calendar_events", "Outlook calendar."),
+];
+eq("'check my hotmail' names outlook_search", has(namedTools(outlook, "check my hotmail"), "outlook_search"), true);
+eq("'what's in my inbox' names outlook_search", has(namedTools(outlook, "what's in my inbox"), "outlook_search"), true);
+eq("'send an email to Sarah' still names gmail_send", has(namedTools(outlook, "send an email to Sarah"), "gmail_send"), true);
+eq("without Outlook, 'check my email' is Gmail as before", namedTools(CATALOGUE, "check my email")[0]?.name.startsWith("gmail"), true);
 // "lists" names the list family, not every tool that lists something.
 eq("'my lists' doesn't name alarm_list", has(namedTools(withBlocks, "show me my lists"), "alarm_list"), false);
 eq("'list my alarms' still names alarm_list", has(namedTools(withBlocks, "list my alarms"), "alarm_list"), true);
