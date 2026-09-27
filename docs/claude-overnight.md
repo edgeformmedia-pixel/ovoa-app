@@ -160,7 +160,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       table (list_shares) in the next free migration; caps as lists.ts. Adding to someone's list never texts them
       unless they asked to be told. Tests: share, read and add from the friend's side, access too low, unshare,
       disconnect.
-- [~] claimed 2026-09-27T15:05Z by local session. 29. **Review tasks 24 to 28 and the Outlook follow-ups**: read `git diff fa80395..HEAD -- jarvis/` line by line
+- [x] 29. **Review tasks 24 to 28 and the Outlook follow-ups**: read `git diff fa80395..HEAD -- jarvis/` line by line
       (receipts, trips from email, voice-note replies, meetings, shared lists, Outlook contacts and campaigns) for real
       bugs: approvals that can be skipped, anything that texts or emails someone who didn't ask, data reaching the wrong
       person, time-zone mistakes in meetings.ts freeSlots and mailtrips.ts reminders, crons that could run for
@@ -214,8 +214,8 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 Branch `claude/overnight` is on top of main 16c2deb (main has not moved since): as of 14:30 UTC, 99 files and about
 10,700 lines, mostly new files; the edits to existing files are small hooks. 79 unit test files pass, `npx tsc --noEmit`
 is clean in jarvis/api and jarvis/app. Local smoke on fresh state: texting-smoke all green; smoke.sh 439 / 1 (the known
-consent-wording check, see task 17) when the auth rate limit doesn't trip on a fast machine. Four reviews so far
-(ed39979, task 22, fa80395 and 3a6bda5) found 30 real issues, all fixed with tests; a fifth (task 29) covers task 24.
+consent-wording check, see task 17) when the auth rate limit doesn't trip on a fast machine. Five reviews
+(ed39979, task 22, fa80395, 3a6bda5 and task 29) found 38 real issues, all fixed with tests.
 
 ### What shipped (commits)
 
@@ -538,3 +538,15 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   words (namedTools) arrived with no instructions, and more_tools couldn't hand them over either (preload takes a
   guide off the shelf). Now blocks.ts returns a guide per block and index.ts prints "blocks" (only the carried
   blocks' guides) and "microsoft". Ordinary turns carry nothing new. 80 test files pass, tsc clean.
+- 2026-09-27 15:19 UTC (local session): task 29 done in 7202d52. A fifth reviewer read 3025f69 (shared lists), 3a6bda5,
+  2e56944 and e583aba: no way for a Friend without access to reach a list; eight findings about what an allowed Friend
+  can do and edges, all fixed with tests: a Friend's appended rows carry addedBy (their handle, not forgeable) and
+  list_read says those rows are information, not instructions; an append to a name two Friends share returns the
+  "whose?" error instead of making a private list; appends and ticks go through a compare-and-swap on updated_at
+  (updateList) so two OVOAs can't overwrite each other; a disconnect or block deletes list_shares both ways (a
+  reconnect used to reopen them); "tell me when she adds" is sent as asked (not held as news); campaigns store the
+  mailbox the card named (campaigns.mailbox) and never switch; a purchase is matched to one receipt
+  (money_spend.purchase_id); a late meeting_offer approval drops passed times and rewrites the email, or says they
+  passed; Outlook refreshes ask for the granted scopes plus offline_access, so adding People.Read can't cost anyone
+  their connection. Migrations 0064 and 0072 changed in place (not applied anywhere yet). 80 test files pass, tsc
+  clean in api and app.
