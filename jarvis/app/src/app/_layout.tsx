@@ -187,6 +187,7 @@ function RootStack() {
         <Stack.Screen name="signed-in-sites" options={{ ...pushed, title: "Signed-in sites" }} />
         <Stack.Screen name="campaigns" options={{ ...pushed, title: "Campaigns" }} />
         <Stack.Screen name="invite" options={{ ...pushed, title: "Invite a friend" }} />
+        <Stack.Screen name="meetings" options={{ ...pushed, title: "Meeting offers" }} />
         <Stack.Screen name="campaign/[id]" options={{ ...pushed, title: "Campaign" }} />
       </Stack.Protected>
       {/* A step of its own, and also opened from the app: from a locked AI

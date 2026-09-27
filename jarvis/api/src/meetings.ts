@@ -9,6 +9,7 @@
 // unclear is handed to them. OVOA never answers Dana on its own. At most 5 open
 // at once, each ends after 7 days. Reading replies is Plus, like watches.
 
+import { Hono } from "hono";
 import { registerApprover } from "./approvers";
 import { parkAction, type PendingAction } from "./google/assistant";
 import { googleAccessToken, listGoogleAccounts } from "./google/oauth";
@@ -20,7 +21,7 @@ import { reach, type Reach } from "./reach";
 import { ruleAllows } from "./rules";
 import { noDashes } from "./sentences";
 import { addDays, atLocalTime, buckets, localWeekday } from "./time";
-import type { Env } from "./types";
+import type { Env, Vars } from "./types";
 
 export const MAX_OPEN = 5;
 const OPEN_DAYS = 7;
@@ -210,12 +211,71 @@ const TOOLS: ToolSpec[] = [
   },
 ];
 
+TOOLS.push({
+  name: "meet_cancel",
+  description:
+    "Stops finding a time with someone by email: an offer still waiting for their approval isn't sent, and OVOA stops watching for the other person's reply. With no email, lists the open ones.",
+  parameters: { type: "object", properties: { email: { type: "string", description: "The other person's email address." } } },
+});
+
 const NAMES = new Set(TOOLS.map((t) => t.name));
 export const isMeetingTool = (name: string) => NAMES.has(name);
+
+/** Offers still open: waiting for their approval (the last day) or for the other person's reply. */
+export async function openMeetings(db: D1Database, userId: string, now = Date.now()) {
+  const { results } = await db
+    .prepare(
+      "SELECT * FROM meetings WHERE user_id = ? AND (status = 'waiting' OR (status = 'offered' AND created_at > ?)) ORDER BY created_at DESC",
+    )
+    .bind(userId, now - 86_400_000)
+    .all<MeetingRow>();
+  return results.map((m) => ({
+    id: m.id,
+    email: m.email,
+    name: m.name,
+    title: m.title,
+    status: m.status === "offered" ? ("waiting_for_your_approval" as const) : ("waiting_for_their_reply" as const),
+    times: (JSON.parse(m.slots) as number[]).map((s) => slotLine(s, m.time_zone)),
+    until: m.expires_at,
+  }));
+}
+
+/**
+ * Cancels one of their open offers: it's never sent if it hadn't been, and the
+ * reply is no longer watched. True when there was one to cancel.
+ */
+export async function cancelMeeting(db: D1Database, userId: string, id: string) {
+  const done = await db
+    .prepare("UPDATE meetings SET status = 'cancelled' WHERE id = ? AND user_id = ? AND status IN ('offered', 'waiting')")
+    .bind(id, userId)
+    .run();
+  if (!done.meta.changes) return false;
+  // Its offer email, if it still waits for their approval.
+  await db.prepare("DELETE FROM pending_actions WHERE user_id = ? AND tool = ? AND args = ?").bind(userId, OFFER, JSON.stringify({ meetingId: id })).run();
+  return true;
+}
+
+/** The app's list of offers, with Cancel. */
+export const meetingRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
+
+meetingRoutes.get("/meetings", async (c) => c.json({ meetings: await openMeetings(c.env.DB, c.var.userId) }));
+
+meetingRoutes.delete("/meetings/:id", async (c) =>
+  (await cancelMeeting(c.env.DB, c.var.userId, c.req.param("id"))) ? c.body(null, 204) : c.json({ error: "Not found." }, 404),
+);
 
 export function meetingsAssistant(env: Env, userId: string, timeZone: string, onPark: (action: PendingAction) => void) {
   const db = env.DB;
   const callTool: CallTool = async (name, args) => {
+    if (name === "meet_cancel") {
+      const open = await openMeetings(db, userId);
+      const who = String(args.email ?? "").trim().toLowerCase();
+      if (!who) return { open: open.map(({ id: _, ...m }) => m) };
+      const m = open.find((x) => x.email === who) ?? open.find((x) => x.email.includes(who) || (x.name ?? "").toLowerCase() === who);
+      if (!m) return { error: `Nothing open with ${who}.` };
+      await cancelMeeting(db, userId, m.id);
+      return { cancelled: m.email, note: m.status === "waiting_for_your_approval" ? "The offer was never sent." : "The offer was already sent; OVOA just stops watching for the reply." };
+    }
     if (name !== "meet_propose") return { error: `Unknown tool ${name}` };
     const email = String(args.email ?? "").trim().toLowerCase();
     if (!EMAIL.test(email)) return { error: "I need their email address." };
@@ -278,7 +338,7 @@ export function meetingsAssistant(env: Env, userId: string, timeZone: string, on
   return {
     tools: TOOLS,
     callTool,
-    prompt: "Finding a time with someone who isn't on OVOA (just an email address): meet_propose. With a Friend on OVOA, ask their OVOA instead.",
+    prompt: "Finding a time with someone who isn't on OVOA (just an email address): meet_propose; to stop, meet_cancel. With a Friend on OVOA, ask their OVOA instead.",
   };
 }
 

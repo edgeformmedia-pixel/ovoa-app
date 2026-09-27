@@ -131,6 +131,7 @@ export const ROUTE_TIERS: RouteRule[] = [
   { method: "*", path: /^\/google\/(status|connect|callback|accounts\/[^/]+)$/, tier: "free", why: "connecting Google and managing its accounts" },
   { method: "*", path: /^\/microsoft\/(status|connect|callback)$/, tier: "free", why: "connecting Outlook" },
   { method: "GET", path: /^\/invites$/, tier: "free", why: "inviting a friend" },
+  { method: "GET", path: /^\/meetings$/, tier: "free", why: "seeing (and cancelling) offers of meeting times" },
   { method: "GET", path: /^\/actions$/, tier: "free", why: "the actions waiting for your OK" },
   { method: "POST", path: /^\/actions\/[^/]+\/approve$/, tier: "free", why: "approving one: it runs as written, no model" },
   { method: "POST", path: /^\/siri\/key$/, tier: "free", why: "making the Siri key (asking through it is base)" },

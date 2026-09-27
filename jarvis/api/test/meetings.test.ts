@@ -176,6 +176,38 @@ async function main() {
   await meetingsTick(env, { now: Date.now(), reply: async () => null, tell: async () => undefined });
   eq("ended after a week", status("kim@x.com"), "expired");
 
+  // Cancelling: an offer still waiting for approval is never sent; one sent stops being watched.
+  sqlite.prepare("UPDATE meetings SET status = 'expired' WHERE status IN ('offered', 'waiting')").run();
+  sqlite.prepare("DELETE FROM google_accounts WHERE id = 'g2'").run();
+  const c1 = blocksAssistant(env, "sam", TZ);
+  await c1.callTool("meet_propose", { email: "nina@x.com", name: "Nina" });
+  const listed = (await c1.callTool("meet_cancel", {})) as { open: { email: string; status: string }[] };
+  eq("with no email, the open ones", listed.open.map((m) => [m.email, m.status]), [["nina@x.com", "waiting_for_your_approval"]]);
+  eq("cancel by name", ((await c1.callTool("meet_cancel", { email: "nina" })) as { cancelled: string }).cancelled, "nina@x.com");
+  eq("its email card is gone too", sqlite.prepare("SELECT COUNT(*) AS n FROM pending_actions WHERE id = ?").get(c1.pending[0]!.id), { n: 0 });
+  eq("and it's never watched", status("nina@x.com"), "cancelled");
+  eq("nothing more to cancel", await c1.callTool("meet_cancel", { email: "nina@x.com" }), { error: "Nothing open with nina@x.com." });
+
+  // The app's list and Cancel, the owner's only.
+  const { Hono } = await import("hono");
+  const { blockRoutes } = await import("../src/blocks");
+  const appFor = (who: string) => {
+    const app = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
+    app.use("*", async (c, next) => {
+      c.set("userId", who);
+      await next();
+    });
+    app.route("/", blockRoutes as never);
+    return app;
+  };
+  await blocksAssistant(env, "sam", TZ).callTool("meet_propose", { email: "omar@x.com" });
+  const omar = (sqlite.prepare("SELECT id FROM meetings WHERE email = 'omar@x.com'").get() as { id: string }).id;
+  const got = (await (await appFor("sam").request("/meetings", {}, env)).json()) as { meetings: { email: string }[] };
+  eq("GET /meetings", got.meetings.map((m) => m.email), ["omar@x.com"]);
+  eq("someone else can't cancel it", (await appFor("alex").request(`/meetings/${omar}`, { method: "DELETE" }, env)).status, 404);
+  eq("DELETE /meetings/:id", (await appFor("sam").request(`/meetings/${omar}`, { method: "DELETE" }, env)).status, 204);
+  eq("cancelled", status("omar@x.com"), "cancelled");
+
   console.log(fails ? `\n${fails} failed` : "\nall passed");
   if (fails) process.exit(1);
 }

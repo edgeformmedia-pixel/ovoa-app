@@ -350,6 +350,7 @@ export default function Settings() {
         <Button label="Approval rules" onPress={() => router.push("/approval-rules" as Href)} />
         <Button label="Signed-in sites" onPress={() => router.push("/signed-in-sites" as Href)} />
         <Button label="Campaigns" onPress={() => router.push("/campaigns" as Href)} />
+        <Button label="Meeting offers" onPress={() => router.push("/meetings" as Href)} />
 
         {/* Other people's OVOAs (api/src/network.ts): who yours can talk to, and what each may do. */}
         <Sub>Other people's OVOAs</Sub>

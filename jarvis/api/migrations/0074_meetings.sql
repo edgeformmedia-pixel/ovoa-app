@@ -12,7 +12,7 @@ CREATE TABLE meetings (
   account_id    TEXT,
   time_zone     TEXT NOT NULL,
   -- offered: the email waits for their YES; waiting: sent, watching for the reply.
-  status        TEXT NOT NULL CHECK (status IN ('offered', 'waiting', 'picked', 'handed', 'expired', 'failed')),
+  status        TEXT NOT NULL CHECK (status IN ('offered', 'waiting', 'picked', 'handed', 'expired', 'failed', 'cancelled')),
   subject       TEXT NOT NULL,
   body          TEXT NOT NULL,
   created_at    INTEGER NOT NULL,

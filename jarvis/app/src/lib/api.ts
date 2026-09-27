@@ -448,6 +448,17 @@ export type CampaignDetail = Campaign & {
 
 /** A standing approval (api/src/rules.ts): one kind of action, for one recipient or "anyone". */
 export type RuleKind = "email" | "text" | "call" | "calendar";
+/** An offer of meeting times sent by email (api/src/meetings.ts). */
+export type MeetingOffer = {
+  id: string;
+  email: string;
+  name: string | null;
+  title: string;
+  status: "waiting_for_your_approval" | "waiting_for_their_reply";
+  times: string[];
+  until: number;
+};
+
 /** Invite a friend (api/src/invites.ts). */
 export type Invite = { number: string; text: string; smsLink: string | null; username: string | null; joined: number; waiting: number };
 
@@ -1674,6 +1685,8 @@ export const api = {
   // ---------- Standing approvals (api/src/rules.ts) ----------
 
   invites: (token: string) => request<Invite>("/invites", token),
+  meetings: (token: string) => request<{ meetings: MeetingOffer[] }>("/meetings", token),
+  cancelMeeting: (token: string, id: string) => request(`/meetings/${id}`, token, { method: "DELETE" }),
   approvalRules: (token: string) => request<{ rules: ApprovalRule[] }>("/approval-rules", token),
   /** No recipient means anyone. Adding one that exists already is a quiet no-op on the server. */
   addApprovalRule: (token: string, kind: RuleKind, recipient?: string) =>
