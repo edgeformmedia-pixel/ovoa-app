@@ -286,6 +286,10 @@ export function listsAssistant(env: Env, userId: string, io: ListsIo = {}) {
   /** A Friend added to the owner's list: the owner hears only if they asked to. */
   const added = async (t: Target, count: number) => {
     if (!t.share?.tellOwner || !count) return;
+    // At most once an hour per list, however many adds a Friend's turn makes.
+    const hour = `${t.name.toLowerCase()}|${Math.floor(Date.now() / 3_600_000)}`;
+    const first = await db.prepare("INSERT OR IGNORE INTO daily_marks (user_id, kind, day, at) VALUES (?, 'list-told', ?, ?)").bind(t.ownerId, hour, Date.now()).run();
+    if (!first.meta.changes) return;
     const me = await db.prepare("SELECT name, username FROM users WHERE id = ?").bind(userId).first<{ name: string; username: string | null }>();
     const who = me?.name.split(" ")[0] || (me?.username ? `@${me.username}` : "A friend");
     await tell(env, t.ownerId, `${who} added ${count === 1 ? "something" : `${count} things`} to your ${t.name} list.`);

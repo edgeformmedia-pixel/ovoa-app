@@ -25,6 +25,9 @@ export const FORBIDDEN_FOR_COMMANDS = new Set([
   "outlook_send",
   // Offers times to someone by email (meetings.ts): a standing rule could send it.
   "meet_propose",
+  // A standing rule or a list shared with a Friend is the person's own decision (rules.ts, lists.ts).
+  "rule_add",
+  "list_share",
   "gmail_trash",
   "drive_trash",
   "calendar_delete_event",

@@ -265,7 +265,10 @@ export async function startCampaign(env: Env, userId: string, args: Record<strin
   if ((!items || !items.length) && typeof args.list === "string" && args.list.trim()) {
     const list = await readList(db, userId, clean(args.list, 80));
     if (!list) return { error: `They have no list called "${clean(args.list, 80)}".` };
-    items = list.rows;
+    // Rows a Friend added to a shared list (lists.ts addedBy) aren't theirs to email.
+    items = list.rows.filter((r) => typeof r.addedBy !== "string");
+    const friends = list.rows.length - items.length;
+    if (friends && !items.length) return { error: `Every row of "${list.name}" was added by a Friend; a campaign only goes to rows they added themselves.` };
   }
   const plan = checkPlan(args, items);
   if ("error" in plan) return plan;
@@ -443,14 +446,18 @@ export async function campaignsTick(env: Env, io: CampaignIo = realIo, deadline 
     if (Date.now() > deadline) break;
     const now = io.now();
     const timeZone = validTimeZone(c.time_zone);
+    // Skipped ones go to the back of the line (updated_at), so they can't hold the lane's 20 places.
+    const later = () => db.prepare("UPDATE campaigns SET updated_at = ? WHERE id = ?").bind(now, c.id).run();
     if (!inDaytime(now, timeZone, c.quiet_start, c.quiet_end)) {
       tally.night++;
+      await later();
       continue;
     }
     // The plan and consent still hold, checked here because an email campaign never calls a
     // model (so the model gate never sees it): below Base or no consent, it waits.
     if (await blockedFor(env, c.user_id, "base")) {
       tally.blocked++;
+      await later();
       continue;
     }
     const { results: items } = await db

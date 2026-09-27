@@ -7,7 +7,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
 import { blockRoutes, blocksAssistant } from "../src/blocks";
-import { phoneAssistant } from "../src/google/assistant";
+import { approveAction, phoneAssistant } from "../src/google/assistant";
 import { kindOfTool, normalRecipient, recipientsOf, ruleAllows, rulesFor } from "../src/rules";
 import type { Env, Vars } from "../src/types";
 
@@ -50,7 +50,16 @@ async function main() {
 
   const sam = blocksAssistant(env, "sam", "UTC");
   eq("tools offered", sam.tools.filter((t) => t.name.startsWith("rule_")).map((t) => t.name), ["rule_add", "rule_list", "rule_remove"]);
-  eq("add: email to wife", await sam.callTool("rule_add", { kind: "email", recipient: "Wife@Example.com" }), { kind: "email", recipient: "wife@example.com", label: "email to wife@example.com without asking" });
+  // Made in conversation, a rule waits for their own YES: text in an email or a page can't make one.
+  const asked = (await sam.callTool("rule_add", { kind: "email", recipient: "Wife@Example.com" })) as { status: string };
+  eq("add: waits for their YES", asked.status, "waiting_for_user_approval");
+  eq("the card says what it allows", sam.pending.at(-1)?.summary, "Let OVOA email wife@example.com without asking you first?");
+  eq("not set until then", (sqlite.prepare("SELECT COUNT(*) AS n FROM approval_rules WHERE user_id = 'sam'").get() as { n: number }).n, 0);
+  eq("approved: set", (await approveAction(env, "sam", sam.pending.at(-1)!.id))?.content, "Done: OVOA no longer asks before it emails wife@example.com.");
+  const approved = async (args: Record<string, unknown>) => {
+    await sam.callTool("rule_add", args);
+    await approveAction(env, "sam", sam.pending.at(-1)!.id);
+  };
   eq("bad kind", await sam.callTool("rule_add", { kind: "purchase" }), { error: "kind must be one of email, text, call, calendar" });
 
   // Every recipient covered.
@@ -62,14 +71,14 @@ async function main() {
   eq("another person's rules don't apply", await ruleAllows(DB, "alex", "gmail_send", { to: "wife@example.com" }), false);
 
   // Anyone rules, and calendar guests.
-  await sam.callTool("rule_add", { kind: "calendar" });
+  await approved({ kind: "calendar" });
   eq("calendar event, no guests", await ruleAllows(DB, "sam", "calendar_create_event", { summary: "Gym" }), true);
   eq("calendar event with a guest still asks", await ruleAllows(DB, "sam", "calendar_create_event", { summary: "Dinner", attendees: ["friend@x.co"] }), false);
-  await sam.callTool("rule_add", { kind: "calendar", recipient: "friend@x.co" });
+  await approved({ kind: "calendar", recipient: "friend@x.co" });
   eq("unless that guest has a rule", await ruleAllows(DB, "sam", "calendar_create_event", { summary: "Dinner", attendees: ["friend@x.co"] }), true);
 
   // The phone path: a covered text runs like Approve for me; others wait.
-  await sam.callTool("rule_add", { kind: "text", recipient: "Mom" });
+  await approved({ kind: "text", recipient: "Mom" });
   const caps = { lookups: true, capabilities: [] };
   const phone = phoneAssistant(env, "sam", caps, false, false, rulesFor(env, "sam"));
   const toMom = (await phone.callTool("phone_message_compose", { to: ["Mom"], body: "On my way" })) as { status: string };

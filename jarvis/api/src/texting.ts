@@ -821,8 +821,10 @@ async function answer(env: Env, ctx: Waiter, userId: string, batch: InboxRow[], 
   const now = Date.now();
 
   // A YES or a NO to what the last reply set up. Anything else lets it go.
-  const waiting = waitingApprovals(link, now);
-  if (link.approvals) await setApprovals(db, userId, [], now);
+  // A task handed over from a group chat (textgroups.ts) isn't their answer to what's waiting here.
+  const handedOver = batch.every((r) => r.handle.endsWith("#1on1"));
+  const waiting = handedOver ? [] : waitingApprovals(link, now);
+  if (link.approvals && !handedOver) await setApprovals(db, userId, [], now);
   if (waiting.length) {
     const verdict = yesOrNo(text);
     if (verdict === "yes") {

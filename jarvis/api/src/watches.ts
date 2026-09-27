@@ -120,7 +120,7 @@ export async function watchesTick(
         .run();
       if (gone) {
         const line = `I stopped watching ${new URL(row.url).hostname} for "${row.looking_for}": the page wouldn't load.`;
-        await tell(env, row.user_id, { kind: "watch", text: line, push: { title: "Watch stopped", body: line } }).catch(() => undefined);
+        await tell(env, row.user_id, { kind: "watch", text: line, asked: true, push: { title: "Watch stopped", body: line } }).catch(() => undefined);
       }
       continue;
     }
@@ -144,7 +144,7 @@ export async function watchesTick(
     if (verdict.met) {
       met++;
       const line = noDashes(`Heads up: ${verdict.note || row.looking_for}. ${row.url}`);
-      await tell(env, row.user_id, { kind: "watch", text: line, push: { title: "Something you're watching", body: line } }).catch(() => undefined);
+      await tell(env, row.user_id, { kind: "watch", text: line, asked: true, push: { title: "Something you're watching", body: line } }).catch(() => undefined);
     }
   }
   return { checked, met };

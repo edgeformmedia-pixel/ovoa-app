@@ -758,7 +758,20 @@ async function signOutEverywhere(db: D1Database, userId: string) {
  * texting the account, and being answered from the owner's things, after the
  * owner took it back. The owner links their own phone again, as with Google.
  */
-const TAKEN_BACK = ["approval_rules", "site_sessions", "vault_items", "text_links", "text_link_codes"];
+const TAKEN_BACK = [
+  "approval_rules",
+  "site_sessions",
+  "vault_items",
+  "text_links",
+  "text_link_codes",
+  // Work they set going that would carry on in the owner's name: campaigns (their items go with them),
+  // page watches, offers of meeting times, text-in codes, and their lists.
+  "campaigns",
+  "page_watches",
+  "meetings",
+  "inbound_codes",
+  "user_lists",
+];
 
 async function disown(db: D1Database, userId: string) {
   await db.batch([

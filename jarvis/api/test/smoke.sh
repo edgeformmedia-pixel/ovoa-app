@@ -111,7 +111,9 @@ if [ "${SKIP_D1:-}" != "1" ]; then
     INSERT INTO site_sessions (user_id, host, cookies_enc, created_at, expires_at) VALUES ('$SQUAT_ID', 'amazon.com', 'x', 0, 9999999999999);
     INSERT INTO vault_items (id, user_id, category, label, value_enc, created_at, updated_at) VALUES ('sq-vault', '$SQUAT_ID', 'address', 'Home', 'x', 0, 0);
     INSERT INTO microsoft_accounts (user_id, email, scopes, refresh_token_enc, connected_at) VALUES ('$SQUAT_ID', 'squatter@outlook.com', 'Mail.Send', 'x', 0);
-    INSERT INTO text_links (user_id, phone, linked_at) VALUES ('$SQUAT_ID', '+15550009999', 0);" > /dev/null
+    INSERT INTO text_links (user_id, phone, linked_at) VALUES ('$SQUAT_ID', '+15550009999', 0);
+    INSERT INTO user_lists (user_id, name, rows, row_count, created_at, updated_at) VALUES ('$SQUAT_ID', 'targets', '[]', 0, 0, 0);
+    INSERT INTO page_watches (id, user_id, url, looking_for, every_min, until_at, next_at, created_at) VALUES ('sq-watch', '$SQUAT_ID', 'https://example.com', 'x', 60, 9999999999999, 0, 0);" > /dev/null
 fi
 SCODE=$(curl -s -X POST -H "x-debug-key: $DEBUG_KEY" -H 'content-type: application/json' "$API/debug/email/code" -d "{\"email\":\"$SQUAT_EMAIL\"}" | j "d['code']")
 PROVEN=$(curl -s -X POST -H 'content-type: application/json' "$API/auth/email/verify" -d "{\"email\":\"$SQUAT_EMAIL\",\"code\":\"$SCODE\"}")
@@ -123,8 +125,8 @@ check "the squatter's session is gone" "$(curl -s -o /dev/null -w '%{http_code}'
 check "and the owner's password is the one that signs in" \
   "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' "$API/auth/login" -d "{\"email\":\"$SQUAT_EMAIL\",\"password\":\"owner12345\"}")" "200"
 if [ "${SKIP_D1:-}" != "1" ]; then
-  LEFT=$(squat_d1 --command "SELECT (SELECT COUNT(*) FROM approval_rules WHERE user_id = '$SQUAT_ID') + (SELECT COUNT(*) FROM site_sessions WHERE user_id = '$SQUAT_ID') + (SELECT COUNT(*) FROM vault_items WHERE user_id = '$SQUAT_ID') + (SELECT COUNT(*) FROM microsoft_accounts WHERE user_id = '$SQUAT_ID') + (SELECT COUNT(*) FROM text_links WHERE user_id = '$SQUAT_ID') AS n" | j "d[0]['results'][0]['n']")
-  check "and nothing the squatter left can act for the owner (rules, site sign-ins, vault, Outlook, their texting phone)" "$LEFT" "0"
+  LEFT=$(squat_d1 --command "SELECT (SELECT COUNT(*) FROM approval_rules WHERE user_id = '$SQUAT_ID') + (SELECT COUNT(*) FROM site_sessions WHERE user_id = '$SQUAT_ID') + (SELECT COUNT(*) FROM vault_items WHERE user_id = '$SQUAT_ID') + (SELECT COUNT(*) FROM microsoft_accounts WHERE user_id = '$SQUAT_ID') + (SELECT COUNT(*) FROM text_links WHERE user_id = '$SQUAT_ID') + (SELECT COUNT(*) FROM user_lists WHERE user_id = '$SQUAT_ID') + (SELECT COUNT(*) FROM page_watches WHERE user_id = '$SQUAT_ID') AS n" | j "d[0]['results'][0]['n']")
+  check "and nothing the squatter left can act for the owner (rules, site sign-ins, vault, Outlook, texting phone, lists, watches)" "$LEFT" "0"
 fi
 
 echo

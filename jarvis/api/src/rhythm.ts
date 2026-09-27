@@ -350,7 +350,7 @@ async function driveSeconds(from: { lat: number; lng: number }, to: { lat: numbe
  */
 async function commuteTick(env: Env, u: TickUser) {
   // Outlook's calendar counts too (microsoft.ts); with it off this is Google only, as before.
-  if (!u.google && !microsoftOn(env)) return 0;
+  if (!u.google && !u.outlook) return 0;
   const db = env.DB;
   const now = Date.now();
   const { results: known } = await db
@@ -550,18 +550,21 @@ type TickUser = {
   sleep: number | null;
   deviceSeen: number | null;
   google: boolean;
+  /** Outlook connected and switched on (microsoft.ts). */
+  outlook?: boolean;
 };
 
 /** Every two minutes, for everyone the phone can reach. */
 export async function rhythmTick(env: Env, slice?: Slice) {
   const { results } = await env.DB.prepare(
     `SELECT s.user_id, s.time_zone, p.wake_time, p.sleep_time, d.updated_at AS device_seen,
-            EXISTS (SELECT 1 FROM google_accounts g WHERE g.user_id = s.user_id) AS google
+            EXISTS (SELECT 1 FROM google_accounts g WHERE g.user_id = s.user_id) AS google,
+            EXISTS (SELECT 1 FROM microsoft_accounts m WHERE m.user_id = s.user_id) AS outlook
        FROM settings s
        LEFT JOIN profile p ON p.user_id = s.user_id
        LEFT JOIN device_state d ON d.user_id = s.user_id
       WHERE EXISTS (SELECT 1 FROM push_tokens t WHERE t.user_id = s.user_id)`,
-  ).all<{ user_id: string; time_zone: string | null; wake_time: number | null; sleep_time: number | null; device_seen: number | null; google: number }>();
+  ).all<{ user_id: string; time_zone: string | null; wake_time: number | null; sleep_time: number | null; device_seen: number | null; google: number; outlook: number }>();
   const counts = { briefs: 0, windDowns: 0, commutes: 0, oddities: 0 };
   for (const r of results) {
     if (!inSlice(r.user_id, slice)) continue;
@@ -572,6 +575,7 @@ export async function rhythmTick(env: Env, slice?: Slice) {
       sleep: r.sleep_time,
       deviceSeen: r.device_seen,
       google: !!r.google,
+      outlook: !!r.outlook && microsoftOn(env),
     };
     try {
       if (await morningTick(env, u, lazyCheck(env, u.userId, "base"))) counts.briefs++;

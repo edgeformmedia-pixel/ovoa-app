@@ -187,6 +187,8 @@ export async function reach(env: Env, userId: string, r: Reach, io: ReachIo = {}
       .bind(crypto.randomUUID(), userId, texts.slice(0, sent).join("\n\n"), now)
       .run();
     if (approvals.length && sent === texts.length) await setApprovals(env.DB, userId, approvals, now, FIRST_APPROVAL_TTL_MS);
+    // A newer text that asks something else: a YES to it mustn't approve what an older one proposed.
+    else if (!approvals.length && link.approvals) await setApprovals(env.DB, userId, [], now);
     say("text", { outcome: "sent first", user: userId, kind: r.kind, bubbles: sent });
     return "text";
   } catch (err) {

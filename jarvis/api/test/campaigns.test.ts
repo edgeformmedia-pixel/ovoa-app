@@ -180,7 +180,9 @@ async function main() {
   // Night: nothing. Day: a few per tick. The do-not-contact number is skipped.
   sqlite.prepare("INSERT INTO do_not_contact (phone, reason, created_at) VALUES ('+15125550101', 'texted STOP', 0)").run();
   clock = NIGHT;
+  const lineBefore = (sqlite.prepare("SELECT updated_at FROM campaigns WHERE id = ?").get(id) as { updated_at: number }).updated_at;
   eq("nothing at night", [(await campaignsTick(env, io)).night, sent.length], [1, 0]);
+  eq("and it goes to the back of the line", (sqlite.prepare("SELECT updated_at FROM campaigns WHERE id = ?").get(id) as { updated_at: number }).updated_at > lineBefore, true);
   clock = NOON;
   const first = await campaignsTick(env, io);
   eq("first tick", [first.worked, first.skipped, first.failed, sent.length], [3, 1, 1, 3]);
@@ -255,6 +257,11 @@ async function main() {
   sqlite.prepare("DELETE FROM campaigns WHERE status = 'proposed'").run();
   await sam.callTool("list_save", { name: "spots", rows: [{ place: "Zilker" }] });
   eq("from a saved list", ((await sam.callTool("campaign_start", { mode: "research", title: "Spots", instructions: "{place} hours", list: "spots" })) as { items: number }).items, 1);
+  // Rows a Friend added to a shared list aren't the owner's recipients.
+  sqlite.prepare("DELETE FROM campaigns WHERE status = 'proposed'").run();
+  await sam.callTool("list_save", { name: "clients", rows: [{ email: "a@x.com" }, { email: "evil@x.com", addedBy: "@maria" }] });
+  eq("a Friend's rows are left out", ((await sam.callTool("campaign_start", { mode: "email", title: "Hi", subject: "Hi", instructions: "Hi", list: "clients" })) as { items: number }).items, 1);
+  sqlite.prepare("DELETE FROM campaigns WHERE status = 'proposed'").run();
 
   // The app: the owner's only; CSV can't run formulas.
   sqlite.prepare("UPDATE campaign_items SET result = '=HYPERLINK(\"x\")' WHERE campaign_id = ? AND idx = 0").run(id);

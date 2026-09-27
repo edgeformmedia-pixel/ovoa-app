@@ -133,10 +133,14 @@ async function main() {
 
   // A task that needs Sam's accounts goes to Sam's private thread.
   answer = { reply: "On it, Sam, I'll text you to confirm.", private_task: "Book a table for 4 at Luca on Saturday at 7" };
+  // Something waits for Sam's YES in the 1:1 thread: a group hand-off isn't Sam's answer to it.
+  sqlite.prepare("INSERT INTO pending_actions (id, user_id, tool, args, summary, created_at) VALUES ('wait-1', ?, 'gmail_send', '{}', 'Send email to Dana', ?)").run("sam", Date.now());
+  sqlite.prepare("UPDATE text_links SET approvals = '[\"wait-1\"]', approvals_at = ?, approvals_until = ? WHERE user_id = ?").run(Date.now(), Date.now() + 3_600_000, "sam");
   await text(on, SAM, "ovoa book us a table saturday at 7 at luca", everyone);
   eq("group told", groupSends.at(-1)?.content, "On it, Sam, I'll text you to confirm.");
   eq("the task ran as Sam's own private text, in Sam's own words (never the group's)", asked, ['[From your group chat] Sam asked in the group: "ovoa book us a table saturday at 7 at luca"']);
   eq("and the private reply went 1:1 to Sam", out.sent.filter((s) => s.to === SAM).at(-1)?.content.startsWith("Booked a table request"), true);
+  eq("what was waiting for Sam's YES is still there", [!!sqlite.prepare("SELECT 1 FROM pending_actions WHERE id = 'wait-1'").get(), (sqlite.prepare("SELECT approvals FROM text_links WHERE user_id = ?").get("sam") as { approvals: string }).approvals], [true, '["wait-1"]']);
   eq("context carries across asks", seen.at(-1)?.includes("Saturday at 7 works for both of you, nice."), true);
 
   // A stranger in the group: quiet again.

@@ -30,7 +30,7 @@ export function blocksAssistant(env: Env, userId: string, timeZone: string) {
     vaultAssistant(env, userId),
     browser,
     campaignsAssistant(env, userId, (action) => pending.push(action)),
-    rulesAssistant(env, userId),
+    rulesAssistant(env, userId, (action) => pending.push(action)),
     inboundAssistant(env, userId),
     watchesAssistant(env, userId),
     invitesAssistant(env, userId),

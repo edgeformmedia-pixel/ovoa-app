@@ -205,6 +205,10 @@ async function main() {
     eq("for hours, not half an hour", waitingApprovals(link, Date.now() + 3 * 3_600_000), ["p1"]);
     eq("but not forever", waitingApprovals(link, Date.now() + 13 * 3_600_000), []);
     eq("a reply's YES still waits only half an hour", waitingApprovals({ approvals: '["p2"]', approvals_at: now, approvals_until: null }, now + 31 * 60_000), []);
+    // A newer text asking something else: a YES to it doesn't approve the older proposal.
+    await reach(env, TEXTER, { kind: "reminder", text: "Want me to read you Sam's email?" }, { sender: capture().sender, push: io.push } as never);
+    const after = one<{ approvals: string | null; approvals_at: number | null; approvals_until: number | null }>("SELECT approvals, approvals_at, approvals_until FROM text_links WHERE user_id = ?", TEXTER)!;
+    eq("a newer question ends the older YES", waitingApprovals(after as never, Date.now()), []);
 
     // The day's share.
     sql("DELETE FROM text_outbox");

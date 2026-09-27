@@ -137,26 +137,28 @@ async function main() {
   await tigh.callTool("list_share", { name: "groceries", username: "maria", tellMe: true });
   await maria.callTool("list_save", { name: "groceries", rows: [{ item: "rice" }, { item: "beans" }], mode: "append" });
   eq("the owner asked to be told", told, [["tigh", "Maria added 2 things to your Groceries list."]]);
+  await maria.callTool("list_save", { name: "groceries", rows: [{ item: "salt" }], mode: "append" });
+  eq("once an hour, however many adds", told.length, 1);
 
   // Not shared with Jake, not reachable by Zoe: nothing shows.
   eq("a Friend it isn't shared with", err(await jake.callTool("list_read", { name: "groceries" })), 'They have no list called "groceries".');
   eq("with from", err(await jake.callTool("list_read", { name: "groceries", from: "tigh" })).startsWith("No list called"), true);
   eq("a stranger", err(await zoe.callTool("list_read", { name: "groceries", from: "tigh" })).startsWith("No list called"), true);
   eq("a stranger can't add", ((await zoe.callTool("list_save", { name: "groceries", rows: [{ item: "spam" }], mode: "append", from: "tigh" })) as R).error !== undefined, true);
-  eq("his list untouched by her", ((await tigh.callTool("list_read", { name: "groceries" })) as R).total, 5);
+  eq("his list untouched by her", ((await tigh.callTool("list_read", { name: "groceries" })) as R).total, 6);
 
   // Level lowered: she reads nothing, adds nothing, at once.
   await tighNet.callTool("ovoa_perms", { username: "maria", level: "basic" });
   eq("Basic again: she reads nothing", err(await maria.callTool("list_read", { name: "groceries" })), 'They have no list called "groceries".');
   eq("and her lists don't name it", ((await maria.callTool("list_read", {})) as R).sharedWithThem, undefined);
   eq("adding makes her own list instead", ((await maria.callTool("list_save", { name: "groceries", rows: [{ item: "x" }], mode: "append" })) as R).sharedBy, undefined);
-  eq("his stays as it was", ((await tigh.callTool("list_read", { name: "groceries" })) as R).total, 5);
+  eq("his stays as it was", ((await tigh.callTool("list_read", { name: "groceries" })) as R).total, 6);
   await maria.callTool("list_delete", { name: "groceries" });
 
   // The single switch under Advanced gives it back without the rest of Best friend.
   const perms = ((await tighNet.callTool("ovoa_perms", { username: "maria", shareLists: true })) as { perms: R }).perms;
   eq("the switch alone is custom", [perms.shareLists, perms.autoAcceptMeetings, perms.level], [true, false, "custom"]);
-  eq("and she reads it again", ((await maria.callTool("list_read", { name: "groceries" })) as R).total, 5);
+  eq("and she reads it again", ((await maria.callTool("list_read", { name: "groceries" })) as R).total, 6);
 
   // Unshare.
   eq("unshare", await tigh.callTool("list_unshare", { name: "groceries", username: "maria" }), { unshared: "Groceries", with: "@maria" });
@@ -166,7 +168,7 @@ async function main() {
   // Disconnect: shared at Partner, then they stop being Friends.
   await tighNet.callTool("ovoa_perms", { username: "maria", level: "partner" });
   await tigh.callTool("list_share", { name: "groceries", username: "maria" });
-  eq("shared again", ((await maria.callTool("list_read", { name: "groceries" })) as R).total, 5);
+  eq("shared again", ((await maria.callTool("list_read", { name: "groceries" })) as R).total, 6);
   await tighNet.callTool("ovoa_disconnect", { username: "maria" });
   eq("disconnected: she reads nothing", err(await maria.callTool("list_read", { name: "groceries" })), 'They have no list called "groceries".');
   eq("or with from", err(await maria.callTool("list_read", { name: "groceries", from: "tigh" })).startsWith("No list called"), true);

@@ -348,7 +348,7 @@ export async function meetingsTick(env: Env, io: MeetingsIo = {}) {
         await db.prepare("UPDATE meetings SET status = 'handed' WHERE id = ?").bind(m.id).run();
         // Their words aren't repeated here: this text is saved as OVOA's own, and an email's text is never that.
         const line = `${who} replied about ${m.title} but didn't clearly pick one of the times. Want me to read you their email?`;
-        await tell(env, m.user_id, { kind: "meeting", text: line, push: { title: `${who} replied`, body: line.slice(0, 180) } });
+        await tell(env, m.user_id, { kind: "meeting", text: line, asked: true, push: { title: `${who} replied`, body: line.slice(0, 180) } });
         done.handed++;
         continue;
       }
@@ -364,7 +364,7 @@ export async function meetingsTick(env: Env, io: MeetingsIo = {}) {
       const action = await parkAction(env, m.user_id, tool, eventArgs, summary, false);
       await db.prepare("UPDATE meetings SET status = 'picked' WHERE id = ?").bind(m.id).run();
       const line = `${who} picked ${slotWords(start, m.time_zone)} for ${m.title}. Want me to send the invite?`;
-      await tell(env, m.user_id, { kind: "meeting", text: line, push: { title: `${who} picked a time`, body: line }, approvals: [action.id] });
+      await tell(env, m.user_id, { kind: "meeting", text: line, asked: true, push: { title: `${who} picked a time`, body: line }, approvals: [action.id] });
       done.picked++;
     } catch (err) {
       console.error("meetings: check failed", err instanceof Error ? err.message : err);

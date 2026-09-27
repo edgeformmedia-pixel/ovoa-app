@@ -57,7 +57,9 @@ async function main() {
     return text.includes("available") ? { met: true, note: "Saturday tickets are on sale now" } : { met: false, note: "Saturday is sold out" };
   };
   const told: string[] = [];
-  const tell = (async (_env: Env, _user: string, r: { text: string }) => {
+  const tell = (async (_env: Env, _user: string, r: { text: string; asked?: boolean }) => {
+    // What they asked to be told isn't held back like news (reach.ts).
+    if (!r.asked) told.push("NOT ASKED");
     told.push(r.text);
     return "text";
   }) as never;
