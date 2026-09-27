@@ -42,7 +42,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       15 s timeout; 3 MB cap; HTML to readable text keeping table cells tab-separated and link hrefs; `offset` /
       `maxChars` paging. Offer it next to web_search (see `web.ts`, `toolbelt.ts`). Tests for the address guard,
       redirects and HTML-to-text.
-- [~] claimed 2026-09-27T11:22Z by local session. 2. **Tone gaps + guest cap**: apply `noDashes` (sentences.ts) to push notifications, email bodies OVOA writes,
+- [x] 2. **Tone gaps + guest cap**: apply `noDashes` (sentences.ts) to push notifications, email bodies OVOA writes,
       and friend answers sent as a push. Guest texting (`guest.ts`) calls the model with `userId: null`, which the
       model gate lets through (`plans.ts`): add a global daily guest cap (var with a safe default) so guest trials
       can't run up unbounded cost; over the cap, reply with the existing "Get Base" style text. Tests.
@@ -96,6 +96,9 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 ## Needs the owner
 
 - Nothing for task 1: fetch_url needs no key, binding or library.
+- Task 2: apply migration `0060_guest_daily.sql` (the normal `npm run db:migrate` before deploy does it). Optional var
+  `GUEST_DAILY_REPLIES` (default 2000 free-trial AI replies per UTC day across all numbers; "0" pauses the trial).
+- Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
 
@@ -107,3 +110,4 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - 2026-09-27 11:05 UTC: plan rewritten from a full gap audit of 16c2deb (texting exists; no page reader, browser,
   vault, campaigns, keywords, do-not-contact, group chats, server calls; guest trial skips the model gate).
 - 2026-09-27 11:20 UTC (local session): task 1 done in f0c2cce. fetch_url + tests (fetchurl.test.ts); 61 test files pass, tsc clean. origin/main unchanged since 16c2deb.
+- 2026-09-27 11:45 UTC (local session): task 2 done in adace60. Tone in pushes + emails, guest daily ceiling; 62 test files pass, tsc clean.
