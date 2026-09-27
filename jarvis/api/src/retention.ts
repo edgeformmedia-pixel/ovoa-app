@@ -48,6 +48,8 @@ const DONE_JOB_DAYS = 7;
 const DAY_MS = 86_400_000;
 /** Texts that came in (texting.ts text_inbox): long enough to tell a second delivery of one, no longer. */
 const TEXT_INBOX_DAYS = 2;
+/** A free-trial number (guest.ts) quiet this long is forgotten, its chat and count with it. */
+const TEXT_GUEST_DAYS = 180;
 /** A deleted website can be put back for this long (sites.ts DELETED_KEEP_DAYS). */
 const SITE_DELETED_DAYS = 30;
 /** A username given up is held and redirects for this long (sites.ts USERNAME_HELD_DAYS). */
@@ -223,6 +225,7 @@ export const RULES: Rule[] = [
   { name: "device_logs", table: "device_logs", where: "received_at < ?", args: (c) => [c.now - DEVICE_LOG_KEEP_MS] },
   // What was said is in messages; this is only there to tell a text delivered twice.
   { name: "text_inbox", table: "text_inbox", where: "received_at < ?", args: (c) => [c.now - TEXT_INBOX_DAYS * DAY_MS] },
+  { name: "text_guests", table: "text_guests", where: "updated_at < ?", args: (c) => [c.now - TEXT_GUEST_DAYS * DAY_MS] },
   // Which texts OVOA sent first, for the day's cap (reach.ts): kinds and times, no words.
   { name: "text_outbox", table: "text_outbox", where: "sent_at < ?", args: (c) => [c.cutoff] },
 
@@ -343,6 +346,7 @@ export const TABLES = {
   text_link_codes: "expires",
   text_inbox: "delete",
   text_outbox: "delete",
+  text_guests: "delete",
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",

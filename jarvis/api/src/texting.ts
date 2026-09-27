@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { approveAction, type PendingAction } from "./google/assistant";
 import { allowed, tooMany } from "./limits";
 import type { CallTool, ToolSpec } from "./llm";
+import { CONTACT_CARD_PATH } from "./contactcard";
+import { guestText, type Turn as GuestTurn } from "./guest";
 import { appFor, describeScreen, type MadeApp } from "./myapps";
 import { describeImage, transcribeAudio } from "./llm";
 import { recordError, say } from "./obs";
@@ -727,6 +729,8 @@ export type Deps = {
   deadline: number;
   /** Tests and /texting/try: no waiting for the rest of a burst. */
   debounceMs?: number;
+  /** Tests: writes a guest's free-trial reply instead of the model (guest.ts). */
+  guestWrite?: (turns: GuestTurn[]) => Promise<string>;
 };
 
 const TROUBLE = "Sorry, something went wrong on my side. Try again in a minute.";
@@ -895,7 +899,6 @@ async function sendAll(out: Sender, to: string, texts: string[]) {
 
 // ---------- A text arrives ----------
 
-const APP_STRANGER = "Hi! This is OVOA. To text me, open the OVOA app, go to Settings, then Assistant, and tap Link my number.";
 const SMS_ONLY =
   "I only answer iMessages, to keep your account safe. Turn on iMessage in your iPhone's Settings (Apps, then Messages) and text me again.";
 const BAD_CODE = "That link code didn't work: it may have expired or been used already. In the OVOA app, tap Link my number again.";
@@ -919,7 +922,7 @@ async function welcome(db: D1Database, userId: string) {
   const me = who?.assistant_name?.trim() || "OVOA";
   return [
     `You're linked${first ? `, ${first}` : ""}! This is ${me}: text me anytime, just like talking to me in the app.`,
-    `I remember what we talk about there, and from here I can set reminders, keep your notes and lists, use your apps and your Google account, look things up, and build websites for you or your clients. I'll text you first too: your morning brief, reminders, check-ins and anything I find. Save this number as ${me} so it's easy to find.`,
+    `I remember what we talk about there, and from here I can set reminders, keep your notes and lists, use your apps and your Google account, look things up, and build websites for you or your clients. I'll text you first too: your morning brief, reminders, check-ins and anything I find. Tap the card I'm sending next to save me as ${me}, with my logo.`,
   ];
 }
 
@@ -958,6 +961,7 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
       say("text", { outcome: "linked", user: userId, moved: link && link.user_id !== userId ? 1 : undefined });
       const out = deps.sender(m.line);
       for (const t of await welcome(db, userId)) await out.text(m.from, t);
+      await out.text(m.from, "OVOA", `https://api.ovoa.ai${CONTACT_CARD_PATH}`);
       return { outcome: "linked" };
     }
     if (!link) {
@@ -976,12 +980,14 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
   }
 
   if (!link) {
-    if (!(await record(db, m, "stranger", null, now))) return { outcome: "duplicate" };
-    if (!(await toldLately(db, m.from, "told", now - TOLD_EVERY_MS, m.handle))) {
-      await deps.sender(m.line).text(m.from, APP_STRANGER);
-      await settle(db, m.handle, "told");
-    }
-    return { outcome: "stranger" };
+    // Not linked: the free trial (guest.ts), no account needed.
+    if (!(await record(db, m, "guest", null, now))) return { outcome: "duplicate" };
+    const out = deps.sender(m.line);
+    const work = guestText(env, m.from, m.content, (t) => out.text(m.from, t), now, deps.guestWrite).then(
+      (outcome) => void say("text", { outcome }),
+      (err) => void console.error("ovoa.err guest text", err),
+    );
+    return { outcome: "guest", work };
   }
 
   if (/^\s*unlink\W*$/i.test(m.content)) {

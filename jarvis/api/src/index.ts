@@ -151,6 +151,7 @@ import {
   type TurnChannel,
   type Waiter,
 } from "./texting";
+import { contactRoutes } from "./contactcard";
 import { termsRoutes, termsView, type TermsRow } from "./terms";
 import { sliceFor } from "./sweep";
 import {
@@ -370,6 +371,7 @@ app.route("/", googlePublic);
 app.route("/", verifyLinkRoutes);
 // Texts to OVOA's number, from Sendblue: no session, the webhook secret is the proof (texting.ts).
 app.route("/", textingWebhook(textTurn));
+app.route("/", contactRoutes());
 // A website's preview, public and sandboxed, while its own address isn't answering yet (sites.ts).
 app.route("/", sitePreview);
 app.route("/", shortcutFiles);

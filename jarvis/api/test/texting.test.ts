@@ -40,6 +40,7 @@ import {
   type TextTurnInput,
   type TextTurnOutcome,
 } from "../src/texting";
+import { ASK_EMAIL, CAPPED, FREE } from "../src/guest";
 import type { MadeApp } from "../src/myapps";
 import type { Env } from "../src/types";
 
@@ -302,17 +303,31 @@ async function main() {
     sender: () => sender,
     deadline: Date.now() + 60_000,
     debounceMs,
+    guestWrite: async (turns) => `guest reply ${turns.filter((t) => t.role === "user").length}`,
   });
 
   // ---------- Strangers, SMS, groups ----------
 
-  eq("a number nobody linked", await text("hello", deps(), { from_number: "+15865550999" }), "stranger");
-  eq("is told how to link", out.sent.at(-1)?.content.includes("Link my number"), true);
+  // A number nobody linked gets the free trial: FREE AI replies, FREE more for an email, then Base.
+  const G = { from_number: "+15865550999" };
+  eq("a number nobody linked", await text("hello", deps(), G), "guest");
+  eq("gets an AI reply", out.sent.at(-1)?.content, "guest reply 1");
   eq("to that number", out.sent.at(-1)?.to, "+15865550999");
-  const told = out.sent.length;
-  eq("the next text from it", await text("hello?", deps(), { from_number: "+15865550999" }), "stranger");
-  eq("isn't told again today", out.sent.length, told);
-  eq("and nothing it said is kept", count("SELECT COUNT(*) AS n FROM text_inbox WHERE phone = '+15865550999' AND content != ''"), 0);
+  for (let i = 2; i <= FREE; i++) await text(`hi ${i}`, deps(), G);
+  eq("the last free reply follows the conversation", out.sent.at(-2)?.content, `guest reply ${FREE}`);
+  eq("then it asks for an email, no AI", out.sent.at(-1)?.content, ASK_EMAIL);
+  let told = out.sent.length;
+  await text("more?", deps(), G);
+  eq("past the free texts: no reply, already asked", out.sent.length, told);
+  await text("Sure, ME@Example.com", deps(), G);
+  eq("an email", out.sent.at(-1)?.content.startsWith("guest reply"), true);
+  eq("is kept", count("SELECT COUNT(*) AS n FROM text_guests WHERE email = 'me@example.com'"), 1);
+  for (let i = 2; i <= FREE; i++) await text(`again ${i}`, deps(), G);
+  eq("after the extra ones: Base", out.sent.at(-1)?.content, CAPPED);
+  told = out.sent.length;
+  await text("please", deps(), G);
+  eq("and it's cut off", out.sent.length, told);
+  eq("and nothing it said is kept in the inbox", count("SELECT COUNT(*) AS n FROM text_inbox WHERE phone = '+15865550999' AND content != ''"), 0);
   eq("nor did any of it reach a turn", replies.asked.length, 0);
 
   eq("SMS", await text("hi", deps(), { service: "SMS", from_number: "+15865550998" }), "sms");
@@ -329,9 +344,10 @@ async function main() {
   eq("the code from their number", (await receive(env, waiter(), linkBody, deps())).outcome, "linked");
   eq("links it", (await linkOf(DB, U))?.phone, PHONE);
   eq("and says so, by name", out.sent[sentBefore]?.content.startsWith("You're linked, Sam!"), true);
-  eq("in two texts", out.sent.length - sentBefore, 2);
+  eq("in two texts, then the contact card", out.sent.length - sentBefore, 3);
+  eq("the card carries the logo", out.sent.at(-1)?.media?.endsWith("/texting/contact.vcf"), true);
   eq("the same delivery again", (await receive(env, waiter(), linkBody, deps())).outcome, "duplicate");
-  eq("sends nothing more", out.sent.length - sentBefore, 2);
+  eq("sends nothing more", out.sent.length - sentBefore, 3);
   eq("the code is spent", count("SELECT COUNT(*) AS n FROM text_link_codes WHERE code = ?", code), 0);
   eq("so from another number it doesn't work", await text(linkText(code), deps(), { from_number: "+15865550777" }), "bad code");
   eq("and they're told", out.sent.at(-1)?.content.startsWith("That link code didn't work"), true);
@@ -614,7 +630,7 @@ async function main() {
   eq("UNLINK by text", await text("Unlink", deps()), "unlinked");
   eq("unlinks", await linkOf(DB, U), null);
   eq("and says so", out.sent.at(-1)?.content.startsWith("Unlinked"), true);
-  eq("after that it's a stranger", await text("hello", deps()), "stranger");
+  eq("after that it's a guest", await text("hello", deps()), "guest");
 
   // An account that goes takes its link and its texts with it.
   const { code: again } = await issueLinkCode(DB, U);
