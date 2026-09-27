@@ -23,6 +23,7 @@ import { registerApprover } from "./approvers";
 import { assertPublicUrl, FetchRefused } from "./fetchurl";
 import { type PendingAction, parkAction } from "./google/assistant";
 import type { CallTool, ToolSpec } from "./llm";
+import { cookiesFor, type SiteCookie } from "./sitesessions";
 import type { Env } from "./types";
 
 // ---------- The driver the adapter provides ----------
@@ -56,6 +57,8 @@ export interface BrowserPage {
   select(selector: string, value: string): Promise<void>;
   pressEnter(selector: string): Promise<void>;
   back(): Promise<void>;
+  /** Loads a signed-in session they lent OVOA (sitesessions.ts) before a page on that site opens. */
+  setCookies?(cookies: SiteCookie[]): Promise<void>;
 }
 
 export interface BrowserSession {
@@ -202,6 +205,17 @@ export function browserAssistant(env: Env, userId: string, onPark: (action: Pend
   const steps: Step[] = [];
   const labels = new Map<string, string>();
   let typedInForm = false;
+  const signedInto = new Set<string>();
+  /** Their own signed-in session for this page's site, if they lent OVOA one (sitesessions.ts). */
+  const signIn = async (url: string) => {
+    const host = new URL(url).hostname;
+    if (signedInto.has(host) || !page?.setCookies) return signedInto.has(host);
+    const cookies = await cookiesFor(env, userId, host);
+    if (!cookies.length) return false;
+    await page.setCookies(cookies);
+    signedInto.add(host);
+    return true;
+  };
 
   const current = async () => {
     state = await page!.state();
@@ -238,8 +252,9 @@ export function browserAssistant(env: Env, userId: string, onPark: (action: Pend
         steps.length = 0;
         typedInForm = false;
         record({ op: "goto", url });
+        const signedIn = await signIn(url);
         await page!.goto(url);
-        return await current();
+        return { ...(await current()), ...(signedIn ? { signedIn: "their own account (they signed in through the OVOA app)" } : {}) };
       }
       if (!page || !state) return { error: "Open a page first (browser_open)." };
       if (name === "browser_click") {
@@ -290,7 +305,8 @@ export function browserAssistant(env: Env, userId: string, onPark: (action: Pend
     callTool,
     prompt: [
       "Browser: to actually use a website for them (search it, check availability or prices, fill in a form), browser_open it, then browser_click / browser_type / browser_select by the element numbers it gives you. To just read a page, use fetch_url.",
-      "Anything that commits (place an order, book, pay, send, post, sign up, submit a form) goes to them to approve; say plainly what you set up and that it's waiting for their YES. Never try to log in for them or enter card details; tell them to do that part.",
+      "Anything that commits (place an order, book, pay, send, post, sign up, submit a form) goes to them to approve; say plainly what you set up and that it's waiting for their YES. Never try to log in for them or enter card details.",
+      "Sites they signed into themselves in the OVOA app open already signed in (the page says signedIn). If a site needs them signed in and isn't, tell them to sign into it once in the OVOA app (Settings, Signed-in sites) and you'll pick it up from there. Banks, cards and payment sites are never signed in.",
     ].join("\n"),
   };
 }
@@ -298,15 +314,23 @@ export function browserAssistant(env: Env, userId: string, onPark: (action: Pend
 // ---------- The approved final step ----------
 
 /** Replays the steps in a fresh browser and makes the final click. Registered with approvers.ts. */
-export async function runApprovedBrowser(env: Env, _userId: string, args: Record<string, unknown>, summary: string): Promise<string> {
+export async function runApprovedBrowser(env: Env, userId: string, args: Record<string, unknown>, summary: string): Promise<string> {
   if (!browserReady(env)) return "That didn't work: the browser isn't available right now.";
   const steps = Array.isArray(args.steps) ? (args.steps as Step[]) : [];
   if (!steps.length || steps[0]?.op !== "goto") return "That didn't work: nothing to replay.";
   const session = await factory!(env);
   try {
     const page = await session.page();
+    const loaded = new Set<string>();
     for (const step of steps) {
-      if (step.op === "goto") assertPublicUrl(step.url);
+      if (step.op === "goto") {
+        const host = assertPublicUrl(step.url).hostname;
+        if (!loaded.has(host) && page.setCookies) {
+          const cookies = await cookiesFor(env, userId, host);
+          if (cookies.length) await page.setCookies(cookies);
+          loaded.add(host);
+        }
+      }
       await run(page, step);
     }
     const after = await page.state();

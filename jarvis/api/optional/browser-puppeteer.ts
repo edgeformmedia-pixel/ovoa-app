@@ -67,6 +67,9 @@ setBrowserFactory(async (env: Env) => {
     async back() {
       await page!.goBack({ timeout: NAV_TIMEOUT_MS }).catch(() => undefined);
     },
+    async setCookies(cookies) {
+      await page!.setCookie(...cookies);
+    },
   };
 
   return {

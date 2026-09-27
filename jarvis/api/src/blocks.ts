@@ -11,6 +11,7 @@ import type { CallTool, ToolSpec } from "./llm";
 import { isListTool, listsAssistant } from "./lists";
 import type { Env, Vars } from "./types";
 import { isRuleTool, ruleRoutes, rulesAssistant } from "./rules";
+import { siteSessionRoutes } from "./sitesessions";
 import { isVaultTool, vaultAssistant, vaultRoutes } from "./vault";
 
 type Block = { tools: ToolSpec[]; callTool: CallTool; prompt: string };
@@ -53,3 +54,4 @@ export const blockRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
 blockRoutes.route("/", vaultRoutes);
 blockRoutes.route("/", campaignRoutes);
 blockRoutes.route("/", ruleRoutes);
+blockRoutes.route("/", siteSessionRoutes);

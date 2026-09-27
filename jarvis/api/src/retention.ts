@@ -227,6 +227,8 @@ export const RULES: Rule[] = [
   { name: "text_inbox", table: "text_inbox", where: "received_at < ?", args: (c) => [c.now - TEXT_INBOX_DAYS * DAY_MS] },
   { name: "text_guests", table: "text_guests", where: "updated_at < ?", args: (c) => [c.now - TEXT_GUEST_DAYS * DAY_MS] },
   // The free trial's daily count (guest.ts): a number per day, nothing about anyone.
+  // Signed-in sites past their 30 days (sitesessions.ts).
+  { name: "site_sessions", table: "site_sessions", where: "expires_at < ?", args: (c) => [c.now], key: ["user_id", "host"] },
   // Group lines that named OVOA and its answers (textgroups.ts).
   { name: "text_groups", table: "text_groups", where: "updated_at < ?", args: (c) => [c.cutoff], key: ["group_id"] },
   { name: "guest_daily", table: "guest_daily", where: "day < ?", args: (c) => [c.countsDay], key: ["day"] },
@@ -374,6 +376,8 @@ export const TABLES = {
   campaign_items: "keep",
   // Their standing approvals (rules.ts): theirs until they remove them.
   approval_rules: "keep",
+  // Signed-in sites they lent the browser (sitesessions.ts): 30 days at most, swept when expired.
+  site_sessions: "delete",
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",
