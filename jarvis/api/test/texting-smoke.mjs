@@ -25,7 +25,7 @@ const PERSIST_TO = process.env.PERSIST_TO ?? ".wrangler/texting";
 const DEBUG_KEY = process.env.DEBUG_KEY ?? "localtest";
 const SECRET = "whsec-local";
 const LINE = "+15125550000";
-// New numbers every run: the once-a-day replies to strangers and SMS remember the last run's.
+// New numbers every run: the free trial and the once-a-day reply to SMS remember the last run's.
 const run = String(Date.now()).slice(-6);
 const ME = `+1586${run}0`;
 const STRANGER = `+1586${run}1`;
@@ -140,7 +140,9 @@ try {
   const linked = await webhook(link.body.body);
   check("the text with the code", linked.status, 200);
   check("links the number", (await api("/texting")).body?.linked?.phone, ME);
-  check("and says so, in two texts", sentTo(ME).length, 2);
+  // Two texts, then OVOA's contact card (45c79b9, contactcard.ts).
+  check("and says so, in two texts and the contact card", sentTo(ME).length, 3);
+  check("the card last", sentTo(ME)[2]?.body?.media_url?.endsWith("/texting/contact.vcf"), true);
   check("from OVOA's line, with its keys", [sentTo(ME)[0]?.body?.from_number, sentTo(ME)[0]?.key, sentTo(ME)[0]?.secret], [LINE, "key-id", "key-secret"]);
   check("by name", sentTo(ME)[0]?.body?.content.startsWith("You're linked, Tex!"), true);
 
@@ -160,21 +162,24 @@ try {
 
   // ---------- Strangers, SMS, groups, reactions ----------
   const s0 = sends().length;
+  // A stranger gets the free trial (guest.ts, 45c79b9), not "how to link". A local
+  // worker has no model, so the trial says sorry and gives the text back.
+  const TRY_AGAIN = "Sorry, something went wrong on my side. Try again in a minute.";
   await webhook("hello?", { from_number: STRANGER, number: STRANGER });
-  check("a stranger is told how to link", sentTo(STRANGER).at(-1)?.body?.content.includes("Link my number"), true);
+  check("a stranger gets the free trial (sorry here: no model)", sentTo(STRANGER).at(-1)?.body?.content, TRY_AGAIN);
   await webhook("hello??", { from_number: STRANGER, number: STRANGER });
-  check("once", sentTo(STRANGER).length, 1);
+  check("and the next text is answered too", sentTo(STRANGER).length, 2);
   await webhook("hi", { service: "SMS", from_number: SMS_SENDER, number: SMS_SENDER });
   check("SMS is told to use iMessage", sentTo(SMS_SENDER).at(-1)?.body?.content.includes("iMessage"), true);
   await webhook("hi all", { group_id: "group-1", participants: [ME, LINE, OTHER] });
   await webhook("Loved “something”");
   await webhook("sent", { is_outbound: true });
-  check("groups, reactions and OVOA's own texts get nothing", sends().length, s0 + 2);
+  check("groups, reactions and OVOA's own texts get nothing", sends().length, s0 + 3);
 
   // ---------- /texting/try ----------
   const tried = await api("/texting/try", { method: "POST", body: JSON.stringify({ message: "hello from try" }) });
   check("/texting/try answers in the response", [tried.status, tried.body?.outcome, tried.body?.texts?.length], [200, "queued", 1]);
-  check("and sends nothing", sends().length, s0 + 2);
+  check("and sends nothing", sends().length, s0 + 3);
 
   // ---------- The cron answers what nobody did ----------
   const uid = me.body.user.id;
@@ -191,7 +196,7 @@ try {
   check("unlinked", (await api("/texting")).body?.linked, null);
   const u0 = sentTo(ME).length;
   await webhook("still there?");
-  check("the number is a stranger again", sentTo(ME).at(-1)?.body?.content.includes("Link my number") && sentTo(ME).length === u0 + 1, true);
+  check("the number is a stranger again, on the free trial", sentTo(ME).at(-1)?.body?.content === TRY_AGAIN && sentTo(ME).length === u0 + 1, true);
 
   await api("/me", { method: "DELETE" });
 } catch (err) {

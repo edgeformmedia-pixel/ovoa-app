@@ -774,7 +774,8 @@ check "free: designing an app is 402" "$(code -X POST "${P[@]}" "$API/apps/desig
 check "free: the setup conversation is 402" "$(code -X POST "${P[@]}" "$API/onboarding/answer" -d '{"step":"name","text":"Sam"}')" "402"
 check "free: a setup turn is 402" "$(code -X POST "${P[@]}" "$API/onboarding/turn" -d '{"turnId":"smoke-free-1","action":"start"}')" "402"
 check "free: streamed too, before anything streams" "$(code -X POST "${P[@]}" "$API/onboarding/turn" -d '{"turnId":"smoke-free-2","action":"start","stream":true}')" "402"
-check "free: background work needs base" "$(curl -s -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"x","instruction":"y","kind":"once"}' | j "d['needs']")" "base"
+# Background work is Plus's since 3b720e9 (the Plus tier between Base and Pro).
+check "free: background work needs plus" "$(curl -s -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"x","instruction":"y","kind":"once"}' | j "d['needs']")" "plus"
 check "free: heart rate is 200" \
   "$(code -X POST "${P[@]}" "$API/hr" -d "{\"source\":\"band\",\"samples\":[{\"ts\":$(($(date +%s)*1000)),\"bpm\":61}]}")" "200"
 check "free: today's heart rate is 200" "$(code "${P[@]}" "$API/hr/today")" "200"
@@ -816,13 +817,20 @@ check "free: refreshing the plan works" "$(curl -s -X POST "${P[@]}" "$API/me/pl
 
 check "made base" "$(setplan '"base"')" "200"
 BASE_ME=$(curl -s "${P[@]}" "$API/me")
-check "base: 20 replies a day" "$(echo "$BASE_ME" | j "d['plan']['limits']['repliesLeftToday']")" "20"
-check "base: every feature, wake word and background work included" "$(echo "$BASE_ME" | j "all(d['plan']['features'].values())")" "True"
+check "base: 15 replies a day" "$(echo "$BASE_ME" | j "d['plan']['limits']['repliesLeftToday']")" "15"
+check "base: chat, voice and the wake word included" "$(echo "$BASE_ME" | j "all(d['plan']['features'][k] for k in ('chat','voice','wake'))")" "True"
+check "base: but not background work (that's Plus)" "$(echo "$BASE_ME" | j "d['plan']['features']['agent']")" "False"
 check "base: /chat gets past the gate" "$(not402 -X POST "${P[@]}" "$API/chat" -d '{"message":"hello"}')" "yes"
 check "base: overheard talk isn't a plan problem" "$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello","ambient":true}' | j "d.get('error')!='needs_plan'")" "True"
-check "base: background work gets through" "$(code -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"Check","instruction":"Look.","kind":"once"}')" "201"
+check "base: background work is refused" "$(code -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"Check","instruction":"Look.","kind":"once"}')" "402"
+check "made plus" "$(setplan '"plus"')" "200"
+PLUS_ME=$(curl -s "${P[@]}" "$API/me")
+check "plus: 30 replies a day" "$(echo "$PLUS_ME" | j "d['plan']['limits']['repliesLeftToday']")" "30"
+check "plus: every feature, wake word and background work included" "$(echo "$PLUS_ME" | j "all(d['plan']['features'].values())")" "True"
+check "plus: background work gets through" "$(code -X POST "${P[@]}" "$API/agent/jobs" -d '{"title":"Check","instruction":"Look.","kind":"once"}')" "201"
+check "back to base" "$(setplan '"base"')" "200"
 check "base: designing an app reaches the engines (none here)" "$(code -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")" "503"
-# The day's spend, used up: $0.30 against Base's $0.25.
+# The day's spend, used up: $0.30 against Base's $0.1875.
 check "a day's spend written" "$(use '"microUsd":300000')" "200"
 sleep 1
 check "base: the spent day leaves no replies" "$(curl -s "${P[@]}" "$API/me" | j "d['plan']['limits']['repliesLeftToday']")" "0"
@@ -852,7 +860,8 @@ CAPPED=$(curl -s -X POST "${P[@]}" "$API/chat" -d '{"message":"hello","timeZone"
 check "pro: the 61st reply says the number, and when" \
   "$(echo "$CAPPED" | j "d['messages'][0]['content'].startswith(\"That's all 60 of today's replies on your plan, so I'll pick up again at\")")" "True"
 check "with no model asked" "$(echo "$CAPPED" | j "d['meta']['engine']")" "none"
-check "but the reply count isn't the gate's: a model call that isn't a reply still goes" "$(code -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")" "503"
+# Since 16c2deb the day's replies are a hard cut-off: used up, no AI runs at all.
+check "and the reply count is the gate's too: a model call that isn't a reply stops: 429" "$(code -X POST "${P[@]}" "$API/apps/design" -d "$DESIGN")" "429"
 check "the debug view says why" "$(curl -s "${D[@]}" "$API/debug/plan?userId=$PID" | j "d['plan']['from']")" "override"
 check "clearing the override" "$(setplan null)" "200"
 check "puts them back to what the site (here: no key) says" "$(curl -s "${P[@]}" "$API/me" | j "d['plan']['tier']")" "pro"
