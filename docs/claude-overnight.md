@@ -189,7 +189,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       and fails on an em dash (U+2014) or en dash (U+2013) inside a string or template literal (comments are fine).
       Fix any it finds in user-facing text (texts, emails, cards, notes, tool results the model repeats). Same for
       jarvis/app/src screens added on this branch.
-- [ ] 35. **Start here for the owner**: at the top of docs/claude-overnight.md's Final report, a short "Start here"
+- [x] 35. **Start here for the owner**: at the top of docs/claude-overnight.md's Final report, a short "Start here"
       list (at most 12 lines): the three things to decide, the one command to run before deploying (migrations),
       which switches to try first, and where the phone test plan is. Plain words, no jargon beyond names of
       switches. Docs only.
@@ -220,8 +220,21 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 
 ## Final report (task 16, 2026-09-27 13:20 UTC)
 
-Branch `claude/overnight` is on top of main 16c2deb (main has not moved since): as of 14:30 UTC, 99 files and about
-10,700 lines, mostly new files; the edits to existing files are small hooks. 79 unit test files pass, `npx tsc --noEmit`
+### Start here
+
+1. Decide whether to merge `claude/overnight` into main. Nothing is live until you do; main is untouched.
+2. Before deploying, run `cd jarvis/api && npm run db:migrate`: it applies migrations 0060 to 0075.
+3. Deploy. Most new things work straight away (list under Deploy order, step 3); none needs a new key.
+4. Try the switches one at a time, each safe to turn off: `TEXT_GROUPS=1`, `CAMPAIGNS=1`, `INBOUND_CODES=1`,
+   `TEXT_VOICE_REPLIES=1`.
+5. Three things only you can decide: Outlook (register an app with Microsoft, docs/outlook.md), the real browser
+   (a library and a Cloudflare binding), and a voice-call provider (docs/server-calls.md).
+6. After deploying, start a TestFlight build and run the phone test plan below (about 25 minutes).
+7. Owner notes worth a look: main's account take-back now unlinks a squatter's phone, and main's own smoke check
+   for the second consent wording waits on commit 10f1fd2.
+
+Branch `claude/overnight` is on top of main 16c2deb (main has not moved since): 108 files, 11738 insertions(+), 67 deletions(-),
+mostly new files; the edits to existing files are small hooks. 81 unit test files pass, `npx tsc --noEmit`
 is clean in jarvis/api and jarvis/app. Local smoke on fresh state: texting-smoke all green; smoke.sh 439 / 1 (the known
 consent-wording check, see task 17) when the auth rate limit doesn't trip on a fast machine. Five reviews
 (ed39979, task 22, fa80395, 3a6bda5 and task 29) found 38 real issues, all fixed with tests.
@@ -283,7 +296,7 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 8. No new secrets except Outlook's two, and only if it's wanted. New libraries only for the browser (@cloudflare/puppeteer) and, if wanted later, the app's
    in-app login screen (@react-native-cookies/cookies, needs a dev build).
 
-### Phone test plan (after deploy, about 20 minutes)
+### Phone test plan (after deploy, about 25 minutes)
 
 1. Text OVOA "read https://example.com and tell me the title": answers from the page.
 2. "Save my frequent flyer number, Delta 1234567": saved; Settings, When it acts for you, Vault shows it masked.
@@ -573,3 +586,5 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   first, so reach() now runs noDashes on its text (test in reach.test.ts); the sign-up email error (api and app) and
   three settings lines were reworded. Main's app UI copy and model prompts left for the owner (Needs the owner).
   81 test files pass (llm.test.ts timing flake seen once in a full run, clean alone three times and in the next run).
+- 2026-09-27 15:30 UTC (local session): task 35: a "Start here" list at the top of the final report (merge, migrate, deploy,
+  switches, the three owner decisions, the phone test plan, two notes). Docs only.
