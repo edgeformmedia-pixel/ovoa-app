@@ -46,7 +46,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       and friend answers sent as a push. Guest texting (`guest.ts`) calls the model with `userId: null`, which the
       model gate lets through (`plans.ts`): add a global daily guest cap (var with a safe default) so guest trials
       can't run up unbounded cost; over the cap, reply with the existing "Get Base" style text. Tests.
-- [~] claimed 2026-09-27T11:48Z by local session. 3. **Saved lists**: `list_save` / `list_read` tools backed by a new D1 table (user_id, name, rows JSON, unique
+- [x] 3. **Saved lists**: `list_save` / `list_read` tools backed by a new D1 table (user_id, name, rows JSON, unique
       per user+name, ~5,000 row cap, size cap). Lets OVOA build a list across steps and reuse it later. Tests.
 - [ ] 4. **Vault**: encrypted personal details OVOA uses when booking or filling forms (addresses, loyalty and
       frequent-flyer numbers, sizes, seat preferences, car). AES-GCM via existing `crypto.ts` / `TOKEN_ENC_KEY`.
@@ -95,9 +95,12 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 
 ## Needs the owner
 
+- test/smoke.sh has 6 stale expectations on main itself (see log 11:30). Update smoke.sh on main when convenient.
+
 - Nothing for task 1: fetch_url needs no key, binding or library.
 - Task 2: apply migration `0060_guest_daily.sql` (the normal `npm run db:migrate` before deploy does it). Optional var
   `GUEST_DAILY_REPLIES` (default 2000 free-trial AI replies per UTC day across all numbers; "0" pauses the trial).
+- Task 3: apply migration `0061_user_lists.sql` (normal db:migrate).
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -111,3 +114,8 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   vault, campaigns, keywords, do-not-contact, group chats, server calls; guest trial skips the model gate).
 - 2026-09-27 11:20 UTC (local session): task 1 done in f0c2cce. fetch_url + tests (fetchurl.test.ts); 61 test files pass, tsc clean. origin/main unchanged since 16c2deb.
 - 2026-09-27 11:45 UTC (local session): task 2 done in adace60. Tone in pushes + emails, guest daily ceiling; 62 test files pass, tsc clean.
+- 2026-09-27 11:30 UTC (local session): task 3 done in 872499f. Saved lists + blocks.ts entry point; 63 test files pass, tsc clean.
+  Local end-to-end smoke (wrangler dev --local, npm run smoke): this branch 427 passed / 6 failed; untouched main 16c2deb
+  gives the SAME 427 / 6 (consent wording 1 vs 2, Base 15 vs 20 replies, Plus tier, a 429 vs 503). Those 6 are stale
+  expectations in test/smoke.sh after main's plan changes, not regressions. Left alone (main's area); flagged for the owner.
+  Note: earlier log times said 11:20/11:45 UTC; real times were about 10:55-11:10 UTC.
