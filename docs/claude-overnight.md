@@ -323,7 +323,7 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   private turn; screener answers equal to a code restarted it; keyword replies hijacked linked users' one-word answers;
   deleting vault/sites/rules needed a paid plan; email campaigns didn't re-check plan/consent; browser sessions weren't
   closed per turn; public-suffix cookies accepted. 72 test files pass; both smokes at main's baseline.
-- 2026-09-27 13:20 UTC (local session): task 18 done in 4e531ed. toolbelt.ts SYNONYMS gained words for watches (notify,
+- 2026-09-27 13:03 UTC (local session): task 18 done in 4e531ed. toolbelt.ts SYNONYMS gained words for watches (notify,
   alert, restock, drop, eye, price...), the vault (passport, flyer, loyalty, locker, address...), campaigns (blast, bulk,
   outreach...), text-in codes (fans, answered, survey...), rules (approve, permission, checking) and the browser (form,
   fill, reserve, checkout). Generic words may now carry generic synonyms (stop -> remove/close, tie-breaks only), and a
@@ -345,14 +345,14 @@ task 17) when the auth rate limit doesn't trip on a fast machine.
   model fails (the per-number count is given back). Harmless at the 2000 default; noted, not changed.
 - 2026-09-27 13:20 UTC (scheduled session): task 16 done: final report (shipped table, deploy order, phone test plan) and
   proposed contextforclaude.txt lines added above. Every task is now [x].
-- 2026-09-27 13:50 UTC (local session): task 19 (Outlook and Microsoft 365) in 35d1336, added after the final report
+- 2026-09-27 13:12 UTC (local session): task 19 (Outlook and Microsoft 365) in 35d1336, added after the final report
   because it closes a real gap with Instinct. Off without MS_CLIENT_ID and MS_CLIENT_SECRET (a turn reads nothing
   extra). test/microsoft.test.ts covers: off, not connected, search, read, calendar view in the person's zone, send and
   reply parked then sent on approval, no em dashes in what's sent, rules and Approve for me, events with and without
   guests, token refresh keeping the rotated refresh token, a revoked token disconnecting, the connect flow (PKCE, "ms_"
   state, Google's states untouched, a used state refused, signed-out sessions refused) and account deletion. 73 test
   files pass, tsc clean in api and app, `wrangler deploy --dry-run` bundles. The final report above is updated with it.
-- 2026-09-27 14:15 UTC (local session): task 20 (read files) in 1f3fac6. files.ts fileToText (AI binding toMarkdown for
+- 2026-09-27 13:19 UTC (local session): task 20 (read files) in 1f3fac6. files.ts fileToText (AI binding toMarkdown for
   PDF / Word / Excel / ODS / ODT / Numbers, text decoded, 8 MB cap, never throws) is used by a file texted in (was "You
   can't open files over text yet"), fetch_url on a document link (octet-stream counts when the name says .pdf/.docx),
   gmail_read (now lists attachments) + new gmail_attachment, and outlook_read + new outlook_attachment. "pdf" and
