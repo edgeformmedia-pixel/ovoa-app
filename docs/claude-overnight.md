@@ -98,7 +98,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       Deepgram/voice pieces that exist. No code that needs keys.
 - [x] 12. **App screens** (jarvis/app, Expo SDK 57, read its docs first): Vault, Campaigns, Approval rules, only for
       API parts that landed. Typecheck the app. Never trigger Codemagic.
-- [~] claimed 2026-09-27T12:33Z by local session. 13. **Page watchers** ("tell me when tickets drop", "watch this price"): tools `watch_add` (url, what to look
+- [x] 13. **Page watchers** ("tell me when tickets drop", "watch this price"): tools `watch_add` (url, what to look
       for in plain words, how often: hourly | daily, until when, max 10 active per person), `watch_list`, `watch_remove`;
       a new table; the existing 2-minute cron checks due watches with fetch_url (fetchurl.ts) and a cheap model call
       comparing the page to the last check against "what to look for"; when it's met, OVOA tells them (reach.ts: a text
@@ -159,6 +159,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - Task 11: pick a voice provider (Twilio Voice + Media Streams, or a hosted agent like Vapi/Retell/ElevenLabs Agents); design in docs/server-calls.md.
 - Task 14: apply migration `0068_inbound_codes.sql`; var `INBOUND_CODES=1` turns text-in codes on (off = unchanged).
 - Task 12: app screens need a TestFlight build after the API is deployed (start it by hand in Codemagic once this is on main). Not run on a device yet.
+- Task 13: apply migration `0069_page_watches.sql`. No switch: watch tools are on for everyone; checks run only for Plus with consent.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -196,3 +197,4 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - 2026-09-27 12:31 UTC (local session): task 14 done in 03166e9. Text-in codes; 71 test files pass, tsc clean; texting smoke 6 = main.
 - 2026-09-27 12:32 UTC (local session): task 12 done in 3705128. App screens; app tsc clean (jarvis/app npx tsc --noEmit). Codemagic only builds main, so this branch starts no build.
 - 2026-09-27 12:33 UTC (local session): task 15 done in 9b731e4: docs/what-ovoa-can-do.md (docs/capabilities.md is an older pendant-era note, left alone).
+- 2026-09-27 12:41 UTC (local session): task 13 done in d936205. Page watchers; 72 test files pass, tsc clean; full smoke 427/6 = main; a local scheduled tick ran the new lane with errors=0.
