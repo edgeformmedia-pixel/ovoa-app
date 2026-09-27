@@ -172,7 +172,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       say (fresh --persist-to, local only) and record the counts. The only allowed failure is "the server wants the
       second wording". If the auth rate limit trips on a fast machine, re-run after a minute and say so. Fix anything
       else the branch broke, with a test.
-- [ ] 32. **One guide per block**: index.ts hands the building blocks' instructions over as ONE guide
+- [~] claimed 2026-09-27T15:06Z by local session. 32. **One guide per block**: index.ts hands the building blocks' instructions over as ONE guide
       (`blocks: { tools: blockTools.tools, prompt: blockTools.prompt }`), so preloading any one block tool (list_read,
       watch_add...) brings every block's instructions into the prompt. Give each block its own guide (blocks.ts can
       return `guides: ToolGuide[]`, one per block with its tools and prompt) so only the used block's text rides
@@ -530,6 +530,6 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   list_tick. Two existing tests got the new field/tools added to their expected values (network.test.ts perms
   object, lists.test.ts tool names), nothing loosened. 80 test files pass, tsc clean in api and app. Needs the
   owner: apply 0075 before the deploy (network.ts reads the new column).
-- 2026-09-27 15:10 UTC (local session): task 30 (docs catch-up): parity table (task 24 done; all five of task 21's
+- 2026-09-27 15:06 UTC (local session): task 30 (docs catch-up): parity table (task 24 done; all five of task 21's
   items built), what-ovoa-can-do (shared lists, Outlook contacts; receipts, trips, meetings and voice replies were
   added earlier), the shipped table (24) and a phone test step for shared lists. Docs only.
