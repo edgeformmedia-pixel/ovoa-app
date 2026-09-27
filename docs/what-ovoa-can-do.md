@@ -39,6 +39,8 @@ live when it's merged and deployed; "Switch" says what turns it on.
 - **Your vault**: *"my Delta number is 1234567, save it"*. Addresses, loyalty numbers, sizes, seat
   preference, encrypted, used when it books or fills forms. Never cards or passwords. (New)
 - **Saved lists** it builds over time: *"keep a list of the places we liked"*. (New)
+- **Watch a page for you**: *"tell me when Saturday tickets go on sale"*, *"let me know if this jacket drops
+  under $120"*. Checks hourly or daily and texts you once when it happens; it never buys. (New, Plus)
 - **Plans and trips**: options, when to book, a reminder, a follow-up. (Live)
 - **Buy within a budget**: it finds it, you say YES, you finish at the store's checkout. OVOA never pays. (Live)
 - **Websites** at yourname.ovoa.ai: *"make a site for my dog walking business"*. (Live)
