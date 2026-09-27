@@ -77,7 +77,7 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
       per item; one summary when done; `campaign_status` / `campaign_stop` tools; authed GET `/campaigns`,
       `/campaigns/:id`, POST `/campaigns/:id/stop`, GET `/campaigns/:id/export.csv` (formula-safe). Counts against
       plan spend via the model gate. Tests.
-- [~] claimed 2026-09-27T11:53Z by local session. 7. **Web agent: real browser** (needs owner: new library `@cloudflare/puppeteer` + Browser Rendering binding):
+- [x] 7. **Web agent: real browser** (needs owner: new library `@cloudflare/puppeteer` + Browser Rendering binding):
       tools browser_open, browser_read (text + numbered clickable elements), browser_click, browser_type,
       browser_back; one session per turn, always closed; only public http(s) URLs (reuse task 1's guard). Anything
       that submits a form, buys, books or posts first creates a pending action describing exactly what it will do.
@@ -114,6 +114,13 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
   Sendblue's contact sharing; first set OVOA's iMessage profile once in Sendblue (POST /api/v2/contact-sharing/profile
   with fromNumber, firstName "OVOA", photoUrl to a public PNG/JPEG of the logo).
 - test/texting-smoke.mjs has 6 stale expectations on main itself (same 6 on this branch; pre-free-trial behavior).
+- Task 7, to switch the browser on (checked on this branch: the adapter typechecks against @cloudflare/puppeteer 1.4.0
+  and a Worker with it bundles to 3 MB with --dry-run):
+  1. `cd jarvis/api && npm i @cloudflare/puppeteer`
+  2. wrangler.jsonc: `"compatibility_flags": ["nodejs_compat"]` and `"browser": { "binding": "BROWSER" }` (Workers Paid).
+  3. Move `jarvis/api/optional/browser-puppeteer.ts` to `src/` and add `import "./browser-puppeteer";` to the top of index.ts.
+  4. The library adds Node's types: in src/llm.ts (around line 1264) change `clearTimeout(timer)` to
+     `clearTimeout(timer ?? undefined)` so `npx tsc` passes. Then run npm test + both smoke scripts, then deploy.
 - Migration numbering: this branch uses 0060 and up so it doesn't collide with main's next ones (0057+). Gaps are fine.
 
 ## Proposed contextforclaude.txt
@@ -136,3 +143,6 @@ The owner is away. Work happens on this branch only; a human reviews, merges and
 - 2026-09-27 11:53 UTC (local session): task 5 done in 418f751. Keywords + do-not-contact; 65 test files pass, tsc clean.
   Texting smoke (test/texting-smoke.mjs, fresh local state): branch 6 failed, untouched main 16c2deb the SAME 6
   (stranger told how to link, message counts from before the free trial). Not regressions; flagged for the owner.
+- 2026-09-27 12:01 UTC (local session): shared hook approvers.ts (3058635), then task 7 done in a1d13eb: browser agent + fake-driver
+  tests (66 test files pass, tsc clean). Branch bundles with wrangler --dry-run; with the adapter, nodejs_compat and the
+  binding it also bundles (3 MB). Installing the library breaks tsc at llm.ts:1264 (Node types), noted for the owner.
