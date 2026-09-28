@@ -185,9 +185,10 @@ export type Plan = {
    * logic: "override" (DEBUG_KEY), "no_key" (the site isn't wired up yet, so
    * everyone is pro), "site" (asked just now), "cache" (asked in the last ten
    * minutes), "stale" (the site is down; last answer, under a day old),
-   * "fallback" (never answered, or over a day ago: free).
+   * "fallback" (never answered, or over a day ago: free), "trial" (a free
+   * account answering one of its number's trial texts: guest.ts).
    */
-  from: "override" | "no_key" | "site" | "cache" | "stale" | "fallback";
+  from: "override" | "no_key" | "site" | "cache" | "stale" | "fallback" | "trial";
 };
 
 /** The site is asked at most this often per person. */
@@ -347,6 +348,24 @@ export async function loadPlan(
   return remember(userId, plan, row.email, now);
 }
 
+// A free account answering one of its number's free trial texts (guest.ts)
+// reaches AI as Base for that one text. Per isolate on purpose: the text's
+// turn runs here, and the crons elsewhere never see it, so a trial doesn't
+// grow background work.
+const TRIAL_TURN_MS = 3 * 60_000;
+const trialTurns = new Map<string, number>();
+
+/** Lets this free account's next few minutes of AI through, for one trial text. */
+export function grantTrialTurn(userId: string, now = Date.now()) {
+  trialTurns.set(userId, now + TRIAL_TURN_MS);
+  if (trialTurns.size > MEMO_MAX) trialTurns.delete(trialTurns.keys().next().value!);
+}
+
+function withTrial<T extends { plan: Plan }>(userId: string, entry: T, now: number): T {
+  if (entry.plan.tier !== "free" || (trialTurns.get(userId) ?? 0) < now) return entry;
+  return { ...entry, plan: { ...entry.plan, tier: "base", from: "trial" } };
+}
+
 function remember(userId: string, plan: Plan, email: string, now: number) {
   const entry = { plan, email, at: now };
   memo.delete(userId);
@@ -378,7 +397,8 @@ async function askSite(env: Env, userId: string, row: PlanRow, had: Plan, now: n
 }
 
 export async function planFor(env: Env, userId: string, opts: Pick<PlanOptions, "waitUntil"> = {}): Promise<Plan> {
-  return (await loadPlan(env, userId, opts))?.plan ?? FREE;
+  const loaded = await loadPlan(env, userId, opts);
+  return loaded ? withTrial(userId, loaded, Date.now()).plan : FREE;
 }
 
 /** Sets or clears the developer's override. Null clears it. */
@@ -631,7 +651,8 @@ export function lazyCheck(env: Env, userId: string, need: Tier) {
 
 export async function modelGate(env: Env, call: GateCall, now = Date.now()): Promise<Refusal | null> {
   if (!call.userId) return null;
-  const loaded = await loadPlan(env, call.userId);
+  const raw = await loadPlan(env, call.userId);
+  const loaded = raw && withTrial(call.userId, raw, now);
   if (!loaded || !atLeast(loaded.plan.tier, "base")) return "needs_plan";
   if (!call.continuing && !isDevEmail(env, loaded.email)) {
     const used = await usedToday(env, call.userId, now).catch((err: unknown) => {

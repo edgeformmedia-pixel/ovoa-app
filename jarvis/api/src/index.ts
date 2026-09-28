@@ -2681,7 +2681,11 @@ async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId, 
   if (standing.month?.verdict === "over") return plain(overCapMessage(standing.month.cap, Date.now(), standing.month.timeZone));
 
   const openId = openAppId(link);
-  const [apps, app] = await Promise.all([appsOf(env.DB, userId), openId ? appFor(env.DB, userId, openId) : null]);
+  const [apps, app, trial] = await Promise.all([
+    appsOf(env.DB, userId),
+    openId ? appFor(env.DB, userId, openId) : null,
+    env.DB.prepare("SELECT trial_phone FROM users WHERE id = ?").bind(userId).first<{ trial_phone: string | null }>(),
+  ]);
   // Into the transcript, as a typed turn's words are, when the timeline is on (transcripts.ts).
   ctx.waitUntil(storeLine(env.DB, userId, text, "mic").catch(() => false));
   const started = Date.now();
@@ -2699,6 +2703,7 @@ async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId, 
         agent: !!settings.agent_enabled && settings.agent_autonomy !== "off",
         proactive: link.proactive !== 0,
         react,
+        trial: !!trial?.trial_phone,
       })),
   }).catch((err: unknown): TurnResult => {
     if (isModelRefused(err)) return refusedReply(err, plan.tier, timeZone);

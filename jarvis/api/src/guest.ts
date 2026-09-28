@@ -1,33 +1,38 @@
-// Texts from a number no account is linked to: a free trial, no sign-up.
-// The first FREE texts get real AI replies; then an automated (no AI) text
-// asks for their email, which is worth FREE more; after that an automated
-// text sends them to Base. The counts are per phone number.
+// Texts from a number no account is linked to: a free trial, no sign-up, with
+// the whole OVOA. The number gets a hidden trial account (users.trial_phone)
+// linked to it, so its texts run the same turn a member's do: tools, web
+// search, reminders, websites (at a demo address). The trial is counted per
+// number, in text_guests:
+//
+//   FREE texts, then an automated (no AI) text asks for their email;
+//   FREE more for the email, then it asks them to make an account and link
+//   the number; FREE more once a real account is linked; then a plan.
 //
 // An email that already has an OVOA account doesn't make the texts that
 // account's: anyone could text anyone's address. OVOA emails that address a
 // link code instead, with a one-tap link that puts it in a text to OVOA, and
 // the text from this number is what links it (texting.ts redeem), exactly as
-// the app's Link my number does. After that their texts are their account's,
-// on their plan.
-import { noDashes } from "./sentences";
+// the app's Link my number does. Linking moves what the trial account made
+// (its chat, notes, reminders, websites and their addresses) to the real
+// account and deletes the trial account (mergeTrial).
 import { CONTACT_CARD_PATH } from "./contactcard";
 import { emailConfigured, esc, sendEmail, type Email } from "./emailauth";
-import { generateText } from "./llm";
+import { atLeast, grantTrialTurn, isDevEmail, loadPlan } from "./plans";
 import { say } from "./obs";
 import { issueLinkCode, linkText } from "./texting";
 import type { Env } from "./types";
 
 export const FREE = 5;
-const HISTORY_TURNS = 12;
 const TELL_EVERY_MS = 6 * 3_600_000;
 const SIGN_UP = "https://ovoa.ai/text";
 
-type Row = { used: number; email: string | null; history: string };
-export type Turn = { role: "user" | "model"; text: string };
+type Row = { used: number; email: string | null };
 
 export const ASK_EMAIL = `That was your ${FREE}th free text. Reply with your email and you'll get ${FREE} more, no account needed.`;
 export const GOT_EMAIL = `Thanks! You've got ${FREE} more free texts. Go ahead.`;
-export const CAPPED = `You've used your free texts. Get OVOA Base to keep texting me (I'll remember this chat): ${SIGN_UP}`;
+export const MAKE_ACCOUNT = (email: string) =>
+  `You've used your free texts. Make a free OVOA account with ${email} (${SIGN_UP}), then text me that email and I'll link this number: you get ${FREE} more, and everything we made here comes with you.`;
+export const CAPPED = `That was your last free text. Pick a plan to keep texting me (I'll remember all of this): ${SIGN_UP}`;
 
 export const LINK_EMAILED = (email: string) =>
   `That email has an OVOA account. I just emailed ${email} a link: tap it on this phone and send the text it opens, and your texts go to your account and your plan.`;
@@ -39,7 +44,9 @@ const LINK_EMAIL_EVERY_MS = 10 * 60_000;
 const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 export const emailIn = (text: string) => text.match(EMAIL)?.[0]?.toLowerCase() ?? null;
 
-export const limitFor = (row: { email: string | null }) => (row.email ? FREE * 2 : FREE);
+/** The trial account's address: .invalid never receives mail (emailauth.ts sendEmail won't try). */
+const trialEmail = (phone: string) => `trial-${phone.replace(/\D/g, "")}@trial.ovoa.invalid`;
+export const isTrialEmail = (email: string) => email.endsWith(".invalid");
 
 async function load(db: D1Database, phone: string, now: number): Promise<Row> {
   const fresh = await db
@@ -54,56 +61,110 @@ async function load(db: D1Database, phone: string, now: number): Promise<Row> {
     .run();
   if (fresh.meta.changes && !first.meta.changes)
     await db.prepare("UPDATE text_guests SET used = ? WHERE phone = ?").bind(FREE * 2, phone).run();
-  return (await db.prepare("SELECT used, email, history FROM text_guests WHERE phone = ?").bind(phone).first<Row>())!;
+  return (await db.prepare("SELECT used, email FROM text_guests WHERE phone = ?").bind(phone).first<Row>())!;
 }
 
-const SYSTEM = [
-  "You are OVOA, an AI assistant people text over iMessage. This person is trying you out: they have no account yet.",
-  "Text like a real person, super chill and casual: short, warm, plain words, contractions, lowercase is fine if they write that way. One to three sentences unless they ask for more. No markdown. Never use em dashes; use commas or periods.",
-  "Answer questions, help them think, draft things, explain things. You can't set reminders, read their accounts, or look things up live in this trial; if they ask for that, say it comes with an OVOA account.",
-  "Don't mention limits or pricing unless asked.",
-].join("\n");
+/** demo + six letters and digits: the trial's username, so its websites live at demo….ovoa.ai. */
+function demoName() {
+  const abc = "abcdefghijkmnpqrstuvwxyz23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  return `demo${[...bytes].map((b) => abc[b % abc.length]).join("")}`;
+}
 
 /**
- * Deals with one text from a guest. `send` texts them. Returns the outcome
- * for logs. Never throws for a model failure: they get a plain sorry instead.
+ * The hidden trial account for this number, made and linked to it the first
+ * time. Its user id. Its AI consent is the texting itself: they texted an AI.
  */
-export async function guestText(
+export async function trialAccount(db: D1Database, phone: string, now = Date.now()): Promise<string> {
+  const had = await db.prepare("SELECT id FROM users WHERE trial_phone = ?").bind(phone).first<{ id: string }>();
+  const id = had?.id ?? crypto.randomUUID();
+  if (!had) {
+    await db.batch([
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO users (id, email, password_hash, password_salt, name, created_at, trial_phone, username, username_at, ai_consent_at, ai_consent_version, plan_override)
+           VALUES (?, ?, '', '', '', ?, ?, ?, ?, ?, 1, 'free')`,
+        )
+        .bind(id, trialEmail(phone), now, phone, demoName(), now, now),
+      db.prepare("INSERT OR IGNORE INTO settings (user_id, assistant_name, updated_at) VALUES (?, 'OVOA', ?)").bind(id, now),
+    ]);
+  }
+  const row = await db.prepare("SELECT id FROM users WHERE trial_phone = ?").bind(phone).first<{ id: string }>();
+  await db
+    .prepare("INSERT INTO text_links (user_id, phone, linked_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO NOTHING")
+    .bind(row!.id, phone, now)
+    .run();
+  if (!had) say("text", { outcome: "trial account", user: row!.id });
+  return row!.id;
+}
+
+type Account = { id: string; email: string; name: string | null };
+
+const accountFor = (db: D1Database, email: string | null) =>
+  email
+    ? db
+        .prepare("SELECT id, email, name FROM users WHERE lower(email) = ? AND trial_phone IS NULL")
+        .bind(email.toLowerCase())
+        .first<Account>()
+    : Promise.resolve(null);
+
+export type TrialOutcome = { answer: false } | { answer: true; after: { text: string; media?: string }[] };
+
+/**
+ * Before a text's turn: whether to answer it, and what to text after the
+ * reply. A member on a plan is always answered, uncounted. Everyone else
+ * spends one of the number's free texts (and the turn is let through as
+ * Base: plans.ts grantTrialTurn), or is told the next step instead.
+ */
+export async function trialGate(
   env: Env,
+  userId: string,
   phone: string,
   content: string,
-  send: (text: string, media?: string) => Promise<boolean>,
+  send: (text: string) => Promise<unknown>,
   now = Date.now(),
-  /** Writes the AI reply; tests stand in for the model here. */
-  write: (turns: Turn[]) => Promise<string> = (turns) =>
-    generateText(env, { model: env.CHAT_MODEL, usage: { userId: null, purpose: "guest text" }, system: SYSTEM, turns, fast: true }),
-): Promise<string> {
+): Promise<TrialOutcome> {
   const db = env.DB;
-  const row = await load(db, phone, now);
-  const email = emailIn(content);
-
-  // Their account's email, given now or before: the way to link, not more trial.
-  const account = await accountFor(db, email ?? row.email);
-  if (account && (email || row.used >= limitFor(row))) {
-    if (email && !row.email) await db.prepare("UPDATE text_guests SET email = ?, updated_at = ? WHERE phone = ?").bind(email, now, phone).run();
-    await send(await offerLink(env, account, now));
-    say("text", { outcome: "guest has an account", user: account.id });
-    return "guest has an account";
+  const me = await db.prepare("SELECT trial_phone FROM users WHERE id = ?").bind(userId).first<{ trial_phone: string | null }>();
+  const trial = !!me?.trial_phone;
+  if (!trial) {
+    const loaded = await loadPlan(env, userId);
+    if (!loaded || atLeast(loaded.plan.tier, "base") || isDevEmail(env, loaded.email)) return { answer: true, after: [] };
   }
-
-  if (email && !row.email) {
-    await db.prepare("UPDATE text_guests SET email = ?, updated_at = ? WHERE phone = ?").bind(email, now, phone).run();
-    say("text", { outcome: "guest email" });
-    // Just the email: thank them. Anything more gets answered below.
-    if (content.replace(EMAIL, "").trim().length < 3) {
-      await send(row.used >= FREE * 2 ? CAPPED : GOT_EMAIL);
-      return "guest email";
+  const row = await load(db, phone, now);
+  let limit: number;
+  let capped: string;
+  if (trial) {
+    const email = emailIn(content);
+    // Their account's email, given now or before: the way to link, not more trial.
+    const account = await accountFor(db, email ?? row.email);
+    if (account && (email || row.used >= FREE * 2)) {
+      if (email && !row.email) await db.prepare("UPDATE text_guests SET email = ?, updated_at = ? WHERE phone = ?").bind(email, now, phone).run();
+      await send(await offerLink(env, account, now));
+      say("text", { outcome: "guest has an account", user: account.id });
+      return { answer: false };
     }
-    row.email = email;
+    if (email && !row.email) {
+      await db.prepare("UPDATE text_guests SET email = ?, updated_at = ? WHERE phone = ?").bind(email, now, phone).run();
+      row.email = email;
+      say("text", { outcome: "guest email" });
+      // Just the email: thank them. Anything more gets answered below.
+      if (content.replace(EMAIL, "").trim().length < 3) {
+        await send(row.used >= FREE * 2 ? MAKE_ACCOUNT(email) : GOT_EMAIL);
+        return { answer: false };
+      }
+    }
+    limit = row.email ? FREE * 2 : FREE;
+    capped = row.email ? MAKE_ACCOUNT(row.email) : ASK_EMAIL;
+  } else {
+    // A free account with its number linked: FREE more, however it got here.
+    if (row.used < FREE * 2) await db.prepare("UPDATE text_guests SET used = ? WHERE phone = ?").bind(FREE * 2, phone).run();
+    row.used = Math.max(row.used, FREE * 2);
+    limit = FREE * 3;
+    capped = CAPPED;
   }
 
   // Take one of their free texts, atomically, so a burst can't overspend.
-  const limit = limitFor(row);
   const took = await db
     .prepare("UPDATE text_guests SET used = used + 1, updated_at = ? WHERE phone = ? AND used < ?")
     .bind(now, phone, limit)
@@ -113,49 +174,77 @@ export async function guestText(
       .prepare("UPDATE text_guests SET told_at = ? WHERE phone = ? AND (told_at IS NULL OR told_at < ?)")
       .bind(now, phone, now - TELL_EVERY_MS)
       .run();
-    if (tell.meta.changes) await send(row.email || row.used >= FREE * 2 ? CAPPED : ASK_EMAIL);
-    return "guest capped";
+    if (tell.meta.changes) await send(capped);
+    say("text", { outcome: "trial capped", user: userId });
+    return { answer: false };
   }
   const used = row.used + 1;
-
-  let history: Turn[] = [];
-  try {
-    history = JSON.parse(row.history) as Turn[];
-  } catch {
-    history = [];
-  }
-  const text = content.trim() || "(they sent something without words)";
-  let reply: string;
-  try {
-    reply = noDashes((await write([...history, { role: "user", text }])).trim());
-  } catch (err) {
-    console.error("ovoa.err guest text", err);
-    // Give the text back: it wasn't answered.
-    await db.prepare("UPDATE text_guests SET used = used - 1 WHERE phone = ?").bind(phone).run();
-    await send("Sorry, something went wrong on my side. Try again in a minute.");
-    return "guest error";
-  }
-  if (!reply) reply = "Sorry, I didn't catch that. Could you say it another way?";
-  const next = [...history, { role: "user", text }, { role: "model", text: reply }].slice(-HISTORY_TURNS);
-  await db.prepare("UPDATE text_guests SET history = ? WHERE phone = ?").bind(JSON.stringify(next), phone).run();
-  await send(reply);
+  grantTrialTurn(userId, now);
+  const after: { text: string; media?: string }[] = [];
   // Their first reply brings OVOA's contact card, so they can save it with its name and logo.
-  if (used === 1) await send("OVOA", `https://api.ovoa.ai${CONTACT_CARD_PATH}`);
-
+  if (trial && used === 1) after.push({ text: "OVOA", media: `https://api.ovoa.ai${CONTACT_CARD_PATH}` });
   if (used >= limit) {
     await db.prepare("UPDATE text_guests SET told_at = ? WHERE phone = ?").bind(now, phone).run();
-    await send(row.email ? CAPPED : ASK_EMAIL);
+    after.push({ text: capped });
   }
-  say("text", { outcome: "guest reply", used });
-  return "guest reply";
+  say("text", { outcome: "trial text", user: userId, used });
+  return { answer: true, after };
 }
 
-type Account = { id: string; email: string; name: string | null };
+// What a trial account made that's worth keeping, moved when the number is
+// linked to a real account. Anything else goes with the trial account.
+const KEEP = [
+  "messages",
+  "memories",
+  "notes",
+  "todos",
+  "alarms",
+  "routines",
+  "people",
+  "profile",
+  "user_apps",
+  "sites",
+  "site_leads",
+  "life_plans",
+  "food_log",
+  "money_settings",
+  "money_accounts",
+  "money_income",
+  "money_bills",
+  "money_spend",
+  "money_plans",
+  "agent_jobs",
+  "agent_goals",
+  "agent_notes",
+];
 
-const accountFor = (db: D1Database, email: string | null) =>
-  email
-    ? db.prepare("SELECT id, email, name FROM users WHERE lower(email) = ?").bind(email.toLowerCase()).first<Account>()
-    : Promise.resolve(null);
+/**
+ * The number that was on a trial is now linked to `realId` (texting.ts redeem):
+ * what the trial made moves there, its websites keep their addresses (and its
+ * demo username too, when the account has none), and the trial account goes.
+ */
+export async function mergeTrial(db: D1Database, phone: string, realId: string) {
+  const trial = await db
+    .prepare("SELECT id, username FROM users WHERE trial_phone = ? AND id != ?")
+    .bind(phone, realId)
+    .first<{ id: string; username: string | null }>();
+  if (!trial) return false;
+  for (const table of KEEP) {
+    // OR IGNORE: a row the account already has one of (its settings, say) stays theirs.
+    await db
+      .prepare(`UPDATE OR IGNORE ${table} SET user_id = ? WHERE user_id = ?`)
+      .bind(realId, trial.id)
+      .run()
+      .catch((err: unknown) => console.error(`ovoa.err trial merge: ${table}`, err));
+  }
+  const real = await db.prepare("SELECT username FROM users WHERE id = ?").bind(realId).first<{ username: string | null }>();
+  await db.prepare("DELETE FROM users WHERE id = ?").bind(trial.id).run();
+  if (trial.username && !real?.username) {
+    await db.prepare("UPDATE users SET username = ?, username_at = ? WHERE id = ?").bind(trial.username, Date.now(), realId).run();
+  }
+  say("text", { outcome: "trial merged", user: realId });
+  return true;
+}
 
 /** Emails the account a link code (at most once in LINK_EMAIL_EVERY_MS). The text to send the guest. */
 async function offerLink(env: Env, account: Account, now: number): Promise<string> {
@@ -168,7 +257,6 @@ async function offerLink(env: Env, account: Account, now: number): Promise<strin
   const sent = await sendEmail(env, linkEmail(account, env.SENDBLUE_NUMBER, code, env.PUBLIC_URL));
   return sent ? LINK_EMAILED(account.email) : LINK_IN_APP;
 }
-
 /** The email with the link code: a button that opens Messages with the text ready, and the text to send by hand. */
 export function linkEmail(account: Account, number: string, code: string, base: string): Email {
   const first = account.name?.trim().split(/\s+/)[0] ?? null;

@@ -262,6 +262,8 @@ export async function sendEmail(
   fetcher: Fetcher = fetch,
 ): Promise<boolean> {
   if (!env.RESEND_API_KEY) return false;
+  // A texting trial's hidden account (guest.ts) has an address that can't receive mail.
+  if (email.to.endsWith(".invalid")) return false;
   try {
     const res = await fetcher(`${env.RESEND_API_BASE || "https://api.resend.com"}/emails`, {
       method: "POST",

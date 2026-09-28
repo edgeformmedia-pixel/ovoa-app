@@ -226,6 +226,8 @@ export const RULES: Rule[] = [
   // What was said is in messages; this is only there to tell a text delivered twice.
   { name: "text_inbox", table: "text_inbox", where: "received_at < ?", args: (c) => [c.now - TEXT_INBOX_DAYS * DAY_MS] },
   { name: "text_guests", table: "text_guests", where: "updated_at < ?", args: (c) => [c.now - TEXT_GUEST_DAYS * DAY_MS] },
+  // A texting trial's hidden account (guest.ts) goes with its number's trial row, and everything it made with it.
+  { name: "trial users", table: "users", where: "trial_phone IS NOT NULL AND trial_phone NOT IN (SELECT phone FROM text_guests)", args: () => [] },
   // Which texts OVOA sent first, for the day's cap (reach.ts): kinds and times, no words.
   { name: "text_outbox", table: "text_outbox", where: "sent_at < ?", args: (c) => [c.cutoff] },
 
@@ -282,7 +284,7 @@ export const RULES: Rule[] = [
  *   index    kept in step with its table by triggers
  */
 export const TABLES = {
-  users: "keep",
+  users: "mixed",
   sessions: "expires",
   settings: "keep",
   messages: "delete",

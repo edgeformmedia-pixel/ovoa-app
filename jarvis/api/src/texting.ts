@@ -4,7 +4,7 @@ import { approveAction, type PendingAction } from "./google/assistant";
 import { allowed, tooMany } from "./limits";
 import type { CallTool, ToolSpec } from "./llm";
 import { CONTACT_CARD_PATH } from "./contactcard";
-import { guestText, type Turn as GuestTurn } from "./guest";
+import { mergeTrial, trialAccount, trialGate } from "./guest";
 import { appFor, describeScreen, type MadeApp } from "./myapps";
 import { describeImage, transcribeAudio } from "./llm";
 import { recordError, say } from "./obs";
@@ -730,8 +730,6 @@ export type Deps = {
   deadline: number;
   /** Tests and /texting/try: no waiting for the rest of a burst. */
   debounceMs?: number;
-  /** Tests: writes a guest's free-trial reply instead of the model (guest.ts). */
-  guestWrite?: (turns: GuestTurn[]) => Promise<string>;
 };
 
 const TROUBLE = "Sorry, something went wrong on my side. Try again in a minute.";
@@ -834,6 +832,13 @@ async function answer(env: Env, ctx: Waiter, userId: string, batch: InboxRow[], 
     }
   }
 
+  // The free trial, and the next step when it's used up (guest.ts). Members pass straight through.
+  const gate = await trialGate(env, userId, to, text, (t) => out.text(to, t));
+  if (!gate.answer) {
+    await saveMessages(db, userId, [{ role: "user", content: text }]);
+    return finish(db, handles, "done");
+  }
+
   let outcome: TextTurnOutcome;
   const started = Date.now();
   try {
@@ -876,6 +881,7 @@ async function answer(env: Env, ctx: Waiter, userId: string, batch: InboxRow[], 
   // A reply with nothing in it (the model only ran a tool) is still an answer, unless a tapback was it.
   if (!texts.length && !outcome.reacted) texts.push("Okay.");
   await sendAll(out, to, texts);
+  for (const a of gate.after) await out.text(to, a.text, a.media);
   // An app open in the conversation stays open for an hour after its last use.
   await db.prepare("UPDATE text_links SET app_at = ? WHERE user_id = ? AND app_id IS NOT NULL").bind(Date.now(), userId).run();
   say("text", { outcome: "answered", user: userId, texts: batch.length, bubbles: texts.length, ms: Date.now() - started });
@@ -941,7 +947,7 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
   if (m.optedOut) return { outcome: "opted out" };
   const db = env.DB;
   const now = Date.now();
-  const link = await linkByPhone(db, m.from);
+  let link = await linkByPhone(db, m.from);
   const codes = linkCodesIn(m.content);
 
   if (m.sms) {
@@ -959,6 +965,8 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
     const userId = await redeem(db, codes, m.from, now);
     if (userId) {
       await settle(db, m.handle, "linked");
+      // Off a trial: what it made comes along (guest.ts).
+      await mergeTrial(db, m.from, userId);
       say("text", { outcome: "linked", user: userId, moved: link && link.user_id !== userId ? 1 : undefined });
       const out = deps.sender(m.line);
       for (const t of await welcome(db, userId)) await out.text(m.from, t);
@@ -981,14 +989,10 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
   }
 
   if (!link) {
-    // Not linked: the free trial (guest.ts), no account needed.
-    if (!(await record(db, m, "guest", null, now))) return { outcome: "duplicate" };
-    const out = deps.sender(m.line);
-    const work = guestText(env, m.from, m.content, (t, media) => out.text(m.from, t, media), now, deps.guestWrite).then(
-      (outcome) => void say("text", { outcome }),
-      (err) => void console.error("ovoa.err guest text", err),
-    );
-    return { outcome: "guest", work };
+    // Not linked: the free trial (guest.ts), on a hidden trial account linked to this number.
+    await trialAccount(db, m.from, now);
+    link = await linkByPhone(db, m.from);
+    if (!link) return { outcome: "trial failed" };
   }
 
   if (/^\s*unlink\W*$/i.test(m.content)) {
@@ -1208,6 +1212,8 @@ export type ChannelOptions = {
   proactive?: boolean;
   /** A tapback on their latest text (TextTurnInput.react); without it, no text_react. */
   react?: (reaction: string) => Promise<boolean>;
+  /** A number on the free trial, on its hidden trial account (guest.ts). */
+  trial?: boolean;
 };
 
 /**
@@ -1293,6 +1299,9 @@ export function textChannel(
     "They're texting you from Messages on their iPhone (iMessage), not using the OVOA app. It's the same conversation as the app, with the same memories, lists, notes, reminders and tools.",
     // Instinct, 2026-09-26: people answer texts that sound like a person, and mute ones that sound like a form.
     "Text like a real person who's chill and easygoing, a sharp friend, not a help desk or a bot: usually one short line, two at most, plain words. No greeting, no \"Sure!\" or \"Great question\", no repeating what they asked, no \"I've gone ahead and\", no sign-off, no offer of more help. Say the result, not the process (\"Done, 5pm tomorrow\", not \"I have set a reminder for you for tomorrow at 5:00 PM\"). Match how they write; emoji only if they use them. No Markdown, headings or asterisks. A blank line starts a new bubble; almost always use one. Links are fine: they can tap them. Never use em dashes (—); use a comma or a period.",
+    opts.trial
+      ? "They're trying OVOA out by text: no account and no app yet, a handful of free texts. Show off what you can really do: when it fits, actually do it (look it up live, set the reminder, build them a website: it goes up at a demo address you can text them). Don't mention limits, pricing or the app unless they ask. Anything that needs the OVOA app or their iPhone comes with an account."
+      : "",
     opts.react ? "When a tapback says it (a thanks, an ok, something funny), react with text_react and write nothing, like a person would." : "",
     // Instinct (2026-09-26): an assistant you text does things; it doesn't describe them.
     "Act, don't narrate: when what they want is clear, do it now with your tools and say what you did in a few words. Ask only for what you can't reasonably work out yourself, one question at a time. Make the reasonable choice for small details and mention it, rather than asking.",

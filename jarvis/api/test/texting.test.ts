@@ -40,7 +40,7 @@ import {
   type TextTurnInput,
   type TextTurnOutcome,
 } from "../src/texting";
-import { ASK_EMAIL, CAPPED, FREE, LINK_IN_APP } from "../src/guest";
+import { ASK_EMAIL, CAPPED, FREE, LINK_IN_APP, MAKE_ACCOUNT } from "../src/guest";
 const LINK_EMALED_PREFIX = "That email has an OVOA account. I just emailed";
 import type { MadeApp } from "../src/myapps";
 import type { Env } from "../src/types";
@@ -304,49 +304,71 @@ async function main() {
     sender: () => sender,
     deadline: Date.now() + 60_000,
     debounceMs,
-    guestWrite: async (turns) => `guest reply ${turns.filter((t) => t.role === "user").length}`,
   });
 
   // ---------- Strangers, SMS, groups ----------
 
-  // A number nobody linked gets the free trial: FREE AI replies, FREE more for an email, then Base.
+  // A number nobody linked gets the free trial on a hidden trial account: FREE
+  // full turns, FREE more for an email, FREE more once a real account is linked.
   const G = { from_number: "+15865550999" };
-  eq("a number nobody linked", await text("hello", deps(), G), "guest");
-  eq("gets an AI reply", out.sent.at(-2)?.content, "guest reply 1");
+  eq("a number nobody linked", await text("hello", deps(), G), "queued");
+  const trialId = count("SELECT COUNT(*) AS n FROM users WHERE trial_phone = '+15865550999'");
+  eq("gets a hidden trial account", trialId, 1);
+  eq("with a demo username", count("SELECT COUNT(*) AS n FROM users WHERE trial_phone = '+15865550999' AND username LIKE 'demo%'"), 1);
+  eq("and a whole turn", replies.asked.length, 1);
   eq("then the contact card", out.sent.at(-1)?.media?.endsWith("/texting/contact.vcf"), true);
   eq("to that number", out.sent.at(-1)?.to, "+15865550999");
   for (let i = 2; i <= FREE; i++) await text(`hi ${i}`, deps(), G);
-  eq("the last free reply follows the conversation", out.sent.at(-2)?.content, `guest reply ${FREE}`);
+  eq("every free text is a turn", replies.asked.length, FREE);
   eq("then it asks for an email, no AI", out.sent.at(-1)?.content, ASK_EMAIL);
   let told = out.sent.length;
   await text("more?", deps(), G);
   eq("past the free texts: no reply, already asked", out.sent.length, told);
   await text("Sure, ME@Example.com", deps(), G);
-  eq("an email", out.sent.at(-1)?.content.startsWith("guest reply"), true);
+  eq("an email with words is answered", replies.asked.length, FREE + 1);
   eq("is kept", count("SELECT COUNT(*) AS n FROM text_guests WHERE email = 'me@example.com'"), 1);
   for (let i = 2; i <= FREE; i++) await text(`again ${i}`, deps(), G);
-  eq("after the extra ones: Base", out.sent.at(-1)?.content, CAPPED);
+  eq("after the extra ones: make an account", out.sent.at(-1)?.content, MAKE_ACCOUNT("me@example.com"));
   told = out.sent.length;
   await text("please", deps(), G);
   eq("and it's cut off", out.sent.length, told);
-  eq("and nothing it said is kept in the inbox", count("SELECT COUNT(*) AS n FROM text_inbox WHERE phone = '+15865550999' AND content != ''"), 0);
-  eq("nor did any of it reach a turn", replies.asked.length, 0);
+  eq("no more turns", replies.asked.length, FREE * 2);
 
   // The trial is once per number: its old row deleted for age, it doesn't start over.
   sqlite.exec("DELETE FROM text_guests WHERE phone = '+15865550999'");
+  sqlite.exec("UPDATE text_guests SET told_at = NULL");
   told = out.sent.length;
   await text("hi again", deps(), G);
-  eq("a number back after its row went: no new trial", out.sent.at(-1)?.content, CAPPED);
-  eq("and no AI reply", out.sent.length, told + 1);
+  eq("a number back after its row went: no new trial", out.sent.length, told + 1);
+  eq("and no turn", replies.asked.length, FREE * 2);
 
   // A guest whose email has an account: told how to link, not given more trial.
   const A = { from_number: "+15865550997" };
   await text("hey", deps(), A);
   const turnsBefore = replies.asked.length;
-  eq("an account's email", await text("it's Sam@example.com", deps(), A), "guest");
+  eq("an account's email", await text("it's Sam@example.com", deps(), A), "queued");
   eq("points them to linking", [LINK_IN_APP, LINK_EMALED_PREFIX].some((t) => out.sent.at(-1)?.content.startsWith(t)), true);
-  eq("with no AI reply for it", count("SELECT used AS n FROM text_guests WHERE phone = '+15865550997'"), 1);
-  eq("and no turn on the account", replies.asked.length, turnsBefore);
+  eq("with no free text spent", count("SELECT used AS n FROM text_guests WHERE phone = '+15865550997'"), 1);
+  eq("and no turn", replies.asked.length, turnsBefore);
+
+  // Linking a trial number to a real account brings what the trial made, and its demo username.
+  const R = "user-trial-merge";
+  sql("INSERT INTO users (id, email, password_hash, password_salt, name, created_at, plan_override) VALUES (?, 'r@example.com', '', '', 'Rae', ?, 'free')", R, Date.now());
+  const tid = sqlite.prepare("SELECT id, username FROM users WHERE trial_phone = '+15865550997'").get() as { id: string; username: string };
+  sql("INSERT INTO sites (id, user_id, slug, name, client, brief, status, created_at, updated_at) VALUES ('s-demo', ?, ?, 'Demo', '', 'x', 'live', ?, ?)", tid.id, `${tid.username}/demo`, Date.now(), Date.now());
+  const { code: rc } = await issueLinkCode(DB, R);
+  eq("the link text", await text(linkText(rc), deps(), A), "linked");
+  eq("the trial account is gone", count("SELECT COUNT(*) AS n FROM users WHERE id = ?", tid.id), 0);
+  eq("its website is theirs, same address", count("SELECT COUNT(*) AS n FROM sites WHERE user_id = ? AND slug = ?", R, `${tid.username}/demo`), 1);
+  eq("its chat too", count("SELECT COUNT(*) AS n FROM messages WHERE user_id = ?", R) > 0, true);
+  eq("and its username", count("SELECT COUNT(*) AS n FROM users WHERE id = ? AND username = ?", R, tid.username), 1);
+  // A free account, linked: FREE more (the number had used 1, so it's topped to FREE * 2 first), then a plan.
+  const before = replies.asked.length;
+  for (let i = 1; i <= FREE; i++) await text(`linked ${i}`, deps(), A);
+  eq("FREE more once linked", replies.asked.length, before + FREE);
+  eq("then pick a plan", out.sent.at(-1)?.content, CAPPED);
+  await text("one more", deps(), A);
+  eq("and no more", replies.asked.length, before + FREE);
 
   eq("SMS", await text("hi", deps(),{ service: "SMS", from_number: "+15865550998" }), "sms");
   eq("is told to use iMessage", out.sent.at(-1)?.content.includes("iMessage"), true);
@@ -648,14 +670,14 @@ async function main() {
   eq("UNLINK by text", await text("Unlink", deps()), "unlinked");
   eq("unlinks", await linkOf(DB, U), null);
   eq("and says so", out.sent.at(-1)?.content.startsWith("Unlinked"), true);
-  eq("after that it's a guest", await text("hello", deps()), "guest");
+  eq("after that it's a trial", await text("hello", deps()), "queued");
 
   // An account that goes takes its link and its texts with it.
   const { code: again } = await issueLinkCode(DB, U);
   await text(linkText(again), deps());
   eq("linked again", (await linkOf(DB, U))?.phone, PHONE);
   sql("DELETE FROM users WHERE id = ?", U);
-  eq("deleting the account unlinks the number", count("SELECT COUNT(*) AS n FROM text_links"), 0);
+  eq("deleting the account unlinks the number", count("SELECT COUNT(*) AS n FROM text_links WHERE user_id = ?", U), 0);
   eq("and takes its texts", count("SELECT COUNT(*) AS n FROM text_inbox WHERE user_id = ?", U), 0);
 }
 
