@@ -17,7 +17,7 @@ import { useSession } from "../lib/auth";
 import { useDevMode } from "../lib/devMode";
 import { useMyApps } from "../lib/myApps";
 import { BlurView } from "expo-blur";
-import { DrawerContext, drawerLocked, spotRef, usePointedAt, type DrawerHandle } from "../lib/drawer";
+import { DrawerContext, drawerLocked, setUserMenuOpen, spotRef, usePointedAt, type DrawerHandle } from "../lib/drawer";
 import { PLAN_NAMES, usePlan } from "../lib/plan";
 import { colors, lift, numeric, space, type } from "../lib/theme";
 import { PressScale } from "./motion";
@@ -175,7 +175,7 @@ export function DrawerPanel({
 
 // ---------- the panel, wired to the app ----------
 
-export function AppDrawer({ children }: { children: ReactNode }) {
+export function AppDrawer({ children, overlay }: { children: ReactNode; overlay?: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { can, needsConsent, plan, free } = usePlan();
@@ -191,6 +191,7 @@ export function AppDrawer({ children }: { children: ReactNode }) {
 
   return (
     <DrawerHost
+      overlay={overlay}
       panel={(close) => {
         // navigate, not push: opening the same screen twice from the menu must
         // never stack two of it.
@@ -244,9 +245,12 @@ export function AppDrawer({ children }: { children: ReactNode }) {
 export function DrawerHost({
   children,
   panel,
+  overlay,
 }: {
   children: ReactNode;
   panel: (close: () => void) => ReactNode;
+  /** Drawn over the panel and pinned to the screen: never moved by a back swipe (the tour). */
+  overlay?: ReactNode;
 }) {
   const { width } = useWindowDimensions();
   // 79% of the screen, as the mock has it, but never so wide on a large phone
@@ -271,20 +275,28 @@ export function DrawerHost({
       new Promise<void>((resolve) => {
         openRef.current = to === 1;
         setOpen(to === 1);
+        // A back swipe cut short can leave the page part-way across; the menu
+        // moving always puts it home.
+        backDrag.stopAnimation();
+        Animated.spring(backDrag, { toValue: 0, useNativeDriver: true, damping: 24, stiffness: 260 }).start();
+        if (to === 0) setUserMenuOpen(false);
         // A spring, so it lands rather than stops. It may go a little past open;
         // the panel is drawn wider than it looks (OVERHANG) so that never shows a gap.
         // Resolves when it has landed (or was overtaken): the tour measures rows
         // only then, because a native-driven slide isn't in the layout until it ends.
         Animated.spring(progress, { toValue: to, useNativeDriver: true, damping: 22, stiffness: 240, mass: 0.9 }).start(() => resolve());
       }),
-    [progress],
+    [progress, backDrag],
   );
 
   const handle = useMemo<DrawerHandle>(
     () => ({
       open: () => settle(1),
       close: () => settle(0),
-      toggle: () => void settle(openRef.current ? 0 : 1),
+      toggle: () => {
+        setUserMenuOpen(!openRef.current);
+        void settle(openRef.current ? 0 : 1);
+      },
     }),
     [settle],
   );
@@ -374,6 +386,8 @@ export function DrawerHost({
             <View style={{ flex: 1, paddingLeft: OVERHANG }}>{panel(handle.close)}</View>
           </View>
         </Animated.View>
+
+        {overlay}
       </View>
     </DrawerContext.Provider>
   );

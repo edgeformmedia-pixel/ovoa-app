@@ -214,14 +214,21 @@ function RootStack() {
         <AssistantProvider>
           {/* The drawer is inside the providers because its rows read from them,
               and outside the Stack because it has to sit over every route. */}
-          <AppDrawer>
+          <AppDrawer
+            overlay={
+              <>
+                {/* Once, the first time the app opens past setup: a spoken walk
+                    through the menu. Inside the drawer so it can open it and
+                    point at its rows; an overlay, not a child, so it's drawn over
+                    the panel and a back swipe's slide never carries it (and the
+                    page) sideways off the screen (TestFlight, iPhone 15 Pro). */}
+                <Tour />
+                {/* Over the drawer and every screen: a card growing into its app. */}
+                <ExpandOverlay />
+              </>
+            }
+          >
             {stack}
-            {/* Once, the first time the app opens past setup: a spoken walk
-                through the menu. Inside the drawer so it can open it and
-                point at its rows, and drawn over it. */}
-            <Tour />
-            {/* Over the drawer and every screen: a card growing into its app. */}
-            <ExpandOverlay />
           </AppDrawer>
           {/* After the drawer, so an alarm going off covers the menu too. */}
           <NagOverlay />

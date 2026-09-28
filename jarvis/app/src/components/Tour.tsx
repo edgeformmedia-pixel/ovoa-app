@@ -155,6 +155,28 @@ const frames = (n: number) =>
 /** About how long a card takes to read to yourself: a third of a second a word, and never under three seconds. */
 const readingMs = (text: string) => Math.max(3000, text.split(/\s+/).length * 330);
 
+/**
+ * Keeps Talk's microphone shut for the whole tour. Left open, it heard the
+ * tour's own voice as a question and answered it ("Let me look into that") over
+ * the top of the next card. Its own component, and memo'd, because the
+ * assistant's state changes with every tick of the mic level: read in the tour
+ * itself, that re-rendered the whole card many times a second.
+ */
+const MicHold = memo(function MicHold({
+  into,
+}: {
+  into: { current: { enabled: boolean | null | undefined; toggleEnabled: () => void } };
+}) {
+  const { hold, enabled, toggleEnabled } = useAssistant();
+  into.current = { enabled, toggleEnabled };
+  useEffect(() => {
+    let release = () => {};
+    void hold(() => new Promise<void>((r) => (release = r)));
+    return () => release();
+  }, [hold]);
+  return null;
+});
+
 export function Tour() {
   const seen = useTourSeen();
   // Never over the Terms or the AI consent page: it waits until they're closed.
@@ -180,7 +202,7 @@ function Walkthrough() {
   const paused = useUserMenuOpen();
   // Filled in by <MicHold>, so the assistant's state (its mic level changes
   // many times a second) never re-renders the tour.
-  const assistant = useRef<{ enabled: boolean | undefined; toggleEnabled: () => void }>({ enabled: undefined, toggleEnabled: () => {} });
+  const assistant = useRef<{ enabled: boolean | null | undefined; toggleEnabled: () => void }>({ enabled: undefined, toggleEnabled: () => {} });
 
   const name = user?.settings.assistantName || "OVOA";
   const all = useMemo(() => steps(name, free, needsConsent), [name, free, needsConsent]);
@@ -357,7 +379,7 @@ function Walkthrough() {
       hush();
       setSpeaking(false);
     };
-    // Keyed on the card and the voice switch only: a re-render mid-sentence must not restart it.
+    // Keyed on the card, the voice switch and the pause only: a re-render mid-sentence must not restart it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [at, voiceOn, paused]);
 
@@ -384,12 +406,10 @@ function Walkthrough() {
 
   return (
     <View
-      pointerEvents={paused ? "none" : "box-none"}
+      pointerEvents={paused ? "none" : "auto"}
       style={[styles.scrim, cardUp && { justifyContent: "flex-start" }, paused && styles.hidden]}
     >
       <MicHold into={assistant} />
-      <Spotlight holeStyle={holeStyle} glowStyle={glowStyle} />
-      <Card && { justifyContent: "flex-start" }]}>
       {/* One view with an enormous border is the dim; its hollow middle is the cut-out.
           In a layer of its own, clipped to the screen, so what's drawn past the edges
           never widens the page or gives the card something to scroll. */}
@@ -470,12 +490,14 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 2,
     borderColor: colors.now,
-    shadowColor: colors.now,
-    shadowOpacity: 0.7,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 0 },
   },
+  // Paused while they use the menu themselves: kept mounted, so it picks up where it was.
+  hidden: { opacity: 0 },
   card: {
+    // Never wider than the screen less its margins, whatever it sits in.
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 520,
     backgroundColor: colors.paper,
     borderRadius: radius.sheet,
     padding: space.s5,

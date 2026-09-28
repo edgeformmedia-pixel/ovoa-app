@@ -90,3 +90,27 @@ export function measureSpot(label: string): Promise<SpotRect | null> {
     }
   });
 }
+
+// ---------- opened by hand ----------
+//
+// The menu button during the tour: the tour steps aside (hides its card, stops
+// talking and moving on) until the menu is closed again, rather than showing
+// through on top of it. Only toggle() sets this; the tour's own open() never does.
+
+const userMenuListeners = new Set<(on: boolean) => void>();
+let userMenu = false;
+export function setUserMenuOpen(on: boolean) {
+  if (on === userMenu) return;
+  userMenu = on;
+  userMenuListeners.forEach((l) => l(on));
+}
+
+/** Whether the person opened the menu themselves and it is still open. */
+export function useUserMenuOpen() {
+  const [on, setOn] = useState(userMenu);
+  useEffect(() => {
+    userMenuListeners.add(setOn);
+    return () => void userMenuListeners.delete(setOn);
+  }, []);
+  return on;
+}
