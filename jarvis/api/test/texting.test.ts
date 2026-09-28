@@ -40,7 +40,8 @@ import {
   type TextTurnInput,
   type TextTurnOutcome,
 } from "../src/texting";
-import { ASK_EMAIL, CAPPED, FREE } from "../src/guest";
+import { ASK_EMAIL, CAPPED, FREE, LINK_IN_APP } from "../src/guest";
+const LINK_EMALED_PREFIX = "That email has an OVOA account. I just emailed";
 import type { MadeApp } from "../src/myapps";
 import type { Env } from "../src/types";
 
@@ -331,7 +332,16 @@ async function main() {
   eq("and nothing it said is kept in the inbox", count("SELECT COUNT(*) AS n FROM text_inbox WHERE phone = '+15865550999' AND content != ''"), 0);
   eq("nor did any of it reach a turn", replies.asked.length, 0);
 
-  eq("SMS", await text("hi", deps(), { service: "SMS", from_number: "+15865550998" }), "sms");
+  // A guest whose email has an account: told how to link, not given more trial.
+  const A = { from_number: "+15865550997" };
+  await text("hey", deps(), A);
+  const turnsBefore = replies.asked.length;
+  eq("an account's email", await text("it's Sam@example.com", deps(), A), "guest");
+  eq("points them to linking", [LINK_IN_APP, LINK_EMALED_PREFIX].some((t) => out.sent.at(-1)?.content.startsWith(t)), true);
+  eq("with no AI reply for it", count("SELECT used AS n FROM text_guests WHERE phone = '+15865550997'"), 1);
+  eq("and no turn on the account", replies.asked.length, turnsBefore);
+
+  eq("SMS", await text("hi", deps(),{ service: "SMS", from_number: "+15865550998" }), "sms");
   eq("is told to use iMessage", out.sent.at(-1)?.content.includes("iMessage"), true);
   eq("group chats", await text("hi all", deps(), { group_id: "G1" }), "group");
   eq("OVOA's own texts, reported back", await text("sent", deps(), { is_outbound: true }), "outbound");

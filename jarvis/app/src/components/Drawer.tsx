@@ -18,7 +18,7 @@ import { useDevMode } from "../lib/devMode";
 import { useMyApps } from "../lib/myApps";
 import { BlurView } from "expo-blur";
 import { DrawerContext, drawerLocked, setUserMenuOpen, spotRef, usePointedAt, type DrawerHandle } from "../lib/drawer";
-import { PLAN_NAMES, usePlan } from "../lib/plan";
+import { planLabel, usePlan } from "../lib/plan";
 import { colors, lift, numeric, space, type } from "../lib/theme";
 import { PressScale } from "./motion";
 import { lockTag } from "./Plan";
@@ -186,7 +186,7 @@ export function AppDrawer({ children, overlay }: { children: ReactNode; overlay?
 
   // Only what is cheaply and truthfully to hand.
   const tails = {
-    Settings: plan ? PLAN_NAMES[plan.tier] : undefined,
+    Settings: plan ? planLabel(plan) : undefined,
   };
 
   return (

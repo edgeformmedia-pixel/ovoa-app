@@ -49,6 +49,15 @@ const NONE: Plan["features"] = { chat: false, voice: false, wake: false, agent: 
 /** What the plan is called on screen. */
 export const PLAN_NAMES: Record<Tier, string> = { free: "Free", base: "Base", plus: "Plus", pro: "Pro" };
 
+/** How it's held, where that changes what the name means ("Pro" given for free is not a paid Pro). */
+const HELD: Partial<Record<Plan["status"], string>> = { comp: "free", trialing: "trial", past_due: "payment due" };
+
+/** The plan as the menu shows it: "Pro · free", "Base · trial", "Free". */
+export function planLabel(plan: Plan) {
+  const held = plan.tier === "free" ? undefined : HELD[plan.status];
+  return held ? `${PLAN_NAMES[plan.tier]} · ${held}` : PLAN_NAMES[plan.tier];
+}
+
 export type PlanState = {
   /** Null until the server has said (or an older server never will). */
   plan: Plan | null;

@@ -2,10 +2,19 @@
 // The first FREE texts get real AI replies; then an automated (no AI) text
 // asks for their email, which is worth FREE more; after that an automated
 // text sends them to Base. The counts are per phone number.
+//
+// An email that already has an OVOA account doesn't make the texts that
+// account's: anyone could text anyone's address. OVOA emails that address a
+// link code instead, with a one-tap link that puts it in a text to OVOA, and
+// the text from this number is what links it (texting.ts redeem), exactly as
+// the app's Link my number does. After that their texts are their account's,
+// on their plan.
 import { noDashes } from "./sentences";
 import { CONTACT_CARD_PATH } from "./contactcard";
+import { emailConfigured, esc, sendEmail, type Email } from "./emailauth";
 import { generateText } from "./llm";
 import { say } from "./obs";
+import { issueLinkCode, linkText } from "./texting";
 import type { Env } from "./types";
 
 export const FREE = 5;
@@ -19,6 +28,13 @@ export type Turn = { role: "user" | "model"; text: string };
 export const ASK_EMAIL = `That was your ${FREE}th free text. Reply with your email and you'll get ${FREE} more, no account needed.`;
 export const GOT_EMAIL = `Thanks! You've got ${FREE} more free texts. Go ahead.`;
 export const CAPPED = `You've used your free texts. Get OVOA Base to keep texting me (I'll remember this chat): ${SIGN_UP}`;
+
+export const LINK_EMAILED = (email: string) =>
+  `That email has an OVOA account. I just emailed ${email} a link: tap it on this phone and send the text it opens, and your texts go to your account and your plan.`;
+export const LINK_IN_APP =
+  "That email has an OVOA account. To text me as you, open the OVOA app, go to Settings, and tap Link my number under Text OVOA.";
+/** One link email per account in this long, however many times the address is texted. */
+const LINK_EMAIL_EVERY_MS = 10 * 60_000;
 
 const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 export const emailIn = (text: string) => text.match(EMAIL)?.[0]?.toLowerCase() ?? null;
@@ -57,6 +73,15 @@ export async function guestText(
   const db = env.DB;
   const row = await load(db, phone, now);
   const email = emailIn(content);
+
+  // Their account's email, given now or before: the way to link, not more trial.
+  const account = await accountFor(db, email ?? row.email);
+  if (account && (email || row.used >= limitFor(row))) {
+    if (email && !row.email) await db.prepare("UPDATE text_guests SET email = ?, updated_at = ? WHERE phone = ?").bind(email, now, phone).run();
+    await send(await offerLink(env, account, now));
+    say("text", { outcome: "guest has an account", user: account.id });
+    return "guest has an account";
+  }
 
   if (email && !row.email) {
     await db.prepare("UPDATE text_guests SET email = ?, updated_at = ? WHERE phone = ?").bind(email, now, phone).run();
@@ -115,4 +140,52 @@ export async function guestText(
   }
   say("text", { outcome: "guest reply", used });
   return "guest reply";
+}
+
+type Account = { id: string; email: string; name: string | null };
+
+const accountFor = (db: D1Database, email: string | null) =>
+  email
+    ? db.prepare("SELECT id, email, name FROM users WHERE lower(email) = ?").bind(email.toLowerCase()).first<Account>()
+    : Promise.resolve(null);
+
+/** Emails the account a link code (at most once in LINK_EMAIL_EVERY_MS). The text to send the guest. */
+async function offerLink(env: Env, account: Account, now: number): Promise<string> {
+  if (!emailConfigured(env) || !env.SENDBLUE_NUMBER) return LINK_IN_APP;
+  const recent = await env.DB.prepare("SELECT 1 AS y FROM text_link_codes WHERE user_id = ? AND created_at > ?")
+    .bind(account.id, now - LINK_EMAIL_EVERY_MS)
+    .first();
+  if (recent) return LINK_EMAILED(account.email);
+  const { code } = await issueLinkCode(env.DB, account.id, now);
+  const sent = await sendEmail(env, linkEmail(account, env.SENDBLUE_NUMBER, code));
+  return sent ? LINK_EMAILED(account.email) : LINK_IN_APP;
+}
+
+/** The email with the link code: a button that opens Messages with the text ready, and the text to send by hand. */
+export function linkEmail(account: Account, number: string, code: string): Email {
+  const first = account.name?.trim().split(/\s+/)[0] ?? null;
+  const hello = `Hi${first ? ` ${first}` : ""},`;
+  const why = "You texted OVOA this email. To make those texts yours, on your account and your plan, tap the button on your iPhone and send the text it opens:";
+  const body = linkText(code);
+  const link = `sms:${number}&body=${encodeURIComponent(body)}`;
+  const orText = `Or text this to ${number}:`;
+  const after = "It works for 15 minutes. If this wasn't you, ignore this email: nothing is linked without that text.";
+  const p = (s: string) => `<p style="margin:0 0 16px;font-size:16px;line-height:1.55;color:#060606">${esc(s)}</p>`;
+  return {
+    to: account.email,
+    subject: "Link your number to OVOA",
+    text: [hello, why, link, orText, body, after, "OVOA"].join("\n\n"),
+    html: `<!doctype html><html><body style="margin:0;padding:0;background:#edebee">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#edebee;padding:32px 16px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:20px;padding:32px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif"><tr><td>
+<p style="margin:0 0 24px;font-size:14px;font-weight:700;letter-spacing:0.08em;color:#060606">OVOA</p>
+${p(hello)}
+${p(why)}
+<p style="margin:8px 0 24px"><a href="${esc(link)}" style="display:inline-block;background:#060606;color:#ffffff;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:24px">Link my number</a></p>
+${p(orText)}
+<p style="margin:8px 0 24px;font-size:18px;font-weight:700;color:#060606;font-family:'SF Mono',Menlo,Consolas,monospace">${esc(body)}</p>
+${p(after)}
+</td></tr></table>
+</td></tr></table></body></html>`,
+  };
 }

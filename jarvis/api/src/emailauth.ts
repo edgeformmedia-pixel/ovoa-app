@@ -196,7 +196,7 @@ const REPLY_TO = "support@ovoa.ai";
 
 export const emailConfigured = (env: Pick<Env, "RESEND_API_KEY">) => !!env.RESEND_API_KEY;
 
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /**
  * The code email. Laid out like the site's own emails (ovoa-team,

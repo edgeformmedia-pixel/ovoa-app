@@ -1,6 +1,6 @@
 import * as Haptics from "expo-haptics";
 import * as SMS from "expo-sms";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Linking, StyleSheet, Text, View } from "react-native";
 import { api, type TextingState } from "../lib/api";
 import { logFail } from "../lib/devlog";
@@ -15,6 +15,16 @@ const WAIT_MS = 3 * 60_000;
 export function formatPhone(phone: string) {
   const us = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(phone);
   return us ? `+1 (${us[1]}) ${us[2]}-${us[3]}` : phone;
+}
+
+/** Opens the text with the code in it: in the app when it can, in Messages when it can't. False if they cancelled. */
+export async function composeText(number: string, body: string) {
+  if (await SMS.isAvailableAsync()) {
+    const { result } = await SMS.sendSMSAsync([number], body);
+    return result !== "cancelled";
+  }
+  await Linking.openURL(`sms:${number}&body=${encodeURIComponent(body)}`);
+  return true;
 }
 
 /**
@@ -76,15 +86,7 @@ export function TextingSetup({ token, assistantName }: { token: string; assistan
     };
   }, [waiting, token]);
 
-  /** Opens the text with the code in it: in the app when it can, in Messages when it can't. */
-  const compose = useCallback(async (number: string, body: string) => {
-    if (await SMS.isAvailableAsync()) {
-      const { result } = await SMS.sendSMSAsync([number], body);
-      return result !== "cancelled";
-    }
-    await Linking.openURL(`sms:${number}&body=${encodeURIComponent(body)}`);
-    return true;
-  }, []);
+  const compose = composeText;
 
   const link = async () => {
     setBusy(true);

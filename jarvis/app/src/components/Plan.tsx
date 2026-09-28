@@ -1,10 +1,14 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter, type Href } from "expo-router";
-import { Linking, RefreshControl, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Alert, Linking, RefreshControl, StyleSheet, Text, View } from "react-native";
+import { api, type TextingState } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { logFail } from "../lib/devlog";
 import { spotRef } from "../lib/drawer";
 import { PLAN_NAMES, planDate, usePlan } from "../lib/plan";
 import { colors, radius, space, type } from "../lib/theme";
+import { composeText, formatPhone } from "./TextingSetup";
 import { Btn, Row, Screen, TopBar, text } from "./ui";
 
 // What the app shows where a plan decides (docs/paywall/SPEC.md).
@@ -142,7 +146,7 @@ const STATUS: Record<string, string | undefined> = {
   trialing: "Trial",
   past_due: "Payment due",
   canceled: "Ends soon",
-  comp: "Given to you",
+  comp: "Free access",
 };
 
 /**
@@ -186,6 +190,76 @@ export function YourPlan() {
         style={{ alignSelf: "flex-start", marginTop: space.s2 }}
       />
       <Text style={text.meta}>Already a member? Refresh after joining and the app catches up.</Text>
+      <TextsOnPlan />
+    </View>
+  );
+}
+
+/** How long, and how often, it looks for their link text once Messages has it. */
+const LINK_WAIT_MS = 90_000;
+const LINK_POLL_MS = 3_000;
+
+/**
+ * Texting OVOA on this plan. A number that isn't linked to the account only
+ * gets the free trial by text (api/src/guest.ts), whatever the plan is, and
+ * giving OVOA an email by text can't link it (anyone can text any address).
+ * This is the way out of that trial: one text with a code, from their number.
+ */
+function TextsOnPlan() {
+  const { token } = useAuth();
+  const [state, setState] = useState<TextingState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [waitingSince, setWaitingSince] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    api.texting(token).then((s) => alive && setState(s)).catch(logFail("plan: texting state"));
+    return () => {
+      alive = false;
+    };
+  }, [token]);
+
+  // Looks for the link their text made.
+  useEffect(() => {
+    if (!token || waitingSince === null) return;
+    const timer = setInterval(() => {
+      api
+        .texting(token)
+        .then((s) => {
+          if (s.linked) {
+            setState(s);
+            setWaitingSince(null);
+          } else if (Date.now() - waitingSince > LINK_WAIT_MS) setWaitingSince(null);
+        })
+        .catch(() => undefined);
+    }, LINK_POLL_MS);
+    return () => clearInterval(timer);
+  }, [token, waitingSince]);
+
+  if (!token || !state?.available || !state.number) return null;
+  if (state.linked) return <Row icon="chatbubbles-outline" tone="teal" title="Texts from" value={formatPhone(state.linked.phone)} />;
+
+  const link = async () => {
+    setBusy(true);
+    try {
+      const r = await api.textingLink(token);
+      if (await composeText(r.number, r.body)) setWaitingSince(Date.now());
+    } catch (err) {
+      Alert.alert("Couldn't start linking", err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View style={{ gap: space.s2, paddingTop: space.s3 }}>
+      <Text style={text.meta}>
+        {waitingSince !== null
+          ? "Send the text that opened. Your number links as soon as it arrives."
+          : `Texting OVOA at ${formatPhone(state.number)}? Your number isn't linked yet, so texts from it only get the free trial, not your plan. Link it with one text.`}
+      </Text>
+      <Btn label={waitingSince !== null ? "Open the text again" : "Link my number"} kind="go" busy={busy} onPress={() => void link()} style={{ alignSelf: "flex-start" }} />
     </View>
   );
 }
