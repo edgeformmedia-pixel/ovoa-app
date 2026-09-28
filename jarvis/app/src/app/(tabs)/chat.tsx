@@ -1,5 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { ApprovalCard } from "../../components/ApprovalCard";
 import { DevLogPanel } from "../../components/DevLogPanel";
@@ -46,6 +46,7 @@ function Talk() {
   const on = a.alwaysListen || !!a.enabled || (a.tapAsks && a.phase !== "off");
   // Map roughly -60..-10 dBFS onto the halo while listening.
   const loudness = a.phase === "listening" ? Math.max(0, Math.min(1, (a.level + 60) / 50)) : 0;
+  const silent = useSilentMic(a.phase === "listening", a.level);
 
   const onOrb = () => {
     if (a.phase === "speaking") a.interrupt();
@@ -104,8 +105,15 @@ function Talk() {
           <OrbView mode={orbMode(on, a.phase)} level={loudness} size={showLogs ? 150 : ORB} />
         </Pressable>
 
-        <Text style={styles.phase}>{label(on, a.phase, a.status)}</Text>
-        <WordsIn text={a.words} style={styles.words} />
+        <View style={styles.phaseRow}>
+          <Text style={styles.phase}>{label(on, a.phase, a.status)}</Text>
+          {on && a.phase === "listening" && <LevelBars level={loudness} />}
+        </View>
+        {silent && !a.words ? (
+          <Text style={styles.words}>Not hearing any sound. Is the microphone working?</Text>
+        ) : (
+          <WordsIn text={a.words} style={styles.words} />
+        )}
         <Text style={styles.hint}>{hint(on, a.alwaysListen, a.phase)}</Text>
         {!!a.error && <Text style={styles.error}>{a.error}</Text>}
       </View>
@@ -137,6 +145,40 @@ function Talk() {
     </View>
   );
 }
+
+/**
+ * A small meter beside "Listening": proof the microphone is delivering sound,
+ * so a dead mic looks different from a slow reply.
+ */
+function LevelBars({ level }: { level: number }) {
+  return (
+    <View style={styles.bars} accessibilityLabel={level > 0.05 ? "Hearing sound" : "Quiet"}>
+      {BAR_WEIGHTS.map((w, i) => (
+        <View key={i} style={[styles.bar, { height: 4 + Math.round(14 * Math.min(1, level * w)) }]} />
+      ))}
+    </View>
+  );
+}
+const BAR_WEIGHTS = [0.7, 1.2, 1.6, 1.1, 0.8];
+
+/** True once the mic has been listening but flat silent (no level at all) for a while. */
+function useSilentMic(listening: boolean, level: number) {
+  const lastSound = useRef(Date.now());
+  const [silent, setSilent] = useState(false);
+  // Anything above the floor counts: a room is never at -160 dB unless the mic is dead.
+  if (level > -100) lastSound.current = Date.now();
+  useEffect(() => {
+    if (!listening) {
+      setSilent(false);
+      return;
+    }
+    lastSound.current = Date.now();
+    const t = setInterval(() => setSilent(Date.now() - lastSound.current > SILENT_MS), 1000);
+    return () => clearInterval(t);
+  }, [listening]);
+  return listening && silent && level <= -100;
+}
+const SILENT_MS = 8000;
 
 /** What the globe shows for where the conversation is (components/Orb.tsx). */
 function orbMode(on: boolean, phase: VoicePhase): OrbMode {
@@ -215,6 +257,9 @@ const styles = StyleSheet.create({
   orbWrap: { alignItems: "center", justifyContent: "center" },
 
   phase: { ...type.phase, color: colors.ink },
+  phaseRow: { flexDirection: "row", alignItems: "center", gap: space.s2 },
+  bars: { flexDirection: "row", alignItems: "center", gap: 3, height: 18 },
+  bar: { width: 3, borderRadius: 2, backgroundColor: colors.now },
   words: { ...type.body, color: colors.inkDim, textAlign: "center", minHeight: 48, maxWidth: 320 },
   hint: { ...type.sub, color: colors.inkMute },
   error: { ...type.meta, color: colors.stop, textAlign: "center" },

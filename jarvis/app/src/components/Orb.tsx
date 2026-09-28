@@ -107,7 +107,7 @@ export default function Orb({
     const back = mix(GREY, mix(VIOLET, TEAL, w), on);
 
     const breathe = m === 1 ? Math.sin(t * 2) * 0.02 : 0;
-    const radius = size * (0.3 + on * 0.04 + breathe + lv * 0.05 + sp * 0.035);
+    const radius = size * (0.3 + on * 0.04 + breathe + lv * 0.09 + sp * 0.035);
     const spin = t * (m === 3 ? 1.1 : 0.4);
     const tilt = 0.38;
     const cs = Math.cos(spin);
