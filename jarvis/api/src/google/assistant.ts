@@ -23,6 +23,7 @@ import {
 } from "./oauth";
 import { pickAccountFor } from "./routing";
 import { googleTools, toolsByName, type ToolContext } from "./tools";
+import { InstagramNotConnected, isInstagramTool, runInstagramWrite } from "../instagram";
 
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 /** The old whole-Drive scope. Accounts connected since hold drive.file instead. */
@@ -376,6 +377,17 @@ export async function approveAction(
     content = opts.phoneResult?.ok
       ? `Done: ${detail || row.summary.split("\n")[0]}`
       : `That didn't work: ${detail || "unknown error"}`;
+  } else if (isInstagramTool(row.tool)) {
+    try {
+      await runInstagramWrite(env, userId, row.tool, JSON.parse(row.args));
+      content = `Done: ${row.summary.split("\n")[0]}`;
+    } catch (err) {
+      console.error("approved instagram action failed", err);
+      content =
+        err instanceof InstagramNotConnected
+          ? "I couldn't do that because your Instagram connection expired. Ask me to reconnect it."
+          : `That didn't work: ${err instanceof Error ? err.message : "unknown error"}`;
+    }
   } else {
     // `account` was stored alongside the tool's own arguments when the action was parked.
     const { account, ...args } = JSON.parse(row.args) as Record<string, unknown>;

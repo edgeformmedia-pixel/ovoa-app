@@ -169,6 +169,8 @@ export const RULES: Rule[] = [
     args: (c) => [c.now - DONE_JOB_DAYS * DAY_MS],
   },
   at("created_at", "pending_actions"),
+  // Instagram DMs and comments the webhook delivered (instagram.ts).
+  at("created_at", "instagram_events"),
   at("created_at", "paused_turns"),
   at("created_at", "command_queue"),
   at("ts", "action_log"),
@@ -266,6 +268,7 @@ export const RULES: Rule[] = [
   // ---- Things with their own expiry ----
   { name: "sessions", table: "sessions", where: "expires_at < ?", args: (c) => [c.now] },
   { name: "oauth_states", table: "oauth_states", where: "expires_at < ?", args: (c) => [c.now] },
+  { name: "instagram_states", table: "instagram_states", where: "expires_at < ?", args: (c) => [c.now] },
   // The confirmation email's one-tap links (verify.ts): a day, used or not.
   { name: "verify_links", table: "verify_links", where: "expires_at < ?", args: (c) => [c.now] },
   // The codes that link a number for texting (texting.ts): 15 minutes, used or not (a used one is gone already).
@@ -372,6 +375,9 @@ export const TABLES = {
   life_plans: "mixed",
   spend_budgets: "keep",
   purchases: "delete",
+  instagram_accounts: "keep",
+  instagram_states: "expires",
+  instagram_events: "delete",
   ovoa_suggestions: "keep",
 } as const satisfies Record<string, "keep" | "delete" | "mixed" | "expires" | "index">;
 

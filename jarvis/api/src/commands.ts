@@ -44,6 +44,13 @@ export const FORBIDDEN_FOR_COMMANDS = new Set([
   "budget_set",
   "purchase_propose",
   "purchase_confirm",
+  // Instagram: sending, publishing and deleting reach other people (instagram.ts).
+  "ig_send_dm",
+  "ig_reply_comment",
+  "ig_private_reply",
+  "ig_delete_comment",
+  "ig_publish",
+  "instagram_disconnect",
 ]);
 
 export async function enqueueCommand(env: Env, userId: string, text: string, source: CommandSource, reason?: string) {

@@ -45,6 +45,7 @@ import {
   SITES_BUDGET_MS,
 } from "./sites";
 import { budgetAssistant, budgetContext, isBudgetTool } from "./budget";
+import { instagramAssistant, instagramPublic, isInstagramTool } from "./instagram";
 import { isLifePlanTool, lifePlansAssistant, plansTick } from "./lifeplans";
 import { isTogetherTool, togetherAssistant, togetherTick } from "./together";
 import { isNetworkTool, networkAssistant, networkContext, networkRoutes, networkTick, networkWaiting, NETWORK_BUDGET_MS } from "./network";
@@ -376,6 +377,8 @@ app.get("/text/open", (c) => {
 });
 
 app.route("/", googlePublic);
+// Instagram's connect link and redirect, and Meta's webhook (signed with the app secret).
+app.route("/", instagramPublic);
 // The link in the confirmation email: no session, the token is the proof (verify.ts).
 app.route("/", verifyLinkRoutes);
 // Texts to OVOA's number, from Sendblue: no session, the webhook secret is the proof (texting.ts).
@@ -1579,6 +1582,8 @@ async function runTurn(
   const togetherTools = togetherAssistant(env, userId);
   const planTools = lifePlansAssistant(env, userId, timeZone);
   const budgetTools = budgetAssistant(env, userId, timeZone);
+  // Their Instagram, connected by them (instagram.ts): DMs, comments, posts; sends wait for a YES.
+  const instagramTools = instagramAssistant(env, userId);
   const waitingBuys = fromAgent ? { prompt: "", carry: [] as string[] } : await budgetContext(env, userId).catch((err) => {
     console.error("budget: couldn't read the turn's context", err);
     return { prompt: "", carry: [] as string[] };
@@ -1676,6 +1681,7 @@ async function runTurn(
     ...togetherTools.tools,
     ...planTools.tools,
     ...budgetTools.tools,
+    ...instagramTools.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -1709,6 +1715,7 @@ async function runTurn(
     together: { tools: togetherTools.tools, prompt: togetherTools.prompt },
     plans: { tools: planTools.tools, prompt: planTools.prompt },
     budget: { tools: budgetTools.tools, prompt: budgetTools.prompt },
+    instagram: { tools: instagramTools.tools, prompt: instagramTools.prompt },
     transcripts: {
       tools: transcriptTools.tools,
       prompt: settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : "",
@@ -1966,6 +1973,8 @@ async function runTurn(
                                     ? planTools.callTool
                                   : isBudgetTool(name)
                                     ? budgetTools.callTool
+                                  : isInstagramTool(name)
+                                    ? instagramTools.callTool
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name
@@ -2023,7 +2032,7 @@ async function runTurn(
       if (!verdict.refused()) ctx.waitUntil(noteEngines(env, attempts));
     });
   spoken?.end();
-  const pendingActions = [...phone.pending, ...shortcuts.pending, ...google.pending];
+  const pendingActions = [...phone.pending, ...shortcuts.pending, ...google.pending, ...instagramTools.pending];
   const cooling = coolingEngines();
   // What this reply cost, for the phone's turn log and the latency table.
   const tokens = usages.reduce(

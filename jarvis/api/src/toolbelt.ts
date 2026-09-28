@@ -222,6 +222,15 @@ const SYNONYMS: Record<string, string[]> = {
   buy: ["purchase", "budget"],
   purchase: ["purchase", "budget"],
   pay: ["purchase", "budget"],
+  // Instagram (instagram.ts): "any new IG DMs", "reply to that comment", "post this to insta".
+  instagram: ["ig", "instagram"],
+  insta: ["ig", "instagram"],
+  ig: ["ig", "instagram"],
+  dm: ["ig"],
+  dms: ["ig"],
+  reel: ["ig"],
+  reels: ["ig"],
+  followers: ["ig"],
 };
 
 /** Words that say a request repeats, so it's a routine (namedTools). */

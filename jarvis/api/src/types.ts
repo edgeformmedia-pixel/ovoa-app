@@ -49,6 +49,10 @@ export type Env = {
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET?: string;
   TOKEN_ENC_KEY: string;
+  /** Instagram (instagram.ts): the Meta app's Instagram app id (a var), its secret, and the webhook's verify token. */
+  IG_APP_ID?: string;
+  IG_APP_SECRET?: string;
+  IG_VERIFY_TOKEN?: string;
   /** "on" answers every request 503 and skips the crons while data moves between accounts (maintenance.ts). */
   MAINTENANCE?: string;
   PUBLIC_URL: string;
