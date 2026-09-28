@@ -696,3 +696,6 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   Stopped without code changes. Needs the owner: nothing new.
 - 2026-09-28 05:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main is still 9b33d3d.
   Stopped without code changes. Needs the owner: nothing new.
+- 2026-09-28 06:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main moved from 9b33d3d
+  to 1cb7c9b (new commits: texting trial exit, Talk and tour fixes); not merged here since no task needs it.
+  Stopped without code changes. Needs the owner: nothing new.
