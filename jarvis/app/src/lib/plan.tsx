@@ -22,7 +22,7 @@ import { storage } from "./storage";
 //
 // The rules mirror the server's since v1: free has no AI; Base has every AI
 // feature, the wake word, Always listen and background work included; Pro is
-// only more of Base's daily usage.
+// only more credits.
 //
 // Kept on the phone between launches, per person, so a free phone opens on the
 // free home rather than flashing the assistant first.

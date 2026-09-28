@@ -312,14 +312,17 @@ eq("Base's worst month of AI is under a third of its $9.95", BASE_DAILY_BUDGET_M
 eq("new work stops one spoken reply short of the budget", spendStopMicro("base"), 100_000 - REPLY_MARGIN_MICRO);
 eq("free has no budget", ALLOWANCES.free.budgetMicro, 0);
 
-eq("base, fresh day", allowanceFor("base", 0), { usedPercent: 0, left: Math.floor((100_000 - REPLY_MARGIN_MICRO) / AVERAGE_REPLY_MICRO), over: null });
+eq("base, fresh day", allowanceFor("base", 0), { usedPercent: 0, left: Math.floor((100_000 - REPLY_MARGIN_MICRO) / AVERAGE_REPLY_MICRO), creditsLeft: 10_000, creditsPerDay: 10_000, over: null });
 eq("about 43 average replies in Base's day", allowanceFor("base", 0).left, 43);
 eq("half spent: 50%", allowanceFor("base", 50_000).usedPercent, 50);
-eq("at the stop line: over", allowanceFor("base", 100_000 - REPLY_MARGIN_MICRO), { usedPercent: 97, left: 0, over: "spend" });
+eq("at the stop line: over", allowanceFor("base", 100_000 - REPLY_MARGIN_MICRO), { usedPercent: 97, left: 0, creditsLeft: 0, creditsPerDay: 10_000, over: "spend" });
 eq("just under it: one left, never zero", allowanceFor("base", 100_000 - REPLY_MARGIN_MICRO - 1).left, 1);
 eq("the percent never passes 100", allowanceFor("base", 500_000).usedPercent, 100);
 eq("plus, Base's whole day spent: fine", allowanceFor("plus", 100_000).over, null);
 eq("pro, Plus's whole day spent: fine", allowanceFor("pro", 250_000).over, null);
+eq("base is 10,000 credits a day", allowanceFor("base", 0).creditsPerDay, 10_000);
+eq("plus 25,000, pro 40,000", [allowanceFor("plus", 0).creditsPerDay, allowanceFor("pro", 0).creditsPerDay], [25_000, 40_000]);
+eq("half spent: 5,000 credits left", allowanceFor("base", 50_000).creditsLeft, 5_000);
 eq("free: always over", allowanceFor("free", 0).over, "spend");
 // Each thing costs what it costs: a spoken reply uses the day faster than a typed one.
 const typedDay = Math.floor(spendStopMicro("base") / 1_300);
@@ -333,7 +336,7 @@ eq("and tomorrow in Berlin", resetPhrase(evening, "Europe/Berlin"), "at 2:00 AM 
 eq(
   "said plainly, with when it resets",
   allowanceMessage(allowanceFor("base", 300_000), evening, "America/Chicago"),
-  "I've used up today's usage on your plan, so I'll pick up again at 7:00 PM.",
+  "You've used today's credits on your plan, so I'll pick up again at 7:00 PM.",
 );
 
 // ---------- What the app is told ----------
@@ -348,7 +351,7 @@ eq("/me.plan, base", view, {
   status: "active",
   trialEndsAt: null,
   renewsAt: "2026-10-22",
-  limits: { repliesLeftToday: 43, usedPercent: 0, resetsAt: "2026-09-23T00:00:00.000Z" },
+  limits: { repliesLeftToday: 43, usedPercent: 0, creditsLeftToday: 10_000, creditsPerDay: 10_000, resetsAt: "2026-09-23T00:00:00.000Z" },
   features: { chat: true, voice: true, wake: true, agent: false },
 });
 eq("/me.plan, plus has the agent", planView({ tier: "plus", status: "active", trialEndsAt: null, renewsAt: null, from: "site" }, allowanceFor("plus", 0), evening).features.agent, true);
@@ -489,7 +492,7 @@ const call = (userId: string | null, continuing = false) => ({ userId, purpose: 
 eq(
   "the day's spend: plainly, with when it comes back",
   refusalMessage("allowance", "base", evening, "America/Chicago"),
-  "I've used up today's usage on your plan, so I'll pick up again at 7:00 PM.",
+  "You've used today's credits on your plan, so I'll pick up again at 7:00 PM.",
 );
 eq("no plan: the 402's own sentence", refusalMessage("needs_plan", "free", evening, "UTC"), needsPlanBody("base").message);
 eq("no consent: its sentence", refusalMessage("needs_consent", "base", evening, "UTC"), CONSENT_NEEDED);

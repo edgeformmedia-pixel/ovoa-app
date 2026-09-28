@@ -100,7 +100,7 @@ function steps(assistant: string, free: boolean, needsConsent = false): Step[] {
       icon: "apps-outline",
       tone: "violet",
       title: "Apps",
-      body: "Apps is everything else — your morning brief, your day, activity, recording, safety and more. Search for one and tap install to add it, and it shows up in the menu too. Each one says how much of your daily usage it uses. Press and hold an app to remove it.",
+      body: "Apps is everything else — your morning brief, your day, activity, recording, safety and more. Search for one and tap install to add it, and it shows up in the menu too. Each one says how many credits it uses. Press and hold an app to remove it.",
       show: { menu: "tap", row: "Apps", href: "/apps" as Href },
     },
     {

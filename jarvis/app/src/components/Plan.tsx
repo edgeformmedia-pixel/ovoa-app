@@ -161,6 +161,8 @@ export function YourPlan() {
   const status = plan && plan.tier !== "free" ? STATUS[plan.status] : undefined;
   const left = plan?.limits.repliesLeftToday;
   const used = plan?.limits.usedPercent;
+  const credits = plan?.limits.creditsLeftToday;
+  const perDay = plan?.limits.creditsPerDay;
 
   return (
     <View style={{ gap: space.s1 }}>
@@ -169,7 +171,14 @@ export function YourPlan() {
       {!trialEnds && !!renews && (
         <Row icon="refresh-outline" tone="blue" title={plan?.status === "canceled" ? "Ends" : "Renews"} value={renews} />
       )}
-      {plan && plan.tier !== "free" && typeof used === "number" ? (
+      {plan && plan.tier !== "free" && typeof credits === "number" && typeof perDay === "number" ? (
+        <Row
+          icon="flash-outline"
+          tone="teal"
+          title="Credits left today"
+          value={`${credits.toLocaleString("en-US")} of ${perDay.toLocaleString("en-US")}`}
+        />
+      ) : plan && plan.tier !== "free" && typeof used === "number" ? (
         <Row icon="speedometer-outline" tone="teal" title="Used today" value={`${used}%`} />
       ) : (
         plan &&
@@ -180,9 +189,9 @@ export function YourPlan() {
         {plan?.tier === "free"
           ? "Health, notes and the apps that don't use AI are free. Talking to OVOA, and everything else that uses AI, is for Base users."
           : plan?.tier === "base"
-            ? "Base has the assistant. Plus adds the background agent and 2.5 times the daily usage; Pro has 4 times Base's. Talking uses the day faster than typing."
+            ? "Base has the assistant. Base has 300,000 credits a month (10,000 a day). Plus adds the background agent and 750,000 credits; Pro has 1,200,000. Talking uses credits faster than typing."
             : plan?.tier === "plus"
-              ? "Pro is Plus with more daily usage. Talking uses the day faster than typing."
+              ? "Pro is Plus with 1,200,000 credits a month instead of 750,000. Talking uses credits faster than typing."
               : ""}
         {plan?.tier === "pro" ? "" : " "}
         {MANAGED_AT}

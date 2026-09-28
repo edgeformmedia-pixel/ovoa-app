@@ -3296,7 +3296,7 @@ authed.get("/usage/me", async (c) => {
   const cap = m ? { limit: m.cap, used: m.used, month: m.month, standing: m.verdict } : null;
   // Today's plan allowance: null for a development account.
   const d = standing.day;
-  const allowance = d ? { tier, budgetMicro: ALLOWANCES[tier].budgetMicro, usedPercent: d.usedPercent, left: d.left, over: d.over } : null;
+  const allowance = d ? { tier, budgetMicro: ALLOWANCES[tier].budgetMicro, usedPercent: d.usedPercent, left: d.left, creditsLeft: d.creditsLeft, creditsPerDay: d.creditsPerDay, over: d.over } : null;
   return c.json({ ...usage, cap, allowance });
 });
 

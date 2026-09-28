@@ -10,8 +10,8 @@ import type { Env, Vars } from "./types";
 //
 // Free is health, notes and every app that doesn't use AI. Base is the AI:
 // talking to OVOA, the wake word, Always listen, making apps. Plus (added
-// 2026-09-27) adds background work, the agent's jobs and goals, and doubles
-// Base's daily replies. Pro is four times Base's daily usage and nothing more. The
+// 2026-09-27) adds background work, the agent's jobs and goals, and 2.5x
+// Base's daily usage. Pro is four times Base's daily usage and nothing more. The
 // site (ovoa.ai) sells the plans and says which tier an email is on; this file
 // asks it, remembers the answer, and decides what each route, each cron job
 // and each model call may do for the person asking.
@@ -488,6 +488,15 @@ export const REPLY_MARGIN_MICRO = 3_400;
 /** An average reply (typed and spoken as people use them), for turning a budget into "about N replies". */
 export const AVERAGE_REPLY_MICRO = 2_200;
 
+// Credits (2026-09-28): what people see instead of dollars. One credit is
+// $0.00001 (10 micro-dollars), so Base's $0.10 a day is 10,000 credits, sold as
+// 300,000 a month. Only a unit for showing the budget: enforcement stays in
+// micro-dollars, and a reply costs whatever it really costs in credits (about
+// 130 typed, 340 spoken). The site (ovoa-team membership/copy.ts) uses the same.
+export const CREDIT_MICRO = 10;
+/** Micro-dollars to whole credits, rounded down. */
+export const creditsOf = (micro: number) => Math.max(0, Math.floor(micro / CREDIT_MICRO));
+
 export const BASE_DAILY_BUDGET_MICRO = 100_000;
 /** Plus is 2.5x Base, Pro 4x (2026-09-28). */
 export const PLUS_DAILY_BUDGET_MICRO = 250_000;
@@ -509,6 +518,9 @@ export type Allowance = {
   usedPercent: number;
   /** About how many average replies are left today: an estimate, for builds that show a number. */
   left: number;
+  /** Credits left today (CREDIT_MICRO), counted to the stop line, and the day's full amount. */
+  creditsLeft: number;
+  creditsPerDay: number;
   /** Set when today is used up. */
   over: null | "spend";
 };
@@ -521,6 +533,8 @@ export function allowanceFor(tier: Tier, microToday: number): Allowance {
   return {
     usedPercent: budgetMicro ? Math.min(100, Math.round((Math.max(0, microToday) / budgetMicro) * 100)) : 100,
     left: over ? 0 : Math.max(1, Math.floor((stop - microToday) / AVERAGE_REPLY_MICRO)),
+    creditsLeft: over ? 0 : creditsOf(budgetMicro - Math.max(0, microToday)),
+    creditsPerDay: creditsOf(budgetMicro),
     over,
   };
 }
@@ -541,7 +555,7 @@ export function resetPhrase(now: number, timeZone: string) {
 
 /** One sentence, spoken or shown, when today's allowance is used up. A reply, not an error. */
 export function allowanceMessage(_a: Allowance, now: number, timeZone: string) {
-  return `I've used up today's usage on your plan, so I'll pick up again ${resetPhrase(now, timeZone)}.`;
+  return `You've used today's credits on your plan, so I'll pick up again ${resetPhrase(now, timeZone)}.`;
 }
 
 /** What today (UTC, like usage_daily) has cost this person so far, in micro-dollars. */
@@ -687,10 +701,17 @@ export type PlanView = {
   /**
    * usedPercent is the share of today's usage budget spent; repliesLeftToday
    * is about how many average replies that leaves (builds before 2026-09-28
-   * show it as "Replies left today"). Both null for a development account,
-   * which has no daily limit.
+   * show it as "Replies left today"). creditsLeftToday and creditsPerDay are
+   * the same day in credits (builds from 2026-09-28 show those). All null for
+   * a development account, which has no daily limit.
    */
-  limits: { repliesLeftToday: number | null; usedPercent: number | null; resetsAt: string };
+  limits: {
+    repliesLeftToday: number | null;
+    usedPercent: number | null;
+    creditsLeftToday: number | null;
+    creditsPerDay: number | null;
+    resetsAt: string;
+  };
   features: { chat: boolean; voice: boolean; wake: boolean; agent: boolean };
 };
 
@@ -703,6 +724,8 @@ export function planView(plan: Plan, allowance: Allowance | null, now: number): 
     limits: {
       repliesLeftToday: allowance ? allowance.left : null,
       usedPercent: allowance ? allowance.usedPercent : null,
+      creditsLeftToday: allowance ? allowance.creditsLeft : null,
+      creditsPerDay: allowance ? allowance.creditsPerDay : null,
       resetsAt: new Date(nextUtcMidnight(now)).toISOString(),
     },
     // Base has every feature but background work, which is Plus's (Pro is

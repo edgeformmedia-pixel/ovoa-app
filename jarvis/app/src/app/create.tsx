@@ -147,7 +147,7 @@ function MakeApp() {
 
         <View style={styles.usage}>
           <Ionicons name="flash-outline" size={14} color={colors.inkMute} />
-          <Text style={styles.meta}>Uses some daily usage · each thing you ask it counts as a reply. Ticking its lists and counting are free.</Text>
+          <Text style={styles.meta}>Uses some credits · each thing you ask it uses some. Ticking its lists and counting are free.</Text>
         </View>
 
         <View style={styles.buttons}>

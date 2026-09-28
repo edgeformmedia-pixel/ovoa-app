@@ -218,8 +218,8 @@ export default function Apps() {
         ) : (
           <>
             <Text style={styles.hint}>
-              Daily usage is what your plan allows each day: your replies, and the work behind them. It resets every
-              day. Apps that use more leave less for talking.
+              Credits are what your plan gives you each day: your replies, and the work behind them, use them. They
+              reset every day. Apps that use more leave fewer for talking.
             </Text>
             {(yours.length > 0 || mine.length > 0) && (
               <Text style={styles.hint}>Press and hold one of your apps to remove it.</Text>

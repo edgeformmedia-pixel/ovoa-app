@@ -48,8 +48,10 @@ export const TERMS: TermsSection[] = [
     paragraphs: [
       "OVOA offers these plans. Prices are in U.S. dollars and, unless we say otherwise, don't include taxes, which you're responsible for.",
       "• Free: health, notes, and apps that don't use AI.",
-      "• Base, $9.95 a month: every AI feature, with up to 20 AI uses a day.",
-      "• Pro, $25.95 a month: the same features as Base, with about three times the daily usage (up to 60 AI uses a day).",
+      "• Base, $9.95 a month: every AI feature except the background agent, with 300,000 credits a month (up to 10,000 a day).",
+      "• Plus, $13.95 a month: Base plus the background agent, with 750,000 credits a month (up to 25,000 a day).",
+      "• Pro, $25.95 a month: the same features as Plus, with 1,200,000 credits a month (up to 40,000 a day).",
+      "Credits measure AI use. What you do uses them at its real cost, so a spoken reply uses more than a typed one and a web search more again. Unused credits don't carry over to the next day, and credits have no cash value.",
       "Paid plans are bought on ovoa.ai, not in the App Store. Stripe processes payments under its own terms, and we don't receive your full card number.",
       "Your plan renews automatically every month until you cancel. By subscribing, you authorize us, through Stripe, to charge your payment method the plan's price plus any taxes at the start of each monthly period. If a payment fails, we may retry it and may pause your paid features or move you to Free until it succeeds.",
       "You can cancel at any time, as described on ovoa.ai, or by emailing [CONTACT EMAIL]. Cancelling stops future renewals. You keep your plan until the end of the period you've paid for, and then your account moves to Free. Cancelling doesn't delete your account or data (see section 18), and deleting the app doesn't cancel your plan.",

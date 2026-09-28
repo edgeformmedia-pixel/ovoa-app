@@ -28,7 +28,7 @@ export type AddonNeeds =
   | "agent";
 
 /**
- * How much of the plan's daily usage it draws on (api/src/plans.ts: replies,
+ * How many of the plan's daily credits it draws on (api/src/plans.ts: replies,
  * and the spend ceiling behind them that catches model calls, voice and
  * microphone time nobody counted as a reply).
  *   none  its routes are free and call no model
@@ -38,9 +38,9 @@ export type AddonNeeds =
 export type AddonUsage = "none" | "some" | "more";
 
 export const USAGE_LABEL: Record<AddonUsage, string> = {
-  none: "No daily usage",
-  some: "Uses some daily usage",
-  more: "Uses more daily usage",
+  none: "Uses no credits",
+  some: "Uses some credits",
+  more: "Uses more credits",
 };
 
 export type Addon = {
