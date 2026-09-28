@@ -65,7 +65,7 @@ function steps(assistant: string, free: boolean, needsConsent = false): Step[] {
       icon: "menu",
       tone: "blue",
       title: "The menu",
-      body: "To get around, tap the three lines at the top left of any screen, or swipe in from the left edge. That opens the menu: Talk and Apps at the top, the apps you've added under them, and Settings at the bottom.",
+      body: "To get around, tap the three lines at the top left of any screen, or swipe in from the left edge. That opens the menu: Talk, Apps and Friends at the top, the apps you've added under them, and Settings at the bottom.",
       show: { menu: "open" },
     },
     ...(free
