@@ -733,3 +733,6 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   Stopped without code changes. Needs the owner: nothing new.
 - 2026-09-28 22:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main is still 4a7e43c.
   Stopped without code changes. Needs the owner: nothing new.
+- 2026-09-28 23:55 UTC (scheduled session): every task is [x], nothing left to take. origin/main moved to 7197ad0
+  (Instagram, hidden until IG_APP_ID and IG_APP_SECRET are set); this branch is 15 commits behind main, not merged
+  here since no task needs it. Stopped without code changes. Needs the owner: nothing new.
