@@ -699,3 +699,6 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 - 2026-09-28 06:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main moved from 9b33d3d
   to 1cb7c9b (new commits: texting trial exit, Talk and tour fixes); not merged here since no task needs it.
   Stopped without code changes. Needs the owner: nothing new.
+- 2026-09-28 07:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main moved from 1cb7c9b
+  to 7a0119e (new commits: daily credit budgets, once-per-number texting trial, link-code email button); not merged
+  here since no task needs it. Stopped without code changes. Needs the owner: nothing new.
