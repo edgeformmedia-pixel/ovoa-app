@@ -62,22 +62,21 @@ export function usePointedAt() {
 export type SpotRect = { x: number; y: number; width: number; height: number };
 type Measurable = { measureInWindow: (cb: (x: number, y: number, width: number, height: number) => void) => void };
 
-const spots = new Map<string, Measurable>();
+// Every mounted copy of a label, since tabs keep screens mounted: with one slot
+// per label, the last to mount won and the first to unmount emptied it, and the
+// spotlight lit nothing. Measuring picks whichever copy is on screen.
+const spots = new Map<string, Set<Measurable>>();
 
-/** For a `ref` callback: `ref={spotRef("Apps")}`. */
+/** For a `ref` callback: `ref={spotRef("Apps")}`. Each copy removes only itself. */
 export const spotRef = (label: string) => (node: Measurable | null) => {
-  if (node) spots.set(label, node);
-  else spots.delete(label);
+  if (!node) return;
+  let set = spots.get(label);
+  if (!set) spots.set(label, (set = new Set()));
+  set.add(node);
+  return () => void spots.get(label)?.delete(node);
 };
 
-/**
- * Where `label` is on screen right now, or null if it isn't there. Something
- * laid out off the edge (the menu, measured before it has slid in) counts as
- * not there, so the caller looks again rather than lighting empty space.
- */
-export function measureSpot(label: string): Promise<SpotRect | null> {
-  const node = spots.get(label);
-  if (!node) return Promise.resolve(null);
+function measureOne(node: Measurable): Promise<SpotRect | null> {
   const { width: W, height: H } = Dimensions.get("window");
   return new Promise((resolve) => {
     try {
@@ -89,6 +88,19 @@ export function measureSpot(label: string): Promise<SpotRect | null> {
       resolve(null);
     }
   });
+}
+
+/**
+ * Where `label` is on screen right now, or null if it isn't there. Something
+ * laid out off the edge (the menu, measured before it has slid in) counts as
+ * not there, so the caller looks again rather than lighting empty space.
+ */
+export async function measureSpot(label: string): Promise<SpotRect | null> {
+  for (const node of spots.get(label) ?? []) {
+    const r = await measureOne(node);
+    if (r) return r;
+  }
+  return null;
 }
 
 // ---------- opened by hand ----------

@@ -244,7 +244,9 @@ function Walkthrough() {
     shade.value = withTiming(r ? 1 : 0, { duration: 350 });
     // The card moves out of the way of what's lit: to the top when that's in the
     // lower half (Settings, pinned to the bottom of the menu), else the bottom.
-    setCardUp(!!r && r.y + r.height / 2 > H * 0.55);
+    // Only when something is lit: clearing between cards used to throw it to the
+    // bottom and back on every step.
+    if (r) setCardUp(r.y + r.height / 2 > H * 0.55);
   };
   const holeStyle = useAnimatedStyle(() => ({
     left: hx.value - DIM,
@@ -297,15 +299,20 @@ function Walkthrough() {
     return false;
   };
 
-  // One card's movements: what it shows on screen. Keyed on the card only, so
-  // turning the voice off or on doesn't open the menu and tap the row again.
+  // One card's movements: what it shows on screen. Keyed on the card and the
+  // pause, not the voice, so turning the voice off or on doesn't open the menu
+  // and tap the row again. While they have the menu open themselves it drives
+  // nothing (it used to close their menu under them); once they close it, the
+  // card's movements run again, rather than lighting where the menu used to be.
   useEffect(() => {
     let cancelled = false;
     const live = () => !cancelled;
     const show = step.show;
 
     const act = async () => {
-      if (!show) return;
+      if (!show || paused) return;
+      // Cards with nothing to light keep the card where it is; the rest start low.
+      if (!("go" in show)) setCardUp(false);
       if ("go" in show) {
         pointAt(null);
         spotlight(null);
@@ -355,7 +362,7 @@ function Walkthrough() {
       spotlight(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [at]);
+  }, [at, paused]);
 
   // One card's words: said, and then on to the next once they've been said.
   useEffect(() => {
