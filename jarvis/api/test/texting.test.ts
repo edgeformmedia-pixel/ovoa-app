@@ -332,6 +332,13 @@ async function main() {
   eq("and nothing it said is kept in the inbox", count("SELECT COUNT(*) AS n FROM text_inbox WHERE phone = '+15865550999' AND content != ''"), 0);
   eq("nor did any of it reach a turn", replies.asked.length, 0);
 
+  // The trial is once per number: its old row deleted for age, it doesn't start over.
+  sqlite.exec("DELETE FROM text_guests WHERE phone = '+15865550999'");
+  told = out.sent.length;
+  await text("hi again", deps(), G);
+  eq("a number back after its row went: no new trial", out.sent.at(-1)?.content, CAPPED);
+  eq("and no AI reply", out.sent.length, told + 1);
+
   // A guest whose email has an account: told how to link, not given more trial.
   const A = { from_number: "+15865550997" };
   await text("hey", deps(), A);

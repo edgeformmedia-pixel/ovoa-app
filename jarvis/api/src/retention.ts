@@ -357,6 +357,7 @@ export const TABLES = {
   text_inbox: "delete",
   text_outbox: "delete",
   text_guests: "delete",
+  text_trial_numbers: "keep",
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",

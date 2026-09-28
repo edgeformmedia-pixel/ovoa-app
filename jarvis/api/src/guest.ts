@@ -42,10 +42,18 @@ export const emailIn = (text: string) => text.match(EMAIL)?.[0]?.toLowerCase() ?
 export const limitFor = (row: { email: string | null }) => (row.email ? FREE * 2 : FREE);
 
 async function load(db: D1Database, phone: string, now: number): Promise<Row> {
-  await db
+  const fresh = await db
     .prepare("INSERT OR IGNORE INTO text_guests (phone, created_at, updated_at) VALUES (?, ?, ?)")
     .bind(phone, now, now)
     .run();
+  // The trial is once per number, ever: a number whose old row was deleted for
+  // age (retention.ts) comes back with its free texts already used.
+  const first = await db
+    .prepare("INSERT OR IGNORE INTO text_trial_numbers (phone, created_at) VALUES (?, ?)")
+    .bind(phone, now)
+    .run();
+  if (fresh.meta.changes && !first.meta.changes)
+    await db.prepare("UPDATE text_guests SET used = ? WHERE phone = ?").bind(FREE * 2, phone).run();
   return (await db.prepare("SELECT used, email, history FROM text_guests WHERE phone = ?").bind(phone).first<Row>())!;
 }
 
@@ -105,7 +113,7 @@ export async function guestText(
       .prepare("UPDATE text_guests SET told_at = ? WHERE phone = ? AND (told_at IS NULL OR told_at < ?)")
       .bind(now, phone, now - TELL_EVERY_MS)
       .run();
-    if (tell.meta.changes) await send(row.email ? CAPPED : ASK_EMAIL);
+    if (tell.meta.changes) await send(row.email || row.used >= FREE * 2 ? CAPPED : ASK_EMAIL);
     return "guest capped";
   }
   const used = row.used + 1;
