@@ -1,13 +1,13 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useRouter, type Href } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, type Href } from "expo-router";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAssistant } from "../lib/assistant";
 import { useSession } from "../lib/auth";
 import { logFail } from "../lib/devlog";
-import { measureSpot, pointAt, setDrawerLocked, useDrawer, type SpotRect } from "../lib/drawer";
+import { measureSpot, pointAt, setDrawerLocked, useDrawer, useUserMenuOpen, type SpotRect } from "../lib/drawer";
 import { usePlan } from "../lib/plan";
 import { tourPref, useTourSeen } from "../lib/tour";
 import { colors, lift, radius, space, type } from "../lib/theme";
@@ -157,12 +157,17 @@ const readingMs = (text: string) => Math.max(3000, text.split(/\s+/).length * 33
 
 export function Tour() {
   const seen = useTourSeen();
-  if (seen !== false) return null;
+  // Never over the Terms or the AI consent page: it waits until they're closed.
+  const path = usePathname();
+  if (seen !== false || path.startsWith("/terms") || path.startsWith("/consent")) return null;
   return <Walkthrough />;
 }
 
 function Walkthrough() {
   const router = useRouter();
+  const pathname = usePathname();
+  const where = useRef(pathname);
+  where.current = pathname;
   const drawer = useDrawer();
   const insets = useSafeAreaInsets();
   const { token, user } = useSession();
@@ -171,18 +176,14 @@ function Walkthrough() {
   const [voiceOn, setVoiceOn] = useState(true);
   const [speaking, setSpeaking] = useState(false);
   const [cardUp, setCardUp] = useState(false);
+  // The person opened the menu themselves: the tour steps aside until it's closed.
+  const paused = useUserMenuOpen();
+  // Filled in by <MicHold>, so the assistant's state (its mic level changes
+  // many times a second) never re-renders the tour.
+  const assistant = useRef<{ enabled: boolean | undefined; toggleEnabled: () => void }>({ enabled: undefined, toggleEnabled: () => {} });
 
-  // Talk's microphone stays shut for the whole tour. Left open, it heard the
-  // tour's own voice as a question and answered it ("Let me look into that")
-  // over the top of the next card.
-  const { hold, enabled, toggleEnabled } = useAssistant();
-  useEffect(() => {
-    let release = () => {};
-    void hold(() => new Promise<void>((r) => (release = r)));
-    return () => release();
-  }, [hold]);
-
-  const all = steps(user?.settings.assistantName || "OVOA", free, needsConsent);
+  const name = user?.settings.assistantName || "OVOA";
+  const all = useMemo(() => steps(name, free, needsConsent), [name, free, needsConsent]);
   const step = all[at];
   const last = at === all.length - 1;
 
@@ -250,6 +251,30 @@ function Walkthrough() {
     if (live()) spotlight(null);
   };
 
+  /**
+   * Takes them to `href` and waits until that screen is really the one showing.
+   * A screen pushed over the tabs (Terms, consent) stayed on top when the tabs
+   * underneath changed, so the tour talked about Apps over the old page and lit
+   * whatever sat where Create would have been. Those are closed first.
+   */
+  const reach = async (href: Href, live: () => boolean) => {
+    const target = String(href);
+    if (where.current !== target) {
+      if (router.canDismiss()) router.dismissAll();
+      router.navigate(href);
+    }
+    for (let tries = 0; tries < 25 && live(); tries++) {
+      if (where.current === target) {
+        await wait(SETTLE_MS);
+        return live() && where.current === target;
+      }
+      await wait(120);
+      // Still not there after a while: ask again, in case the first went nowhere.
+      if (tries === 10 && where.current !== target) router.navigate(href);
+    }
+    return false;
+  };
+
   // One card's movements: what it shows on screen. Keyed on the card only, so
   // turning the voice off or on doesn't open the menu and tap the row again.
   useEffect(() => {
@@ -263,18 +288,18 @@ function Walkthrough() {
         pointAt(null);
         spotlight(null);
         void drawer.close();
-        router.navigate(show.go);
+        await reach(show.go, live);
       } else if ("point" in show) {
         pointAt(null);
         spotlight(null);
         await drawer.close();
         if (cancelled) return;
-        router.navigate(show.on);
-        // The new screen has to be up before its row can be found and lit.
-        await wait(SETTLE_MS);
-        if (cancelled) return;
+        // The new screen has to be up before its row can be found and lit, and
+        // nothing is lit unless it's the screen the card is about.
+        const there = await reach(show.on, live);
+        if (!there || cancelled) return;
         pointAt(show.point);
-        await shineOn(show.point, live);
+        await shineOn(show.point, () => live() && where.current === String(show.on));
       } else if (show.menu === "open") {
         pointAt(null);
         // Measured only once the menu has finished sliding in: measured on the
@@ -296,7 +321,7 @@ function Walkthrough() {
         spotlight(null);
         await drawer.close();
         if (cancelled) return;
-        router.navigate(show.href);
+        await reach(show.href, live);
       }
     };
 
@@ -314,7 +339,7 @@ function Walkthrough() {
   useEffect(() => {
     let cancelled = false;
     const talk = async () => {
-      if (!voiceOn) return;
+      if (!voiceOn || paused) return;
       setSpeaking(true);
       const started = Date.now();
       await say(step.body).catch(logFail("tour: speaking"));
@@ -334,7 +359,7 @@ function Walkthrough() {
     };
     // Keyed on the card and the voice switch only: a re-render mid-sentence must not restart it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [at, voiceOn]);
+  }, [at, voiceOn, paused]);
 
   // The tour drives the menu; a swipe mustn't move it underneath. And nothing
   // is left pointed at, or locked, once the tour has gone.
@@ -354,11 +379,17 @@ function Walkthrough() {
     tourPref.done();
     if (go) router.navigate(go);
     // "Start talking" means it: the orb goes on, rather than leaving them at a silent Talk.
-    if (go === "/chat" && enabled === false) toggleEnabled();
+    if (go === "/chat" && assistant.current.enabled === false) assistant.current.toggleEnabled();
   };
 
   return (
-    <View style={[styles.scrim, cardUp && { justifyContent: "flex-start" }]}>
+    <View
+      pointerEvents={paused ? "none" : "box-none"}
+      style={[styles.scrim, cardUp && { justifyContent: "flex-start" }, paused && styles.hidden]}
+    >
+      <MicHold into={assistant} />
+      <Spotlight holeStyle={holeStyle} glowStyle={glowStyle} />
+      <Card && { justifyContent: "flex-start" }]}>
       {/* One view with an enormous border is the dim; its hollow middle is the cut-out.
           In a layer of its own, clipped to the screen, so what's drawn past the edges
           never widens the page or gives the card something to scroll. */}
