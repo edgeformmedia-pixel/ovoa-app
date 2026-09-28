@@ -812,6 +812,19 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     end();
   }, [conversation.phase, shouldListen, end]);
 
+  // Tapped on and nothing heard for a while: turn the orb off and say so, rather
+  // than sit on "Listening" with no end (2026-09-28). Always listen is exempt.
+  useEffect(() => {
+    if (!enabled || alwaysListen || conversation.phase !== "listening") return;
+    const timer = setTimeout(() => {
+      devlog("voice", "tap: nothing heard; the orb is off");
+      setEnabled(false);
+      listeningPref.set(false);
+      conversation.setError("Didn't hear a question, so listening stopped. Tap to talk again.");
+    }, LISTEN_IDLE_MS);
+    return () => clearTimeout(timer);
+  }, [enabled, alwaysListen, conversation.phase, conversation.words]);
+
   // Why listening went off, for device_logs (remoteLog.ts). On 2026-09-24 it went
   // off with a question on its way, the reply was never heard, and nothing said
   // why. The phase is this render's, from before end() below turns it off.
@@ -877,6 +890,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       return;
     }
     const on = !enabled;
+    // A tap is as good as the name for the next few seconds (voice.ts expect).
+    if (on) conversation.expect();
     setEnabled(on);
     listeningPref.set(on);
   };
@@ -970,6 +985,8 @@ function excuse(message: string) {
 
 /** After a summon, how long the microphone stays open with nothing said. */
 const SUMMON_IDLE_MS = 12_000;
+/** Tapped on with nothing heard: how long the orb stays on "Listening". */
+const LISTEN_IDLE_MS = 45_000;
 
 const LOOKUP_LABELS: Record<string, string> = {
   phone_contacts_search: "contacts",

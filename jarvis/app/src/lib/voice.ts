@@ -1320,7 +1320,12 @@ export function useConversation(
           } finally {
             answering = false;
           }
-          if (cancelled() || !spoke) continue;
+          if (cancelled()) continue;
+          if (!spoke) {
+            // Asked outright (the name or a tap) and nothing came back: say so, not a silent orb.
+            if (turn.addressed) setError("No answer came back. Try asking again.");
+            continue;
+          }
           gate.spoke(Date.now());
           // An answer without the name still counts for a moment; the window stays open for it.
           ear.wake("follow-up");
@@ -1549,13 +1554,27 @@ export function useConversation(
     return Promise.resolve(true);
   }, [start]);
 
+  /**
+   * The orb was tapped on: what's said in the next few seconds is for the assistant,
+   * without the name. Unlike summon it doesn't start listening; the orb's switch does.
+   * Without it a tap on a Base plan listened in room mode and dropped every sentence
+   * that didn't start with the name (device_logs 39156-39160, 2026-09-28).
+   */
+  const expect = useCallback(() => {
+    const now = Date.now();
+    summonedUntil.current = now + SUMMON_MS;
+    askedAt.current = now;
+    gateRef.current?.summon(summonedUntil.current);
+    earRef.current?.wake("summon");
+  }, []);
+
   /** A second click while listening: send what's been said now. False when nothing has been said yet. */
   const finishNow = useCallback(() => gateRef.current?.done() ?? false, []);
 
   /** The phase right now (the state can be a render behind). */
   const currentPhase = useCallback(() => phaseRef.current, []);
 
-  return { phase, currentPhase, level, error, setError, words, start, end, interrupt, summon, finishNow, stoppedBy };
+  return { phase, currentPhase, level, error, setError, words, start, end, interrupt, summon, expect, finishNow, stoppedBy };
 }
 
 /** The click standby: how often the ear is checked. */
