@@ -14,12 +14,12 @@ function eq(label: string, got: unknown, want: unknown) {
 
 // ---------- The numbers, per plan ----------
 
-eq("Base: 465 a month (15 a day × 31)", ALLOWANCES.base.monthly, 465);
-eq("Plus: 930 a month (30 a day × 31)", ALLOWANCES.plus.monthly, 930);
-eq("Pro: 1,860 a month (60 a day × 31)", ALLOWANCES.pro.monthly, 1860);
-eq("free has no cap to count (it has no replies)", ALLOWANCES.free.monthly, 0);
-eq("Base is warned at 372", capVerdict(372, ALLOWANCES.base.monthly, false), "warn");
-eq("and stops at 465", capVerdict(465, ALLOWANCES.base.monthly, true), "over");
+// Since 2026-09-28 the plans have no monthly cap (the daily budget bounds a
+// month); the arithmetic stays for a plan that sets one.
+eq("no plan has a monthly cap", ALLOWANCES.free.monthly + ALLOWANCES.base.monthly + ALLOWANCES.plus.monthly + ALLOWANCES.pro.monthly, 0);
+eq("a cap of 0 is off", capVerdict(100_000, 0, false), "ok");
+eq("a cap of 465 warns at 372", capVerdict(372, 465, false), "warn");
+eq("and stops at 465", capVerdict(465, 465, true), "over");
 
 // ---------- Where the lines are ----------
 
@@ -48,7 +48,7 @@ eq("and the month key follows the zone, not UTC", monthKey(dec, "Pacific/Aucklan
 
 eq("over: one sentence with the number and the date", overCapMessage(1000, sept, "America/Chicago"), "I've reached this month's limit of 1,000 replies, so I'll pick up again on October 1.");
 eq("warn: one sentence with both numbers", warnMessage(800, 1000), "Heads up: that's 800 of this month's 1,000 replies.");
-eq("Pro's, with its comma", overCapMessage(ALLOWANCES.pro.monthly, sept, "America/Chicago"), "I've reached this month's limit of 1,860 replies, so I'll pick up again on October 1.");
+eq("Pro's, with its comma", overCapMessage(1860, sept, "America/Chicago"), "I've reached this month's limit of 1,860 replies, so I'll pick up again on October 1.");
 
 console.log(fails ? `\n${fails} failed` : "\nall passed");
 process.exit(fails ? 1 : 0);

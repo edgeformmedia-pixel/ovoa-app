@@ -714,8 +714,13 @@ export type Plan = {
   status: "trialing" | "active" | "past_due" | "canceled" | "comp" | "none";
   trialEndsAt: string | null;
   renewsAt: string | null;
-  /** repliesLeftToday is null for a development account, which has no daily limit. */
-  limits: { repliesLeftToday: number | null; resetsAt: string };
+  /**
+   * usedPercent is the share of today's usage budget spent (servers from
+   * 2026-09-28; older ones don't send it). repliesLeftToday is about how many
+   * average replies are left. Both null for a development account, which has
+   * no daily limit.
+   */
+  limits: { repliesLeftToday: number | null; usedPercent?: number | null; resetsAt: string };
   features: { chat: boolean; voice: boolean; wake: boolean; agent: boolean };
 };
 

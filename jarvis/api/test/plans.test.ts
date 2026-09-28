@@ -6,10 +6,13 @@
 import { AI_CONSENT_VERSION, CONSENT_NEEDED, forgetConsent } from "../src/consent";
 import {
   ALLOWANCES,
+  AVERAGE_REPLY_MICRO,
+  BASE_DAILY_BUDGET_MICRO,
+  PLUS_DAILY_BUDGET_MICRO,
+  PRO_DAILY_BUDGET_MICRO,
+  REPLY_MARGIN_MICRO,
   allowanceFor,
   allowanceMessage,
-  BASE_DAILY_CEILING_MICRO,
-  BASE_REPLIES_PER_DAY,
   blockedFor,
   fetchMembership,
   forgetPlan,
@@ -22,14 +25,9 @@ import {
   PLAN_GRACE_MS,
   planFromRow,
   planView,
-  PRO_DAILY_CEILING_MICRO,
-  PLUS_DAILY_CEILING_MICRO,
-  PLUS_REPLIES_PER_DAY,
-  PRO_REPLIES_PER_DAY,
   refusalMessage,
   resetPhrase,
   ROUTE_TIERS,
-  SPOKEN_REPLY_MICRO,
   spendStopMicro,
   tierForRoute,
   type PlanRow,
@@ -306,41 +304,36 @@ const U = "user-1";
 
 // ---------- The allowance arithmetic ----------
 
-eq("one spoken reply: $0.0022 + $0.0066 (no live listening to pay for)", SPOKEN_REPLY_MICRO, 8_800);
-eq("Base at its cap stays under its $0.1875", BASE_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO <= BASE_DAILY_CEILING_MICRO, true);
-eq("Plus at its cap stays under its $0.375", PLUS_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO <= PLUS_DAILY_CEILING_MICRO, true);
-eq("Pro at its cap stays under $0.75", PRO_REPLIES_PER_DAY * SPOKEN_REPLY_MICRO <= 750_000, true);
-eq("the ceilings", `${BASE_DAILY_CEILING_MICRO} ${PLUS_DAILY_CEILING_MICRO} ${PRO_DAILY_CEILING_MICRO}`, "187500 375000 750000");
-eq("the replies are 15, 30 and 60", `${BASE_REPLIES_PER_DAY} ${PLUS_REPLIES_PER_DAY} ${PRO_REPLIES_PER_DAY}`, "15 30 60");
-eq("Plus is exactly 2x Base: replies", PLUS_REPLIES_PER_DAY, 2 * BASE_REPLIES_PER_DAY);
-eq("Pro is exactly 4x Base: replies", PRO_REPLIES_PER_DAY, 4 * BASE_REPLIES_PER_DAY);
-eq("and ceiling", PRO_DAILY_CEILING_MICRO, 4 * BASE_DAILY_CEILING_MICRO);
-eq("and month", ALLOWANCES.pro.monthly, 4 * ALLOWANCES.base.monthly);
-eq("new work stops one reply short of the ceiling", spendStopMicro("base"), 187_500 - 8_800);
-eq("so the last reply can't cross it", spendStopMicro("pro") + SPOKEN_REPLY_MICRO <= PRO_DAILY_CEILING_MICRO, true);
-eq("free has nothing", ALLOWANCES.free.replies, 0);
+eq("the budgets: Base $0.10, Plus $0.25, Pro $0.40 a day", `${BASE_DAILY_BUDGET_MICRO} ${PLUS_DAILY_BUDGET_MICRO} ${PRO_DAILY_BUDGET_MICRO}`, "100000 250000 400000");
+eq("Plus is 2.5x Base", PLUS_DAILY_BUDGET_MICRO, 2.5 * BASE_DAILY_BUDGET_MICRO);
+eq("Pro is 4x Base", PRO_DAILY_BUDGET_MICRO, 4 * BASE_DAILY_BUDGET_MICRO);
+eq("no monthly cap: the daily budget bounds a month", ALLOWANCES.base.monthly + ALLOWANCES.plus.monthly + ALLOWANCES.pro.monthly, 0);
+eq("Base's worst month of AI is under a third of its $9.95", BASE_DAILY_BUDGET_MICRO * 31 < 9_950_000 / 3, true);
+eq("new work stops one spoken reply short of the budget", spendStopMicro("base"), 100_000 - REPLY_MARGIN_MICRO);
+eq("free has no budget", ALLOWANCES.free.budgetMicro, 0);
 
-eq("base, fresh day", allowanceFor("base", 0, 0), { limit: 15, used: 0, left: 15, over: null });
-eq("base, 14 used", allowanceFor("base", 14, 100_000).left, 1);
-eq("base, 15 used: over on replies", allowanceFor("base", 15, 100_000), { limit: 15, used: 15, left: 0, over: "replies" });
-eq("plus, 15 used: fine", allowanceFor("plus", 15, 100_000).left, 15);
-eq("base, an hour of mic: over on spend", allowanceFor("base", 2, 288_000).over, "spend");
-eq("pro, the same hour: fine", allowanceFor("pro", 2, 288_000).over, null);
-eq("free: always over", allowanceFor("free", 0, 0).over, "replies");
+eq("base, fresh day", allowanceFor("base", 0), { usedPercent: 0, left: Math.floor((100_000 - REPLY_MARGIN_MICRO) / AVERAGE_REPLY_MICRO), over: null });
+eq("about 43 average replies in Base's day", allowanceFor("base", 0).left, 43);
+eq("half spent: 50%", allowanceFor("base", 50_000).usedPercent, 50);
+eq("at the stop line: over", allowanceFor("base", 100_000 - REPLY_MARGIN_MICRO), { usedPercent: 97, left: 0, over: "spend" });
+eq("just under it: one left, never zero", allowanceFor("base", 100_000 - REPLY_MARGIN_MICRO - 1).left, 1);
+eq("the percent never passes 100", allowanceFor("base", 500_000).usedPercent, 100);
+eq("plus, Base's whole day spent: fine", allowanceFor("plus", 100_000).over, null);
+eq("pro, Plus's whole day spent: fine", allowanceFor("pro", 250_000).over, null);
+eq("free: always over", allowanceFor("free", 0).over, "spend");
+// Each thing costs what it costs: a spoken reply uses the day faster than a typed one.
+const typedDay = Math.floor(spendStopMicro("base") / 1_300);
+const spokenDay = Math.floor(spendStopMicro("base") / 3_400);
+eq("typed replies go further than spoken ones", typedDay > 2 * spokenDay, true);
 
 const evening = Date.UTC(2026, 8, 22, 18); // 1 PM in Chicago, 8 PM in Berlin
 eq("resets at the next UTC midnight", new Date(nextUtcMidnight(evening)).toISOString(), "2026-09-23T00:00:00.000Z");
 eq("which is this evening in Chicago", resetPhrase(evening, "America/Chicago"), "at 7:00 PM");
 eq("and tomorrow in Berlin", resetPhrase(evening, "Europe/Berlin"), "at 2:00 AM tomorrow");
 eq(
-  "said plainly, with the number",
-  allowanceMessage(allowanceFor("base", 20, 0), evening, "America/Chicago"),
-  "That's all 15 of today's replies on your plan, so I'll pick up again at 7:00 PM.",
-);
-eq(
-  "or the allowance, when the spend ran out first",
-  allowanceMessage(allowanceFor("base", 3, 300_000), evening, "America/Chicago"),
-  "I've used up today's allowance on your plan, so I'll pick up again at 7:00 PM.",
+  "said plainly, with when it resets",
+  allowanceMessage(allowanceFor("base", 300_000), evening, "America/Chicago"),
+  "I've used up today's usage on your plan, so I'll pick up again at 7:00 PM.",
 );
 
 // ---------- What the app is told ----------
@@ -349,18 +342,18 @@ eq("the 402 body", Object.keys(needsPlanBody("base")).join(","), "error,needs,me
 eq("keyed on error", needsPlanBody("pro").error, "needs_plan");
 eq("said plainly", needsPlanBody("base").message.startsWith("That's for Base users."), true);
 eq("and says where plans are", needsPlanBody("base").message.includes("ovoa.ai"), true);
-const view = planView({ tier: "base", status: "active", trialEndsAt: null, renewsAt: "2026-10-22", from: "site" }, allowanceFor("base", 5, 0), evening);
+const view = planView({ tier: "base", status: "active", trialEndsAt: null, renewsAt: "2026-10-22", from: "site" }, allowanceFor("base", 0), evening);
 eq("/me.plan, base", view, {
   tier: "base",
   status: "active",
   trialEndsAt: null,
   renewsAt: "2026-10-22",
-  limits: { repliesLeftToday: 10, resetsAt: "2026-09-23T00:00:00.000Z" },
+  limits: { repliesLeftToday: 43, usedPercent: 0, resetsAt: "2026-09-23T00:00:00.000Z" },
   features: { chat: true, voice: true, wake: true, agent: false },
 });
-eq("/me.plan, plus has the agent", planView({ tier: "plus", status: "active", trialEndsAt: null, renewsAt: null, from: "site" }, allowanceFor("plus", 0, 0), evening).features.agent, true);
+eq("/me.plan, plus has the agent", planView({ tier: "plus", status: "active", trialEndsAt: null, renewsAt: null, from: "site" }, allowanceFor("plus", 0), evening).features.agent, true);
 eq("the plus 402 names Plus", needsPlanBody("plus").message.startsWith("Background work is for Plus users."), true);
-eq("free: none of it", planView({ tier: "free", status: "none", trialEndsAt: null, renewsAt: null, from: "site" }, allowanceFor("free", 0, 0), evening).features, {
+eq("free: none of it", planView({ tier: "free", status: "none", trialEndsAt: null, renewsAt: null, from: "site" }, allowanceFor("free", 0), evening).features, {
   chat: false,
   voice: false,
   wake: false,
@@ -496,7 +489,7 @@ const call = (userId: string | null, continuing = false) => ({ userId, purpose: 
 eq(
   "the day's spend: plainly, with when it comes back",
   refusalMessage("allowance", "base", evening, "America/Chicago"),
-  "I've used up today's allowance on your plan, so I'll pick up again at 7:00 PM.",
+  "I've used up today's usage on your plan, so I'll pick up again at 7:00 PM.",
 );
 eq("no plan: the 402's own sentence", refusalMessage("needs_plan", "free", evening, "UTC"), needsPlanBody("base").message);
 eq("no consent: its sentence", refusalMessage("needs_consent", "base", evening, "UTC"), CONSENT_NEEDED);

@@ -3,8 +3,8 @@
 // One person asking a thousand questions a month is the plan; one phone stuck
 // in a loop asking ten thousand is a bill. The cap is counted from usage_daily
 // (a turn row per answered reply), so it costs nothing extra to keep. Since the
-// v1 release it is per plan, the daily replies × 31: Base 620, Pro 1,860
-// (plans.ts ALLOWANCES.monthly). This file is only the arithmetic and the
+// v1 release it was per plan (the daily replies × 31); since 2026-09-28 the
+// daily usage budget bounds a month and ALLOWANCES.monthly is 0 (off). This file is only the arithmetic and the
 // words; development accounts are never capped (index.ts standingFor).
 
 /** At this share of the cap the person is told once, in the reply they were getting anyway. */

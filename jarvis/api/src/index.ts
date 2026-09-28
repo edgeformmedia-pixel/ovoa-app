@@ -1211,8 +1211,8 @@ async function planForMe(env: Env, userId: string, force = false) {
     loaded && isDevEmail(env, loaded.email)
       ? null
       : plan.tier === "free"
-        ? allowanceFor("free", 0, 0)
-        : await replyCounts(env.DB, userId, dayOf(now), dayOf(now)).then((n) => allowanceFor(plan.tier, n.todayTurns, n.todayMicro));
+        ? allowanceFor("free", 0)
+        : await replyCounts(env.DB, userId, dayOf(now), dayOf(now)).then((n) => allowanceFor(plan.tier, n.todayMicro));
   return planView(plan, allowance, now);
 }
 
@@ -2428,7 +2428,7 @@ async function standingFor(env: Env, userId: string, timeZone: string, tier: Tie
   ]);
   return {
     month: cap ? { cap, used: counts.monthTurns, month, timeZone, verdict: capVerdict(counts.monthTurns, cap, !!warnedRow) } : null,
-    day: allowanceFor(tier, counts.todayTurns, counts.todayMicro),
+    day: allowanceFor(tier, counts.todayMicro),
   };
 }
 
@@ -3296,7 +3296,7 @@ authed.get("/usage/me", async (c) => {
   const cap = m ? { limit: m.cap, used: m.used, month: m.month, standing: m.verdict } : null;
   // Today's plan allowance: null for a development account.
   const d = standing.day;
-  const allowance = d ? { tier, limit: d.limit, used: d.used, left: d.left, over: d.over } : null;
+  const allowance = d ? { tier, budgetMicro: ALLOWANCES[tier].budgetMicro, usedPercent: d.usedPercent, left: d.left, over: d.over } : null;
   return c.json({ ...usage, cap, allowance });
 });
 

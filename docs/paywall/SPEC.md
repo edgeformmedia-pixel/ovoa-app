@@ -1,5 +1,9 @@
 # OVOA plans, paywall and beta site: spec
 
+> **2026-09-28:** Plans are daily usage budgets, not reply counts: Base $0.10, Plus $0.25 (2.5x), Pro $0.40 (4x) a day of AI
+> at real cost (talking uses it faster than typing; a search more). No monthly cap. `/me` limits gain `usedPercent`;
+> `repliesLeftToday` is an estimate. See `jarvis/api/src/plans.ts` "The daily allowance".
+>
 > **2026-09-27:** Plus added between Base and Pro. Base: 15 replies/day, $0.1875 ceiling, no background agent
 > (`/agent/jobs|goals` POST and the agent crons need `plus`; `features.agent` is true from Plus). Plus: 30/day,
 > $0.375. Pro: 60/day, $0.75. Every ceiling is $0.0125 a reply. The tables below predate this where they differ.

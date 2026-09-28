@@ -24,8 +24,8 @@ import type { Env, Vars } from "./types";
 //      calls a model is behind requirePlan below, the cron jobs that call
 //      models ask mayRunFor first, and every model call asks modelGate (the
 //      gate, near the end) before anything is sent.
-//   3. At its cap, Base costs under $0.19 a day, Plus under $0.38 and Pro
-//      under $0.75 (the
+//   3. A day's AI costs no more than its plan's budget: Base $0.10, Plus
+//      $0.25, Pro $0.40 (the
 //      allowance section below has the arithmetic).
 
 // ---------------------------------------------------------------------------
@@ -452,84 +452,77 @@ export function requirePlan(): MiddlewareHandler<{ Bindings: Env; Variables: Var
 // The daily allowance
 // ---------------------------------------------------------------------------
 //
-// What a reply costs at its most expensive ordinary shape: spoken and voiced
-// by Aura-2. From the cost pass's measurements (docs/cost-pass.md, production
-// benchmark 2026-09-22):
+// Since 2026-09-28 a plan is a daily usage budget in dollars, not a count of
+// replies. Everything a person's AI costs draws on it at its real price, read
+// from usage_daily (usage.ts, pricing.ts): the model reading and writing each
+// reply, the spoken voice, web searches, recorded clips, the morning brief,
+// memory, background work. So talking uses the day faster than typing (the
+// voice is most of a spoken reply), a search faster still, and a quiet day
+// leaves the budget for replies. What a reply costs, measured on production
+// 2026-09-21..27 at list prices (Z.ai GLM 5.3 Flash, Aura-2):
 //
-//   reply models, spoken      $0.0022          measured per reply (gpt-oss-120b)
-//   voice, 220 chars Aura-2   $0.0066          220 × $0.030 / 1000
-//   ───────────────────────────────────
-//   one spoken reply          $0.0088          (a typed one is $0.0032)
+//   a typed or texted reply   about $0.0013   the model, and a search now and then
+//   a spoken reply            about $0.0034   the same, plus about 70 characters voiced
+//   a reply that searches     about $0.011    Z.ai's search is $0.01
 //
-// Hearing the question costs nothing here: since 2026-09-23 the iPhone
-// recognises speech itself, so the $0.0028 of Nova-3 live listening that used
-// to be in this sum is gone (voice.ts).
+// The budgets (the user's call, 2026-09-28): Base is the most profitable plan,
+// Plus has 2.5x Base's usage, and Pro 4x with a wide margin:
 //
-// Base: 15 replies × $0.0088 = $0.132 a day, under the $0.19 ceiling (SPEC §1;
-//       $9.95 a month is about $0.31 a day after Stripe).
-// Plus: 30 replies × $0.0088 = $0.264 a day, under the $0.38 ceiling ($13.95
-//       is about $0.44 a day after Stripe), with background work inside it.
-// Pro:  60 replies × $0.0088 = $0.528 a day, under the $0.75 ceiling.
-// Every ceiling is $0.0125 a reply (2026-09-27; Base was 20 replies and $0.25).
+//   Base  $0.10 a day   about 45 average replies   $9.95: at most $3.00 a month of AI
+//   Plus  $0.25 a day   about 110                  $13.95: at most $7.50
+//   Pro   $0.40 a day   about 180                  $25.95: at most $12.00
 //
-// Replies are the limit a person can see and count. Behind them is a spend
-// ceiling, read from usage_daily, which catches everything else the day cost:
-// the morning brief, background work, a long reply with many tool rounds, and
-// the microphone seconds old builds still report (/usage/stream). New replies
-// stop once the day's spend is within one spoken reply of the ceiling, so the
-// reply that crosses the line can't carry the day past it.
+// New work stops once the day's spend is within one spoken reply of the
+// budget (REPLY_MARGIN_MICRO), so the reply that crosses the line can't carry
+// the day far past it. The spend is checked where a turn starts (index.ts
+// chatTurn) and by the gate on every model call (modelGate), which is what
+// stops the crons and the other model routes once the day is spent.
 //
-// The replies are counted where a turn starts (index.ts chatTurn), never on each
-// model call: the reply that uses the last one still gets its memory update.
-// The spend is checked in both places: at the start of a turn, and by the gate
-// on every model call (modelGate), which is what stops the crons and the other
-// model routes once the day is spent.
-//
-// Both are counted per UTC day, because usage_daily is (usage.ts); the person
-// is told the reset in their own time.
-//
-// A monthly ceiling applies on top (cap.ts): the daily replies × 31, so Base 465,
-// Plus 930 and Pro 1,860 a calendar month. Development accounts are exempt from all of it.
+// Counted per UTC day, because usage_daily is (usage.ts); the person is told
+// the reset in their own time. There is no monthly cap any more: the daily
+// budget already bounds a month (cap.ts is kept for a plan that sets one).
+// Development accounts are exempt from all of it.
 
-/** One spoken reply at list price, in micro-dollars (see the table above). */
-export const MODEL_MICRO_PER_SPOKEN_REPLY = 2_200;
-export const SPOKEN_REPLY_MICRO = MODEL_MICRO_PER_SPOKEN_REPLY + ttsCostMicro("deepgram-aura-2", 220);
+/** One spoken reply at today's measured cost, in micro-dollars: the margin new work stops short of the budget by. */
+export const REPLY_MARGIN_MICRO = 3_400;
+/** An average reply (typed and spoken as people use them), for turning a budget into "about N replies". */
+export const AVERAGE_REPLY_MICRO = 2_200;
 
-export const BASE_REPLIES_PER_DAY = 15;
-export const PLUS_REPLIES_PER_DAY = 30;
-export const PRO_REPLIES_PER_DAY = 60;
-export const BASE_DAILY_CEILING_MICRO = 187_500;
-export const PLUS_DAILY_CEILING_MICRO = 375_000;
-export const PRO_DAILY_CEILING_MICRO = 750_000;
-/** The daily replies × 31 (the brief's default): a month can't use more than its longest days would. */
-export const BASE_REPLIES_PER_MONTH = BASE_REPLIES_PER_DAY * 31;
-export const PLUS_REPLIES_PER_MONTH = PLUS_REPLIES_PER_DAY * 31;
-export const PRO_REPLIES_PER_MONTH = PRO_REPLIES_PER_DAY * 31;
+export const BASE_DAILY_BUDGET_MICRO = 100_000;
+/** Plus is 2.5x Base, Pro 4x (2026-09-28). */
+export const PLUS_DAILY_BUDGET_MICRO = 250_000;
+export const PRO_DAILY_BUDGET_MICRO = 400_000;
 
-/** Per plan: replies a day, the day's spend ceiling, and replies a calendar month (cap.ts). */
-export const ALLOWANCES: Record<Tier, { replies: number; ceilingMicro: number; monthly: number }> = {
-  free: { replies: 0, ceilingMicro: 0, monthly: 0 },
-  base: { replies: BASE_REPLIES_PER_DAY, ceilingMicro: BASE_DAILY_CEILING_MICRO, monthly: BASE_REPLIES_PER_MONTH },
-  plus: { replies: PLUS_REPLIES_PER_DAY, ceilingMicro: PLUS_DAILY_CEILING_MICRO, monthly: PLUS_REPLIES_PER_MONTH },
-  pro: { replies: PRO_REPLIES_PER_DAY, ceilingMicro: PRO_DAILY_CEILING_MICRO, monthly: PRO_REPLIES_PER_MONTH },
+/** Per plan: the day's usage budget in micro-dollars, and replies a calendar month (cap.ts; 0 = no monthly cap). */
+export const ALLOWANCES: Record<Tier, { budgetMicro: number; monthly: number }> = {
+  free: { budgetMicro: 0, monthly: 0 },
+  base: { budgetMicro: BASE_DAILY_BUDGET_MICRO, monthly: 0 },
+  plus: { budgetMicro: PLUS_DAILY_BUDGET_MICRO, monthly: 0 },
+  pro: { budgetMicro: PRO_DAILY_BUDGET_MICRO, monthly: 0 },
 };
 
-/** The spend at which new work stops for the day: one spoken reply short of the ceiling. */
-export const spendStopMicro = (tier: Tier) => Math.max(0, ALLOWANCES[tier].ceilingMicro - SPOKEN_REPLY_MICRO);
+/** The spend at which new work stops for the day: one spoken reply short of the budget. */
+export const spendStopMicro = (tier: Tier) => Math.max(0, ALLOWANCES[tier].budgetMicro - REPLY_MARGIN_MICRO);
 
 export type Allowance = {
-  limit: number;
-  used: number;
+  /** Share of today's budget used, 0-100. */
+  usedPercent: number;
+  /** About how many average replies are left today: an estimate, for builds that show a number. */
   left: number;
-  /** Why it's used up, when it is: the replies, or the day's spend. */
-  over: null | "replies" | "spend";
+  /** Set when today is used up. */
+  over: null | "spend";
 };
 
-/** Where a person stands today. Pure. */
-export function allowanceFor(tier: Tier, repliesToday: number, microToday: number): Allowance {
-  const { replies } = ALLOWANCES[tier];
-  const over = repliesToday >= replies ? "replies" : microToday >= spendStopMicro(tier) ? "spend" : null;
-  return { limit: replies, used: repliesToday, left: over ? 0 : Math.max(0, replies - repliesToday), over };
+/** Where a person stands today, from what today has cost them. Pure. */
+export function allowanceFor(tier: Tier, microToday: number): Allowance {
+  const { budgetMicro } = ALLOWANCES[tier];
+  const stop = spendStopMicro(tier);
+  const over = !budgetMicro || microToday >= stop ? "spend" : null;
+  return {
+    usedPercent: budgetMicro ? Math.min(100, Math.round((Math.max(0, microToday) / budgetMicro) * 100)) : 100,
+    left: over ? 0 : Math.max(1, Math.floor((stop - microToday) / AVERAGE_REPLY_MICRO)),
+    over,
+  };
 }
 
 /** The next UTC midnight, when usage_daily starts a new day. */
@@ -547,30 +540,24 @@ export function resetPhrase(now: number, timeZone: string) {
 }
 
 /** One sentence, spoken or shown, when today's allowance is used up. A reply, not an error. */
-export function allowanceMessage(a: Allowance, now: number, timeZone: string) {
-  const when = resetPhrase(now, timeZone);
-  return a.over === "replies"
-    ? `That's all ${a.limit} of today's replies on your plan, so I'll pick up again ${when}.`
-    : `I've used up today's allowance on your plan, so I'll pick up again ${when}.`;
+export function allowanceMessage(_a: Allowance, now: number, timeZone: string) {
+  return `I've used up today's usage on your plan, so I'll pick up again ${resetPhrase(now, timeZone)}.`;
 }
 
-/** What today (UTC, like usage_daily) has used so far: answered replies, and cost in micro-dollars. */
+/** What today (UTC, like usage_daily) has cost this person so far, in micro-dollars. */
 async function usedToday(env: Env, userId: string, now = Date.now()) {
-  const row = await env.DB.prepare(
-    "SELECT COALESCE(SUM(CASE WHEN kind = 'turn' THEN n END), 0) AS turns, COALESCE(SUM(est_micro_usd), 0) AS micro FROM usage_daily WHERE user_id = ? AND day = ?",
-  )
+  const row = await env.DB.prepare("SELECT COALESCE(SUM(est_micro_usd), 0) AS micro FROM usage_daily WHERE user_id = ? AND day = ?")
     .bind(userId, new Date(now).toISOString().slice(0, 10))
-    .first<{ turns: number; micro: number }>();
-  return { turns: row?.turns ?? 0, micro: row?.micro ?? 0 };
+    .first<{ micro: number }>();
+  return { micro: row?.micro ?? 0 };
 }
 
 /**
- * Whether today is used up, by either measure: the day's replies or its spend.
- * Once it is, nothing more runs on AI for this person until the reset: not a
- * text, not a cron job, not a game or a site (2026-09-27, a hard cut-off).
+ * Whether today's usage budget is spent. Once it is, nothing more runs on AI
+ * for this person until the reset: not a text, not a cron job, not a game or a
+ * site (2026-09-27, a hard cut-off).
  */
-const dayUsedUp = (tier: Tier, used: { turns: number; micro: number }) =>
-  used.turns >= ALLOWANCES[tier].replies || used.micro >= spendStopMicro(tier);
+const dayUsedUp = (tier: Tier, used: { micro: number }) => used.micro >= spendStopMicro(tier);
 
 /**
  * For work nobody asked for this minute (the cron, a workout summary): null
@@ -611,10 +598,9 @@ export function lazyCheck(env: Env, userId: string, need: Tier) {
 // Three questions, in order:
 //
 //   1. The plan. Free never reaches a model: needs_plan.
-//   2. Today's allowance, used up by replies (the plan's daily count) or by
-//      spend (spendStopMicro): allowance. Since 2026-09-27 this is a hard
-//      cut-off: once the day's replies are gone, no AI runs for that person at
-//      all (texts, crons, games, sites) until the reset. A resumed turn
+//   2. Today's usage budget, spent (spendStopMicro): allowance. Since
+//      2026-09-27 this is a hard cut-off: once the day's budget is gone, no AI
+//      runs for that person at all (texts, crons, games, sites) until the reset. A resumed turn
 //      (GateCall.continuing) isn't asked: it was let in when it began.
 //      Development accounts have no line.
 //   3. Consent (consent.ts aiConsentFor): needs_consent until they've agreed.
@@ -625,8 +611,8 @@ export function lazyCheck(env: Env, userId: string, need: Tier) {
 //
 // Fails closed on the plan: a database error reading it fails the call as an
 // ordinary error, and nothing is sent. Fails open on the spend: a person on a
-// plan whose day couldn't be read this once isn't refused for it (the reply
-// count at the start of their turn, and blockedFor for the crons, still hold).
+// plan whose day couldn't be read this once isn't refused for it (the check
+// at the start of their turn, and blockedFor for the crons, still hold).
 // A call with no person (userId null) is only ever a DEBUG_KEY route's.
 
 export async function modelGate(env: Env, call: GateCall, now = Date.now()): Promise<Refusal | null> {
@@ -636,7 +622,7 @@ export async function modelGate(env: Env, call: GateCall, now = Date.now()): Pro
   if (!call.continuing && !isDevEmail(env, loaded.email)) {
     const used = await usedToday(env, call.userId, now).catch((err: unknown) => {
       console.error("ovoa.err plan: couldn't read today's usage for a model call; letting it through", err);
-      return { turns: 0, micro: 0 };
+      return { micro: 0 };
     });
     if (dayUsedUp(loaded.plan.tier, used)) {
       say("plan", { outcome: "refused", user: call.userId, why: "allowance", purpose: call.purpose });
@@ -657,8 +643,7 @@ export const modelGateFor = (env: LlmEnv, call: GateCall) => modelGate(env as En
 export function refusalMessage(reason: Refusal, tier: Tier, now: number, timeZone: string) {
   if (reason === "needs_plan") return needsPlanBody("base").message;
   if (reason === "needs_consent") return CONSENT_NEEDED;
-  const { replies } = ALLOWANCES[tier];
-  return allowanceMessage({ limit: replies, used: 0, left: 0, over: "spend" }, now, timeZone);
+  return allowanceMessage(allowanceFor(tier, ALLOWANCES[tier].budgetMicro), now, timeZone);
 }
 
 /** A time zone Intl knows, or UTC. */
@@ -699,8 +684,13 @@ export type PlanView = {
   status: PlanStatus;
   trialEndsAt: string | null;
   renewsAt: string | null;
-  /** repliesLeftToday is null for a development account, which has no daily limit. */
-  limits: { repliesLeftToday: number | null; resetsAt: string };
+  /**
+   * usedPercent is the share of today's usage budget spent; repliesLeftToday
+   * is about how many average replies that leaves (builds before 2026-09-28
+   * show it as "Replies left today"). Both null for a development account,
+   * which has no daily limit.
+   */
+  limits: { repliesLeftToday: number | null; usedPercent: number | null; resetsAt: string };
   features: { chat: boolean; voice: boolean; wake: boolean; agent: boolean };
 };
 
@@ -710,7 +700,11 @@ export function planView(plan: Plan, allowance: Allowance | null, now: number): 
     status: plan.status,
     trialEndsAt: plan.trialEndsAt,
     renewsAt: plan.renewsAt,
-    limits: { repliesLeftToday: allowance ? allowance.left : null, resetsAt: new Date(nextUtcMidnight(now)).toISOString() },
+    limits: {
+      repliesLeftToday: allowance ? allowance.left : null,
+      usedPercent: allowance ? allowance.usedPercent : null,
+      resetsAt: new Date(nextUtcMidnight(now)).toISOString(),
+    },
     // Base has every feature but background work, which is Plus's (Pro is
     // more usage, not more features). Every build of the app reads all four.
     features: {

@@ -160,6 +160,7 @@ export function YourPlan() {
   const renews = planDate(plan?.renewsAt ?? null);
   const status = plan && plan.tier !== "free" ? STATUS[plan.status] : undefined;
   const left = plan?.limits.repliesLeftToday;
+  const used = plan?.limits.usedPercent;
 
   return (
     <View style={{ gap: space.s1 }}>
@@ -168,16 +169,20 @@ export function YourPlan() {
       {!trialEnds && !!renews && (
         <Row icon="refresh-outline" tone="blue" title={plan?.status === "canceled" ? "Ends" : "Renews"} value={renews} />
       )}
-      {plan && plan.tier !== "free" && typeof left === "number" && (
-        <Row icon="chatbubble-outline" tone="teal" title="Replies left today" value={String(left)} />
+      {plan && plan.tier !== "free" && typeof used === "number" ? (
+        <Row icon="speedometer-outline" tone="teal" title="Used today" value={`${used}%`} />
+      ) : (
+        plan &&
+        plan.tier !== "free" &&
+        typeof left === "number" && <Row icon="chatbubble-outline" tone="teal" title="Replies left today" value={String(left)} />
       )}
       <Text style={[text.meta, { paddingTop: space.s2 }]}>
         {plan?.tier === "free"
           ? "Health, notes and the apps that don't use AI are free. Talking to OVOA, and everything else that uses AI, is for Base users."
           : plan?.tier === "base"
-            ? "Base has the assistant. Plus adds the background agent and twice the daily replies; Pro has four times Base's."
+            ? "Base has the assistant. Plus adds the background agent and 2.5 times the daily usage; Pro has 4 times Base's. Talking uses the day faster than typing."
             : plan?.tier === "plus"
-              ? "Pro is Plus with twice the daily replies."
+              ? "Pro is Plus with more daily usage. Talking uses the day faster than typing."
               : ""}
         {plan?.tier === "pro" ? "" : " "}
         {MANAGED_AT}
