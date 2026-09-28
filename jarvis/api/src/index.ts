@@ -1,3 +1,4 @@
+import { openMessagesPage } from "./guest";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -368,6 +369,11 @@ app.onError(async (err, c) => {
 });
 
 app.get("/", (c) => c.json({ ok: true, service: "jarvis-api" }));
+// The "Link my number" button in the link-code email (guest.ts): mail apps drop sms: links.
+app.get("/text/open", (c) => {
+  const page = openMessagesPage(c.req.query("to") ?? "", c.req.query("body") ?? "");
+  return page ? c.html(page) : c.text("Not found", 404);
+});
 
 app.route("/", googlePublic);
 // The link in the confirmation email: no session, the token is the proof (verify.ts).

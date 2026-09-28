@@ -165,17 +165,18 @@ async function offerLink(env: Env, account: Account, now: number): Promise<strin
     .first();
   if (recent) return LINK_EMAILED(account.email);
   const { code } = await issueLinkCode(env.DB, account.id, now);
-  const sent = await sendEmail(env, linkEmail(account, env.SENDBLUE_NUMBER, code));
+  const sent = await sendEmail(env, linkEmail(account, env.SENDBLUE_NUMBER, code, env.PUBLIC_URL));
   return sent ? LINK_EMAILED(account.email) : LINK_IN_APP;
 }
 
 /** The email with the link code: a button that opens Messages with the text ready, and the text to send by hand. */
-export function linkEmail(account: Account, number: string, code: string): Email {
+export function linkEmail(account: Account, number: string, code: string, base: string): Email {
   const first = account.name?.trim().split(/\s+/)[0] ?? null;
   const hello = `Hi${first ? ` ${first}` : ""},`;
   const why = "You texted OVOA this email. To make those texts yours, on your account and your plan, tap the button on your iPhone and send the text it opens:";
   const body = linkText(code);
-  const link = `sms:${number}&body=${encodeURIComponent(body)}`;
+  // Gmail and most mail apps drop sms: links, so the button goes to a page of ours that opens Messages.
+  const link = `${base}/text/open?to=${encodeURIComponent(number)}&body=${encodeURIComponent(body)}`;
   const orText = `Or text this to ${number}:`;
   const after = "It works for 15 minutes. If this wasn't you, ignore this email: nothing is linked without that text.";
   const p = (s: string) => `<p style="margin:0 0 16px;font-size:16px;line-height:1.55;color:#060606">${esc(s)}</p>`;
@@ -196,4 +197,20 @@ ${p(after)}
 </td></tr></table>
 </td></tr></table></body></html>`,
   };
+}
+
+/** GET /text/open?to=&body=: opens Messages with the text ready. Email buttons can't link to sms: directly. */
+export function openMessagesPage(to: string, body: string): string | null {
+  if (!/^\+?\d{7,15}$/.test(to) || body.length > 200) return null;
+  const sms = `sms:${to}&body=${encodeURIComponent(body)}`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Messages</title>
+<meta http-equiv="refresh" content="0;url=${esc(sms)}"></head>
+<body style="margin:0;padding:48px 20px;background:#edebee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;text-align:center;color:#060606">
+<p style="font-size:14px;font-weight:700;letter-spacing:0.08em">OVOA</p>
+<p style="font-size:16px">Opening Messages. If it didn't open, tap the button, then send the text.</p>
+<p><a href="${esc(sms)}" style="display:inline-block;background:#060606;color:#fff;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:24px">Open Messages</a></p>
+<p style="font-size:14px">Or text this to ${esc(to)}:</p>
+<p style="font-size:17px;font-weight:700;font-family:'SF Mono',Menlo,Consolas,monospace">${esc(body)}</p>
+<script>location.href=${JSON.stringify(sms)};</script>
+</body></html>`;
 }
