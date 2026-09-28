@@ -1,5 +1,5 @@
-import { useRouter } from "expo-router";
-import { useRef, useState } from "react";
+import { useRouter, type Href } from "expo-router";
+import { useEffect, useRef, useState } from "react";
 import { ScrollView, StyleSheet, Text, View, type NativeScrollEvent } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Btn } from "../components/ui";
@@ -39,6 +39,17 @@ export default function Terms() {
   const agreedOn = user?.terms?.at
     ? new Date(user.terms.at).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
     : null;
+
+  // Agreed as a step of first open: the guard (app/_layout.tsx) keeps this screen
+  // open once the app is signed in, since Terms is also read from Settings, so it
+  // leaves by itself for Talk. Left up, the tour started over the legal text.
+  const asStep = useRef(!agreed);
+  useEffect(() => {
+    if (agreed && asStep.current) {
+      asStep.current = false;
+      router.replace("/chat" as Href);
+    }
+  }, [agreed, router]);
 
   const agree = async () => {
     setBusy(true);
