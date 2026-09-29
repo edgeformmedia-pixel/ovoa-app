@@ -51,6 +51,68 @@ async function accountOf(db: D1Database, userId: string) {
     .first<Account>();
 }
 
+/** The tools whose YES may still be waiting in pending_actions, with a DM's or a caption's text in them. */
+const PARKED_TOOLS = ["ig_send_dm", "ig_reply_comment", "ig_private_reply", "ig_delete_comment", "ig_publish"];
+
+/**
+ * Removes everything OVOA holds for their Instagram: the token, the account
+ * row, the DMs and comments the webhook stored, and sends still waiting for a
+ * YES. Asked for by them ("disconnect Instagram"), or by Meta when they remove
+ * OVOA in Instagram or ask Meta to delete their data (the routes below).
+ * Before the token goes, Meta is told to stop sending this account's webhooks.
+ */
+export async function forgetInstagram(env: Env, where: { userId: string } | { igUserId: string }) {
+  const db = env.DB;
+  const { results: accounts } = await ("userId" in where
+    ? db.prepare("SELECT id, user_id, token_enc FROM instagram_accounts WHERE user_id = ?").bind(where.userId)
+    : db.prepare("SELECT id, user_id, token_enc FROM instagram_accounts WHERE ig_user_id = ?").bind(where.igUserId)
+  ).all<{ id: string; user_id: string; token_enc: string }>();
+  for (const a of accounts) {
+    try {
+      await ig(await decrypt(env.TOKEN_ENC_KEY, a.token_enc), "/me/subscribed_apps", { method: "DELETE" });
+    } catch {
+      // Already revoked, or Meta is down: the token is deleted either way.
+    }
+  }
+  const users = [...new Set(accounts.map((a) => a.user_id))];
+  const statements = [
+    ...accounts.map((a) => db.prepare("DELETE FROM instagram_events WHERE account_id = ?").bind(a.id)),
+    ...accounts.map((a) => db.prepare("DELETE FROM instagram_accounts WHERE id = ?").bind(a.id)),
+    ...users.map((u) =>
+      db.prepare(`DELETE FROM pending_actions WHERE user_id = ? AND tool IN (${PARKED_TOOLS.map(() => "?").join(",")})`).bind(u, ...PARKED_TOOLS),
+    ),
+    ...("userId" in where ? [db.prepare("DELETE FROM instagram_states WHERE user_id = ?").bind(where.userId)] : []),
+  ];
+  // Nothing to delete (Meta asking about someone who never connected, or already disconnected) is still a success.
+  if (statements.length) await db.batch(statements);
+  return accounts.length;
+}
+
+/** Instagram's rule for a normal DM: the other person wrote in the last 24 hours. */
+export const REPLY_WINDOW_MS = 24 * 3_600_000;
+export const inReplyWindow = (lastFromThem: number | null, now = Date.now()) => lastFromThem !== null && now - lastFromThem < REPLY_WINDOW_MS;
+
+/** When the other person in a conversation last wrote, or null if never (in the last 20 messages). */
+async function lastFromThem(token: string, convoId: string, selfId: string) {
+  const full = await ig(token, `/${encodeURIComponent(convoId)}`, { params: { fields: "messages.limit(20){from,created_time}" } });
+  const theirs = (full.messages?.data ?? [])
+    .filter((m: any) => m.from?.id && String(m.from.id) !== String(selfId))
+    .map((m: any) => Date.parse(m.created_time))
+    .filter((t: number) => Number.isFinite(t));
+  return theirs.length ? Math.max(...theirs) : null;
+}
+
+/** Who a DM goes to, or why Instagram won't allow it. Checked before asking for the YES and again before sending. */
+async function dmTarget(token: string, account: Account, to: string) {
+  const convo = await findConversation(token, to);
+  const them = convo?.participants?.data.find((p) => p.id !== account.ig_user_id);
+  if (!convo || !them) return { error: `No conversation with ${to}: Instagram only lets you message people who wrote to you first.` };
+  if (!inReplyWindow(await lastFromThem(token, convo.id, account.ig_user_id))) {
+    return { error: `${to} hasn't written in the last 24 hours, so Instagram won't allow a message from OVOA. They can reply from the Instagram app.` };
+  }
+  return { id: them.id };
+}
+
 /** A usable token for their account, refreshed when it's getting old. */
 async function tokenFor(env: Env, account: Account) {
   const token = await decrypt(env.TOKEN_ENC_KEY, account.token_enc);
@@ -223,10 +285,10 @@ export async function runInstagramWrite(env: Env, userId: string, name: string, 
   const token = await tokenFor(env, account);
   switch (name) {
     case "ig_send_dm": {
-      const convo = await findConversation(token, String(a.to));
-      const them = convo?.participants?.data.find((p) => p.id !== account.ig_user_id);
-      if (!them) throw new Error(`No conversation with ${a.to}: Instagram only lets you message people who wrote to you first`);
-      return ig(token, "/me/messages", { method: "POST", json: { recipient: { id: them.id }, message: { text: String(a.text) } } });
+      // The YES may have come hours later: the 24-hour window is checked again.
+      const target = await dmTarget(token, account, String(a.to));
+      if ("error" in target) throw new Error(target.error);
+      return ig(token, "/me/messages", { method: "POST", json: { recipient: { id: target.id }, message: { text: String(a.text) } } });
     }
     case "ig_private_reply":
       return ig(token, "/me/messages", { method: "POST", json: { recipient: { comment_id: String(a.comment_id) }, message: { text: String(a.text) } } });
@@ -269,13 +331,26 @@ export function instagramAssistant(env: Env, userId: string) {
     const account = await accountOf(env.DB, userId);
     if (!account) return { error: "Their Instagram isn't connected. Offer to connect it (instagram_connect)." };
     if (name === "instagram_disconnect") {
-      await env.DB.prepare("DELETE FROM instagram_accounts WHERE user_id = ?").bind(userId).run();
-      return { disconnected: `@${account.username}` };
+      await forgetInstagram(env, { userId });
+      return {
+        disconnected: `@${account.username}`,
+        note: "OVOA deleted its access and the DMs and comments it stored. To also remove OVOA from Instagram: Settings > Website permissions > Apps and websites (on some accounts it's under Business integrations).",
+      };
     }
     if (INSTAGRAM_WRITES.has(name)) {
       const text = String(args.text ?? "").trim();
       if (name !== "ig_delete_comment" && name !== "ig_publish" && !text) return { error: "text is required" };
       if (name === "ig_publish" && !/^https:\/\//.test(String(args.media_url ?? ""))) return { error: "media_url must be a public https link" };
+      // Don't ask for a YES to a DM Instagram will refuse.
+      if (name === "ig_send_dm") {
+        try {
+          const target = await dmTarget(await tokenFor(env, account), account, String(args.to ?? ""));
+          if ("error" in target) return { error: target.error };
+        } catch (err) {
+          if (err instanceof InstagramNotConnected) return { error: "Their Instagram connection expired or was removed. Offer to reconnect it (instagram_connect)." };
+          return { error: err instanceof Error ? err.message : String(err) };
+        }
+      }
       pending.push(await parkAction(env, userId, name, args, summarize(name, args), false));
       return {
         status: "waiting_for_user_approval",
@@ -476,7 +551,12 @@ async function signatureOk(secret: string, raw: string, header: string | undefin
 instagramPublic.post("/instagram/webhook", async (c) => {
   const raw = await c.req.text();
   if (!c.env.IG_APP_SECRET || !(await signatureOk(c.env.IG_APP_SECRET, raw, c.req.header("x-hub-signature-256")))) return c.text("Bad signature", 401);
-  const body = JSON.parse(raw) as { object?: string; entry?: any[] };
+  let body: { object?: string; entry?: any[] };
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return c.text("Bad body", 400);
+  }
   if (body.object !== "instagram") return c.text("ok");
 
   const db = c.env.DB;
@@ -506,4 +586,109 @@ instagramPublic.post("/instagram/webhook", async (c) => {
   // Kept RETAIN_DAYS, like messages (retention.ts).
   if (rows.length) await db.batch(rows);
   return c.text("ok");
+});
+
+// ---------- Deleting someone's Instagram data (what Meta's App Review checks) ----------
+//
+// In the Meta app (Instagram > API setup with Instagram business login >
+// Business login settings):
+//   Deauthorize callback URL:  https://api.ovoa.ai/instagram/deauthorize
+//   Data deletion request URL: https://api.ovoa.ai/instagram/data-deletion
+// Both get a signed_request from Meta, signed with the app secret. The same
+// data-deletion address, opened in a browser, is the page that tells a person
+// how to delete their Instagram data themselves.
+
+const unb64url = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0));
+
+async function hmac(secret: string, data: string) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data)));
+}
+
+/** Meta's signed_request ("sig.payload", both base64url): the payload if the signature is the app secret's, else null. */
+export async function parseSignedRequest(secret: string, signed: string): Promise<{ user_id?: string; [k: string]: unknown } | null> {
+  const [sig, payload] = String(signed ?? "").split(".");
+  if (!sig || !payload) return null;
+  try {
+    const want = await hmac(secret, payload);
+    const got = unb64url(sig);
+    if (got.length !== want.length) return null;
+    let diff = 0;
+    for (let i = 0; i < want.length; i++) diff |= want[i] ^ got[i];
+    if (diff) return null;
+    const data = JSON.parse(new TextDecoder().decode(unb64url(payload)));
+    return data && typeof data === "object" && (!data.algorithm || String(data.algorithm).toUpperCase() === "HMAC-SHA256") ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A confirmation code that says when the deletion was done, signed so the status page can't be fed a made-up one. */
+async function deletionCode(secret: string, at: number) {
+  const body = `${at.toString(36)}.${base64url(crypto.getRandomValues(new Uint8Array(6)))}`;
+  return `${body}.${base64url((await hmac(secret, body)).slice(0, 9))}`;
+}
+async function deletionCodeTime(secret: string, code: string) {
+  const [t, r, mac] = code.split(".");
+  if (!t || !r || !mac || base64url((await hmac(secret, `${t}.${r}`)).slice(0, 9)) !== mac) return null;
+  const at = parseInt(t, 36);
+  return Number.isFinite(at) ? at : null;
+}
+
+async function signedFrom(c: { req: { parseBody: () => Promise<Record<string, unknown>> }; env: Env }) {
+  if (!c.env.IG_APP_SECRET) return null;
+  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
+  return parseSignedRequest(c.env.IG_APP_SECRET, String(form.signed_request ?? ""));
+}
+
+// They removed OVOA in Instagram's settings: the token is useless now, so it and what came with it go.
+instagramPublic.post("/instagram/deauthorize", async (c) => {
+  const data = await signedFrom(c);
+  if (!data?.user_id) return c.text("Bad signed_request", 400);
+  await forgetInstagram(c.env, { igUserId: String(data.user_id) });
+  return c.text("ok");
+});
+
+// They asked Meta to delete what OVOA has from their Instagram. Meta wants a status link and a code back.
+instagramPublic.post("/instagram/data-deletion", async (c) => {
+  const data = await signedFrom(c);
+  if (!data?.user_id) return c.json({ error: "Bad signed_request" }, 400);
+  await forgetInstagram(c.env, { igUserId: String(data.user_id) });
+  const code = await deletionCode(c.env.IG_APP_SECRET!, Date.now());
+  return c.json({ url: `${c.env.PUBLIC_URL}/instagram/data-deletion?code=${encodeURIComponent(code)}`, confirmation_code: code });
+});
+
+const DELETION_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Delete your Instagram data from OVOA</title>
+<style>body{font:17px/1.55 system-ui,sans-serif;max-width:680px;margin:0 auto;padding:32px 16px;color:#111;background:#fff}h1{font-size:28px;line-height:1.2}h2{font-size:19px;margin-top:28px}a{color:#111}.status{padding:12px 16px;border:1px solid #ccc;border-radius:10px}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}a{color:#eee}.status{border-color:#444}}</style>
+<h1>Delete your Instagram data from OVOA</h1>
+%STATUS%
+<p>If you connected an Instagram Business or Creator account to OVOA, here is what OVOA keeps and how to delete it.</p>
+<h2>What OVOA keeps</h2>
+<ul>
+<li>The access token Instagram gave OVOA (stored encrypted), your Instagram username and account id, and which permissions you approved.</li>
+<li>The Instagram DMs and comments sent to your account after you connected it, so OVOA can tell you what came in. These are deleted automatically after 14 days.</li>
+<li>Anything OVOA said to you about your Instagram is part of your OVOA conversation, which is deleted after 14 days.</li>
+</ul>
+<p>OVOA reads your posts, conversations and stats from Instagram when you ask, and doesn't keep copies of them. We never sell Instagram data or use it for ads.</p>
+<h2>How to delete it</h2>
+<ol>
+<li><strong>Tell OVOA.</strong> Text or say &ldquo;disconnect Instagram&rdquo;. OVOA deletes the token, your account details, the stored DMs and comments, and any Instagram action still waiting for your YES, right away.</li>
+<li><strong>Or remove OVOA in Instagram.</strong> In the Instagram app, go to Settings, then Website permissions, then Apps and websites (on some accounts it's Business integrations), and remove OVOA. Instagram tells OVOA, and OVOA deletes the same data.</li>
+<li><strong>Or email us</strong> at <a href="mailto:support@ovoa.ai">support@ovoa.ai</a> from the email on your OVOA account, and we'll delete it for you.</li>
+</ol>
+<p>Deleting your OVOA account (Settings, then Delete account, in the app) also deletes all of it, along with everything else OVOA has about you.</p>
+<p><a href="https://ovoa.ai/privacy">Privacy policy</a> &middot; <a href="https://ovoa.ai/terms">Terms</a></p>
+</html>`;
+
+instagramPublic.get("/instagram/data-deletion", async (c) => {
+  const code = c.req.query("code");
+  let status = "";
+  if (code) {
+    const at = c.env.IG_APP_SECRET ? await deletionCodeTime(c.env.IG_APP_SECRET, code) : null;
+    status = at
+      ? `<p class="status">Request <strong>${code.replace(/[^\w.-]/g, "")}</strong>: done. On ${new Date(at).toUTCString()}, OVOA deleted the Instagram token, account details, and stored DMs and comments for that account.</p>`
+      : `<p class="status">We don't recognise that confirmation code. Email <a href="mailto:support@ovoa.ai">support@ovoa.ai</a> and we'll check.</p>`;
+  }
+  return c.html(DELETION_HTML.replace("%STATUS%", status));
 });
