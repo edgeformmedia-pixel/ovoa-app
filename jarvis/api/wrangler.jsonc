@@ -3,6 +3,8 @@
   "name": "jarvis-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
+  // The browser agent's puppeteer (src/browser.ts) needs Node's built-ins.
+  "compatibility_flags": ["nodejs_compat"],
   // The Cloudflare account, pinned: admin@ovoa.ai's, since the move in the v1
   // release (2026-09). A pinned id beats CLOUDFLARE_ACCOUNT_ID and wrangler's
   // account cache, so every deploy, secret and D1 command run from this folder
@@ -148,8 +150,20 @@
     { "name": "RL_FORM", "namespace_id": "1105", "simple": { "limit": 5, "period": 60 } }
   ],
   // A game's online room (src/gameroom.ts): one per game, relaying moves between phones.
-  "durable_objects": { "bindings": [{ "name": "GAME_ROOM", "class_name": "GameRoom" }] },
-  "migrations": [{ "tag": "game-rooms-1", "new_sqlite_classes": ["GameRoom"] }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "GAME_ROOM", "class_name": "GameRoom" },
+      // One per errand: holds the browser session and runs the agent's steps (src/browser.ts).
+      { "name": "BROWSER_TASK", "class_name": "BrowserTask" }
+    ]
+  },
+  "migrations": [
+    { "tag": "game-rooms-1", "new_sqlite_classes": ["GameRoom"] },
+    { "tag": "browser-task-1", "new_sqlite_classes": ["BrowserTask"] }
+  ],
+  // Cloudflare Browser Rendering, as env.BROWSER: a real Chrome in the cloud
+  // for the browser agent. Workers Paid; billed per browser hour.
+  "browser": { "binding": "BROWSER" },
   "d1_databases": [
     {
       "binding": "DB",

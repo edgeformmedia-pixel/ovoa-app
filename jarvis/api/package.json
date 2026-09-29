@@ -13,6 +13,7 @@
     "smoke": "bash test/smoke.sh"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^1.4.0",
     "hono": "^4.9.0",
     "zod": "^4.1.0"
   },

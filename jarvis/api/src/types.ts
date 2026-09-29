@@ -2,6 +2,9 @@ export type Env = {
   DB: D1Database;
   /** A game's online room (gameroom.ts), one per game. */
   GAME_ROOM: DurableObjectNamespace;
+  /** The browser agent: one per errand (browser.ts), and the cloud Chrome it drives. */
+  BROWSER_TASK: DurableObjectNamespace;
+  BROWSER: Fetcher;
   /** Gemini, the second engine (llm.ts), and web search grounding (web.ts). */
   GEMINI_API_KEY?: string;
   /**

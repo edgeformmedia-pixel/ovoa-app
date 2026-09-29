@@ -1,5 +1,5 @@
-Task (2026-09-29): read real Sendblue texts (messages.source='text', ~111, 12 people) and make the texting AI smarter. Commit 26885a5, deployed 45e3b9a6.
-Found: guests had time_zone NULL -> UTC -> "late night, 2 AM"; step nags on jokes; invented shared past; false "can't" (images, Instagram, App Store).
-Fixed: src/phonezone.ts (area code -> zone, saved on first text), stepsWanted off for text unless asked, channel prompt rules + honest trial facts (early access, ovoa.ai/text).
-Verify: node scripts/intent-probe.mjs (prod, throwaway account). Residual: ~1 in 3 small-talk replies still remarks on the hour.
-Not done: sending real images by Sendblue media_url (dog pic sends a link), real-user reply-quality review beyond these 111 texts.
+Task (2026-09-29): browser agent so OVOA works on sites with no API (competitor gap vs instinct.com). Deployed 0199adc4, migration 0061.
+Built: jarvis/api/src/browser.ts (BrowserTask durable object, Cloudflare Browser Rendering + GLM vision, numbered-box marks) + browsermoves.ts (pure rules, tested). Tools browser_task/status/login_done/cancel/forget_logins.
+Gate: risky steps (pay/send/delete/submit...) park as browser_continue and wait for YES; sign-in = live-view link, cookies kept encrypted (browser_logins), never a password.
+Verified on prod (node scripts/browser-probe.mjs "goal" url [--approve]): example.com, Wikipedia search, httpbin form fill -> YES -> submit, GitHub login handoff link.
+Not done: a human really signing in via live view then "done"; WhatsApp; phone calls (user said no calls for now); errand-specific skills; docs/ write-up.

@@ -24,6 +24,7 @@ import {
 import { pickAccountFor } from "./routing";
 import { googleTools, toolsByName, type ToolContext } from "./tools";
 import { InstagramNotConnected, isInstagramTool, runInstagramWrite } from "../instagram";
+import { approveBrowserStep } from "../browser";
 
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 /** The old whole-Drive scope. Accounts connected since hold drive.file instead. */
@@ -377,6 +378,8 @@ export async function approveAction(
     content = opts.phoneResult?.ok
       ? `Done: ${detail || row.summary.split("\n")[0]}`
       : `That didn't work: ${detail || "unknown error"}`;
+  } else if (row.tool === "browser_continue") {
+    content = await approveBrowserStep(env, userId, JSON.parse(row.args));
   } else if (isInstagramTool(row.tool)) {
     try {
       await runInstagramWrite(env, userId, row.tool, JSON.parse(row.args));

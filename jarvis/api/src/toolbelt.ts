@@ -231,6 +231,14 @@ const SYNONYMS: Record<string, string[]> = {
   reel: ["ig"],
   reels: ["ig"],
   followers: ["ig"],
+  // The browser agent (browser.ts): things done on a website nothing else reaches.
+  browse: ["browser"],
+  online: ["browser"],
+  form: ["browser"],
+  forms: ["browser"],
+  reorder: ["browser"],
+  reservation: ["browser"],
+  order: ["browser"],
 };
 
 /** Words that say a request repeats, so it's a routine (namedTools). */

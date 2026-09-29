@@ -46,6 +46,7 @@ import {
 } from "./sites";
 import { budgetAssistant, budgetContext, isBudgetTool } from "./budget";
 import { instagramAssistant, instagramPublic, isInstagramTool } from "./instagram";
+import { browserAssistant, isBrowserTool } from "./browser";
 import { zoneForPhone } from "./phonezone";
 import { isLifePlanTool, lifePlansAssistant, plansTick } from "./lifeplans";
 import { isTogetherTool, togetherAssistant, togetherTick } from "./together";
@@ -1587,6 +1588,8 @@ async function runTurn(
   const budgetTools = budgetAssistant(env, userId, timeZone);
   // Their Instagram, connected by them (instagram.ts): DMs, comments, posts; sends wait for a YES.
   const instagramTools = instagramAssistant(env, userId);
+  // A real browser for sites with no API (browser.ts); its risky steps wait for a YES.
+  const browserTools = browserAssistant(env, userId);
   const waitingBuys = fromAgent ? { prompt: "", carry: [] as string[] } : await budgetContext(env, userId).catch((err) => {
     console.error("budget: couldn't read the turn's context", err);
     return { prompt: "", carry: [] as string[] };
@@ -1685,6 +1688,7 @@ async function runTurn(
     ...planTools.tools,
     ...budgetTools.tools,
     ...instagramTools.tools,
+    ...browserTools.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -1978,6 +1982,8 @@ async function runTurn(
                                     ? budgetTools.callTool
                                   : isInstagramTool(name)
                                     ? instagramTools.callTool
+                                  : isBrowserTool(name)
+                                    ? browserTools.callTool
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name
@@ -3783,6 +3789,7 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
  * answers every request 503 and skips every tick while data is being moved.
  */
 export { GameRoom } from "./gameroom";
+export { BrowserTask } from "./browser";
 
 export default withMaintenance({
   // <name>.ovoa.ai is a website OVOA built (sites.ts), served before anything

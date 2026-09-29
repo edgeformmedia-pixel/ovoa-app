@@ -171,6 +171,8 @@ export const RULES: Rule[] = [
   at("created_at", "pending_actions"),
   // Instagram DMs and comments the webhook delivered (instagram.ts).
   at("created_at", "instagram_events"),
+  // Browser errands and their results (browser.ts). The logins are kept until they forget them.
+  at("created_at", "browser_tasks"),
   at("created_at", "paused_turns"),
   at("created_at", "command_queue"),
   at("ts", "action_log"),
@@ -378,6 +380,8 @@ export const TABLES = {
   instagram_accounts: "keep",
   instagram_states: "expires",
   instagram_events: "delete",
+  browser_tasks: "delete",
+  browser_logins: "keep",
   ovoa_suggestions: "keep",
 } as const satisfies Record<string, "keep" | "delete" | "mixed" | "expires" | "index">;
 
