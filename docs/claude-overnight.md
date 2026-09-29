@@ -750,3 +750,6 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   Stopped without code changes. Needs the owner: nothing new.
 - 2026-09-29 05:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main is still 7301742.
   Stopped without code changes. Needs the owner: nothing new.
+- 2026-09-29 06:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main moved from 7301742
+  to 431ebc0 (browser agent, pushed by the owner); not merged here, per the rules. Stopped without code changes.
+  Needs the owner: nothing new.
