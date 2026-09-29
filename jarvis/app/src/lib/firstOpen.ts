@@ -13,8 +13,6 @@ import { storage } from "./storage";
 // conversation (app/onboarding.tsx) before the tour.
 //
 // What this file keeps, on this phone, so a step isn't asked twice:
-//   - that the permissions step is still to come: set at sign-up and kept until
-//     it's done, so quitting the app half-way doesn't skip it;
 //   - who said "Not now" to the code screen: only an account from before codes,
 //     which the server doesn't hold (a new one can't skip it);
 //   - who said "Not now" to the consent screen, and to which wording: AI then
@@ -22,6 +20,7 @@ import { storage } from "./storage";
 //     (lib/consent.ts CONSENT_VERSION) is put in front of them once more.
 // All of it goes when someone signs out: the next person gets their own.
 
+/** The permissions step is gone (2026-09-29); a phone that still has this saved has it cleared on sign-out. */
 const PERMISSIONS_KEY = "ovoa.firstOpen.permissions";
 const CODE_LATER_KEY = "ovoa.firstOpen.codeLater";
 const CONSENT_LATER_KEY = "ovoa.firstOpen.consentLater";
@@ -29,15 +28,13 @@ const CONSENT_LATER_KEY = "ovoa.firstOpen.consentLater";
 type State = {
   /** Storage has been read: nothing here is known before that. */
   loaded: boolean;
-  /** The permissions step is still to come (a sign-up on this phone). */
-  permissions: boolean;
   /** The user id that put the code off. */
   codeLater: string | null;
   /** Who put consent off, and which wording (consentLaterKey). */
   consentLater: string | null;
 };
 
-let state: State = { loaded: false, permissions: false, codeLater: null, consentLater: null };
+let state: State = { loaded: false, codeLater: null, consentLater: null };
 const listeners = new Set<() => void>();
 let loading: Promise<void> | null = null;
 
@@ -49,8 +46,8 @@ function set(patch: Partial<State>) {
 function load() {
   loading ??= (async () => {
     const read = (key: string) => storage.get(key).catch(() => null);
-    const [permissions, codeLater, consentLater] = await Promise.all([read(PERMISSIONS_KEY), read(CODE_LATER_KEY), read(CONSENT_LATER_KEY)]);
-    set({ loaded: true, permissions: permissions === "1", codeLater, consentLater });
+    const [codeLater, consentLater] = await Promise.all([read(CODE_LATER_KEY), read(CONSENT_LATER_KEY)]);
+    set({ loaded: true, codeLater, consentLater });
   })();
   return loading;
 }
@@ -66,15 +63,6 @@ const keep = (key: string, value: string | null) =>
   (value === null ? storage.remove(key) : storage.set(key, value)).catch(logFail(`firstOpen: saving ${key}`));
 
 export const firstOpen = {
-  /** An account was just made on this phone: the permissions step comes after the code. */
-  signedUp: () => {
-    set({ permissions: true });
-    void keep(PERMISSIONS_KEY, "1");
-  },
-  permissionsDone: () => {
-    set({ permissions: false });
-    void keep(PERMISSIONS_KEY, null);
-  },
   /** An account from before codes chose "Not now" on the code screen. */
   codeLater: (userId: string) => {
     set({ codeLater: userId });
@@ -88,7 +76,7 @@ export const firstOpen = {
 };
 
 onSignOut("first open", async () => {
-  set({ permissions: false, codeLater: null, consentLater: null });
+  set({ codeLater: null, consentLater: null });
   await Promise.all([storage.remove(PERMISSIONS_KEY), storage.remove(CODE_LATER_KEY), storage.remove(CONSENT_LATER_KEY)]);
 });
 

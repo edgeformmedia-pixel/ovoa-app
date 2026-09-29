@@ -9,7 +9,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { sha256 } from "../src/auth";
+import { hashPassword, sha256 } from "../src/auth";
 import worker from "../src/index";
 import {
   appleIdentityFrom,
@@ -432,15 +432,13 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
     eq("redeeming without the key gets nothing", (await call("POST", "/auth/google/redeem", { code })).status, 400);
     // That spent nothing: a malformed request never reaches the code.
     const redeemed = await call("POST", "/auth/google/redeem", { code, key: start.body.key });
-    eq("a new address gets a ticket, Google's name, and no session", [redeemed.body?.email, redeemed.body?.name, !!redeemed.body?.ticket, "token" in (redeemed.body ?? {})], ["ada@example.com", "Ada Lovelace", true, false]);
+    eq("a new address gets an account straight away: no ticket, no step", [redeemed.status, redeemed.body?.created, redeemed.body?.user?.email, "ticket" in (redeemed.body ?? {})], [201, true, "ada@example.com", false]);
+    eq("named as Google said", redeemed.body?.user?.name, "Ada Lovelace");
     eq("the code works once", (await call("POST", "/auth/google/redeem", { code, key: start.body.key })).body?.expired, true);
-
-    const made = await call("POST", "/auth/email/signup", { ticket: redeemed.body.ticket, name: "Ada L", password: "password123", session: "app" });
-    eq("the name + password step makes the account", [made.status, made.body?.user?.email, made.body?.user?.name], [201, "ada@example.com", "Ada L"]);
     const ada = row(sqlite, "SELECT id, email_verified_at FROM users WHERE email = 'ada@example.com'");
     eq("proven by Google, so verified", typeof ada?.email_verified_at, "number");
-    eq("with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(made.body.token))?.kind, "app");
-    eq("which works", (await call("GET", "/me", undefined, { authorization: `Bearer ${made.body.token}` })).body?.user?.email, "ada@example.com");
+    eq("with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(redeemed.body.token))?.kind, "app");
+    eq("which works", (await call("GET", "/me", undefined, { authorization: `Bearer ${redeemed.body.token}` })).body?.user?.email, "ada@example.com");
 
     // A Google sign-in as far as the app's redeem, for whoever `google` says.
     const viaGoogle = async (email: string, name: string | null) => {
@@ -467,44 +465,28 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
       .prepare("INSERT INTO push_tokens (token, user_id, platform, created_at) VALUES (?, ?, 'ios', ?)")
       .run("ExponentPushToken[mallory]", bobId, Date.now());
     const r2 = await viaGoogle("bob@example.com", "Robert");
-    eq("the owner's proof isn't signed in to someone else's account", "token" in (r2.body ?? {}), false);
-    eq("it gets a ticket to set a new password", [!!r2.body?.ticket, r2.body?.existing, r2.body?.email], [true, true, "bob@example.com"]);
+    eq("the owner's proof signs them in to the account, taken back", [r2.status, r2.body?.user?.id, "ticket" in (r2.body ?? {})], [200, bobId, false]);
     eq("the registrant's password stops working at the proof", await login("bob@example.com", "password123"), 401);
     eq("and their session with it", await me(pw.body.token), 401);
-    eq("every session goes, the Siri key too", sessionsOf("bob@example.com"), 0);
+    eq("their Siri key goes too", sessionsOf("bob@example.com"), 1);
     eq("and their phone stops getting its notifications", row(sqlite, "SELECT count(*) n FROM push_tokens WHERE user_id = ?", bobId)?.n, 0);
-    eq("it isn't verified until the owner picks a password", row(sqlite, "SELECT email_verified_at v FROM users WHERE id = ?", bobId)?.v, null);
-    const bob = await call("POST", "/auth/email/signup", { ticket: r2.body.ticket, name: "Robert", password: "newpassword1", session: "app" });
-    eq("the step signs the owner in to it", [bob.status, bob.body?.user?.id, bob.body?.user?.name, bob.body?.passwordChanged], [200, bobId, "Robert", true]);
     eq("now verified", typeof row(sqlite, "SELECT email_verified_at v FROM users WHERE id = ?", bobId)?.v, "number");
-    eq("with the owner's password", await login("bob@example.com", "newpassword1"), 200);
-    eq("and not the registrant's", await login("bob@example.com", "password123"), 401);
-    eq("with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(bob.body.token))?.kind, "app");
+    eq("with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(r2.body.token))?.kind, "app");
+    eq("which works", await me(r2.body.token), 200);
 
     // Google, an account whose address was proven before: signed straight in, password kept.
+    const bobPw = await hashPassword("newpassword1");
+    sqlite.prepare("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?").run(bobPw.hash, bobPw.salt, bobId);
     const r3 = await viaGoogle("bob@example.com", "Robert");
     eq("a verified account is signed straight in", [r3.body?.user?.id, "ticket" in (r3.body ?? {})], [bobId, false]);
     eq("with an app session", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(r3.body.token))?.kind, "app");
     eq("and its password is left alone", await login("bob@example.com", "newpassword1"), 200);
 
-    // Registered by someone else after the owner's proof, before the owner's step.
-    const late = await viaGoogle("dan@example.com", "Dan");
-    const squat = await call("POST", "/auth/signup", { email: "dan@example.com", password: "password123", name: "Mallory" });
-    eq("an address can still be registered meanwhile", squat.status, 201);
-    const dan = await call("POST", "/auth/email/signup", { ticket: late.body.ticket, name: "Dan", password: "danspassword", session: "app" });
-    eq("the ticket takes it over", [dan.status, dan.body?.user?.name, dan.body?.passwordChanged], [200, "Dan", true]);
-    eq("the registrant is signed out", await me(squat.body.token), 401);
-    eq("and their password is gone", [await login("dan@example.com", "password123"), await login("dan@example.com", "danspassword")], [401, 200]);
-
-    // Two tickets for one new address: the second finds a proven account and keeps its password.
+    // Twice for one new address: the second finds the account the first made.
     const t1 = await viaGoogle("eve@example.com", null);
     const t2 = await viaGoogle("eve@example.com", null);
-    eq("a new address twice is two tickets", [!!t1.body?.ticket, !!t2.body?.ticket, "existing" in (t2.body ?? {})], [true, true, false]);
-    const eve = await call("POST", "/auth/email/signup", { ticket: t1.body.ticket, name: "Eve", password: "firstpassword", session: "app" });
-    eq("the first makes the account", [eve.status, "passwordChanged" in (eve.body ?? {})], [201, false]);
-    const second = await call("POST", "/auth/email/signup", { ticket: t2.body.ticket, name: "Eve", password: "otherpassword", session: "app" });
-    eq("the second signs in to it and says the password didn't change", [second.status, second.body?.passwordChanged], [200, false]);
-    eq("so the first password is still the one", [await login("eve@example.com", "firstpassword"), await login("eve@example.com", "otherpassword")], [200, 401]);
+    eq("the first makes the account, the second signs in to it", [t1.status, t1.body?.created, t2.status, "created" in (t2.body ?? {}) && t2.body.created], [201, true, 200, false]);
+    eq("one account", row(sqlite, "SELECT count(*) n FROM users WHERE email = 'eve@example.com'")?.n, 1);
 
     // An account from before sign-ups had to prove their address: a proof only stamps it.
     const old = await call("POST", "/auth/signup", { email: "olga@example.com", password: "password123", name: "Olga" });
@@ -530,7 +512,7 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
     const gusId = String(row(sqlite, "SELECT id FROM users WHERE email = 'gus@example.com'")?.id);
     const early = await connectState(sq.body.token);
     const rGus = await viaGoogle("gus@example.com", "Gus");
-    eq("the owner's proof takes it back", rGus.body?.existing, true);
+    eq("the owner's proof takes it back and signs them in", [rGus.status, "token" in (rGus.body ?? {})], [200, true]);
     eq("and the registrant's connect in progress with it", row(sqlite, "SELECT count(*) n FROM oauth_states WHERE user_id = ?", gusId)?.n, 0);
     const lateCb = await call("GET", `/google/callback?state=${early}&code=abc`);
     eq("so finishing Google's page afterwards connects nothing", [lateCb.location, googlesOf(gusId)], [null, 0]);
@@ -544,7 +526,7 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
       [cachedCb.location, googlesOf(gusId)],
       ["ovoa://google-callback?google=error&message=You+were+signed+out.+Sign+in+and+connect+again.", 0],
     );
-    const gus = await call("POST", "/auth/email/signup", { ticket: rGus.body.ticket, name: "Gus", password: "guspassword1", session: "app" });
+    const gus = rGus;
     const stub = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input instanceof Request ? input.url : input);
@@ -572,14 +554,6 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
       .run("connect-state", String(ada?.id), "v", "ovoa://google-callback", Date.now() + 60_000);
     const connect = await call("GET", "/google/callback?state=connect-state&error=access_denied");
     eq("a connect state still runs the connect flow", connect.location, "ovoa://google-callback?google=error&message=You+cancelled");
-
-    // The site's ticket signup is unchanged: a web session.
-    google = googleClaims({ email: "carol@example.com", name: null, exp: String(Math.floor(Date.now() / 1000) + 600) });
-    const s4 = await call("POST", "/auth/google/start", { returnUrl: "ovoa://google-signin" });
-    const cb4 = await call("GET", `/google/callback?state=${new URL(s4.body.url).searchParams.get("state")}&code=abc`);
-    const r4 = await call("POST", "/auth/google/redeem", { code: new URL(cb4.location!).searchParams.get("code"), key: s4.body.key });
-    const web = await call("POST", "/auth/email/signup", { ticket: r4.body.ticket, name: "Carol", password: "password123" });
-    eq("without session: app the ticket makes a web session, as before", row(sqlite, "SELECT kind FROM sessions WHERE token_hash = ?", await sha256(web.body.token))?.kind, "web");
 
     // Apple, a new person.
     forgetAppleKeys();
@@ -659,6 +633,8 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
     const hal = await call("POST", "/auth/signup", { email: "hal@example.com", password: "password123", name: "Hal" });
     eq("a new app sign-up must prove its address", [hal.status, hal.body?.user?.mustVerify, hal.body?.user?.emailVerified], [201, true, false]);
     eq("and is held until then", await routinesFor(hal.body.token), 403);
+    const noName = await call("POST", "/auth/signup", { email: "nan@example.com", password: "password123" });
+    eq("email and password are enough to sign up: the name comes later", [noName.status, noName.body?.user?.name], [201, ""]);
     const halProof = await call("POST", "/me/email/verify", { code: await debugCode("hal@example.com") }, auth(hal.body.token));
     eq("the code in the app proves it", [halProof.status, halProof.body?.emailVerified], [200, true]);
     eq("without signing anyone out", await me(hal.body.token), 200);
@@ -672,20 +648,17 @@ subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
       .prepare("INSERT INTO google_accounts (id, user_id, email, is_default, scopes, refresh_token_enc, connected_at) VALUES (?, ?, ?, 1, '', 'x', ?)")
       .run("g-ivy", ivyId, "mallory@gmail.com", Date.now());
     const rIvy = await viaGoogle("ivy@example.com", "Ivy");
-    eq("Google takes back a sign-up still waiting for its code", [!!rIvy.body?.ticket, rIvy.body?.existing], [true, true]);
-    eq("its sessions go", await me(ivy.body.token), 401);
+    eq("Google takes back a sign-up still waiting for its code, and signs the owner in", [rIvy.status, rIvy.body?.user?.id, "ticket" in (rIvy.body ?? {})], [200, ivyId, false]);
+    eq("its old sessions go", await me(ivy.body.token), 401);
     eq("and so does the Google account connected to it", row(sqlite, "SELECT count(*) n FROM google_accounts WHERE user_id = ?", ivyId)?.n, 0);
-    const ivyStep = await call("POST", "/auth/email/signup", { ticket: rIvy.body.ticket, name: "Ivy", password: "ivyspassword", session: "app" });
-    eq("the step makes it the owner's", [ivyStep.status, ivyStep.body?.user?.id, ivyStep.body?.passwordChanged], [200, ivyId, true]);
-    eq("proven, so no longer held", [ivyStep.body?.user?.emailVerified, ivyStep.body?.user?.mustVerify], [true, false]);
-    eq("everything opens up for the owner", await routinesFor(ivyStep.body.token), 200);
+    eq("proven, so no longer held", [rIvy.body?.user?.emailVerified, rIvy.body?.user?.mustVerify], [true, false]);
+    eq("everything opens up for the owner", await routinesFor(rIvy.body.token), 200);
 
     // New accounts from Google and Apple are proven already, and start where an email sign-up does.
     const kim = await viaGoogle("kim@example.com", "Kim");
-    const kimMade = await call("POST", "/auth/email/signup", { ticket: kim.body.ticket, name: "Kim", password: "password123", session: "app" });
     const fresh = (u: Record<string, any> | undefined) => [u?.emailVerified, u?.mustVerify, u?.aiConsent?.given, u?.onboarded];
-    eq("a Google sign-up: proven, not held, no consent yet, setup to do", fresh(kimMade.body?.user), [true, false, false, false]);
-    eq("and it isn't held", await routinesFor(kimMade.body.token), 200);
+    eq("a Google sign-up: proven, not held, no consent yet, setup to do", fresh(kim.body?.user), [true, false, false, false]);
+    eq("and it isn't held", await routinesFor(kim.body.token), 200);
     const lee = await apple({ sub: "002.lee", email: "lee@example.com" });
     eq("an Apple sign-up: the same", fresh(lee.body?.user), [true, false, false, false]);
     delete codesEnv.EMAIL_CODES_TO_LOG;

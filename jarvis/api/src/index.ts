@@ -405,7 +405,8 @@ const emailField = z.string().trim().toLowerCase().pipe(z.email().max(254));
 const signupSchema = z.object({
   email: emailField,
   password: z.string().min(8).max(200),
-  name: z.string().trim().min(1).max(80),
+  // Optional: the app asks for email and password only. Setup's first question asks the name.
+  name: z.string().trim().max(80).default(""),
 });
 
 const loginSchema = z.object({
@@ -1057,9 +1058,11 @@ app.post("/auth/google/redeem", async (c) => {
     logAuth("google", "code refused", null);
     return c.json({ error: "That Google sign-in has run out of time. Try again.", expired: true }, 400);
   }
-  const result = await afterProven(c.env, who.email, who.name, { kind: "app" });
-  logAuth("google", `${provenOutcome(result)} (app)`, who.email);
-  return c.json(result);
+  // One tap, like Apple: Google has proven the address, so the account is made
+  // (or signed in to) right here, never a name + password step afterwards.
+  const result = await afterApple(c.env, who.email, who.name, null, { kind: "app" });
+  logAuth("google", `${result.created ? "created" : "signed in"} (app)`, who.email, { user: result.user?.id });
+  return c.json(result, result.created ? 201 : 200);
 });
 
 /** A nonce for Sign in with Apple, good once: the app hands it to Apple, which signs it into the token. */

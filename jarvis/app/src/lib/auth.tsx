@@ -3,12 +3,12 @@ import { AppState } from "react-native";
 import { devlog, logFail } from "./devlog";
 import { api, ApiError, whenCodeNeeded, whenSessionDies, type User } from "./api";
 import { noteConsentFromUser } from "./consent";
-import { firstOpen } from "./firstOpen";
 import { unregisterPush } from "./push";
 import { setLogToken } from "./remoteLog";
 import { setRecordingsOwner } from "./recordings";
 import { resetForSignOut } from "./signOut";
 import { storage } from "./storage";
+import { TERMS_VERSION } from "./terms";
 
 /**
  * Signing out tells the server twice (push, then the session), each with the
@@ -49,22 +49,18 @@ type AuthState = {
   token: string | null;
   user: User | null;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, name: string) => Promise<void>;
-  /** Google or Apple found the account: signed in, as with a password. `isNew`: Apple just made it, as a sign-up. */
+  signUp: (email: string, password: string, name?: string) => Promise<void>;
+  /** Google or Apple: signed in, as with a password. `isNew`: the server just made the account, as a sign-up. */
   signInWithSession: (session: { token: string; user: User }, isNew?: boolean) => Promise<void>;
-  /** Google proved an address with no account (or an unproven one): the name + password step makes or claims it. */
-  signUpWithTicket: (ticket: string, name: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   setUser: (user: User) => void;
   /** Reads GET /me again: after the code is typed, consent is given, or the server said either is missing. */
   refreshUser: () => Promise<void>;
   /**
-   * True right after sign-up, until the first-open permissions step is done
-   * (app/permissions.tsx). Connect Google isn't part of first open any more:
-   * it's in Settings.
+   * True right after sign-up on this phone: the plan isn't known yet, so
+   * app/_layout.tsx waits the moment it takes before deciding what comes first.
    */
   onboarding: boolean;
-  finishOnboarding: () => void;
   /** When sign-up's own code went out, so the code screen counts down from it instead of asking again. */
   codeSentAt: number | null;
   /** This phone has been signed in before, so "Sign in" is the likelier form. */
@@ -94,11 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [hasAccountHere, setHasAccountHere] = useState(false);
   const [lastEmail, setLastEmail] = useState<string | null>(null);
   const [codeSentAt, setCodeSentAt] = useState<number | null>(null);
-  /** A new account on this phone: the permissions step is kept for it, even across a restart (lib/firstOpen.ts). */
-  const setOnboarding = useCallback((on: boolean) => {
-    setOnboardingState(on);
-    if (on) firstOpen.signedUp();
-  }, []);
+  const setOnboarding = setOnboardingState;
 
   // Server-side logs get tagged with whoever is signed in, and recordings are theirs.
   useEffect(() => setLogToken(token), [token]);
@@ -235,7 +227,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const start = async ({ token, user }: { token: string; user: User }) => {
+  const start = async ({ token, user: fresh }: { token: string; user: User }) => {
+    // Signing in is agreeing to the Terms (the line on app/sign-in.tsx), so the
+    // answer is kept now and app/terms.tsx never comes up as a step. Best
+    // effort: if it doesn't go through, the Terms screen asks as before.
+    let user = fresh;
+    if (user.terms?.accepted === false) {
+      try {
+        const { terms } = await api.agreeToTerms(token, TERMS_VERSION);
+        user = { ...user, terms };
+        devlog("log", `terms: agreed at sign-in to version ${TERMS_VERSION}`);
+      } catch (err) {
+        devlog("warn", "terms: couldn't record the agreement at sign-in", err instanceof Error ? err.message : String(err));
+      }
+    }
     // Signed in the moment the server says so. The keychain write comes after and
     // cannot undo it: setItemAsync rejects when it can't write (Expo SDK 57 docs),
     // and throwing from here threw away an account that had just been created.
@@ -252,19 +257,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signIn: async (email, password) => start(await api.login(email, password)),
     signUp: async (email, password, name) => {
       const session = await api.signup(email, password, name);
-      // Then the emailed code (app/verify-email.tsx), then the permissions.
+      // Then the emailed code (app/verify-email.tsx), then the app.
       setCodeSentAt(session.codeSent ? Date.now() : null);
       setOnboarding(true);
       await start(session);
     },
     signInWithSession: async (session, isNew) => {
       if (isNew) setOnboarding(true);
-      await start(session);
-    },
-    signUpWithTicket: async (ticket, name, password) => {
-      const session = await api.ticketSignup(ticket, name, password);
-      // A new account, not one the step gave a new password.
-      if (session.passwordChanged === undefined) setOnboarding(true);
       await start(session);
     },
     signOut: async () => {
@@ -285,7 +284,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser,
     refreshUser,
     onboarding,
-    finishOnboarding: () => setOnboarding(false),
     codeSentAt,
     hasAccountHere,
     lastEmail,

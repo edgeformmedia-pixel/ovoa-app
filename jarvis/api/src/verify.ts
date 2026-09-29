@@ -34,6 +34,8 @@ const OPEN_ROUTES: [method: string, path: RegExp][] = [
   ["DELETE", /^\/me$/],
   ["POST", /^\/auth\/logout$/],
   ["POST", /^\/me\/email\/(code|verify)$/],
+  // Agreeing to the Terms happens on the sign-in screen, before the code step.
+  ["POST", /^\/me\/terms$/],
 ];
 
 export const openWhileUnverified = (method: string, path: string) => {

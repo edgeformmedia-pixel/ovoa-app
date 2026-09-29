@@ -28,16 +28,16 @@ const SIGN_UP = "https://ovoa.ai/text";
 
 type Row = { used: number; email: string | null };
 
-export const ASK_EMAIL = `That was your ${FREE}th free text. Reply with your email and you'll get ${FREE} more, no account needed.`;
-export const GOT_EMAIL = `Thanks! You've got ${FREE} more free texts. Go ahead.`;
+export const ASK_EMAIL = `That was your ${FREE}th free text. Reply with your email for ${FREE} more. No account needed.`;
+export const GOT_EMAIL = `Thanks! ${FREE} more free texts. Go ahead.`;
 export const MAKE_ACCOUNT = (email: string) =>
-  `You've used your free texts. Make a free OVOA account with ${email} (${SIGN_UP}), then text me that email and I'll link this number: you get ${FREE} more, and everything we made here comes with you.`;
+  `Out of free texts. Sign up free at ${SIGN_UP} with ${email}, then text me that email again. I'll link this number and you get ${FREE} more.`;
 export const CAPPED = `That was your last free text. Pick a plan to keep texting me (I'll remember all of this): ${SIGN_UP}`;
 
 export const LINK_EMAILED = (email: string) =>
-  `That email has an OVOA account. I just emailed ${email} a link: tap it on this phone and send the text it opens, and your texts go to your account and your plan.`;
+  `That email has an OVOA account. I just sent ${email} a link. Tap it on this phone and send the text it opens. That's it.`;
 export const LINK_IN_APP =
-  "That email has an OVOA account. To text me as you, open the OVOA app, go to Settings, and tap Link my number under Text OVOA.";
+  "That email has an OVOA account. In the OVOA app, tap Settings, then Link my number.";
 /** One link email per account in this long, however many times the address is texted. */
 const LINK_EMAIL_EVERY_MS = 10 * 60_000;
 

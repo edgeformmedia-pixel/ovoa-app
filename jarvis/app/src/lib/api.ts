@@ -1144,7 +1144,7 @@ async function streamedTurn<R extends { meta?: unknown } = ChatResponse>(
 
 export const api = {
   /** `codeSent`: the first code went to the address with the sign-up (api/src/verify.ts). Missing from older servers. */
-  signup: (email: string, password: string, name: string) =>
+  signup: (email: string, password: string, name = "") =>
     request<{ token: string; user: User; codeSent?: boolean }>("/auth/signup", null, {
       method: "POST",
       body: JSON.stringify({ email, password, name }),
@@ -1172,13 +1172,6 @@ export const api = {
     request<ProvenSignIn>("/auth/apple", null, {
       method: "POST",
       body: JSON.stringify({ identityToken, nonce, fullName }),
-    }),
-  /** The name + password step after Google proved an address with no account (or an unproven one) behind it. */
-  ticketSignup: (ticket: string, name: string, password: string) =>
-    // `passwordChanged` is there only when the account already existed.
-    request<{ token: string; user: User; passwordChanged?: boolean }>("/auth/email/signup", null, {
-      method: "POST",
-      body: JSON.stringify({ ticket, name, password, session: "app" }),
     }),
   logout: (token: string) => request("/auth/logout", token, { method: "POST" }),
   /** `plan` is missing from servers from before the plans. */

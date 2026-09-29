@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -13,36 +14,35 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
+import { Btn } from "../components/ui";
 import { ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { devlog } from "../lib/devlog";
 import { appleAuth, appleSignInAvailable, signInWithApple, signInWithGoogle } from "../lib/signInWith";
-import { colors } from "../lib/theme";
+import { TERMS, TERMS_UPDATED } from "../lib/terms";
+import { colors, space, type } from "../lib/theme";
 
-// The screen almost nobody got past. device_logs, 2026-09-21: 38 devices, 123
-// failed sign-ins in clusters of 4-7, 4 failed sign-ups from one of them, and 2
-// accounts to show for it. Everybody landed on "Sign in", typed an address that
-// had no account behind it, read "Invalid email or password" — which is what the
-// server also says for a typo, and for a missing account, and for a bad password
-// — and left. So: start a new phone on the form that can succeed, say which box
-// is wrong, and always leave a door open.
+// The one screen a new person sees before the app, kept as small as it can be.
 //
-// Google and Apple are two more doors, on both forms: they sign in to the
-// account with that address. When there isn't one, Google asks only for a name
-// and a password to make it, and Apple makes it without asking anything. An
-// account made with the address before anyone proved it gets a new password
-// from the person Google just proved it for (lib/signInWith.ts, api/src/signin.ts).
+// Continue with Apple or Google is one tap and nothing after it: the server makes
+// the account there and then (api/src/index.ts afterApple). Email and a password
+// is the smaller link under them. The Terms are one line at the bottom, and
+// continuing is agreeing (lib/auth.tsx records it), so there's no Terms screen
+// to scroll. The phone's permissions are asked where each is first needed, not
+// in a row up front. Only an email sign-up has one more step, the emailed code,
+// because nobody has proven that address yet.
+//
+// History: device_logs, 2026-09-21: 38 devices, 123 failed sign-ins in clusters
+// of 4-7, 4 failed sign-ups from one of them, and 2 accounts to show for it.
+// Everybody landed on "Sign in", typed an address that had no account behind it,
+// read "Invalid email or password" — which is what the server also says for a
+// typo, and for a missing account, and for a bad password — and left. So: start
+// a new phone on the form that can succeed, say which box is wrong, and always
+// leave a door open.
 
-type Field = "name" | "email" | "password";
+type Field = "email" | "password";
 type Fields = Partial<Record<Field, string>>;
 type Provider = "Google" | "Apple";
-/**
- * Google proved an address with no account yet: the name + password step.
- * (Apple never hands back a ticket now, api/src/index.ts afterApple, but the
- * step takes one from either.) `existing`: there is an account, never proven,
- * and this gives it a new password.
- */
-type Finishing = { ticket: string; email: string; via: Provider; existing: boolean };
 
 /** Rough enough to catch a typo before a round trip; the server has the real rule. */
 const LOOKS_LIKE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -54,12 +54,11 @@ function domainOf(address: string) {
 }
 
 export default function SignIn() {
-  const { signIn, signUp, signInWithSession, signUpWithTicket, hasAccountHere, lastEmail } = useAuth();
+  const { signIn, signUp, signInWithSession, hasAccountHere, lastEmail } = useAuth();
   // A phone that has been signed in opens on Sign in with the last address
   // filled in (lib/auth.tsx LAST_EMAIL_KEY): what's left to type is the
   // password, and Create an account is still the link underneath.
   const [mode, setMode] = useState<"signin" | "signup">(hasAccountHere ? "signin" : "signup");
-  const [name, setName] = useState("");
   const [email, setEmail] = useState(lastEmail ?? "");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +68,9 @@ export default function SignIn() {
   const [busy, setBusy] = useState(false);
   /** Which of Google or Apple is on screen or being checked. */
   const [provider, setProvider] = useState<Provider | null>(null);
-  const [finishing, setFinishing] = useState<Finishing | null>(null);
+  /** The email form is behind a link, unless this phone already knows an address. */
+  const [showEmail, setShowEmail] = useState(!!lastEmail);
+  const [showTerms, setShowTerms] = useState(false);
   /** Only where Apple's sheet can open: iOS, in the installed app. */
   const [appleShown, setAppleShown] = useState(false);
 
@@ -86,8 +87,6 @@ export default function SignIn() {
   }, []);
 
   const isSignup = mode === "signup";
-  /** Either form that ends with a new account asks for a name and an 8+ password. */
-  const makesAccount = isSignup || !!finishing;
 
   const switchTo = (next: "signin" | "signup", because?: string) => {
     devlog("log", `sign-in: switching to ${next}${because ? ` — ${because}` : ""}`);
@@ -105,32 +104,11 @@ export default function SignIn() {
   /** Everything the server would reject, caught here so nobody round-trips to find out. */
   const check = () => {
     const bad: Fields = {};
-    if (makesAccount && !name.trim()) bad.name = "Enter your name";
-    if (!finishing) {
-      if (!email.trim()) bad.email = "Enter your email";
-      else if (!LOOKS_LIKE_EMAIL.test(email.trim())) bad.email = "That email doesn't look right — check it for a typo";
-    }
-    if (!password) bad.password = finishing ? "Pick a password" : "Enter your password";
-    else if (makesAccount && password.length < 8) bad.password = "Password must be at least 8 characters";
+    if (!email.trim()) bad.email = "Enter your email";
+    else if (!LOOKS_LIKE_EMAIL.test(email.trim())) bad.email = "That email doesn't look right — check it for a typo";
+    if (!password) bad.password = "Enter your password";
+    else if (isSignup && password.length < 8) bad.password = "Password must be at least 8 characters";
     return bad;
-  };
-
-  /** The name + password step after Google, making (or claiming) the account with the proven address. */
-  const finish = async (done: Finishing) => {
-    const what = done.existing ? "new password" : "sign-up";
-    devlog("log", `sign-in: finishing a ${done.via} ${what} · ${domainOf(done.email)}`);
-    try {
-      await signUpWithTicket(done.ticket, name.trim(), password);
-      devlog("log", `sign-in: ${done.existing ? "password set" : "account created"} with ${done.via}`);
-    } catch (err) {
-      setBusy(false);
-      devlog("err", "sign-in: finishing refused", err instanceof Error ? err.message : String(err));
-      if (err instanceof ApiError && Object.keys(err.fields).length) return setFields(err.fields);
-      // Most likely the half hour ran out. Starting again is one tap away.
-      setFinishing(null);
-      setPassword("");
-      setError(err instanceof Error ? err.message : "Something went wrong");
-    }
   };
 
   const submit = async () => {
@@ -140,15 +118,14 @@ export default function SignIn() {
     const bad = check();
     setFields(bad);
     if (Object.keys(bad).length) {
-      devlog("warn", `sign-in: ${finishing ? "finishing" : mode} not sent`, Object.keys(bad).join(", "));
+      devlog("warn", `sign-in: ${mode} not sent`, Object.keys(bad).join(", "));
       return;
     }
     setBusy(true);
-    if (finishing) return finish(finishing);
     const address = email.trim();
     devlog("log", `sign-in: ${isSignup ? "creating an account" : "signing in"} · ${domainOf(address)}`);
     try {
-      if (isSignup) await signUp(address, password, name.trim());
+      if (isSignup) await signUp(address, password);
       else await signIn(address, password);
       devlog("log", `sign-in: ${isSignup ? "account created" : "signed in"}`);
     } catch (err) {
@@ -177,7 +154,7 @@ export default function SignIn() {
     }
   };
 
-  /** Google or Apple: signed in, or on to the name + password step. Cancelling says nothing. */
+  /** Google or Apple: signed in, with an account made on the spot if there wasn't one. Cancelling says nothing. */
   const continueWith = async (via: Provider) => {
     if (busy || provider) return;
     setError(null);
@@ -191,16 +168,10 @@ export default function SignIn() {
         devlog("log", `sign-in: ${via} cancelled`);
         return;
       }
-      if ("token" in proven) {
-        await signInWithSession(proven, !!proven.created);
-        devlog("log", `sign-in: ${proven.created ? "account created" : "signed in"} with ${via}`);
-        return;
-      }
-      const existing = !!proven.existing;
-      devlog("log", `sign-in: ${via} proved an address with ${existing ? "an unproven account" : "no account yet"} · ${domainOf(proven.email)}`);
-      setFinishing({ ticket: proven.ticket, email: proven.email, via, existing });
-      if (proven.name) setName(proven.name);
-      setPassword("");
+      // A ticket is the old two-step Google sign-up, which the server no longer sends.
+      if (!("token" in proven)) throw new Error(`${via} sign-in didn't work just now. Try again.`);
+      await signInWithSession(proven, !!proven.created);
+      devlog("log", `sign-in: ${proven.created ? "account created" : "signed in"} with ${via}`);
     } catch (err) {
       devlog("err", `sign-in: ${via} failed`, err instanceof Error ? err.message : String(err));
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -209,118 +180,59 @@ export default function SignIn() {
     }
   };
 
-  const nameField = (
-    <Field error={fields.name}>
-      <TextInput
-        style={[styles.input, !!fields.name && styles.inputBad]}
-        placeholder="Your name"
-        placeholderTextColor={colors.inkMute}
-        value={name}
-        onChangeText={onEdit("name", setName)}
-        textContentType="name"
-        autoComplete="name"
-        returnKeyType="next"
-      />
-    </Field>
-  );
-  const passwordField = (
-    <Field error={fields.password}>
-      <TextInput
-        style={[styles.input, !!fields.password && styles.inputBad]}
-        placeholder={makesAccount ? "Password (8+ characters)" : "Password"}
-        placeholderTextColor={colors.inkMute}
-        value={password}
-        onChangeText={onEdit("password", setPassword)}
-        secureTextEntry
-        textContentType={makesAccount ? "newPassword" : "password"}
-        autoComplete={makesAccount ? "new-password" : "current-password"}
-        returnKeyType="go"
-        onSubmitEditing={submit}
-      />
-    </Field>
-  );
-  const mainButton = (label: string) => (
-    <Pressable
-      style={({ pressed }) => [styles.button, (pressed || busy) && { opacity: 0.7 }]}
-      onPress={submit}
-      disabled={busy}
-    >
-      {busy ? <ActivityIndicator color={colors.paper} /> : <Text style={styles.buttonText}>{label}</Text>}
-    </Pressable>
-  );
+  const waiting = !!provider || busy;
 
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.safe}>
-        {/* Scrolls only when it has to: a small phone with the keyboard up, now that there are more rows. */}
+        {/* Scrolls only when it has to: a small phone with the keyboard up. */}
         <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled" bounces={false}>
           <Image source={require("../../assets/logo-wordmark.png")} style={styles.logo} resizeMode="contain" accessibilityLabel="OVOA" />
+          <Text style={styles.subtitle}>{hasAccountHere ? "Welcome back" : "Get started in one tap"}</Text>
 
-          {finishing ? (
-            <>
-              <Text style={styles.subtitle}>One more step</Text>
-              <Text style={styles.note}>
-                {finishing.existing
-                  ? `${finishing.via} confirmed ${finishing.email}. There's already an account with this email, made before anyone confirmed it, so pick a new password for it.`
-                  : `${finishing.via} confirmed ${finishing.email}. Add your name, and a password for signing in with your email.`}
+          <View style={[styles.providers, waiting && styles.waiting]}>
+            {appleShown && appleAuth && (
+              // Apple's own button, as App Review requires: its look can't be restyled.
+              <appleAuth.AppleAuthenticationButton
+                buttonType={appleAuth.AppleAuthenticationButtonType.CONTINUE}
+                buttonStyle={appleAuth.AppleAuthenticationButtonStyle.BLACK}
+                cornerRadius={12}
+                style={styles.appleButton}
+                onPress={() => void continueWith("Apple")}
+              />
+            )}
+            <Pressable
+              style={({ pressed }) => [styles.google, pressed && { opacity: 0.7 }]}
+              onPress={() => void continueWith("Google")}
+              accessibilityRole="button"
+              accessibilityLabel="Continue with Google"
+            >
+              {provider === "Google" ? (
+                <ActivityIndicator color={colors.ink} />
+              ) : (
+                <>
+                  <GoogleG />
+                  <Text style={styles.googleText}>Continue with Google</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+
+          {error && !showEmail && <Text style={styles.error}>{error}</Text>}
+
+          {!showEmail ? (
+            <Pressable onPress={() => setShowEmail(true)} style={styles.switch} accessibilityRole="button">
+              <Text style={styles.switchText}>
+                Use <Text style={{ color: colors.now }}>email</Text> instead
               </Text>
-              {nameField}
-              {passwordField}
-              {error && <Text style={styles.error}>{error}</Text>}
-              {mainButton(finishing.existing ? "Set password and sign in" : "Create account")}
-              <Pressable
-                onPress={() => {
-                  devlog("log", `sign-in: left the ${finishing.via} ${finishing.existing ? "new password" : "sign-up"}`);
-                  setFinishing(null);
-                  setPassword("");
-                  setFields({});
-                  setError(null);
-                }}
-                style={styles.switch}
-                disabled={busy}
-              >
-                <Text style={styles.switchText}>Cancel</Text>
-              </Pressable>
-            </>
+            </Pressable>
           ) : (
-            <>
-              <Text style={styles.subtitle}>{isSignup ? "Create your account" : "Welcome back"}</Text>
-
-              <View style={[styles.providers, (!!provider || busy) && styles.waiting]}>
-                {appleShown && appleAuth && (
-                  // Apple's own button, as App Review requires: its look can't be restyled.
-                  <appleAuth.AppleAuthenticationButton
-                    buttonType={appleAuth.AppleAuthenticationButtonType.CONTINUE}
-                    buttonStyle={appleAuth.AppleAuthenticationButtonStyle.BLACK}
-                    cornerRadius={12}
-                    style={styles.appleButton}
-                    onPress={() => void continueWith("Apple")}
-                  />
-                )}
-                <Pressable
-                  style={({ pressed }) => [styles.google, pressed && { opacity: 0.7 }]}
-                  onPress={() => void continueWith("Google")}
-                  accessibilityRole="button"
-                  accessibilityLabel="Continue with Google"
-                >
-                  {provider === "Google" ? (
-                    <ActivityIndicator color={colors.ink} />
-                  ) : (
-                    <>
-                      <GoogleG />
-                      <Text style={styles.googleText}>Continue with Google</Text>
-                    </>
-                  )}
-                </Pressable>
-              </View>
-
+            <View style={[styles.form, waiting && styles.waiting]}>
               <View style={styles.or}>
                 <View style={styles.orLine} />
                 <Text style={styles.orText}>or with your email</Text>
                 <View style={styles.orLine} />
               </View>
-
-              {isSignup && nameField}
               <Field error={fields.email}>
                 <TextInput
                   style={[styles.input, !!fields.email && styles.inputBad]}
@@ -336,11 +248,30 @@ export default function SignIn() {
                   returnKeyType="next"
                 />
               </Field>
-              {passwordField}
+              <Field error={fields.password}>
+                <TextInput
+                  style={[styles.input, !!fields.password && styles.inputBad]}
+                  placeholder={isSignup ? "Password (8+ characters)" : "Password"}
+                  placeholderTextColor={colors.inkMute}
+                  value={password}
+                  onChangeText={onEdit("password", setPassword)}
+                  secureTextEntry
+                  textContentType={isSignup ? "newPassword" : "password"}
+                  autoComplete={isSignup ? "new-password" : "current-password"}
+                  returnKeyType="go"
+                  onSubmitEditing={submit}
+                />
+              </Field>
 
               {error && <Text style={styles.error}>{error}</Text>}
 
-              {mainButton(isSignup ? "Create account" : "Sign in")}
+              <Pressable
+                style={({ pressed }) => [styles.button, (pressed || busy) && { opacity: 0.7 }]}
+                onPress={submit}
+                disabled={busy}
+              >
+                {busy ? <ActivityIndicator color={colors.paper} /> : <Text style={styles.buttonText}>{isSignup ? "Create account" : "Sign in"}</Text>}
+              </Pressable>
 
               {offerSignup && (
                 <Pressable style={styles.secondary} onPress={() => switchTo("signup")}>
@@ -354,10 +285,41 @@ export default function SignIn() {
                   <Text style={{ color: colors.now }}>{isSignup ? "Sign in" : "Create an account"}</Text>
                 </Text>
               </Pressable>
-            </>
+            </View>
           )}
+
+          {/* Continuing is agreeing: lib/auth.tsx records it once the account is in. */}
+          <Text style={styles.terms}>
+            By continuing you agree to the{" "}
+            <Text style={styles.termsLink} onPress={() => setShowTerms(true)} accessibilityRole="link">
+              Terms of Service
+            </Text>
+            .
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal visible={showTerms} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowTerms(false)}>
+        <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+          <ScrollView contentContainerStyle={styles.termsPage}>
+            <Text style={styles.termsTitle}>Terms of Service</Text>
+            <Text style={styles.termsLead}>Last updated {TERMS_UPDATED}.</Text>
+            {TERMS.map((section) => (
+              <View key={section.title} style={{ gap: space.s2 }}>
+                <Text style={styles.termsHeading}>{section.title}</Text>
+                {section.paragraphs.map((p, i) => (
+                  <Text key={i} style={styles.termsBody}>
+                    {p}
+                  </Text>
+                ))}
+              </View>
+            ))}
+          </ScrollView>
+          <View style={styles.termsFoot}>
+            <Btn label="Close" kind="go" onPress={() => setShowTerms(false)} />
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -407,7 +369,7 @@ const styles = StyleSheet.create({
   // needing new artwork — it is pure alpha, so the letterforms are unchanged.
   logo: { width: "86%", height: 110, alignSelf: "center", marginBottom: 8, tintColor: colors.ink },
   subtitle: { color: colors.inkMute, fontSize: 16, textAlign: "center", marginBottom: 20 },
-  note: { color: colors.inkDim, fontSize: 15, lineHeight: 21, textAlign: "center", marginTop: -12, marginBottom: 8 },
+  form: { gap: 12 },
   providers: { gap: 12 },
   /** While Google or Apple is being asked, or the form is sending: dimmed and not pressable. */
   waiting: { opacity: 0.6, pointerEvents: "none" },
@@ -461,4 +423,18 @@ const styles = StyleSheet.create({
   secondaryText: { color: colors.now, fontSize: 16, fontWeight: "600" },
   switch: { alignItems: "center", paddingVertical: 12 },
   switchText: { color: colors.inkMute, fontSize: 15 },
+  terms: { color: colors.inkMute, fontSize: 13, lineHeight: 18, textAlign: "center", marginTop: 8 },
+  termsLink: { color: colors.now, textDecorationLine: "underline" },
+  termsPage: { paddingHorizontal: space.s6, paddingTop: space.s8, paddingBottom: space.s6, gap: space.s4 },
+  termsTitle: { ...type.title, color: colors.ink },
+  termsLead: { ...type.sub, color: colors.inkDim },
+  termsHeading: { ...type.body, color: colors.ink, fontWeight: "700" },
+  termsBody: { ...type.meta, color: colors.inkDim, lineHeight: 20 },
+  termsFoot: {
+    paddingHorizontal: space.s6,
+    paddingVertical: space.s3,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.line,
+    backgroundColor: colors.paper,
+  },
 });

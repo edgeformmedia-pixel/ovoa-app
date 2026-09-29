@@ -87,33 +87,35 @@ function RootStack() {
   const { free, ready, needsConsent } = usePlan();
   const first = useFirstOpen();
 
-  // First open, in order (the v1 release). Each step is a predicate, named once,
-  // so the providers below and the guards inside the Stack can't drift apart.
+  // First open, in order. Each step is a predicate, named once, so the
+  // providers below and the guards inside the Stack can't drift apart.
   //
-  //   1. The emailed code: until the address is proven. A new account can't
-  //      skip it (the server holds it, api/src/verify.ts); one from before codes
-  //      is asked once and may put it off. Older servers don't send
-  //      emailVerified; only an explicit false asks.
+  // Sign-in (app/sign-in.tsx) is the whole front door: Apple or Google is one
+  // tap and nothing more, and continuing is agreeing to the Terms. What's left:
+  //
+  //   1. The emailed code: only an email sign-up, until the address is proven.
+  //      A new account can't skip it (the server holds it, api/src/verify.ts); one
+  //      from before codes is asked once and may put it off. Older servers don't
+  //      send emailVerified; only an explicit false asks.
   const codeStep = !!user && user.emailVerified === false && (!!user.mustVerify || first.codeLater !== user.id);
-  //   2. The Terms of Service, in full, scrolled to the end (app/terms.tsx), until
-  //      the current wording is agreed. Older servers don't send `terms`; only
-  //      an explicit false asks.
+  //   2. The Terms of Service, in full, scrolled to the end (app/terms.tsx): only
+  //      if agreeing at sign-in didn't go through, or a new wording needs asking.
+  //      Older servers don't send `terms`; only an explicit false asks.
   const termsStep = !!user && !codeStep && user.terms?.accepted === false;
-  //   3. The phone's permissions, once, after a sign-up on this phone.
-  const permissionsStep = !!user && !codeStep && !termsStep && (onboarding || first.permissions);
-  //   4. With Base (or while the plan isn't known to be free): agreeing to AI,
+  //   3. With Base (or while the plan isn't known to be free): agreeing to AI,
   //      before anything goes to an AI company. Once: "Not now" goes on to the
   //      app with AI locked, and they come back to it from there.
   const paid = !free;
-  const consentStep = !!user && !codeStep && !termsStep && !permissionsStep && paid && needsConsent && first.consentLater !== consentLaterKey(user.id);
-  //   5. With Base and consent: the setup conversation, the first time they
+  const consentStep = !!user && !codeStep && !termsStep && paid && needsConsent && first.consentLater !== consentLaterKey(user.id);
+  //   4. With Base and consent: the setup conversation, the first time they
   //      have Base (paid or a Band's days), never at sign-up for a free account.
   //      Without consent it waits until they agree. Older servers don't send
   //      `onboarded`; only an explicit false shows it.
-  const setupStep = !!user && !codeStep && !termsStep && !permissionsStep && !consentStep && paid && !needsConsent && user.onboarded === false;
-  //   6. The app, with the tour on top the first time (components/Tour.tsx).
-  // Connect Google isn't a step any more: it's in Settings.
-  const signedIn = !!user && !codeStep && !termsStep && !permissionsStep && !consentStep && !setupStep;
+  const setupStep = !!user && !codeStep && !termsStep && !consentStep && paid && !needsConsent && user.onboarded === false;
+  //   5. The app, with the tour on top the first time (components/Tour.tsx).
+  // The phone's permissions aren't a step: each is asked where it's first
+  // needed (health cards, Talk, a recording, the agent). Connect Google is in Settings.
+  const signedIn = !!user && !codeStep && !termsStep && !consentStep && !setupStep;
 
   // Which state the app is in. A crash report that doesn't say whether anyone
   // was signed in costs a round trip to the phone to find out.
@@ -125,13 +127,11 @@ function RootStack() {
         ? "code"
         : termsStep
           ? "terms"
-          : permissionsStep
-            ? "permissions"
-            : consentStep
-              ? "consent"
-              : setupStep
-                ? "setup"
-                : "signed in";
+          : consentStep
+            ? "consent"
+            : setupStep
+              ? "setup"
+              : "signed in";
   useEffect(() => {
     devlog("log", `session: ${where}`);
   }, [where]);
@@ -141,7 +141,7 @@ function RootStack() {
   // the moment it takes rather than flash either at a free account. And what
   // this phone remembers of first open is read before any of it is decided.
   const waitingForPlan =
-    !!user && !codeStep && !termsStep && !permissionsStep && (onboarding || user.onboarded === false || needsConsent) && !ready;
+    !!user && !codeStep && !termsStep && (onboarding || user.onboarded === false || needsConsent) && !ready;
 
   if (loading || waitingForPlan || (!!user && !first.loaded)) {
     return (
@@ -159,9 +159,6 @@ function RootStack() {
       {/* A step of its own, and read again from Settings → App & help. */}
       <Stack.Protected guard={termsStep || signedIn}>
         <Stack.Screen name="terms" options={signedIn ? { presentation: "modal" } : undefined} />
-      </Stack.Protected>
-      <Stack.Protected guard={permissionsStep}>
-        <Stack.Screen name="permissions" />
       </Stack.Protected>
       <Stack.Protected guard={setupStep}>
         <Stack.Screen name="onboarding" />

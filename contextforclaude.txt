@@ -1,5 +1,4 @@
-Task (2026-09-29): browser agent so OVOA works on sites with no API (competitor gap vs instinct.com). Deployed 0199adc4, migration 0061.
-Built: jarvis/api/src/browser.ts (BrowserTask durable object, Cloudflare Browser Rendering + GLM vision, numbered-box marks) + browsermoves.ts (pure rules, tested). Tools browser_task/status/login_done/cancel/forget_logins.
-Gate: risky steps (pay/send/delete/submit...) park as browser_continue and wait for YES; sign-in = live-view link, cookies kept encrypted (browser_logins), never a password.
-Verified on prod (node scripts/browser-probe.mjs "goal" url [--approve]): example.com, Wikipedia search, httpbin form fill -> YES -> submit, GitHub login handoff link.
-Not done: a human really signing in via live view then "done"; WhatsApp; phone calls (user said no calls for now); errand-specific skills; docs/ write-up.
+Task (2026-09-29): sign-up made stupid simple. Deployed API 24442261 (no migration).
+Done: Google in the app is one tap like Apple (index.ts /auth/google/redeem -> afterApple, never a ticket); email sign-up needs only email+password (name optional, setup asks it); Terms = one line on sign-in (modal to read), lib/auth.tsx start() records the agreement; /me/terms open while unverified; permissions screen deleted (each asked where first needed); guest texting copy shortened (guest.ts).
+Kept on purpose: emailed code for EMAIL sign-ups only (guards address takeover/text linking). Google/Apple skip it.
+Not done: on-device test (needs a TestFlight build); the ovoa.ai /text sign-up page lives outside this repo; texting guest flow still email -> sign up -> text email back to link.
