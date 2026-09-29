@@ -118,7 +118,10 @@
     // Where the websites OVOA builds live: <name>.SITES_DOMAIN (src/sites.ts). Links
     // go to the preview (PUBLIC_URL/s/<name>) until the wildcard DNS record answers;
     // SITES_WILDCARD "on" or "off" decides that instead of looking it up.
-    "SITES_DOMAIN": "ovoa.ai"
+    "SITES_DOMAIN": "ovoa.ai",
+    // Instagram API with Instagram Login (src/instagram.ts): the Meta app's Instagram app ID (not
+    // secret). IG_APP_SECRET and IG_VERIFY_TOKEN are secrets.
+    "IG_APP_ID": "1084915031133276"
     // Optional: "EXPO_GO_SIGNIN": "off" refuses Expo Go as the way back from the app's Google
     // sign-in, leaving only the installed app's ovoa://google-signin (src/signin.ts appReturnUrl).
   },
