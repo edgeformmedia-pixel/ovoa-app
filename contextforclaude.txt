@@ -1,4 +1,5 @@
-Last task (2026-09-28): Instagram prepared for Meta App Review (d0185e3, deployed 38ee1cff). Nothing submitted; app still in Development mode.
-Code: disconnect (forgetInstagram) deletes token, account, stored DMs/comments, waiting IG sends, unsubscribes the webhook; DMs refused outside the 24h window (before YES and at send); POST /instagram/deauthorize + /instagram/data-deletion (signed_request) and a public deletion page at GET api.ovoa.ai/instagram/data-deletion.
-Docs: docs/instagram-app-review.md = per-permission screencast scripts, justifications, dashboard URLs, user checklist (Business Verification, testers, legacy perms, record, submit, Live).
-Open: privacy draft is on ovoa-team local branch instagram-privacy-draft (not pushed/deployed); ovoa-team main is 3 commits ahead of origin (not mine). No real Meta traffic tested yet. smoke.sh has ~16 stale plan/terms failures on baseline too.
+Task (2026-09-29): read real Sendblue texts (messages.source='text', ~111, 12 people) and make the texting AI smarter. Commit 26885a5, deployed 45e3b9a6.
+Found: guests had time_zone NULL -> UTC -> "late night, 2 AM"; step nags on jokes; invented shared past; false "can't" (images, Instagram, App Store).
+Fixed: src/phonezone.ts (area code -> zone, saved on first text), stepsWanted off for text unless asked, channel prompt rules + honest trial facts (early access, ovoa.ai/text).
+Verify: node scripts/intent-probe.mjs (prod, throwaway account). Residual: ~1 in 3 small-talk replies still remarks on the hour.
+Not done: sending real images by Sendblue media_url (dog pic sends a link), real-user reply-quality review beyond these 111 texts.
