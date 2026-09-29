@@ -494,6 +494,20 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
         required: ["text", "reason"],
       },
     },
+    ...(job && job.kind !== "once"
+      ? [
+          {
+            name: "agent_finish_job",
+            description:
+              "Ends this standing job for good. Use when it was a watch that has done its work (the price dropped, it's back in stock, the answer came, the thing happened) and you've told them with agent_say, or when it can no longer matter (the flight has left, the date passed). Don't use it for a briefing or a routine they asked for every day.",
+            parameters: {
+              type: "object",
+              properties: { because: { type: "string", description: "One short line for the log." } },
+              required: ["because"],
+            },
+          } satisfies ToolSpec,
+        ]
+      : []),
     {
       name: "agent_schedule_followup",
       description:
@@ -559,6 +573,13 @@ async function autonomousTurn(env: Env, { userId, settings, trigger, job, instru
         return { error: "It's quiet hours. Only an urgent buzz goes through now." };
       }
       return agentBuzz(env, userId, args);
+    }
+
+    if (name === "agent_finish_job") {
+      if (!job) return { error: "This run isn't a standing job." };
+      await db.prepare("UPDATE agent_jobs SET status = 'done' WHERE id = ? AND user_id = ?").bind(job.id, userId).run();
+      await logAction(db, userId, "job", `Finished "${job.title}": ${String(args.because ?? "").slice(0, 200)}`, "agent", job.id);
+      return { finished: true, note: "It won't run again. If you haven't told them yet, do it with agent_say now." };
     }
 
     if (name === "agent_schedule_followup") {
@@ -918,8 +939,9 @@ export async function cancelNudges(env: Env, userId: string, commitmentId: strin
  * cannot reason about.
  */
 export async function seedSystemJobs(env: Env, userId: string) {
-  const existing = await env.DB.prepare("SELECT 1 FROM agent_jobs WHERE user_id = ? AND source = 'system'")
-    .bind(userId)
+  await seedHeadsUp(env, userId);
+  const existing = await env.DB.prepare("SELECT 1 FROM agent_jobs WHERE user_id = ? AND source = 'system' AND title != ?")
+    .bind(userId, HEADS_UP)
     .first();
   if (existing) return;
 
@@ -956,6 +978,56 @@ export async function seedSystemJobs(env: Env, userId: string) {
     notify: "ifuseful",
     source: "system",
   });
+}
+
+/**
+ * The heads-up sweep (2026-09-29): once a day, the things that cost money or
+ * a missed moment if nobody mentions them, from their email and calendar: a
+ * bill or renewal about to charge, a free trial ending, a deadline, check-in
+ * opening for tomorrow's flight, a package or appointment that needs them.
+ * Only for someone with Google connected (there's nothing to read otherwise),
+ * and speaks only when something is actually coming.
+ */
+export const HEADS_UP = "Heads-up: bills, deadlines, trips";
+
+export async function seedHeadsUp(env: Env, userId: string) {
+  const [has, google] = await Promise.all([
+    env.DB.prepare("SELECT 1 FROM agent_jobs WHERE user_id = ? AND source = 'system' AND title = ?").bind(userId, HEADS_UP).first(),
+    env.DB.prepare("SELECT 1 FROM google_accounts WHERE user_id = ? LIMIT 1").bind(userId).first(),
+  ]);
+  if (has || !google) return false;
+  await createJob(env, userId, {
+    title: HEADS_UP,
+    instruction: [
+      "Look for what's coming in the next 72 hours that costs them money or a moment if nobody mentions it.",
+      "Search their email (gmail_search, newer_than:14d) for: bills and payments due, subscriptions or memberships renewing, free trials ending, deadlines (forms, taxes, RSVPs, returns closing), flight and hotel confirmations, packages that need a signature or pickup, appointments to confirm.",
+      "Check the calendar for today and tomorrow for anything that needs doing beforehand.",
+      "For a flight in the next 24 to 30 hours, check-in is usually open now: say so with the airline and confirmation code if the email has it.",
+      "For a renewal or trial ending, give the amount and the date, and offer to cancel it for them if it looks unwanted.",
+      "Only what's new since your last heads-up and actually due soon. One text with at most three items, most urgent first. If nothing qualifies, stay quiet.",
+    ].join(" "),
+    kind: "daily",
+    atMinutes: 8 * 60 + 30,
+    notify: "ifuseful",
+    source: "system",
+  });
+  return true;
+}
+
+/** Gives people who already had the agent on the jobs added since: a few a tick. */
+export async function backfillSystemJobs(env: Env) {
+  const { results } = await env.DB.prepare(
+    `SELECT s.user_id FROM settings s
+      WHERE s.agent_enabled = 1 AND s.agent_autonomy != 'off'
+        AND EXISTS (SELECT 1 FROM google_accounts g WHERE g.user_id = s.user_id)
+        AND NOT EXISTS (SELECT 1 FROM agent_jobs j WHERE j.user_id = s.user_id AND j.source = 'system' AND j.title = ?)
+      LIMIT 10`,
+  )
+    .bind(HEADS_UP)
+    .all<{ user_id: string }>();
+  let made = 0;
+  for (const r of results) if (await seedHeadsUp(env, r.user_id)) made++;
+  return made;
 }
 
 async function settingsFor(db: D1Database, userId: string) {
@@ -1203,6 +1275,7 @@ export async function followUpDropped(env: Env, now = Date.now()) {
  * purge (retention.ts), with everything else past its 14 days.
  */
 export async function tick(env: Env, cron: string) {
+  await backfillSystemJobs(env).catch((err) => console.error("agent: backfill failed", err));
   const jobs = await runDueJobs(env);
   const pushed = await drainNotes(env);
   if (jobs || pushed) say("cron", { cron, part: "agent", jobs, notes: pushed });
@@ -1215,7 +1288,7 @@ const TOOLS: ToolSpec[] = [
   {
     name: "agent_schedule",
     description:
-      "Sets up something for you to do on your own later, on a schedule. Use it whenever the user asks you to check, watch, remind, or tell them something on a recurring basis or at a future time — 'every morning', 'each Friday', 'keep an eye on', 'let me know when'. Don't use it for a one-off reminder they want on their phone; that is a reminder, not a job.",
+      "Sets up something for you to do on your own later, on a schedule. Use it whenever the user asks you to check, watch, remind, or tell them something on a recurring basis or at a future time — 'every morning', 'each Friday', 'keep an eye on', 'let me know when', 'text me if flights to Austin drop under $300', 'tell me when it's back in stock', and for research that takes a while (once, inMinutes 1, notify always). A watch is an interval job (every 180 to 720 minutes) whose instruction names the exact condition and says to stay quiet until it's met, then tell them and finish the job (agent_finish_job). Don't use it for a one-off reminder they want on their phone; that is a reminder, not a job.",
     parameters: {
       type: "object",
       properties: {

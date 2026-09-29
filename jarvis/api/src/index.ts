@@ -47,6 +47,7 @@ import {
 import { budgetAssistant, budgetContext, isBudgetTool } from "./budget";
 import { instagramAssistant, instagramPublic, isInstagramTool } from "./instagram";
 import { browserAssistant, isBrowserTool } from "./browser";
+import { isMemoryTool, memoryAssistant } from "./memorytools";
 import { zoneForPhone } from "./phonezone";
 import { isLifePlanTool, lifePlansAssistant, plansTick } from "./lifeplans";
 import { isTogetherTool, togetherAssistant, togetherTick } from "./together";
@@ -1593,6 +1594,8 @@ async function runTurn(
   const instagramTools = instagramAssistant(env, userId);
   // A real browser for sites with no API (browser.ts); its risky steps wait for a YES.
   const browserTools = browserAssistant(env, userId);
+  // What OVOA remembers about them, shown and edited on request (memorytools.ts).
+  const memoryTools = memoryAssistant(env, userId);
   const waitingBuys = fromAgent ? { prompt: "", carry: [] as string[] } : await budgetContext(env, userId).catch((err) => {
     console.error("budget: couldn't read the turn's context", err);
     return { prompt: "", carry: [] as string[] };
@@ -1692,6 +1695,7 @@ async function runTurn(
     ...budgetTools.tools,
     ...instagramTools.tools,
     ...browserTools.tools,
+    ...memoryTools.tools,
     ...(settings.context_enabled || settings.capture_everything ? transcriptTools.tools : []),
   ].filter(
     // Removed, not discouraged: a missing tool is a fact, a prompt is a request.
@@ -1726,6 +1730,7 @@ async function runTurn(
     plans: { tools: planTools.tools, prompt: planTools.prompt },
     budget: { tools: budgetTools.tools, prompt: budgetTools.prompt },
     instagram: { tools: instagramTools.tools, prompt: instagramTools.prompt },
+    memory: { tools: memoryTools.tools, prompt: memoryTools.prompt },
     transcripts: {
       tools: transcriptTools.tools,
       prompt: settings.context_enabled || settings.capture_everything ? transcriptTools.prompt : "",
@@ -1987,6 +1992,8 @@ async function runTurn(
                                     ? instagramTools.callTool
                                   : isBrowserTool(name)
                                     ? browserTools.callTool
+                                  : isMemoryTool(name)
+                                    ? memoryTools.callTool
                                   : isExtrasTool(name)
                                     ? extraTools.callTool
                                     : name === briefTool.name

@@ -239,6 +239,28 @@ const SYNONYMS: Record<string, string[]> = {
   reorder: ["browser"],
   reservation: ["browser"],
   order: ["browser"],
+  // Errands on a website (2026-09-29): cancelling, refunds, disputes are done in a browser.
+  subscription: ["browser"],
+  subscriptions: ["browser"],
+  unsubscribe: ["browser"],
+  refund: ["browser", "gmail"],
+  dispute: ["browser"],
+  return: ["browser"],
+  // What OVOA remembers (memorytools.ts): "what do you know about me", "forget that".
+  know: ["memory"],
+  forget: ["memory"],
+  memories: ["memory"],
+  // Group actions (network.ts ovoa_group): "poll the group", "split the bill".
+  poll: ["ovoa", "group"],
+  vote: ["ovoa", "group"],
+  split: ["ovoa", "group"],
+  group: ["ovoa", "group"],
+  everyone: ["ovoa", "group"],
+  // Watches are standing jobs (agent.ts agent_schedule).
+  watch: ["agent", "schedule"],
+  stock: ["agent", "schedule"],
+  drops: ["agent", "schedule"],
+  price: ["agent", "schedule"],
 };
 
 /** Words that say a request repeats, so it's a routine (namedTools). */

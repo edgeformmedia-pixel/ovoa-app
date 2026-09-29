@@ -253,6 +253,9 @@ export const RULES: Rule[] = [
   at("updated_at", "ovoa_threads"),
   at("created_at", "ovoa_messages"),
   at("created_at", "ovoa_approvals"),
+  // A group poll (network.ts ovoa_group) and its answers, 14 days after they came.
+  at("created_at", "ovoa_groups"),
+  at("at", "ovoa_group_answers"),
   // ---- Plans, budgets, games (plans_life.ts, budget.ts, together.ts) ----
   // A plan that's over (done, cancelled, or its last day passed) goes 14 days later; an active one is theirs.
   {
@@ -374,6 +377,8 @@ export const TABLES = {
   ovoa_threads: "delete",
   ovoa_messages: "delete",
   ovoa_approvals: "delete",
+  ovoa_groups: "delete",
+  ovoa_group_answers: "delete",
   life_plans: "mixed",
   spend_budgets: "keep",
   purchases: "delete",

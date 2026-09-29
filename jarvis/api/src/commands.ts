@@ -34,6 +34,8 @@ export const FORBIDDEN_FOR_COMMANDS = new Set([
   "ovoa_connect",
   "ovoa_connect_answer",
   "ovoa_ask",
+  "ovoa_group",
+  "memory_forget",
   "ovoa_approve",
   "ovoa_disconnect",
   "ovoa_perms",
