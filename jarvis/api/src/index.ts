@@ -46,6 +46,7 @@ import {
 } from "./sites";
 import { budgetAssistant, budgetContext, isBudgetTool } from "./budget";
 import { instagramAssistant, instagramPublic, isInstagramTool } from "./instagram";
+import { zoneForPhone } from "./phonezone";
 import { isLifePlanTool, lifePlansAssistant, plansTick } from "./lifeplans";
 import { isTogetherTool, togetherAssistant, togetherTick } from "./together";
 import { isNetworkTool, networkAssistant, networkContext, networkRoutes, networkTick, networkWaiting, NETWORK_BUDGET_MS } from "./network";
@@ -1527,7 +1528,9 @@ async function runTurn(
   // and the moment built from it aren't read again. Out loud, the week's steps
   // only when the words are about them: they were read before every "what's
   // the weather" (2026-09-23).
-  const stepsWanted = !resume && (!voice || ABOUT_STEPS.test(text));
+  // Typed in the app they ride along; spoken or texted, only when the words are about them
+  // (a texted joke was answered with "no step data yet, want a routine?", 2026-09-28).
+  const stepsWanted = !resume && ((!voice && !makeChannel) || ABOUT_STEPS.test(text));
   // Everything here is independent, so none of it should wait on the rest.
   // googleAssistant needs auto-approve from the settings, but only once a tool
   // runs, so its own read goes out at the same time.
@@ -2681,7 +2684,16 @@ async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId, 
     getSettings(env.DB, userId),
     planFor(env, userId, { waitUntil: (work) => ctx.waitUntil(work) }),
   ]);
-  const timeZone = validTimeZone(settings.time_zone);
+  // No zone yet (a guest, or a number linked before the app was ever opened): the number's own
+  // area code, kept until the app says better, instead of UTC and "it's 2 AM" at someone's 10 pm.
+  const guessedZone = settings.time_zone ? null : zoneForPhone(link.phone);
+  if (guessedZone) {
+    ctx.waitUntil(
+      env.DB.prepare("UPDATE settings SET time_zone = ? WHERE user_id = ? AND time_zone IS NULL").bind(guessedZone, userId).run().then(() => undefined, () => undefined),
+    );
+  }
+  const zoneKnown = !!(settings.time_zone ?? guessedZone);
+  const timeZone = validTimeZone(settings.time_zone ?? guessedZone);
   if (!atLeast(plan.tier, "base")) return plain(needsPlanBody("base").message);
   if ((await aiConsentFor(env, userId)) !== "given") return plain(CONSENT_NEEDED);
   if (!(await allowed(env, "RL_TURN", `turn:${userId}`))) return plain(TEXT_TOO_FAST);
@@ -2713,6 +2725,7 @@ async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId, 
         proactive: link.proactive !== 0,
         react,
         trial: !!trial?.trial_phone,
+        zoneKnown,
       })),
   }).catch((err: unknown): TurnResult => {
     if (isModelRefused(err)) return refusedReply(err, plan.tier, timeZone);
