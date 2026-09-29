@@ -787,3 +787,5 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   src/browser.ts); 1df1f03 adds jarvis/app/src/app/sign-in.tsx. Not merged here: no task covers it, and choosing
   between the two browser agents is the owner's call. Needs the owner: decide whether task 7's browser.ts is
   dropped in favor of main's (likely), then merge main into this branch (or ask a session to, as a new task).
+- 2026-09-29 21:55 UTC (scheduled session): every task is [x], nothing left to take. origin/main still at 1df1f03; the
+  merge conflicts logged at 20:56 UTC still stand (git merge-tree exits 1). Nothing new for the owner.
