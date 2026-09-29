@@ -302,7 +302,8 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 
 ### Deploy order (owner)
 
-1. Review and merge `claude/overnight` into main (no conflicts with main as of 9b33d3d).
+1. Review and merge `claude/overnight` into main. It merged cleanly up to 9b33d3d, but NOT into main as of 1df1f03:
+   8 files conflict (see the 2026-09-29 20:56 log line), including two different browser.ts files.
 2. `cd jarvis/api && npm run db:migrate` BEFORE deploying: applies 0060 to 0069 (guest_daily, user_lists, vault,
    do_not_contact, campaigns, approval_rules, text_groups, site_sessions, inbound_codes, page_watches) and 0070
    (microsoft_accounts), 0071 (invite_referrals), 0072 (money_spend.budget_id), 0073 (voice_clips), 0074 (meetings) and 0075 (list_shares, connection_perms.share_lists). The new code
@@ -778,3 +779,11 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   Stopped without code changes. Needs the owner: nothing new.
 - 2026-09-29 19:55 UTC (scheduled session): every task is [x], nothing left to take. origin/main is still 431ebc0.
   Stopped without code changes. Needs the owner: nothing new.
+- 2026-09-29 20:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main moved from 431ebc0
+  to 1df1f03 (one-screen sign-up). Checked with `git merge-tree`: this branch NO LONGER merges cleanly into main
+  (earlier logs and the Final report said it did; that was last true at 1cb7c9b). Conflicts by main commit:
+  7a0119e retention.ts; 4a7e43c adds guest.ts, texting.ts; 62d34db adds index.ts, toolbelt.ts; 431ebc0 adds
+  browser.ts and test/browser.test.ts (main's own browser agent and this branch's task 7 browser both live in
+  src/browser.ts); 1df1f03 adds jarvis/app/src/app/sign-in.tsx. Not merged here: no task covers it, and choosing
+  between the two browser agents is the owner's call. Needs the owner: decide whether task 7's browser.ts is
+  dropped in favor of main's (likely), then merge main into this branch (or ask a session to, as a new task).
