@@ -677,7 +677,7 @@ const DELETION_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><met
 <li><strong>Or remove OVOA in Instagram.</strong> In the Instagram app, go to Settings, then Website permissions, then Apps and websites (on some accounts it's Business integrations), and remove OVOA. Instagram tells OVOA, and OVOA deletes the same data.</li>
 <li><strong>Or email us</strong> at <a href="mailto:support@ovoa.ai">support@ovoa.ai</a> from the email on your OVOA account, and we'll delete it for you.</li>
 </ol>
-<p>Deleting your OVOA account (Settings, then Delete account, in the app) also deletes all of it, along with everything else OVOA has about you.</p>
+<p>Deleting your OVOA account (at ovoa.ai/account, or Settings then Delete account in the app) also deletes all of it, along with everything else OVOA has about you.</p>
 <p><a href="https://ovoa.ai/privacy">Privacy policy</a> &middot; <a href="https://ovoa.ai/terms">Terms</a></p>
 </html>`;
 

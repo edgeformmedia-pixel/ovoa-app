@@ -1019,7 +1019,7 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
     if (!(await record(db, m, "unlinked", null, now))) return { outcome: "duplicate" };
     await unlink(db, link.user_id);
     say("text", { outcome: "unlinked by text", user: link.user_id });
-    await deps.sender(m.line).text(m.from, "Unlinked: texts from this number won't reach your OVOA account any more. You can link it again in the app.");
+    await deps.sender(m.line).text(m.from, "Unlinked: texts from this number won't reach your OVOA account any more. You can link it again at ovoa.ai/account.");
     return { outcome: "unlinked" };
   }
 

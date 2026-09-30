@@ -2684,7 +2684,7 @@ authed.delete("/siri/key", async (c) => {
 // ---------- Texting ----------
 
 /** A text can't be a turn until the account's address is proven (verify.ts). */
-const TEXT_VERIFY = "Finish making your account first: open the OVOA app and enter the code we emailed you.";
+const TEXT_VERIFY = "Finish making your account first: sign in at ovoa.ai/account, or enter the code we emailed you in the OVOA app.";
 /** Past the per-person turn limit (limits.ts RL_TURN), which texts share with the app. */
 const TEXT_TOO_FAST = "That's a lot at once. Give me a minute, then text me again.";
 

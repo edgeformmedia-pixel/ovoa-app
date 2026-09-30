@@ -37,8 +37,8 @@ export const CAPPED = `That was your last free text. Pick a plan to keep texting
 
 export const LINK_EMAILED = (email: string) =>
   `That email has an OVOA account. I just sent ${email} a link. Tap it on this phone and send the text it opens. That's it.`;
-export const LINK_IN_APP =
-  "That email has an OVOA account. In the OVOA app, tap Settings, then Link my number.";
+export const LINK_ON_SITE =
+  "That email has an OVOA account. Sign in at ovoa.ai/account and tap Link my number.";
 /** One link email per account in this long, however many times the address is texted. */
 const LINK_EMAIL_EVERY_MS = 10 * 60_000;
 
@@ -249,14 +249,14 @@ export async function mergeTrial(db: D1Database, phone: string, realId: string) 
 
 /** Emails the account a link code (at most once in LINK_EMAIL_EVERY_MS). The text to send the guest. */
 async function offerLink(env: Env, account: Account, now: number): Promise<string> {
-  if (!emailConfigured(env) || !env.SENDBLUE_NUMBER) return LINK_IN_APP;
+  if (!emailConfigured(env) || !env.SENDBLUE_NUMBER) return LINK_ON_SITE;
   const recent = await env.DB.prepare("SELECT 1 AS y FROM text_link_codes WHERE user_id = ? AND created_at > ?")
     .bind(account.id, now - LINK_EMAIL_EVERY_MS)
     .first();
   if (recent) return LINK_EMAILED(account.email);
   const { code } = await issueLinkCode(env.DB, account.id, now);
   const sent = await sendEmail(env, linkEmail(account, env.SENDBLUE_NUMBER, code, env.PUBLIC_URL));
-  return sent ? LINK_EMAILED(account.email) : LINK_IN_APP;
+  return sent ? LINK_EMAILED(account.email) : LINK_ON_SITE;
 }
 /** The email with the link code: a button that opens Messages with the text ready, and the text to send by hand. */
 export function linkEmail(account: Account, number: string, code: string, base: string): Email {

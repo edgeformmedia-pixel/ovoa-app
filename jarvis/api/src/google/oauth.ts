@@ -21,8 +21,10 @@ export const GOOGLE_SCOPES = [
 ];
 
 const STATE_TTL_MS = 10 * 60 * 1000;
-// Where the app may ask to be sent back to: Expo Go (exp://) or the installed app (ovoa://).
-const RETURN_URL = /^(exps?|ovoa):\/\//;
+// Where a connect may ask to be sent back to: Expo Go (exp://), the installed
+// app (ovoa://), or the website's account page, which connects Google with no
+// app at all (that one address and nothing else on the web).
+const RETURN_URL = /^(?:(?:exps?|ovoa):\/\/|https:\/\/ovoa\.ai\/account$)/;
 
 const redirectUri = (env: Env) => `${env.PUBLIC_URL}/google/callback`;
 

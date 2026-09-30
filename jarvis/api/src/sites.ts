@@ -896,7 +896,7 @@ function whyItFailed(err: unknown) {
     return err.reason === "allowance"
       ? "today's AI allowance on your plan is used up"
       : err.reason === "needs_consent"
-        ? "you haven't agreed to AI yet, in the app"
+        ? "you haven't agreed to AI yet (ovoa.ai/account)"
         : "building websites is part of Base";
   }
   return "the AI didn't finish writing it";

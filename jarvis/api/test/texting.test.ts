@@ -40,7 +40,7 @@ import {
   type TextTurnInput,
   type TextTurnOutcome,
 } from "../src/texting";
-import { ASK_EMAIL, CAPPED, FREE, LINK_IN_APP, MAKE_ACCOUNT } from "../src/guest";
+import { ASK_EMAIL, CAPPED, FREE, LINK_ON_SITE, MAKE_ACCOUNT } from "../src/guest";
 const LINK_EMALED_PREFIX = "That email has an OVOA account. I just emailed";
 import type { MadeApp } from "../src/myapps";
 import type { Env } from "../src/types";
@@ -347,7 +347,7 @@ async function main() {
   await text("hey", deps(), A);
   const turnsBefore = replies.asked.length;
   eq("an account's email", await text("it's Sam@example.com", deps(), A), "queued");
-  eq("points them to linking", [LINK_IN_APP, LINK_EMALED_PREFIX].some((t) => out.sent.at(-1)?.content.startsWith(t)), true);
+  eq("points them to linking", [LINK_ON_SITE, LINK_EMALED_PREFIX].some((t) => out.sent.at(-1)?.content.startsWith(t)), true);
   eq("with no free text spent", count("SELECT used AS n FROM text_guests WHERE phone = '+15865550997'"), 1);
   eq("and no turn", replies.asked.length, turnsBefore);
 
