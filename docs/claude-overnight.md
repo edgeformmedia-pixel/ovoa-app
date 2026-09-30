@@ -789,3 +789,8 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   dropped in favor of main's (likely), then merge main into this branch (or ask a session to, as a new task).
 - 2026-09-29 21:55 UTC (scheduled session): every task is [x], nothing left to take. origin/main still at 1df1f03; the
   merge conflicts logged at 20:56 UTC still stand (git merge-tree exits 1). Nothing new for the owner.
+- 2026-09-30 13:55 UTC (scheduled session): every task is [x], nothing left to take. origin/main moved from 1df1f03
+  to c5937d0 (5 commits: agentic polls and heads-up sweep, OVOA pays via Stripe Issuing, texting photo bursts, site
+  photos). git merge-tree still conflicts, same eight files as before: browser.ts, guest.ts, index.ts,
+  retention.ts, texting.ts, toolbelt.ts, test/browser.test.ts, app sign-in.tsx. Stopped without code changes.
+  Needs the owner: the merge decision logged at 2026-09-29 20:56 UTC still stands and the gap with main is growing.
