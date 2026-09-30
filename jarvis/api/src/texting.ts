@@ -445,12 +445,19 @@ export async function unlink(db: D1Database, userId: string) {
 
 /** How long a text waits for the rest of its burst before it's answered. */
 const DEBOUNCE_MS = 1_200;
+/**
+ * A photo with no words yet: its caption, or the rest of the photos, can come
+ * ten seconds behind it (iMessage uploads each one first), so it waits longer.
+ */
+const MEDIA_DEBOUNCE_MS = 15_000;
 /** The per-person lock: longer than any one reply takes. */
 const LOCK_MS = 100_000;
 /** Waiting this long with nobody answering it: the cron answers it. */
 const SWEEP_AFTER_MS = 60_000;
-/** Claimed this long ago and never answered: the run that claimed it died. */
-const STUCK_MS = 5 * 60_000;
+/** Claimed this long ago and never answered: the run that claimed it died (no reply takes longer than LOCK_MS). */
+const STUCK_MS = 3 * 60_000;
+/** Past this, a photo that couldn't be made out is answered without it. */
+const LOOK_MS = 20_000;
 
 /** `seq`: the row's rowid, which is the order the texts were written down in: arrival order, even within a millisecond. */
 type InboxRow = { seq: number; handle: string; phone: string; line: string | null; content: string; media: number; received_at: number };
@@ -577,9 +584,23 @@ const MEDIA_MAX_BYTES = 8 * 1024 * 1024;
 /** The photos and voice notes in a burst, fetched from Sendblue and made into words (llm.ts). Never throws. */
 export async function lookAt(env: Env, userId: string, batch: Pick<InboxRow, "content" | "media">[]): Promise<Seen> {
   const seen: Seen = new Map();
-  for (const row of batch) {
-    const { url } = mediaOf(row.content);
-    if (!row.media || !url || seen.has(url)) continue;
+  const urls = [...new Set(batch.flatMap((row) => (row.media ? [mediaOf(row.content).url ?? ""] : [])).filter(Boolean))];
+  // All at once, each with LOOK_MS at most: one at a time, four photos outlast the Worker.
+  await Promise.all(
+    urls.map((url) => {
+      const fallback = { kind: mediaKind("", url), text: null };
+      return Promise.race([
+        lookAtOne(env, userId, url),
+        new Promise<Seen extends Map<string, infer V> ? V : never>((r) => setTimeout(() => r(fallback), LOOK_MS)),
+      ]).then((got) => void seen.set(url, got));
+    }),
+  );
+  return seen;
+}
+
+/** One photo, voice note or file, made into words. Never throws. */
+async function lookAtOne(env: Env, userId: string, url: string): Promise<{ kind: "photo" | "voice" | "file"; text: string | null }> {
+  {
     let kind = mediaKind("", url);
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
@@ -601,15 +622,14 @@ export async function lookAt(env: Env, userId: string, batch: Pick<InboxRow, "co
           : kind === "voice"
             ? await transcribeAudio(env, { bytes, usage })
             : null;
-      seen.set(url, { kind, text: text ? text.slice(0, 3_000) : null });
       say("text", { outcome: `read a ${kind}`, user: userId, type, bytes: bytes.length });
+      return { kind, text: text ? text.slice(0, 3_000) : null };
     } catch (err) {
       // Refused by the plan, or a format nothing could read: said in the reply, not thrown.
-      seen.set(url, { kind, text: null });
       say("text", { outcome: `couldn't read a ${kind}`, user: userId, why: err instanceof Error ? err.message.slice(0, 120) : "error" });
+      return { kind, text: null };
     }
   }
-  return seen;
 }
 
 // ---------- Sounding like a person ----------
@@ -740,11 +760,11 @@ const LOST = "Sorry, I lost track of your last text before I could answer it. Co
  * is. `handle`: the text this run came in with; it waits out the burst first,
  * and leaves the answering to a later text's run when there is one. Never throws.
  */
-export async function processThread(env: Env, ctx: Waiter, userId: string, handle: string | null, deps: Deps) {
+export async function processThread(env: Env, ctx: Waiter, userId: string, handle: string | null, deps: Deps, onlyMedia = false) {
   const db = env.DB;
   try {
     if (handle) {
-      await new Promise((r) => setTimeout(r, deps.debounceMs ?? DEBOUNCE_MS));
+      await new Promise((r) => setTimeout(r, deps.debounceMs ?? (onlyMedia ? MEDIA_DEBOUNCE_MS : DEBOUNCE_MS)));
       if (await newerWaiting(db, userId, handle)) return;
     }
     for (;;) {
@@ -1027,7 +1047,8 @@ async function queue(env: Env, ctx: Waiter, m: Inbound, link: TextLink, now: num
   const out = deps.sender(m.line);
   // Read, and the "…" while it waits for the rest of the burst and the reply.
   ctx.waitUntil(Promise.allSettled([out.read(m.from), out.typing(m.from)]));
-  return { outcome: "queued", work: processThread(env, ctx, link.user_id, m.handle, deps) };
+  const onlyMedia = m.media && !m.content.trim();
+  return { outcome: "queued", work: processThread(env, ctx, link.user_id, m.handle, deps, onlyMedia) };
 }
 
 // ---------- The cron ----------
@@ -1064,17 +1085,40 @@ export async function textsTick(
     )
     .run();
   const { results: stuck } = await db
-    .prepare(
-      "UPDATE text_inbox SET status = 'failed', content = '' WHERE status = 'claimed' AND claimed_at < ? RETURNING user_id, phone, line",
-    )
+    .prepare("SELECT handle, user_id, phone, line, content, received_at, claimed_at FROM text_inbox WHERE status = 'claimed' AND claimed_at < ?")
     .bind(now - STUCK_MS)
-    .all<{ user_id: string | null; phone: string; line: string | null }>();
+    .all<{ handle: string; user_id: string | null; phone: string; line: string | null; content: string; received_at: number; claimed_at: number }>();
   const sorry = new Set<string>();
+  let retried = 0;
   for (const r of stuck) {
+    const mark = (status: string, keep = false) =>
+      db
+        .prepare(`UPDATE text_inbox SET status = ?${keep ? "" : ", content = ''"} WHERE handle = ? AND status = 'claimed'`)
+        .bind(status, r.handle)
+        .run();
+    // Answered since (by this run before it died, or a later one): nothing to be sorry for.
+    const answered =
+      r.user_id &&
+      (await db
+        .prepare("SELECT 1 AS x FROM messages WHERE user_id = ? AND role = 'assistant' AND created_at >= ? LIMIT 1")
+        .bind(r.user_id, r.claimed_at)
+        .first());
+    if (answered) {
+      await mark("done");
+      continue;
+    }
+    // Its first try (claimed soon after it came in), words still kept: answered again, below.
+    if (r.user_id && r.content && r.claimed_at - r.received_at < STUCK_MS) {
+      await mark("new", true);
+      retried++;
+      continue;
+    }
+    await mark("failed");
     if (!r.user_id || sorry.has(r.user_id)) continue;
     sorry.add(r.user_id);
     await sender(r.line).text(r.phone, LOST);
   }
+  if (retried) say("text", { outcome: "retried after a run died", texts: retried });
   const { results: waiting } = await db
     .prepare("SELECT DISTINCT user_id FROM text_inbox WHERE status = 'new' AND user_id IS NOT NULL AND received_at < ? LIMIT 20")
     .bind(now - SWEEP_AFTER_MS)

@@ -521,6 +521,8 @@ async function main() {
   {
     const late = scripted((i) => ({ reply: `late: ${i.text}`, pendingActions: [] }));
     const old = Date.now() - 2 * 60_000;
+    // Nothing answered since: a reply after a claim means the conversation moved on past it.
+    sql("DELETE FROM messages WHERE user_id = ?", U);
     sql("INSERT INTO text_inbox (handle, user_id, phone, content, status, received_at) VALUES ('w1', ?, ?, 'are you there', 'new', ?)", U, PHONE, old);
     sql(
       "INSERT INTO text_inbox (handle, user_id, phone, content, status, received_at, claimed_at) VALUES ('s1', ?, ?, '', 'claimed', ?, ?)",
@@ -536,6 +538,47 @@ async function main() {
     eq("the lost one is failed", one<{ status: string }>("SELECT status FROM text_inbox WHERE handle = 's1'")?.status, "failed");
     eq("a second tick has nothing to do", await textsTick(env, late.turn, Date.now(), () => out.sender), { lost: 0, answered: 0 });
     eq("off without the keys", await textsTick({ DB } as unknown as Env, late.turn), {});
+
+    // A run that died on its first try: answered again, not apologised for.
+    sql("DELETE FROM messages WHERE user_id = ?", U);
+    const t = Date.now() - 4 * 60_000;
+    sql(
+      "INSERT INTO text_inbox (handle, user_id, phone, content, status, received_at, claimed_at) VALUES ('r1', ?, ?, 'make a portfolio', 'claimed', ?, ?)",
+      U,
+      PHONE,
+      t,
+      t + 15_000,
+    );
+    const sent = out.sent.length;
+    const again = await textsTick(env, late.turn, Date.now(), () => out.sender);
+    eq("answers one a run died on, again", late.asked.at(-1), "make a portfolio");
+    eq("without saying sorry", out.sent.slice(sent).some((s) => s.content.startsWith("Sorry, I lost track")), false);
+    eq("and it's done", one<{ status: string }>("SELECT status FROM text_inbox WHERE handle = 'r1'")?.status, "done");
+    eq("counted as answered", again, { lost: 0, answered: 1 });
+
+    // Dead again on the retry: then it's sorry.
+    sql(
+      "INSERT INTO text_inbox (handle, user_id, phone, content, status, received_at, claimed_at) VALUES ('r2', ?, ?, 'hello?', 'claimed', ?, ?)",
+      U,
+      PHONE,
+      t - 10 * 60_000,
+      t,
+    );
+    eq("a second death is said sorry for", (await textsTick(env, late.turn, Date.now(), () => out.sender)).lost, 1);
+
+    // Answered after it was claimed (a later text's reply): no sorry, nothing sent again.
+    sql(
+      "INSERT INTO text_inbox (handle, user_id, phone, content, status, received_at, claimed_at) VALUES ('r3', ?, ?, 'dry food?', 'claimed', ?, ?)",
+      U,
+      PHONE,
+      t,
+      t,
+    );
+    sql("INSERT INTO messages (id, user_id, role, content, created_at) VALUES ('m-r3', ?, 'assistant', 'mix it in', ?)", U, t + 30_000);
+    const before = out.sent.length;
+    eq("one answered since is let go quietly", await textsTick(env, late.turn, Date.now(), () => out.sender), { lost: 0, answered: 0 });
+    eq("sending nothing", out.sent.length, before);
+    eq("and marked done", one<{ status: string }>("SELECT status FROM text_inbox WHERE handle = 'r3'")?.status, "done");
   }
 
   // ---------- Their apps, over text ----------
