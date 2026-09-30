@@ -70,7 +70,7 @@ function Talk() {
 
       {openApp && (
         <View style={styles.appBar}>
-          <Ionicons name="apps-outline" size={16} color={colors.agent} />
+          <Ionicons name="apps-outline" size={16} color={colors.ink} />
           <View style={{ flex: 1 }}>
             <Text style={styles.appName} numberOfLines={1}>
               Using {openApp.name}
@@ -89,7 +89,7 @@ function Talk() {
 
       {a.alwaysListen && (
         <Pressable style={styles.alwaysBar} onPress={() => a.setAlwaysListen(false)}>
-          <Ionicons name="ear" size={16} color={colors.stop} />
+          <Ionicons name="ear" size={16} color={colors.ink} />
           <Text style={styles.alwaysText}>Always listen is on · tap to turn off</Text>
         </Pressable>
       )}
@@ -232,9 +232,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.s4,
     paddingVertical: 11,
     borderRadius: 14,
-    backgroundColor: colors.stopWash,
+    backgroundColor: colors.wash,
   },
-  alwaysText: { ...type.meta, fontWeight: "600", color: colors.stop, flex: 1 },
+  alwaysText: { ...type.meta, fontWeight: "600", color: colors.ink, flex: 1 },
 
   // Violet: the app is theirs, not something happening now.
   appBar: {
@@ -246,9 +246,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.s4,
     paddingVertical: 10,
     borderRadius: 14,
-    backgroundColor: colors.agentWash,
+    backgroundColor: colors.wash,
   },
-  appName: { ...type.meta, fontWeight: "600", color: colors.agent },
+  appName: { ...type.meta, fontWeight: "600", color: colors.ink },
   appOpener: { ...type.meta, color: colors.inkDim },
 
   voice: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.s3, paddingHorizontal: space.s5 },
@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
   phase: { ...type.phase, color: colors.ink },
   phaseRow: { flexDirection: "row", alignItems: "center", gap: space.s2 },
   bars: { flexDirection: "row", alignItems: "center", gap: 3, height: 18 },
-  bar: { width: 3, borderRadius: 2, backgroundColor: colors.now },
+  bar: { width: 3, borderRadius: 2, backgroundColor: colors.ink },
   words: { ...type.body, color: colors.inkDim, textAlign: "center", minHeight: 48, maxWidth: 320 },
   hint: { ...type.sub, color: colors.inkMute },
   error: { ...type.meta, color: colors.stop, textAlign: "center" },

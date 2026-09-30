@@ -8,10 +8,10 @@ import { useDerivedValue, useFrameCallback, useSharedValue, withTiming } from "r
 // Chosen in the Orb Studio (2026-09-23) as "Particle Globe, fewer particles".
 // One shared clock turns it; what it is doing changes how:
 //   off        grey, small, barely turning
-//   idle       teal, breathing slowly
-//   listening  teal, points scatter with the real microphone level
-//   thinking   violet, spins up and ripples in bands
-//   speaking   violet, the equator swells with each syllable
+//   idle       black, breathing slowly
+//   listening  black, points scatter with the real microphone level
+//   thinking   black, spins up and ripples in bands
+//   speaking   black, the equator swells with each syllable
 // Speaking has no level of its own to read (the voice plays from a file), so
 // its pulse is a made-up syllable rhythm, which reads as talking.
 //
@@ -38,9 +38,9 @@ const POINTS: number[] = (() => {
   return out;
 })();
 
-// theme.ts: now, agent, inkMute.
-const TEAL = [14, 140, 168];
-const VIOLET = [91, 79, 199];
+// Black and white only: theme.ts ink when on, inkMute when off. Depth alone
+// (size and fade toward the back) makes it read as 3D.
+const INK = [12, 14, 18];
 const GREY = [139, 147, 161];
 
 export default function Orb({
@@ -58,14 +58,12 @@ export default function Orb({
   const target = useSharedValue(0);
   const loud = useSharedValue(0);
   const speak = useSharedValue(0);
-  const warm = useSharedValue(mode === "thinking" || mode === "speaking" ? 1 : 0);
   const lit = useSharedValue(mode === "off" ? 0 : 1);
 
   useEffect(() => {
     modeSV.value = MODE[mode];
-    warm.value = withTiming(mode === "thinking" || mode === "speaking" ? 1 : 0, { duration: 600 });
     lit.value = withTiming(mode === "off" ? 0 : 1, { duration: 500 });
-  }, [mode, modeSV, warm, lit]);
+  }, [mode, modeSV, lit]);
 
   useEffect(() => {
     target.value = mode === "listening" ? level : 0;
@@ -96,15 +94,13 @@ export default function Orb({
     const m = modeSV.value;
     const lv = loud.value;
     const sp = speak.value;
-    const w = warm.value;
     const on = lit.value;
     const c = size / 2;
 
     // A colour as Skia takes it, without parsing a string for every point.
     const rgba = (col: number[], a: number) => Float32Array.of(col[0] / 255, col[1] / 255, col[2] / 255, a);
     const mix = (a: number[], b: number[], k: number) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
-    const front = mix(GREY, mix(TEAL, VIOLET, w), on);
-    const back = mix(GREY, mix(VIOLET, TEAL, w), on);
+    const col = mix(GREY, INK, on);
 
     const breathe = m === 1 ? Math.sin(t * 2) * 0.02 : 0;
     const radius = size * (0.3 + on * 0.04 + breathe + lv * 0.09 + sp * 0.035);
@@ -117,20 +113,6 @@ export default function Orb({
 
     return createPicture(
       (canvas) => {
-        // The glow behind it, strongest when it's listening loudly or talking.
-        const glow = Skia.Paint();
-        const g = 0.1 + on * (0.14 + lv * 0.3 + sp * 0.25);
-        glow.setShader(
-          Skia.Shader.MakeRadialGradient(
-            { x: c, y: c },
-            radius * 1.45,
-            [rgba(front, g), rgba(front, 0)],
-            null,
-            0,
-          ),
-        );
-        canvas.drawCircle(c, c, radius * 1.45, glow);
-
         // Turn, tilt, displace, then draw back to front.
         const projected: number[][] = [];
         for (let i = 0; i < POINTS.length; i += 4) {
@@ -154,7 +136,6 @@ export default function Orb({
         dot.setAntiAlias(true);
         for (const [px, py, pz] of projected) {
           const depth = (pz + 1) / 2;
-          const col = depth > 0.5 ? front : back;
           const alpha = (0.18 + depth * 0.82) * (0.55 + on * 0.45);
           dot.setColor(rgba(col, alpha));
           canvas.drawCircle(px, py, (1.3 + depth * 2.7) * (size / 220), dot);

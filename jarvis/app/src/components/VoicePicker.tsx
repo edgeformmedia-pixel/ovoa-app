@@ -17,10 +17,10 @@ const ONE_VOICE: Record<string, string> = {
   device: "The assistant is using your iPhone's own voice right now. Your choice here picks the one that sounds closest.",
 };
 
-/** Settings: the list, with Talk's microphone held while a sample plays. */
+/** Settings: the list folded into a dropdown, with Talk's microphone held while a sample plays. */
 export function VoicePicker({ token }: { token: string }) {
   const { hold } = useAssistant();
-  return <VoiceList token={token} hold={hold} />;
+  return <VoiceList token={token} hold={hold} dropdown />;
 }
 
 /**
@@ -28,8 +28,18 @@ export function VoicePicker({ token }: { token: string }) {
  * listen doesn't hear it as a question; setup has no assistant listening and
  * just plays it.
  */
-export function VoiceList({ token, hold = (run) => run() }: { token: string; hold?: (run: () => Promise<void>) => Promise<void> }) {
+export function VoiceList({
+  token,
+  hold = (run) => run(),
+  dropdown = false,
+}: {
+  token: string;
+  hold?: (run: () => Promise<void>) => Promise<void>;
+  /** Show only the chosen voice until tapped open. */
+  dropdown?: boolean;
+}) {
   const [selected, setSelected] = useState<VoiceId | null>(null);
+  const [open, setOpen] = useState(!dropdown);
   const [error, setError] = useState<string | null>(null);
   const speaker = useRef(createSpeaker(token));
   const { user } = useSession();
@@ -53,7 +63,18 @@ export function VoiceList({ token, hold = (run) => run() }: { token: string; hol
     <View style={{ gap: 4 }}>
       <Text style={styles.meta}>How the assistant sounds. Tap a voice to hear it.</Text>
       {note && <Text style={styles.meta}>{note}</Text>}
-      {VOICES.map((v) => (
+      {dropdown && (
+        <Pressable
+          style={styles.select}
+          onPress={() => setOpen((o) => !o)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: open }}
+        >
+          <Text style={[styles.label, { flex: 1 }]}>{VOICES.find((v) => v.id === selected)?.label ?? "Choose a voice"}</Text>
+          <Ionicons name={open ? "chevron-up" : "chevron-down"} size={18} color={colors.inkMute} />
+        </Pressable>
+      )}
+      {open && VOICES.map((v) => (
         <Pressable key={v.id} style={styles.row} onPress={() => choose(v.id, v.label)}>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>{v.label}</Text>
@@ -68,6 +89,16 @@ export function VoiceList({ token, hold = (run) => run() }: { token: string; hol
 }
 
 const styles = StyleSheet.create({
+  select: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.inkMute,
+    marginTop: 4,
+  },
   row: { flexDirection: "row", alignItems: "center", paddingVertical: 8 },
   label: { color: colors.ink, fontSize: 15 },
   meta: { color: colors.inkMute, fontSize: 13 },
