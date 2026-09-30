@@ -1,6 +1,7 @@
 import type { CallTool, ToolSpec } from "./llm";
 import { money, toCents } from "./money";
 import { say } from "./obs";
+import { cardLink, cardName, cardOf, forgetCard, payReady, startPaid } from "./pay";
 import { addDays, atLocalTime, buckets, localWeekday } from "./time";
 import type { Env } from "./types";
 
@@ -12,10 +13,11 @@ import type { Env } from "./types";
 // this for $X? Reply YES". Only their YES, in a later message of their own,
 // records it against the budget and hands them the link to complete it.
 //
-// OVOA never pays. It holds no card and asks for none, and there is no payment
-// integration for people's own purchases (OVOA's Stripe is only for OVOA's own
-// plans). Paying hands-off would need virtual cards from a provider like Stripe
-// Issuing, one per budget with its own limits, which is later work.
+// With paying on (pay.ts, 2026-09-30) and a card they saved, their YES pays:
+// their card is held, a one-time Stripe Issuing card is made for the amount and
+// the browser agent checks out with it. Without a saved card (or with paying
+// off) it's the link, as before, and payment_card offers the save-a-card link.
+// OVOA never sees a card number: it's saved on Stripe's page.
 //
 // A background run can't reach any of this: none of these tools are in
 // agent.ts READ_ALONE, and the spending ones are in commands.ts
@@ -39,7 +41,7 @@ type Budget = {
   currency: string;
   created_at: number;
 };
-type Purchase = { id: string; budget_id: string | null; what: string; merchant: string | null; url: string | null; price_cents: number; status: string; created_at: number };
+type Purchase = { id: string; budget_id: string | null; what: string; merchant: string | null; url: string | null; price_cents: number; status: string; created_at: number; details: string | null };
 
 /** When the budget's current period began: Monday for a week, the 1st for a month, its creation for once. Pure. */
 export function periodStart(period: Period, now: number, timeZone: string, createdAt: number) {
@@ -147,6 +149,11 @@ function specs(): ToolSpec[] {
           merchant: { type: "string" },
           url: { type: "string", description: "The https page where they can book or buy it" },
           category: { type: "string", description: "Which budget: travel, dinners, gifts…" },
+          details: {
+            type: "string",
+            description:
+              "Everything the checkout will ask for that they told you: travelers' full names as on ID, dates of birth, email, phone, shipping address, sizes, seat or room choices. Ask for what's missing BEFORE preparing it.",
+          },
         },
         required: ["what", "price", "url", "category"],
       },
@@ -154,7 +161,7 @@ function specs(): ToolSpec[] {
     {
       name: "purchase_confirm",
       description:
-        "Their answer to a purchase you prepared, from their own reply: yes records it against the budget and gives the link to complete it; no drops it. Only for a purchase prepared before this message, and only on their explicit yes.",
+        "Their answer to a purchase you prepared, from their own reply: yes records it against the budget and, if they've saved a card, OVOA pays and checks out for them; otherwise it gives the link to complete it. No drops it. Only for a purchase prepared before this message, and only on their explicit yes.",
       parameters: {
         type: "object",
         properties: {
@@ -164,13 +171,19 @@ function specs(): ToolSpec[] {
         required: ["id", "decision"],
       },
     },
+    {
+      name: "payment_card",
+      description:
+        "The card OVOA pays with when they say YES to a purchase: 'link' gives a one-time link to save or replace it on Stripe's page (OVOA never sees the number), 'status' says which card is saved, 'remove' deletes it.",
+      parameters: { type: "object", properties: { action: { type: "string", enum: ["link", "status", "remove"] } }, required: ["action"] },
+    },
   ];
 }
 
 const NAMES = new Set(specs().map((t) => t.name));
 export const isBudgetTool = (name: string) => NAMES.has(name);
 /** The ones that commit to spending: never for the agent's queued commands (commands.ts). */
-export const SPENDING_TOOLS = ["budget_set", "purchase_propose", "purchase_confirm"];
+export const SPENDING_TOOLS = ["budget_set", "purchase_propose", "purchase_confirm", "payment_card"];
 
 /**
  * `born`: when this turn began. A purchase prepared at or after it can't be
@@ -239,21 +252,25 @@ export function budgetAssistant(env: Env, userId: string, timeZone: string, born
       }
       const id = crypto.randomUUID().slice(0, 8);
       await db
-        .prepare("INSERT INTO purchases (id, user_id, budget_id, what, merchant, url, price_cents, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?)")
-        .bind(id, userId, budget?.id ?? null, what, String(args.merchant ?? "").trim().slice(0, 80) || null, url, price, now)
+        .prepare("INSERT INTO purchases (id, user_id, budget_id, what, merchant, url, price_cents, status, created_at, details) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?)")
+        .bind(id, userId, budget?.id ?? null, what, String(args.merchant ?? "").trim().slice(0, 80) || null, url, price, now, String(args.details ?? "").trim().slice(0, 1_000) || null)
         .run();
       say("budget", { outcome: "proposed", user: userId });
+      const card = payReady(env) ? await cardOf(db, userId) : null;
+      const ask = card ? `Buy this for about ${money(price)} with your ${cardName(card)}? Reply YES` : `Book this for ${money(price)}? Reply YES`;
       return {
         prepared: id,
-        ask: `Book this for ${money(price)}? Reply YES`,
+        ask,
         ...(budget ? { budget: budget.category, leftAfter: money(left!) } : { budget: "none", note2: "They have no budget for this: mention it." }),
-        note: `Nothing is bought. End your reply by asking exactly: "Book this for ${money(price)}? Reply YES" after saying what it is and where. Don't say it's booked.`,
+        note: card
+          ? `Nothing is bought yet. On their YES you'll pay and check out for them. End your reply by asking exactly: "${ask}" after saying what it is and where.`
+          : `Nothing is bought. End your reply by asking exactly: "${ask}" after saying what it is and where. Don't say it's booked.`,
       };
     }
     if (name === "purchase_confirm") {
       const id = String(args.id ?? "").trim();
       const p = await db
-        .prepare("SELECT id, budget_id, what, merchant, url, price_cents, status, created_at FROM purchases WHERE id = ? AND user_id = ?")
+        .prepare("SELECT id, budget_id, what, merchant, url, price_cents, status, created_at, details FROM purchases WHERE id = ? AND user_id = ?")
         .bind(id, userId)
         .first<Purchase>();
       if (!p) return { error: "No purchase with that id is waiting." };
@@ -277,27 +294,64 @@ export function budgetAssistant(env: Env, userId: string, timeZone: string, born
       await db.prepare("UPDATE purchases SET status = 'approved', decided_at = ? WHERE id = ?").bind(now, p.id).run();
       say("budget", { outcome: "approved", user: userId });
       const after = budget ? view(budget, await spentIn(db, budget, now, timeZone)) : null;
+      const budgetLine = after?.warning ? `Warn them: the ${budget!.category} budget is ${after.warning} (${after.spent} of ${after.budget}).` : after ? `Say what's left: ${after.left}.` : "";
+      // OVOA pays, when it can.
+      if (payReady(env)) {
+        const card = await cardOf(db, userId);
+        if (card) {
+          const paid = await startPaid(env, userId, p.id);
+          if (paid.ok) {
+            return {
+              paying: p.what,
+              hold: money(paid.hold),
+              card: paid.card,
+              note: `Say you're checking out now with their ${paid.card}: it's held for up to ${money(paid.hold)} (room for taxes and fees), only what the site charges is taken, and you'll text when it's done or if you need them. It is NOT paid yet: never say paid or booked. ${budgetLine}`,
+            };
+          }
+          return {
+            approved: p.what,
+            price: money(p.price_cents),
+            link: p.url,
+            note: `You couldn't pay for it yourself: ${paid.why}. Say so plainly, and give them the link to finish it themselves: ${p.url}. Never say booked or paid. ${budgetLine}`,
+          };
+        }
+      }
+      const offer = payReady(env) ? " Then offer: if they save a card (payment_card link), next time you can pay for them." : "";
       return {
         approved: p.what,
         price: money(p.price_cents),
         link: p.url,
         ...(after && { budget: after }),
         note: [
-          `It is NOT booked yet: never say "booked" or "paid". Say it's approved and counted against the budget, and give them the link to finish booking it themselves (you don't pay and never ask for a card): ${p.url}`,
-          after?.warning ? `Warn them: the ${budget!.category} budget is ${after.warning} (${after.spent} of ${after.budget}).` : after ? `Say what's left: ${after.left}.` : "",
+          `It is NOT booked yet: never say "booked" or "paid". Say it's approved and counted against the budget, and give them the link to finish booking it themselves (never ask for card numbers in chat): ${p.url}.${offer}`,
+          budgetLine,
         ]
           .filter(Boolean)
           .join(" "),
       };
     }
+    if (name === "payment_card") {
+      if (!payReady(env)) return { error: "OVOA can't pay for things yet: purchases end with a link they complete themselves." };
+      const action = String(args.action ?? "status");
+      if (action === "link") {
+        const link = await cardLink(env, userId);
+        return { link, note: `Give them this link (it works once, for an hour): ${link}. It's Stripe's page: OVOA never sees the card number. After that, a YES to a purchase you prepared pays for it.` };
+      }
+      if (action === "remove") return (await forgetCard(env, userId)) ? { removed: true } : { error: "No card is saved." };
+      const card = await cardOf(db, userId);
+      return card ? { saved: cardName(card) } : { saved: "none", note: "Offer the link (payment_card with action link)." };
+    }
     return { error: `Unknown tool ${name}` };
   };
+  const paying = payReady(env);
   return {
-    tools: specs(),
+    tools: paying ? specs() : specs().filter((t) => t.name !== "payment_card"),
     callTool,
     prompt: [
       "Budgets: they can give you a spending budget (budget_set). To buy something within it, find real options (web_search), pick the best that fits, and prepare it with purchase_propose (what, total price, merchant, the https link), then ask \"Book this for $X? Reply YES\".",
-      "Only when their own next reply says yes, call purchase_confirm: it counts it against the budget and you give them the link to complete it. You never pay, never hold or ask for card details, and never say something is booked or paid.",
+      paying
+        ? "Only when their own next reply says yes, call purchase_confirm: with a saved card OVOA pays and the browser checks out (say you're on it; the result is texted), otherwise you give them the link. Before preparing a booking, get what the checkout needs (travelers' names as on ID, dates of birth, email, phone, address) into details. Never ask for card numbers in chat: payment_card gives the link to save one on Stripe's page. Never say something is booked or paid until OVOA texts that it is."
+        : "Only when their own next reply says yes, call purchase_confirm: it counts it against the budget and you give them the link to complete it. You never pay, never hold or ask for card details, and never say something is booked or paid.",
     ].join("\n"),
   };
 }

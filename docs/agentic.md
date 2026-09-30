@@ -52,8 +52,8 @@ backfillSystemJobs), `texting.ts` (the "take things off their plate" line),
 - **Notion, Apple contacts**: Notion needs an OAuth integration made in
   Notion's dashboard. Apple contacts are on the phone, and the phone tools
   already reach them.
-- **Paying on its own**: this would need Stripe Issuing and a card per user.
-  It's deliberately not built; purchases stay "YES, then you finish it at the
-  link", or the browser agent stops at the pay step for a YES.
+- **Paying on its own**: built 2026-09-30 (docs/pay.md), off until Stripe
+  approves Issuing and scripts/pay-setup.mjs puts the keys on. A YES holds
+  their saved card, a one-time Issuing card pays and the browser checks out.
 - **Messaging a non-user**: not on the $100/mo Sendblue plan (inbound-first).
   Forwardable lines instead.

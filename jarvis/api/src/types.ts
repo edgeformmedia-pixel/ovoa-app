@@ -123,6 +123,22 @@ export type Env = {
    */
   SITES_DOMAIN?: string;
   SITES_WILDCARD?: string;
+  /**
+   * OVOA paying for approved purchases (pay.ts, docs/pay.md). All three are
+   * secrets, put by scripts/pay-setup.mjs; until every one is set, paying is off
+   * and purchases end with a link as before. STRIPE_SECRET_KEY is the live key
+   * of the Stripe account with Issuing; STRIPE_PAY_WEBHOOK_SECRET signs its
+   * webhook to /pay/webhook; STRIPE_ISSUING_CARDHOLDER is the cardholder the
+   * one-time cards are issued to (ich_...).
+   */
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_PAY_WEBHOOK_SECRET?: string;
+  STRIPE_ISSUING_CARDHOLDER?: string;
+  /** Where Stripe's API is: https://api.stripe.com/v1 unless a local test points it at a fake one. */
+  STRIPE_API_BASE?: string;
+  /** Dollars: the most OVOA pays for one purchase, and in a month, per person (paycore.ts defaults: 500 and 1000). */
+  PAY_MAX_PURCHASE?: string;
+  PAY_MAX_MONTH?: string;
   /** Rate limits (wrangler.jsonc "ratelimits", limits.ts). Optional: a missing one allows everything. */
   RL_AUTH?: RateLimit;
   RL_TURN?: RateLimit;

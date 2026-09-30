@@ -265,7 +265,10 @@ export const RULES: Rule[] = [
     args: (c) => [c.cutoff, c.cutoffDay],
   },
   // What was bought against a budget: a month's total reads from the 1st, so the counts' window.
-  { name: "purchases", table: "purchases", where: "created_at < ?", args: (c) => [c.counts] },
+  // One OVOA is still paying for (a hold on their card, pay.ts) stays until it settles.
+  { name: "purchases", table: "purchases", where: "created_at < ? AND COALESCE(pay_status, '') NOT IN ('holding', 'authorized')", args: (c) => [c.counts] },
+  // Stripe events already handled: a retry comes within days, not weeks.
+  at("created_at", "pay_events"),
   at("last_seen", "error_events"),
   at("last_at", "engine_stats"),
   at("last_at", "cron_ticks"),
@@ -273,6 +276,8 @@ export const RULES: Rule[] = [
   // ---- Things with their own expiry ----
   { name: "sessions", table: "sessions", where: "expires_at < ?", args: (c) => [c.now] },
   { name: "oauth_states", table: "oauth_states", where: "expires_at < ?", args: (c) => [c.now] },
+  // A save-a-card link works for an hour (pay.ts).
+  { name: "pay_setups", table: "pay_setups", where: "created_at < ?", args: (c) => [c.now - 3_600_000] },
   { name: "instagram_states", table: "instagram_states", where: "expires_at < ?", args: (c) => [c.now] },
   // The confirmation email's one-tap links (verify.ts): a day, used or not.
   { name: "verify_links", table: "verify_links", where: "expires_at < ?", args: (c) => [c.now] },
@@ -387,6 +392,9 @@ export const TABLES = {
   instagram_events: "delete",
   browser_tasks: "delete",
   browser_logins: "keep",
+  pay_cards: "keep",
+  pay_setups: "expires",
+  pay_events: "delete",
   ovoa_suggestions: "keep",
 } as const satisfies Record<string, "keep" | "delete" | "mixed" | "expires" | "index">;
 

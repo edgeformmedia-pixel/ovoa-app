@@ -46,6 +46,7 @@ export const FORBIDDEN_FOR_COMMANDS = new Set([
   "budget_set",
   "purchase_propose",
   "purchase_confirm",
+  "payment_card",
   // Instagram: sending, publishing and deleting reach other people (instagram.ts).
   "ig_send_dm",
   "ig_reply_comment",

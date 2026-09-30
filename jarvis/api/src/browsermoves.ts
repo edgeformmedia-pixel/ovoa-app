@@ -14,6 +14,7 @@ export type Move =
   | { action: "scroll"; dir: "up" | "down" }
   | { action: "key"; key: string }
   | { action: "wait" }
+  | { action: "pay" }
   | { action: "needs_approval"; summary: string }
   | { action: "need_login"; site?: string }
   | { action: "done"; result: string }
@@ -63,6 +64,7 @@ export function parseMove(text: string): Move | null {
     case "scroll": return { action: "scroll", dir: raw.dir === "up" ? "up" : "down" };
     case "key": return typeof raw.key === "string" ? { action: "key", key: raw.key } : null;
     case "wait": return { action: "wait" };
+    case "pay": return { action: "pay" };
     case "needs_approval": return { action: "needs_approval", summary: clip(raw.summary, 300) || "the next step" };
     case "need_login": return { action: "need_login", site: clip(raw.site, 80) };
     case "done": return { action: "done", result: clip(raw.result, 1200) };

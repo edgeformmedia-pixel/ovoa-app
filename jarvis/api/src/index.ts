@@ -47,6 +47,7 @@ import {
 import { budgetAssistant, budgetContext, isBudgetTool } from "./budget";
 import { instagramAssistant, instagramPublic, isInstagramTool } from "./instagram";
 import { browserAssistant, isBrowserTool } from "./browser";
+import { payRoutes, payTick } from "./pay";
 import { isMemoryTool, memoryAssistant } from "./memorytools";
 import { zoneForPhone } from "./phonezone";
 import { isLifePlanTool, lifePlansAssistant, plansTick } from "./lifeplans";
@@ -389,6 +390,8 @@ app.route("/", textingWebhook(textTurn));
 app.route("/", contactRoutes());
 // A website's preview, public and sandboxed, while its own address isn't answering yet (sites.ts).
 app.route("/", sitePreview);
+// Saving the card OVOA pays with (the token is the proof), and Stripe's webhook for the one-time cards (signed) (pay.ts).
+app.route("/", payRoutes);
 app.route("/", shortcutFiles);
 app.route("/", logs);
 
@@ -3722,6 +3725,8 @@ async function runTick(env: Env, cron: string, at = Date.now()) {
     await part("nightly", nightly(env));
     await part("summaries", writeDaySummaries(env));
     await part("retention", purgeExpired(env));
+    // Holds on cards with nothing charged are let go; approved charges are captured before the hold runs out (pay.ts).
+    await part("pay", payTick(env));
   } else {
     // Sequential on purpose: a Worker has one CPU, and two concurrent waitUntils
     // only interleave. The clock-sensitive ones go first, though — the agent's
