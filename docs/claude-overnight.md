@@ -801,3 +801,6 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   to f2b0d45 (one commit, guest.ts: the email ask after the free texts reads as an offer). git merge-tree still
   conflicts on the same eight files. Stopped without code changes. The merge decision from 2026-09-29 20:56 UTC
   still needs the owner.
+- 2026-09-30 16:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main still at f2b0d45,
+  no new commits since the 15:57 UTC run; git merge-tree still conflicts. Stopped without code changes. The merge
+  decision from 2026-09-29 20:56 UTC still needs the owner.
