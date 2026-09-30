@@ -704,7 +704,7 @@ const PHOTO_MAX_KEPT = 1_800_000;
 const PHOTOS_PER_BUILD = 12;
 
 const PHOTOS_RULE =
-  "The https://.../site-photos/... addresses above are the owner's own photos. Put every one on the page as an <img> with that exact src, alt text from what it shows, and width/height or aspect-ratio set, cropped with object-fit: cover to suit the design. Never draw a photo with CSS or describe it in place of showing it.";
+  "The https://.../site-photos/... addresses above are the owner's own photos. Put every one on the page as an <img> with that exact src, alt text from what it shows, and width/height or aspect-ratio set, cropped with object-fit: cover to suit the design; a photo of a person keeps their face in the frame (object-position: 50% 15% or so, and a wide crop of a tall portrait never cuts at the chest). Never draw a photo with CSS or describe it in place of showing it.";
 
 /** A photo of theirs on their site, by its id. Pure. */
 export const sitePhotoUrl = (env: Pick<Env, "PUBLIC_URL">, id: string) => `${env.PUBLIC_URL || "https://api.ovoa.ai"}/site-photos/${id}.jpg`;
