@@ -797,3 +797,7 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 - 2026-09-30 14:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main still at c5937d0,
   no new commits since the 13:55 UTC run. Stopped without code changes. The merge decision from 2026-09-29 20:56 UTC
   still needs the owner.
+- 2026-09-30 15:57 UTC (scheduled session): every task is [x], nothing left to take. origin/main moved from c5937d0
+  to f2b0d45 (one commit, guest.ts: the email ask after the free texts reads as an offer). git merge-tree still
+  conflicts on the same eight files. Stopped without code changes. The merge decision from 2026-09-29 20:56 UTC
+  still needs the owner.
