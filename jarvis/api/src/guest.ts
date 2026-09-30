@@ -28,7 +28,8 @@ const SIGN_UP = "https://ovoa.ai/text";
 
 type Row = { used: number; email: string | null };
 
-export const ASK_EMAIL = `That was your ${FREE}th free text. Reply with your email for ${FREE} more. No account needed.`;
+// An offer, not a wall: what they get and what it doesn't cost them.
+export const ASK_EMAIL = `Want to keep going? Reply with your email and I'll give you ${FREE} more free texts. No account, no card, no spam.`;
 export const GOT_EMAIL = `Thanks! ${FREE} more free texts. Go ahead.`;
 export const MAKE_ACCOUNT = (email: string) =>
   `Out of free texts. Sign up free at ${SIGN_UP} with ${email}, then text me that email again. I'll link this number and you get ${FREE} more.`;
