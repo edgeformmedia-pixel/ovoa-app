@@ -1,4 +1,5 @@
 import { openMessagesPage } from "./guest";
+import { appState, noteAppSeen } from "./appSeen";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -1169,6 +1170,11 @@ authed.use("*", async (c, next) => {
   // Used today, so good for another month. At most one write a day per session,
   // and after the reply: nothing in this request reads it (2026-09-23).
   c.executionCtx.waitUntil(touchSession(c.env.DB, session).catch((err) => console.error("auth: couldn't extend the session", err)));
+  // The iPhone app says so on every request: ovoa.ai/account's "app installed" (appSeen.ts).
+  const appVersion = c.req.header("x-ovoa-app");
+  if (appVersion && session.kind === "app") {
+    c.executionCtx.waitUntil(noteAppSeen(c.env.DB, session.userId, appVersion).catch((err) => console.error("auth: couldn't note the app", err)));
+  }
   c.set("userId", session.userId);
   c.set("token", token);
   // Which engine answers may have been switched in the table since this isolate
@@ -1271,6 +1277,9 @@ const updateMeSchema = z.object({
    */
   timeZone: z.string().max(64).optional(),
 });
+
+/** Whether they have the iPhone app (appSeen.ts), for ovoa.ai/account. */
+authed.get("/me/app", async (c) => c.json(await appState(c.env.DB, c.var.userId)));
 
 authed.patch("/me", async (c) => {
   const parsed = updateMeSchema.safeParse(await c.req.json().catch(() => null));

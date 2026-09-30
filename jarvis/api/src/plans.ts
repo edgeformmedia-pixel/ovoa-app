@@ -138,6 +138,7 @@ export const ROUTE_TIERS: RouteRule[] = [
   // call); listing and deleting the ones you have calls none.
   { method: "GET", path: /^\/sites$/, tier: "free", why: "the websites you have (building one is a turn)" },
   // Your @username (usernames.ts): picking, checking and changing it calls no model.
+  { method: "GET", path: /^\/me\/app$/, tier: "free", why: "whether you have the iPhone app" },
   { method: "*", path: /^\/me\/username(\/check)?$/, tier: "free", why: "your username, and whether one is free" },
   // OVOA to OVOA (network.ts): connecting, permissions, answering what waits for
   // you and the log call no model; asking another OVOA something is base, like

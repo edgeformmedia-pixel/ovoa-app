@@ -928,7 +928,7 @@ async function sendAll(out: Sender, to: string, texts: string[]) {
 
 const SMS_ONLY =
   "I only answer iMessages, to keep your account safe. Turn on iMessage in your iPhone's Settings (Apps, then Messages) and text me again.";
-const BAD_CODE = "That link code didn't work: it may have expired or been used already. In the OVOA app, tap Link my number again.";
+const BAD_CODE = "That link code didn't work: it may have expired or been used already. Get a new one at ovoa.ai/account (Switch number, or Link my number).";
 /** How often a number that isn't linked (or sends SMS) is told what to do. */
 const TOLD_EVERY_MS = 24 * 3_600_000;
 const BAD_CODES_PER_HOUR = 5;

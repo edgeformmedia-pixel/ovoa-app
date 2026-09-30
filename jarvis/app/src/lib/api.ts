@@ -1,7 +1,12 @@
+import * as Application from "expo-application";
+import Constants from "expo-constants";
 import { fetch as streamingFetch } from "expo/fetch";
 import { openAppId } from "./activeApp";
 import { consentMissing, noteConsentNeeded, type AiConsent } from "./consent";
 import { devlog } from "./devlog";
+
+// Sent on every request so ovoa.ai/account knows the app is installed (api appSeen.ts).
+const APP_VERSION = Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? "?";
 
 // The server (jarvis/api) on the ovoa.ai account since the v1 move. Builds from
 // before it use jarvis-api.edgeformmedia.workers.dev, which forwards here until
@@ -940,6 +945,7 @@ export async function request<T>(path: string, token: string | null, init: Reque
       headers: {
         "content-type": "application/json",
         ...(token && { authorization: `Bearer ${token}` }),
+        "x-ovoa-app": APP_VERSION,
         ...init.headers,
       },
     });
@@ -1060,7 +1066,7 @@ async function streamedTurn<R extends { meta?: unknown } = ChatResponse>(
     const res = await streamingFetch(`${API_URL}${path}`, {
       method: "POST",
       signal: timeout.signal,
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "x-ovoa-app": APP_VERSION },
       body: JSON.stringify({ ...body, stream: true }),
     });
     if (!res.ok) {
