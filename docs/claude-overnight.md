@@ -819,3 +819,7 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
 - 2026-09-30 21:55 UTC (scheduled session): every task is [x], nothing left to take. origin/main still at 854bc6d,
   no new commits since the 20:56 UTC run. Stopped without code changes. The merge decision from 2026-09-29 20:56 UTC
   still needs the owner.
+- 2026-09-30 22:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main moved from 854bc6d
+  to f2e1653 (one commit, app Talk screen goes black and white and the Settings voice choice becomes a dropdown);
+  git merge-tree still conflicts on the same eight files. Stopped without code changes. The merge decision from
+  2026-09-29 20:56 UTC still needs the owner.
