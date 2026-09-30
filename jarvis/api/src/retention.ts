@@ -376,6 +376,7 @@ export const TABLES = {
   sites: "mixed",
   site_builds: "delete",
   site_leads: "delete",
+  site_photos: "keep",
   usernames_history: "expires",
   connections: "keep",
   connection_perms: "keep",

@@ -5,6 +5,8 @@ export type Env = {
   /** The browser agent: one per errand (browser.ts), and the cloud Chrome it drives. */
   BROWSER_TASK: DurableObjectNamespace;
   BROWSER: Fetcher;
+  /** Cloudflare Images: the photos on their websites, made web-sized (sites.ts hostPhotos). */
+  IMAGES?: ImagesBinding;
   /** Gemini, the second engine (llm.ts), and web search grounding (web.ts). */
   GEMINI_API_KEY?: string;
   /**

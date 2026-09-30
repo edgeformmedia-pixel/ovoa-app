@@ -693,6 +693,99 @@ export async function queueBuild(db: D1Database, site: Pick<SiteRow, "id" | "use
   return id;
 }
 
+// ---------- Their photos ----------
+
+/** Where a texted photo is (Sendblue's store): copied before a page uses it. */
+const TEXTED_PHOTO = /https:\/\/storage\.googleapis\.com\/inbound-file-store\/[A-Za-z0-9_.~%-]+/g;
+/** Past this a photo isn't fetched. */
+const PHOTO_MAX_IN = 25 * 1024 * 1024;
+/** And past this (Images couldn't shrink it) it isn't kept: a D1 row holds 2 MB. */
+const PHOTO_MAX_KEPT = 1_800_000;
+const PHOTOS_PER_BUILD = 12;
+
+const PHOTOS_RULE =
+  "The https://.../site-photos/... addresses above are the owner's own photos. Put every one on the page as an <img> with that exact src, alt text from what it shows, and width/height or aspect-ratio set, cropped with object-fit: cover to suit the design. Never draw a photo with CSS or describe it in place of showing it.";
+
+/** A photo of theirs on their site, by its id. Pure. */
+export const sitePhotoUrl = (env: Pick<Env, "PUBLIC_URL">, id: string) => `${env.PUBLIC_URL || "https://api.ovoa.ai"}/site-photos/${id}.jpg`;
+
+/**
+ * The texted photos a build's words point to, copied into site_photos (once per
+ * site) and web-sized by Cloudflare Images, their addresses swapped for ours.
+ * One that can't be had is named as missing. Never throws.
+ */
+export async function hostPhotos(env: Env, site: Pick<SiteRow, "id" | "user_id">, text: string): Promise<{ text: string; count: number }> {
+  const sources = [...new Set(text.match(TEXTED_PHOTO) ?? [])].slice(0, PHOTOS_PER_BUILD);
+  if (!sources.length) return { text, count: 0 };
+  const hosted = new Map<string, string | null>();
+  await Promise.all(sources.map(async (src) => hosted.set(src, await hostPhoto(env, site, src))));
+  let count = 0;
+  const out = text.replace(TEXTED_PHOTO, (src) => {
+    const id = hosted.get(src);
+    if (id === undefined) return src;
+    if (id === null) return "(a photo that couldn't be loaded: leave it out)";
+    count++;
+    return sitePhotoUrl(env, id);
+  });
+  say("site", { outcome: "photos", user: site.user_id, asked: sources.length, kept: hosted.size - [...hosted.values()].filter((v) => !v).length });
+  return { text: out, count };
+}
+
+async function hostPhoto(env: Env, site: Pick<SiteRow, "id" | "user_id">, src: string): Promise<string | null> {
+  const db = env.DB;
+  const had = () => db.prepare("SELECT id FROM site_photos WHERE site_id = ? AND source = ?").bind(site.id, src).first<{ id: string }>();
+  try {
+    const before = await had();
+    if (before) return before.id;
+    const res = await fetch(src, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw new Error(`photo ${res.status}`);
+    const got = new Uint8Array(await res.arrayBuffer());
+    if (got.length > PHOTO_MAX_IN) throw new Error("too big");
+    let bytes: Uint8Array | null = null;
+    let type = (res.headers.get("content-type") ?? "").split(";")[0].trim();
+    if (env.IMAGES) {
+      try {
+        const made = await env.IMAGES.input(new Blob([got]).stream())
+          .transform({ width: 1600, height: 1600, fit: "scale-down" })
+          .output({ format: "image/jpeg", quality: 82 });
+        bytes = new Uint8Array(await made.response().arrayBuffer());
+        type = "image/jpeg";
+      } catch (err) {
+        console.error("ovoa.err sites: Images couldn't resize a photo", err);
+      }
+    }
+    if (!bytes && /^image\/(jpeg|png|webp|gif)$/.test(type)) bytes = got;
+    if (!bytes || bytes.length > PHOTO_MAX_KEPT) throw new Error(bytes ? "too big to keep" : `can't show ${type || "it"}`);
+    await db
+      .prepare("INSERT OR IGNORE INTO site_photos (id, site_id, user_id, source, type, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID().replaceAll("-", ""), site.id, site.user_id, src, type, bytes, Date.now())
+      .run();
+    return (await had())?.id ?? null;
+  } catch (err) {
+    say("site", { outcome: "photo missing", user: site.user_id, why: err instanceof Error ? err.message.slice(0, 120) : "error" });
+    return null;
+  }
+}
+
+/** GET /site-photos/<id>.jpg: a photo on one of their websites, public like the site. */
+export async function sitePhoto(env: Env, file: string) {
+  const id = /^([a-f0-9]{32})(?:\.jpg)?$/.exec(file)?.[1];
+  const row = id
+    ? await env.DB.prepare("SELECT p.type, p.bytes FROM site_photos p JOIN sites s ON s.id = p.site_id WHERE p.id = ? AND s.deleted_at IS NULL")
+        .bind(id)
+        .first<{ type: string; bytes: ArrayBuffer | number[] }>()
+    : null;
+  if (!row) return new Response("Not found", { status: 404 });
+  return new Response(row.bytes instanceof ArrayBuffer ? row.bytes : new Uint8Array(row.bytes), {
+    headers: {
+      "content-type": row.type,
+      "cache-control": "public, max-age=31536000, immutable",
+      "x-content-type-options": "nosniff",
+      "cross-origin-resource-policy": "cross-origin",
+    },
+  });
+}
+
 // ---------- Building ----------
 
 /** One build, start to finish: the model writes the page, it's cleaned and kept, and they're told. */
@@ -729,10 +822,12 @@ ${site.brief}`,
         .filter(Boolean)
         .join("\n");
   const started = Date.now();
+  // Their texted photos, copied here and web-sized: the page shows these, never Sendblue's.
+  const photos = game ? { text, count: 0 } : await hostPhotos(env, site, text);
   const raw = await generateText(env, {
     model: env.CHAT_MODEL,
     system: game ? gamePrompt(url, change) : change ? changePrompt(url) : createPrompt(url),
-    turns: [{ role: "user", text }],
+    turns: [{ role: "user", text: photos.count ? `${photos.text}\n\n${PHOTOS_RULE}` : photos.text }],
     usage: { userId: site.user_id, purpose: game ? "game build" : change ? "site change" : "site build" },
     maxTokens: BUILD_TOKENS,
     fast: true,
@@ -1421,7 +1516,7 @@ function specs(domain: string): ToolSpec[] {
           about: {
             type: "string",
             description:
-              "Everything the site should say and how it should look, in full: what they do and for whom, where, services or menu and prices, hours, phone, email, address, social links, the style and colors they want. Only what they told you or you know about them: never make up contact details.",
+              "Everything the site should say and how it should look, in full: what they do and for whom, where, services or menu and prices, hours, phone, email, address, social links, the style and colors they want. Only what they told you or you know about them: never make up contact details. Photos they sent for it: every one's address exactly as given (https://...) and what it shows, and they go on the site.",
           },
           project: { type: "string", description: `The project's name in its address, e.g. "tonys-pizza" for <username>.${domain}/tonys-pizza. Leave out to use the name.` },
           subdomain: { type: "string", description: `Only when they ask for an address of its own: the one they want, e.g. "tonyspizza" for tonyspizza.${domain}.` },
@@ -1438,7 +1533,10 @@ function specs(domain: string): ToolSpec[] {
         type: "object",
         properties: {
           site: { type: "string", description: "Which website: its name or address" },
-          change: { type: "string", description: "The change, in full and in their words, with any new details" },
+          change: {
+            type: "string",
+            description: "The change, in full and in their words, with any new details. Photos they sent for it: every one's address exactly as given (https://...) and what it shows.",
+          },
         },
         required: ["site", "change"],
       },

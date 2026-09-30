@@ -12,6 +12,8 @@ import {
   briefWith,
   cleanSiteHtml,
   forgetWildcard,
+  hostPhotos,
+  sitePhoto,
   iconSvg,
   isSiteTool,
   leadFrom,
@@ -323,6 +325,10 @@ const asks: { max: number; stream: boolean }[] = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
+  // A texted photo in Sendblue's store; "gone" ones are no longer there.
+  if (url.startsWith("https://storage.googleapis.com/inbound-file-store/")) {
+    return url.includes("gone") ? new Response("", { status: 404 }) : new Response(new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]), { headers: { "content-type": "image/jpeg" } });
+  }
   if (url.startsWith("https://glm.test/")) {
     modelCalls++;
     const body = JSON.parse(String(init?.body ?? "{}"));
@@ -554,6 +560,23 @@ async function main() {
   eq("after 90 days it's forgotten", (sql("UPDATE usernames_history SET released_at = ? WHERE username = 'sam'", Date.now() - 91 * 86_400_000), await route("sam", "/sams-bakery/")).kind, "none");
   eq("the list gives the new links", ((await call("site_list", {})).sites as { name: string; link: string }[]).find((s) => s.name === "Sam's Bakery")?.link, "https://api.ovoa.ai/s/samuel/sams-bakery");
   eq("a project can move to another name", (await call("site_manage", { site: "Cakes by Sam", action: "move", project: "sweets" })).link, "https://api.ovoa.ai/s/samuel/sweets");
+
+  // ---------- Their photos ----------
+  {
+    const site = one<{ id: string }>("SELECT id FROM sites WHERE user_id = ? LIMIT 1", U)!;
+    const a = "https://storage.googleapis.com/inbound-file-store/W21A9skT_7";
+    const said = `A portfolio. Photos: ${a} (red top, mirror) and https://storage.googleapis.com/inbound-file-store/gone_1 (a car).`;
+    const got = await hostPhotos(env, { id: site.id, user_id: U }, said);
+    const id = /site-photos\/([a-f0-9]{32})\.jpg/.exec(got.text)?.[1] ?? "";
+    eq("a texted photo is copied, its address swapped for ours", got.text.startsWith("A portfolio. Photos: https://api.ovoa.ai/site-photos/") && !got.text.includes(a), true);
+    eq("one that's gone is named as missing", got.text.includes("couldn't be loaded") && got.count === 1, true);
+    eq("and a second build keeps the same copy", (await hostPhotos(env, { id: site.id, user_id: U }, a)).text, `https://api.ovoa.ai/site-photos/${id}.jpg`);
+    const served = await sitePhoto(env, `${id}.jpg`);
+    eq("served, public and cached", [served.status, served.headers.get("content-type"), served.headers.get("cache-control")?.includes("immutable")], [200, "image/jpeg", true]);
+    eq("the bytes it was sent", [...new Uint8Array(await served.arrayBuffer())], [0xff, 0xd8, 0xff, 1, 2, 3]);
+    eq("anything else is a 404", (await sitePhoto(env, "../etc")).status, 404);
+    eq("nothing to copy: the words as they were", await hostPhotos(env, { id: site.id, user_id: U }, "no photos"), { text: "no photos", count: 0 });
+  }
 
   // ---------- Limits ----------
   const have = count("SELECT COUNT(*) AS n FROM sites WHERE user_id = ?", U);

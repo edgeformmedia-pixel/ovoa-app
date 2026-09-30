@@ -164,6 +164,8 @@
   // Cloudflare Browser Rendering, as env.BROWSER: a real Chrome in the cloud
   // for the browser agent. Workers Paid; billed per browser hour.
   "browser": { "binding": "BROWSER" },
+  // Cloudflare Images: a texted photo made web-sized for a website (src/sites.ts hostPhotos).
+  "images": { "binding": "IMAGES" },
   "d1_databases": [
     {
       "binding": "DB",

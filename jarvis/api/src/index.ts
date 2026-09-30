@@ -40,6 +40,7 @@ import {
   siteLabel,
   sitePreview,
   siteRoutes,
+  sitePhoto,
   sitesAssistant,
   sitesTick,
   SITES_BUDGET_MS,
@@ -388,6 +389,8 @@ app.route("/", verifyLinkRoutes);
 // Texts to OVOA's number, from Sendblue: no session, the webhook secret is the proof (texting.ts).
 app.route("/", textingWebhook(textTurn));
 app.route("/", contactRoutes());
+// The photos on the websites OVOA builds: public, like the sites.
+app.get("/site-photos/:file", (c) => sitePhoto(c.env, c.req.param("file")));
 // A website's preview, public and sandboxed, while its own address isn't answering yet (sites.ts).
 app.route("/", sitePreview);
 // Saving the card OVOA pays with (the token is the proof), and Stripe's webhook for the one-time cards (signed) (pay.ts).
