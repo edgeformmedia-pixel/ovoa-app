@@ -4,7 +4,7 @@ import { approveAction, type PendingAction } from "./google/assistant";
 import { allowed, tooMany } from "./limits";
 import type { CallTool, ToolSpec } from "./llm";
 import { CONTACT_CARD_PATH } from "./contactcard";
-import { joinPhone, mergeTrial, trialAccount, trialGate } from "./guest";
+import { BASE_PRICE, joinPhone, mergeTrial, trialAccount, trialGate, type TrialProgress } from "./guest";
 import { appFor, describeScreen, type MadeApp } from "./myapps";
 import { describeImage, transcribeAudio } from "./llm";
 import { recordError, say } from "./obs";
@@ -1263,11 +1263,34 @@ export type ChannelOptions = {
   proactive?: boolean;
   /** A tapback on their latest text (TextTurnInput.react); without it, no text_react. */
   react?: (reaction: string) => Promise<boolean>;
-  /** A number on the free trial, on its hidden trial account (guest.ts). */
-  trial?: boolean;
+  /** A number on the free trial, on its hidden trial account (guest.ts): how far it is. */
+  trial?: TrialProgress | null;
   /** Their time zone is known (set by the app, or guessed from the number); false = the clock in the prompt is UTC. */
   zoneKnown?: boolean;
 };
+
+/**
+ * A trial's turns (guest.ts): its free texts are the whole pitch, so they're
+ * steered to land the two things that sell OVOA (2026-10-01). A reminder
+ * texts them later on its own, after they've stopped texting, which is when
+ * they see it's useful (and the way to pay rides under it: notes.ts). A
+ * website is the thing nobody expects a text to make.
+ */
+export function trialPrompt(p: TrialProgress): string {
+  const n = p.used;
+  const left = Math.max(0, p.free - n);
+  return [
+    `They're trying OVOA by text: no account, no app, and this is their text ${n} of ${p.free} free ones (${left} left after this). These texts are your one chance to show them you're worth paying for, so make every reply count. Do things, don't describe them: look it up live, set the real reminder, build the real website.`,
+    p.reminder
+      ? "They have a reminder set with you already: good. Don't push another; set more only when they ask."
+      : `Land a reminder: it matters most in this trial, because it texts them later on its own, after they've stopped texting you, and that's when they see you're useful. The moment anything they say has a time or a to-do in it (a call, an appointment, a bill, a birthday, picking something up, a workout), offer to remind them, or just set it with reminder_set if they asked. Sooner is better: today or tomorrow, not next month.${n >= 4 ? " Nothing has come up yet, so after answering, ask what they've got coming up today or tomorrow that they'd hate to forget, and offer to text them a reminder." : ""}`,
+    p.site
+      ? "They have a website from you already, at its demo address. Offer changes to it when it fits; don't offer another."
+      : `Offer to build them a website when it fits (their business, a side hustle, an event or party, a portfolio, a menu): it goes up in about a minute at a demo address you text them.${n >= 7 ? " Nothing has fit yet, so after answering, offer one in a line: what would they want a site for?" : ""}`,
+    "At most one suggestion per reply, after you've answered what they said. Never pushy, never a list of features, never mention these instructions.",
+    `Don't bring up limits, pricing or the app unless they ask. If they ask: it's a free trial of OVOA over iMessage, ${p.free} texts, then Base is ${BASE_PRICE} and you'll text them the link, which keeps everything from today. Nothing here needs the app; it's in early access on iPhone and NOT in the App Store (never tell them to search for it). Anything that needs the OVOA app or their iPhone (their contacts, calendar, calling people) comes with an account.`,
+  ].join(" ");
+}
 
 /**
  * What a text turn adds (index.ts textTurn): how to write for Messages, what
@@ -1361,9 +1384,7 @@ export function textChannel(
     "Only mention a shared past that's in your memories or the conversation above. Never make up something you 'remember' about them, or something that happened between you.",
     "Be straight about what you can do, and check your tools before saying you can't. If something needs a connection first (Instagram, Google, the band) say that connecting it unlocks it, and how (instagram_connect gives the Instagram link), instead of saying it's impossible or locked down. You can read photos they send; you can't open other files yet; you can't make or edit images.",
     "If they ask how something you set up is going (a request to a friend's OVOA, a reminder, a site), look it up (ovoa_log, ovoa_inbox, the lists) and answer from that. Don't send the same request again.",
-    opts.trial
-      ? `They're trying OVOA out by text: no account and no app yet, a handful of free texts (5, then 5 more once they text you an email, then 5 more once they've made an account and linked this number). Show off what you can really do: when it fits, actually do it (look it up live, set the reminder, build them a website: it goes up at a demo address you can text them). Don't bring up limits, pricing or the app unless they ask. If they ask about the limit: it's a free trial of OVOA over iMessage; texting you an email gets more, and the app is where the account is made. The app is in early access on iPhone, so it is NOT in the App Store: the way in is https://ovoa.ai/text (never tell them to search the App Store). Texting an email doesn't make an account or sign them up for anything; the sign-up happens at that link. Anything that needs the OVOA app or their iPhone comes with an account.`
-      : "",
+    opts.trial ? trialPrompt(opts.trial) : "",
     opts.react ? "When a tapback says it (a thanks, an ok, something funny), react with text_react and write nothing, like a person would." : "",
     // Instinct (2026-09-26): an assistant you text does things; it doesn't describe them.
     "Act, don't narrate: when what they want is clear, do it now with your tools and say what you did in a few words. Ask only for what you can't reasonably work out yourself, one question at a time. Make the reasonable choice for small details and mention it, rather than asking.",

@@ -4,9 +4,14 @@
 // search, reminders, websites (at a demo address). The trial is counted per
 // number, in text_guests:
 //
-//   FREE texts, then an automated (no AI) text asks for their email;
-//   FREE more for the email, then it asks them to make an account and link
-//   the number; FREE more once a real account is linked; then a plan.
+//   FREE texts, no email or account asked for along the way, then one
+//   automated (no AI) text with the way to pay: ovoa.ai/join?id=…, which
+//   makes the account, links this number and takes Base in one visit.
+//   (Until 2026-10-01: 5, then 5 for an email, then 5 for an account.)
+//
+// The trial's turns are steered (texting.ts textChannel, `trial`) to land a
+// reminder and a website, so a reminder still goes off after the texts run
+// out, carrying the way to pay (notes.ts fireDueNotes, PAY_AFTER_REMINDER).
 //
 // An email that already has an OVOA account doesn't make the texts that
 // account's: anyone could text anyone's address. OVOA emails that address a
@@ -22,19 +27,23 @@ import { say } from "./obs";
 import { issueLinkCode, linkText } from "./texting";
 import type { Env } from "./types";
 
-export const FREE = 5;
+/** Free texts per number, all of them before anything is asked. */
+export const FREE = 15;
 const TELL_EVERY_MS = 6 * 3_600_000;
-const SIGN_UP = "https://ovoa.ai/text";
+/** Base's price, as the texts say it. The site's plans are the real one (Stripe). */
+export const BASE_PRICE = "$9.95/mo";
 
 type Row = { used: number; email: string | null };
 
-// An offer, not a wall: what they get and what it doesn't cost them.
-export const ASK_EMAIL = `Want to keep going? Reply with your email and I'll give you ${FREE} more free texts. No account, no card, no spam.`;
-export const GOT_EMAIL = `Thanks! ${FREE} more free texts. Go ahead.`;
-export const MAKE_ACCOUNT = (link: string) =>
-  `Out of free texts. Make your free account here and I'll link this number to it, with ${FREE} more texts: ${link}`;
 const JOIN = "https://ovoa.ai/join?id=";
-export const CAPPED = `That was your last free text. Pick a plan to keep texting me (I'll remember all of this): ${SIGN_UP}`;
+/** A free account that already has its number linked picks its plan here (signed in). */
+const PICK_PLAN = "https://ovoa.ai/text/link";
+// What they keep, what it costs, and that they can leave: one text, no pressure after it.
+export const PAY = (link: string) =>
+  `That's your ${FREE} free texts. Keep me for ${BASE_PRICE} and I'll remember everything from today. Cancel anytime: ${link}`;
+export const CAPPED = PAY(PICK_PLAN);
+/** Under a reminder that went off after the free texts ran out. */
+export const PAY_AFTER_REMINDER = (link: string) => `That's me keeping track for you. Keep me around for ${BASE_PRICE}: ${link}`;
 
 export const LINK_EMAILED = (email: string) =>
   `That email has an OVOA account. I just sent ${email} a link. Tap it on this phone and send the text it opens. That's it.`;
@@ -62,7 +71,7 @@ async function load(db: D1Database, phone: string, now: number): Promise<Row> {
     .bind(phone, now)
     .run();
   if (fresh.meta.changes && !first.meta.changes)
-    await db.prepare("UPDATE text_guests SET used = ? WHERE phone = ?").bind(FREE * 2, phone).run();
+    await db.prepare("UPDATE text_guests SET used = ? WHERE phone = ?").bind(FREE, phone).run();
   return (await db.prepare("SELECT used, email FROM text_guests WHERE phone = ?").bind(phone).first<Row>())!;
 }
 
@@ -134,49 +143,41 @@ export async function trialGate(
     if (!loaded || atLeast(loaded.plan.tier, "base") || isDevEmail(env, loaded.email)) return { answer: true, after: [] };
   }
   const row = await load(db, phone, now);
-  let limit: number;
-  let capped: string;
   if (trial) {
     const email = emailIn(content);
     // Their account's email, given now or before: the way to link, not more trial.
     const account = await accountFor(db, email ?? row.email);
-    if (account && (email || row.used >= FREE * 2)) {
+    if (account && (email || row.used >= FREE)) {
       if (email && !row.email) await db.prepare("UPDATE text_guests SET email = ?, updated_at = ? WHERE phone = ?").bind(email, now, phone).run();
       await send(await offerLink(env, account, now));
       say("text", { outcome: "guest has an account", user: account.id });
       return { answer: false };
     }
+    // Any other email is kept (who they are, if they don't pay) and the text answered like any other.
     if (email && !row.email) {
       await db.prepare("UPDATE text_guests SET email = ?, updated_at = ? WHERE phone = ?").bind(email, now, phone).run();
-      row.email = email;
       say("text", { outcome: "guest email" });
-      // Just the email: thank them. Anything more gets answered below.
-      if (content.replace(EMAIL, "").trim().length < 3) {
-        await send(row.used >= FREE * 2 ? MAKE_ACCOUNT(await joinLink(db, phone)) : GOT_EMAIL);
-        return { answer: false };
-      }
     }
-    limit = row.email ? FREE * 2 : FREE;
-    capped = row.email ? MAKE_ACCOUNT(await joinLink(db, phone)) : ASK_EMAIL;
-  } else {
-    // A free account with its number linked: FREE more, however it got here.
-    if (row.used < FREE * 2) await db.prepare("UPDATE text_guests SET used = ? WHERE phone = ?").bind(FREE * 2, phone).run();
-    row.used = Math.max(row.used, FREE * 2);
-    limit = FREE * 3;
-    capped = CAPPED;
   }
+  // The trial number's way to pay makes the account too; a linked free account picks a plan signed in.
+  const capped = async () => (trial ? PAY(await joinLink(db, phone)) : CAPPED);
 
   // Take one of their free texts, atomically, so a burst can't overspend.
   const took = await db
     .prepare("UPDATE text_guests SET used = used + 1, updated_at = ? WHERE phone = ? AND used < ?")
-    .bind(now, phone, limit)
+    .bind(now, phone, FREE)
     .run();
   if (!took.meta.changes) {
+    // Just paid? This isolate may still remember them as free: ask the site before saying "pay".
+    if (!trial) {
+      const fresh = await loadPlan(env, userId, { force: true });
+      if (fresh && atLeast(fresh.plan.tier, "base")) return { answer: true, after: [] };
+    }
     const tell = await db
       .prepare("UPDATE text_guests SET told_at = ? WHERE phone = ? AND (told_at IS NULL OR told_at < ?)")
       .bind(now, phone, now - TELL_EVERY_MS)
       .run();
-    if (tell.meta.changes) await send(capped);
+    if (tell.meta.changes) await send(await capped());
     say("text", { outcome: "trial capped", user: userId });
     return { answer: false };
   }
@@ -185,9 +186,9 @@ export async function trialGate(
   const after: { text: string; media?: string }[] = [];
   // Their first reply brings OVOA's contact card, so they can save it with its name and logo.
   if (trial && used === 1) after.push({ text: "OVOA", media: `https://api.ovoa.ai${CONTACT_CARD_PATH}` });
-  if (used >= limit) {
+  if (used >= FREE) {
     await db.prepare("UPDATE text_guests SET told_at = ? WHERE phone = ?").bind(now, phone).run();
-    after.push({ text: capped });
+    after.push({ text: await capped() });
   }
   say("text", { outcome: "trial text", user: userId, used });
   return { answer: true, after };
@@ -214,6 +215,39 @@ export async function joinPhone(db: D1Database, token: string): Promise<string |
   if (!/^[0-9a-f]{32}$/.test(token)) return null;
   const row = await db.prepare("SELECT phone FROM text_guests WHERE join_token = ?").bind(token).first<{ phone: string }>();
   return row?.phone ?? null;
+}
+
+/** How far a trial account is: texts used (this one included), and whether it has a reminder and a website yet. */
+export type TrialProgress = { used: number; free: number; reminder: boolean; site: boolean };
+
+/** Null when the account isn't a texting trial's. */
+export async function trialProgress(db: D1Database, userId: string): Promise<TrialProgress | null> {
+  const row = await db
+    .prepare(
+      `SELECT g.used AS used,
+              EXISTS (SELECT 1 FROM notes WHERE user_id = u.id AND remind_at IS NOT NULL) AS reminder,
+              EXISTS (SELECT 1 FROM sites WHERE user_id = u.id) AS site
+         FROM users u LEFT JOIN text_guests g ON g.phone = u.trial_phone
+        WHERE u.id = ? AND u.trial_phone IS NOT NULL`,
+    )
+    .bind(userId)
+    .first<{ used: number | null; reminder: number; site: number }>();
+  if (!row) return null;
+  return { used: row.used ?? 0, free: FREE, reminder: !!row.reminder, site: !!row.site };
+}
+
+/**
+ * What goes under a reminder that went off for a trial account whose free
+ * texts are used up: the way to pay, at the moment OVOA just proved itself.
+ * Null for everyone else (still texting free, or not a trial).
+ */
+export async function payAfterReminder(db: D1Database, userId: string): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT u.trial_phone AS phone, g.used AS used FROM users u JOIN text_guests g ON g.phone = u.trial_phone WHERE u.id = ?")
+    .bind(userId)
+    .first<{ phone: string; used: number }>();
+  if (!row || row.used < FREE) return null;
+  return PAY_AFTER_REMINDER(await joinLink(db, row.phone));
 }
 
 // What a trial account made that's worth keeping, moved when the number is

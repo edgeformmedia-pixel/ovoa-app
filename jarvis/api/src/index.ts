@@ -1,4 +1,4 @@
-import { openMessagesPage } from "./guest";
+import { openMessagesPage, trialProgress } from "./guest";
 import { appState, noteAppSeen } from "./appSeen";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
@@ -2736,7 +2736,7 @@ async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId, 
   const [apps, app, trial] = await Promise.all([
     appsOf(env.DB, userId),
     openId ? appFor(env.DB, userId, openId) : null,
-    env.DB.prepare("SELECT trial_phone FROM users WHERE id = ?").bind(userId).first<{ trial_phone: string | null }>(),
+    trialProgress(env.DB, userId),
   ]);
   // Into the transcript, as a typed turn's words are, when the timeline is on (transcripts.ts).
   ctx.waitUntil(storeLine(env.DB, userId, text, "mic").catch(() => false));
@@ -2755,7 +2755,7 @@ async function textTurn(env: Env, ctx: Waiter, { userId, text, link, requestId, 
         agent: !!settings.agent_enabled && settings.agent_autonomy !== "off",
         proactive: link.proactive !== 0,
         react,
-        trial: !!trial?.trial_phone,
+        trial,
         zoneKnown,
       })),
   }).catch((err: unknown): TurnResult => {

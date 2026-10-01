@@ -3,6 +3,7 @@ import { logAction } from "./actionlog";
 import { capabilities } from "./capabilities";
 import { resolveDue } from "./context";
 import { validTimeZone } from "./google/assistant";
+import { payAfterReminder } from "./guest";
 import type { CallTool, ToolSpec } from "./llm";
 import { push } from "./push";
 import { reach } from "./reach";
@@ -120,9 +121,11 @@ export async function fireDueNotes(env: Env) {
       await push(env, n.user_id, { title: `Text ${other[1]}?`, body: other[2].slice(0, 180), data: { type: "remind-other", who: other[1], text: other[2] } });
     } else {
       // By text for someone who texts OVOA (reach.ts), where "done" is the answer.
+      // A trial whose free texts are gone: the way to pay rides under it, as its own bubble (guest.ts).
+      const pay = await payAfterReminder(env.DB, n.user_id).catch(() => null);
       await reach(env, n.user_id, {
         kind: "reminder",
-        text: `Reminder: ${n.text}${n.urgent ? `\n\nText "done" when it's done.` : ""}`,
+        text: `Reminder: ${n.text}${n.urgent ? `\n\nText "done" when it's done.` : ""}${pay ? `\n\n${pay}` : ""}`,
         push: { title: "Reminder", body: n.text.slice(0, 180), data: { type: "note", noteId: n.id } },
       });
     }

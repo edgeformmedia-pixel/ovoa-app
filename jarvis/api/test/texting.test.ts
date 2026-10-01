@@ -31,6 +31,7 @@ import {
   tidyReply,
   withMedia,
   textsTick,
+  trialPrompt,
   waitingApprovals,
   waitingLine,
   yesOrNo,
@@ -40,7 +41,7 @@ import {
   type TextTurnInput,
   type TextTurnOutcome,
 } from "../src/texting";
-import { ASK_EMAIL, CAPPED, FREE, LINK_ON_SITE } from "../src/guest";
+import { CAPPED, FREE, LINK_ON_SITE, payAfterReminder, trialProgress } from "../src/guest";
 const LINK_EMALED_PREFIX = "That email has an OVOA account. I just emailed";
 import type { MadeApp } from "../src/myapps";
 import type { Env } from "../src/types";
@@ -309,7 +310,7 @@ async function main() {
   // ---------- Strangers, SMS, groups ----------
 
   // A number nobody linked gets the free trial on a hidden trial account: FREE
-  // full turns, FREE more for an email, FREE more once a real account is linked.
+  // full turns, nothing asked along the way, then one text with the way to pay.
   const G = { from_number: "+15865550999" };
   eq("a number nobody linked", await text("hello", deps(), G), "queued");
   const trialId = count("SELECT COUNT(*) AS n FROM users WHERE trial_phone = '+15865550999'");
@@ -318,21 +319,29 @@ async function main() {
   eq("and a whole turn", replies.asked.length, 1);
   eq("then the contact card", out.sent.at(-1)?.media?.endsWith("/texting/contact.vcf"), true);
   eq("to that number", out.sent.at(-1)?.to, "+15865550999");
-  for (let i = 2; i <= FREE; i++) await text(`hi ${i}`, deps(), G);
-  eq("every free text is a turn", replies.asked.length, FREE);
-  eq("then it asks for an email, no AI", out.sent.at(-1)?.content, ASK_EMAIL);
-  let told = out.sent.length;
-  await text("more?", deps(), G);
-  eq("past the free texts: no reply, already asked", out.sent.length, told);
   await text("Sure, ME@Example.com", deps(), G);
-  eq("an email with words is answered", replies.asked.length, FREE + 1);
-  eq("is kept", count("SELECT COUNT(*) AS n FROM text_guests WHERE email = 'me@example.com'"), 1);
-  for (let i = 2; i <= FREE; i++) await text(`again ${i}`, deps(), G);
-  eq("after the extra ones: make an account", /^Out of free texts\. Make your free account here.*https:\/\/ovoa\.ai\/join\?id=[0-9a-f]{32}$/.test(out.sent.at(-1)?.content ?? ""), true);
-  told = out.sent.length;
+  eq("an email is just answered", replies.asked.length, 2);
+  eq("and kept", count("SELECT COUNT(*) AS n FROM text_guests WHERE email = 'me@example.com'"), 1);
+  eq("nothing asked for it", out.sent.some((m) => /free texts/.test(m.content)), false);
+  for (let i = 3; i <= FREE; i++) await text(`hi ${i}`, deps(), G);
+  eq("every free text is a turn", replies.asked.length, FREE);
+  eq("then the way to pay, no AI", new RegExp(`^That's your ${FREE} free texts\\. Keep me for \\$9\\.95/mo.*https://ovoa\\.ai/join\\?id=[0-9a-f]{32}$`).test(out.sent.at(-1)?.content ?? ""), true);
+  let told = out.sent.length;
   await text("please", deps(), G);
-  eq("and it's cut off", out.sent.length, told);
-  eq("no more turns", replies.asked.length, FREE * 2);
+  eq("past the free texts: no reply, already told", out.sent.length, told);
+  eq("no more turns", replies.asked.length, FREE);
+
+  // The prompt knows how far the trial is, and what it still has to land.
+  const tp = await trialProgress(DB, (sqlite.prepare("SELECT id FROM users WHERE trial_phone = '+15865550999'").get() as { id: string }).id);
+  eq("trial progress", tp && { used: tp.used, reminder: tp.reminder, site: tp.site }, { used: FREE, reminder: false, site: false });
+  eq("steers to a reminder", trialPrompt({ used: 5, free: FREE, reminder: false, site: false }).includes("reminder_set"), true);
+  eq("asks what's coming up once nothing has", trialPrompt({ used: 5, free: FREE, reminder: false, site: false }).includes("hate to forget"), true);
+  eq("not before", trialPrompt({ used: 2, free: FREE, reminder: false, site: false }).includes("hate to forget"), false);
+  eq("stops once there's one", trialPrompt({ used: 5, free: FREE, reminder: true, site: false }).includes("hate to forget"), false);
+
+  // A reminder going off after the free texts carries the way to pay; during them it doesn't.
+  const after = await payAfterReminder(DB, tp ? (sqlite.prepare("SELECT id FROM users WHERE trial_phone = '+15865550999'").get() as { id: string }).id : "");
+  eq("a reminder after the trial", /^That's me keeping track for you\..*https:\/\/ovoa\.ai\/join\?id=[0-9a-f]{32}$/.test(after ?? ""), true);
 
   // The trial is once per number: its old row deleted for age, it doesn't start over.
   sqlite.exec("DELETE FROM text_guests WHERE phone = '+15865550999'");
@@ -340,7 +349,7 @@ async function main() {
   told = out.sent.length;
   await text("hi again", deps(), G);
   eq("a number back after its row went: no new trial", out.sent.length, told + 1);
-  eq("and no turn", replies.asked.length, FREE * 2);
+  eq("and no turn", replies.asked.length, FREE);
 
   // A guest whose email has an account: told how to link, not given more trial.
   const A = { from_number: "+15865550997" };
@@ -350,6 +359,7 @@ async function main() {
   eq("points them to linking", [LINK_ON_SITE, LINK_EMALED_PREFIX].some((t) => out.sent.at(-1)?.content.startsWith(t)), true);
   eq("with no free text spent", count("SELECT used AS n FROM text_guests WHERE phone = '+15865550997'"), 1);
   eq("and no turn", replies.asked.length, turnsBefore);
+  eq("still texting free: no pay line under a reminder", await payAfterReminder(DB, (sqlite.prepare("SELECT id FROM users WHERE trial_phone = '+15865550997'").get() as { id: string }).id), null);
 
   // Linking a trial number to a real account brings what the trial made, and its demo username.
   const R = "user-trial-merge";
@@ -362,13 +372,13 @@ async function main() {
   eq("its website is theirs, same address", count("SELECT COUNT(*) AS n FROM sites WHERE user_id = ? AND slug = ?", R, `${tid.username}/demo`), 1);
   eq("its chat too", count("SELECT COUNT(*) AS n FROM messages WHERE user_id = ?", R) > 0, true);
   eq("and its username", count("SELECT COUNT(*) AS n FROM users WHERE id = ? AND username = ?", R, tid.username), 1);
-  // A free account, linked: FREE more (the number had used 1, so it's topped to FREE * 2 first), then a plan.
+  // A free account, linked: the rest of the number's free texts (it had used 1), then a plan.
   const before = replies.asked.length;
-  for (let i = 1; i <= FREE; i++) await text(`linked ${i}`, deps(), A);
-  eq("FREE more once linked", replies.asked.length, before + FREE);
+  for (let i = 2; i <= FREE; i++) await text(`linked ${i}`, deps(), A);
+  eq("the rest of the free texts once linked", replies.asked.length, before + FREE - 1);
   eq("then pick a plan", out.sent.at(-1)?.content, CAPPED);
   await text("one more", deps(), A);
-  eq("and no more", replies.asked.length, before + FREE);
+  eq("and no more", replies.asked.length, before + FREE - 1);
 
   eq("SMS", await text("hi", deps(),{ service: "SMS", from_number: "+15865550998" }), "sms");
   eq("is told to use iMessage", out.sent.at(-1)?.content.includes("iMessage"), true);
