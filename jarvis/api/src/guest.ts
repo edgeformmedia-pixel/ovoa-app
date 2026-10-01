@@ -31,8 +31,9 @@ type Row = { used: number; email: string | null };
 // An offer, not a wall: what they get and what it doesn't cost them.
 export const ASK_EMAIL = `Want to keep going? Reply with your email and I'll give you ${FREE} more free texts. No account, no card, no spam.`;
 export const GOT_EMAIL = `Thanks! ${FREE} more free texts. Go ahead.`;
-export const MAKE_ACCOUNT = (email: string) =>
-  `Out of free texts. Sign up free at ${SIGN_UP} with ${email}, then text me that email again. I'll link this number and you get ${FREE} more.`;
+export const MAKE_ACCOUNT = (link: string) =>
+  `Out of free texts. Make your free account here and I'll link this number to it, with ${FREE} more texts: ${link}`;
+const JOIN = "https://ovoa.ai/join?id=";
 export const CAPPED = `That was your last free text. Pick a plan to keep texting me (I'll remember all of this): ${SIGN_UP}`;
 
 export const LINK_EMAILED = (email: string) =>
@@ -151,12 +152,12 @@ export async function trialGate(
       say("text", { outcome: "guest email" });
       // Just the email: thank them. Anything more gets answered below.
       if (content.replace(EMAIL, "").trim().length < 3) {
-        await send(row.used >= FREE * 2 ? MAKE_ACCOUNT(email) : GOT_EMAIL);
+        await send(row.used >= FREE * 2 ? MAKE_ACCOUNT(await joinLink(db, phone)) : GOT_EMAIL);
         return { answer: false };
       }
     }
     limit = row.email ? FREE * 2 : FREE;
-    capped = row.email ? MAKE_ACCOUNT(row.email) : ASK_EMAIL;
+    capped = row.email ? MAKE_ACCOUNT(await joinLink(db, phone)) : ASK_EMAIL;
   } else {
     // A free account with its number linked: FREE more, however it got here.
     if (row.used < FREE * 2) await db.prepare("UPDATE text_guests SET used = ? WHERE phone = ?").bind(FREE * 2, phone).run();
@@ -190,6 +191,29 @@ export async function trialGate(
   }
   say("text", { outcome: "trial text", user: userId, used });
   return { answer: true, after };
+}
+
+/**
+ * ovoa.ai/join?id=…: the link a trial number gets when its free texts run
+ * out. Only this number is ever texted it, so whoever signs in with it there
+ * gets the number linked (POST /texting/join), no code to text back. The same
+ * token every time, until it's used.
+ */
+export async function joinLink(db: D1Database, phone: string): Promise<string> {
+  const had = await db.prepare("SELECT join_token FROM text_guests WHERE phone = ?").bind(phone).first<{ join_token: string | null }>();
+  if (had?.join_token) return JOIN + had.join_token;
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  const token = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  await db.prepare("UPDATE text_guests SET join_token = ? WHERE phone = ? AND join_token IS NULL").bind(token, phone).run();
+  const now = await db.prepare("SELECT join_token FROM text_guests WHERE phone = ?").bind(phone).first<{ join_token: string | null }>();
+  return JOIN + (now?.join_token ?? token);
+}
+
+/** The number a join token was texted to. Null if it's unknown or used (linking clears it). */
+export async function joinPhone(db: D1Database, token: string): Promise<string | null> {
+  if (!/^[0-9a-f]{32}$/.test(token)) return null;
+  const row = await db.prepare("SELECT phone FROM text_guests WHERE join_token = ?").bind(token).first<{ phone: string }>();
+  return row?.phone ?? null;
 }
 
 // What a trial account made that's worth keeping, moved when the number is

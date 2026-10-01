@@ -4,7 +4,7 @@ import { approveAction, type PendingAction } from "./google/assistant";
 import { allowed, tooMany } from "./limits";
 import type { CallTool, ToolSpec } from "./llm";
 import { CONTACT_CARD_PATH } from "./contactcard";
-import { mergeTrial, trialAccount, trialGate } from "./guest";
+import { joinPhone, mergeTrial, trialAccount, trialGate } from "./guest";
 import { appFor, describeScreen, type MadeApp } from "./myapps";
 import { describeImage, transcribeAudio } from "./llm";
 import { recordError, say } from "./obs";
@@ -416,22 +416,29 @@ async function redeem(db: D1Database, codes: string[], phone: string, now: numbe
       .bind(code, now)
       .first<{ user_id: string }>();
     if (!row) continue;
-    // One number, one account: a number linked elsewhere moves here, since the
-    // same person just proved both.
-    await db.batch([
-      db.prepare("DELETE FROM text_links WHERE phone = ? AND user_id != ?").bind(phone, row.user_id),
-      db
-        .prepare(
-          `INSERT INTO text_links (user_id, phone, linked_at) VALUES (?, ?, ?)
-             ON CONFLICT(user_id) DO UPDATE SET phone = excluded.phone, linked_at = excluded.linked_at,
-               app_id = NULL, app_at = NULL, approvals = NULL, approvals_at = NULL, approvals_until = NULL, followed_up_at = NULL`,
-        )
-        .bind(row.user_id, phone, now),
-      db.prepare("DELETE FROM text_link_codes WHERE user_id = ?").bind(row.user_id),
-    ]);
+    await linkPhone(db, row.user_id, phone, now);
     return row.user_id;
   }
   return null;
+}
+
+/**
+ * Links `phone` to the account. One number, one account: a number linked
+ * elsewhere moves here, since the same person just proved both.
+ */
+export async function linkPhone(db: D1Database, userId: string, phone: string, now: number) {
+  await db.batch([
+    db.prepare("DELETE FROM text_links WHERE phone = ? AND user_id != ?").bind(phone, userId),
+    db
+      .prepare(
+        `INSERT INTO text_links (user_id, phone, linked_at) VALUES (?, ?, ?)
+           ON CONFLICT(user_id) DO UPDATE SET phone = excluded.phone, linked_at = excluded.linked_at,
+             app_id = NULL, app_at = NULL, approvals = NULL, approvals_at = NULL, approvals_until = NULL, followed_up_at = NULL`,
+      )
+      .bind(userId, phone, now),
+    db.prepare("DELETE FROM text_link_codes WHERE user_id = ?").bind(userId),
+    db.prepare("UPDATE text_guests SET join_token = NULL WHERE phone = ?").bind(phone),
+  ]);
 }
 
 export async function unlink(db: D1Database, userId: string) {
@@ -1478,6 +1485,21 @@ export function textingRoutes(turn: TextTurn) {
     if (!(await allowed(c.env, "RL_AUTH", `textlink:${c.var.userId}`))) return tooMany(c, "link codes");
     const { code, expiresAt } = await issueLinkCode(c.env.DB, c.var.userId);
     return c.json({ code, number: c.env.SENDBLUE_NUMBER, body: linkText(code), expiresAt });
+  });
+
+  // ovoa.ai/join?id=…, signed in: the number that join link was texted to
+  // (guest.ts joinLink) is linked to this account, and what its trial made moves here.
+  routes.post("/texting/join", async (c) => {
+    const body = (await c.req.json().catch(() => null)) as { id?: unknown } | null;
+    if (!(await allowed(c.env, "RL_AUTH", `textjoin:${c.var.userId}`))) return tooMany(c, "join attempts");
+    const phone = typeof body?.id === "string" ? await joinPhone(c.env.DB, body.id) : null;
+    if (!phone) return c.json({ error: "That link was already used or has expired. Text OVOA and I'll send a new one." }, 404);
+    const me = await c.env.DB.prepare("SELECT trial_phone FROM users WHERE id = ?").bind(c.var.userId).first<{ trial_phone: string | null }>();
+    if (me?.trial_phone) return c.json({ error: "Sign in to your own account first." }, 409);
+    await linkPhone(c.env.DB, c.var.userId, phone, Date.now());
+    await mergeTrial(c.env.DB, phone, c.var.userId);
+    say("text", { outcome: "joined", user: c.var.userId });
+    return c.json({ ok: true, phone, number: c.env.SENDBLUE_NUMBER ?? null });
   });
 
   routes.delete("/texting/link", async (c) => {

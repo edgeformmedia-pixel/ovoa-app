@@ -40,7 +40,7 @@ import {
   type TextTurnInput,
   type TextTurnOutcome,
 } from "../src/texting";
-import { ASK_EMAIL, CAPPED, FREE, LINK_ON_SITE, MAKE_ACCOUNT } from "../src/guest";
+import { ASK_EMAIL, CAPPED, FREE, LINK_ON_SITE } from "../src/guest";
 const LINK_EMALED_PREFIX = "That email has an OVOA account. I just emailed";
 import type { MadeApp } from "../src/myapps";
 import type { Env } from "../src/types";
@@ -328,7 +328,7 @@ async function main() {
   eq("an email with words is answered", replies.asked.length, FREE + 1);
   eq("is kept", count("SELECT COUNT(*) AS n FROM text_guests WHERE email = 'me@example.com'"), 1);
   for (let i = 2; i <= FREE; i++) await text(`again ${i}`, deps(), G);
-  eq("after the extra ones: make an account", out.sent.at(-1)?.content, MAKE_ACCOUNT("me@example.com"));
+  eq("after the extra ones: make an account", /^Out of free texts\. Make your free account here.*https:\/\/ovoa\.ai\/join\?id=[0-9a-f]{32}$/.test(out.sent.at(-1)?.content ?? ""), true);
   told = out.sent.length;
   await text("please", deps(), G);
   eq("and it's cut off", out.sent.length, told);
