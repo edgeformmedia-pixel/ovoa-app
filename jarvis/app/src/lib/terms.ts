@@ -1,7 +1,7 @@
 // The Terms of Service shown in full at sign-up (app/terms.tsx), which the person
 // must scroll to the end of before Agree turns on, and again from Settings.
 // DRAFT written 2026-09-24 from how OVOA works; it needs a lawyer's review before
-// launch, and every [BRACKETED] value must be filled in.
+// launch. Its blanks were filled in on 2026-10-03.
 // A new wording needs a new TERMS_VERSION here and in api/src/terms.ts.
 
 export const TERMS_VERSION = 1;
@@ -13,9 +13,9 @@ export const TERMS: TermsSection[] = [
   {
     title: "1. Agreeing to these Terms",
     paragraphs: [
-      "These Terms of Service (the \"Terms\") are a legal agreement between you and [COMPANY LEGAL NAME], a company formed in [STATE OF FORMATION] (\"OVOA\", \"we\" or \"us\"). They cover the OVOA iPhone app, the OVOA Band, our website at ovoa.ai, and our server at api.ovoa.ai (together, the \"Service\").",
+      "These Terms of Service (the \"Terms\") are a legal agreement between you and OVOA LLC, a Florida limited liability company (\"OVOA\", \"we\" or \"us\"). They cover the OVOA iPhone app, the OVOA Band, our website at ovoa.ai, and our server at api.ovoa.ai (together, the \"Service\").",
       "By creating an account, tapping Agree, or using the Service, you agree to these Terms. If you don't agree, don't use the Service.",
-      "Our Privacy Policy at [PRIVACY POLICY URL] explains what information we collect and how we use it. It's part of these Terms, and so are the separate agreements some features ask for, such as the \"AI and your data\" screen.",
+      "Our Privacy Policy at ovoa.ai/privacy explains what information we collect and how we use it. It's part of these Terms, and so are the separate agreements some features ask for, such as the \"AI and your data\" screen.",
       "Section 22 says that most disputes will be settled by binding individual arbitration, not in court, and that you give up the right to join a class action. You can opt out within 30 days.",
       "The law where you live may give you rights that these Terms can't take away. Nothing here limits them.",
     ],
@@ -28,7 +28,7 @@ export const TERMS: TermsSection[] = [
       "You can sign up with an email address and password (the email address must be verified), with Sign in with Apple, or with Google sign-in. Apple's or Google's terms also apply when you sign in with them.",
       "Give us accurate information, and keep your email address up to date; that's where we send important notices.",
       "Each account is for one person. Don't share, sell or transfer it, create accounts for others or by automated means, or open extra accounts to get around limits.",
-      "Keep your password and devices secure, and use a passcode on your iPhone: anyone who can unlock it may be able to talk to OVOA as you and have it act for you. You're responsible for activity under your account unless our own failure caused it. If you think someone else has used it, tell us right away at [CONTACT EMAIL].",
+      "Keep your password and devices secure, and use a passcode on your iPhone: anyone who can unlock it may be able to talk to OVOA as you and have it act for you. You're responsible for activity under your account unless our own failure caused it. If you think someone else has used it, tell us right away at admin@ovoa.ai.",
     ],
   },
   {
@@ -54,9 +54,9 @@ export const TERMS: TermsSection[] = [
       "Credits measure AI use. What you do uses them at its real cost, so a spoken reply uses more than a typed one and a web search more again. Unused credits don't carry over to the next day, and credits have no cash value.",
       "Paid plans are bought on ovoa.ai, not in the App Store. Stripe processes payments under its own terms, and we don't receive your full card number.",
       "Your plan renews automatically every month until you cancel. By subscribing, you authorize us, through Stripe, to charge your payment method the plan's price plus any taxes at the start of each monthly period. If a payment fails, we may retry it and may pause your paid features or move you to Free until it succeeds.",
-      "You can cancel at any time, as described on ovoa.ai, or by emailing [CONTACT EMAIL]. Cancelling stops future renewals. You keep your plan until the end of the period you've paid for, and then your account moves to Free. Cancelling doesn't delete your account or data (see section 18), and deleting the app doesn't cancel your plan.",
-      "Refunds: [REFUND POLICY — e.g. no refunds for partial months]. This doesn't limit any refund rights you have under the law where you live.",
-      "We may change prices, what each plan includes, and its limits. We'll tell you about a price increase by email or in the app at least [PRICE CHANGE NOTICE PERIOD — e.g. 30 days] before it applies to you. If you don't want to pay the new price, cancel before then.",
+      "You can cancel at any time, as described on ovoa.ai, or by emailing admin@ovoa.ai. Cancelling stops future renewals. You keep your plan until the end of the period you've paid for, and then your account moves to Free. Cancelling doesn't delete your account or data (see section 18), and deleting the app doesn't cancel your plan.",
+      "Refunds: if a charge goes through and OVOA isn't for you, email us within 14 days and we'll refund it; otherwise we don't refund partial months. This doesn't limit any refund rights you have under the law where you live.",
+      "We may change prices, what each plan includes, and its limits. We'll tell you about a price increase by email or in the app at least 30 days before it applies to you. If you don't want to pay the new price, cancel before then.",
       "If you think a charge is wrong, contact us first. If you dispute it with your bank instead, we may suspend your paid plan while the dispute is open.",
     ],
   },
@@ -64,7 +64,7 @@ export const TERMS: TermsSection[] = [
     title: "5. Usage limits and fair use",
     paragraphs: [
       "Base includes up to 20 AI uses a day, and Pro up to 60. In general, each request that OVOA answers with AI counts as one use, and we decide how uses are counted. Daily limits reset each day, and unused uses don't carry over.",
-      "Every paid plan also has a monthly fair-use cap of [MONTHLY FAIR-USE CAP], which keeps OVOA affordable and available for everyone.",
+      "Every paid plan also has the monthly credit allowance listed in section 4, which keeps OVOA affordable and available for everyone.",
       "When you reach a limit, AI features pause until the limit resets or you change plans, and features that don't use AI keep working. Work OVOA does in the background, such as the background agent's checks, may count toward your limits.",
       "Plans are for one person's own use. Don't use scripts, bots, or shared or multiple accounts to get more usage, and don't resell or share access. We may slow, limit or suspend use that is automated, far above normal, or looks like abuse.",
     ],
@@ -75,10 +75,10 @@ export const TERMS: TermsSection[] = [
       "The OVOA Band is a small clip with a microphone, a button, a vibration motor and a heart-rate sensor. It connects to your iPhone over Bluetooth and needs the OVOA app. It's a one-time purchase of $89.99 and works without a paid plan, although features that use AI still need one.",
       "The Band relies on its Bluetooth connection to your iPhone. If the phone is out of range, off or low on battery, if Bluetooth is off, or if iOS limits the app in the background, the Band may not buzz, pass on what you say, or send heart-rate readings.",
       "The Band has a rechargeable battery. Charge it only as its instructions describe. Don't open, puncture, crush or heat it, and stop using it if it's damaged, swollen or unusually hot.",
-      "Water and dust: [BAND WATER RESISTANCE — e.g. the Band is not waterproof or water resistant]. Unless we state a water-resistance rating for your Band, keep it dry.",
+      "Water and dust: the Band is not waterproof or water resistant. Unless we state a water-resistance rating for your Band, keep it dry.",
       "Stop wearing the Band if it irritates your skin. It has small parts, so keep it away from young children and pets.",
-      "Returns: you may return a Band you bought from us within [BAND RETURN WINDOW — e.g. 30 days] of delivery, as described on ovoa.ai.",
-      "Limited warranty: [BAND LIMITED WARRANTY — e.g. one year against defects in materials and workmanship; we repair, replace or refund]. It doesn't cover normal wear, accidents, liquid damage (unless your Band is rated for it), misuse, repairs by anyone other than us, or normal battery decline. To make a claim, contact [CONTACT EMAIL]. Apart from this warranty and any the law requires, section 19 applies to the Band.",
+      "Returns: you may return a Band you bought from us within 30 days of delivery, as described on ovoa.ai.",
+      "Limited warranty: if your Band stops working because of a defect in materials or workmanship within 30 days of delivery, we will refund what you paid for it. It doesn't cover normal wear, accidents, liquid damage (unless your Band is rated for it), misuse, repairs by anyone other than us, or normal battery decline. To make a claim, contact admin@ovoa.ai. Apart from this warranty and any the law requires, section 19 applies to the Band.",
       "Heart-rate readings from the Band are estimates, not medical-grade (see section 11).",
     ],
   },
@@ -178,7 +178,7 @@ export const TERMS: TermsSection[] = [
   {
     title: "14. Privacy and how long we keep data",
     paragraphs: [
-      "Our Privacy Policy at [PRIVACY POLICY URL] explains fully what we collect, why, who we share it with, and your rights. Here's a summary; where they differ, the Privacy Policy controls.",
+      "Our Privacy Policy at ovoa.ai/privacy explains fully what we collect, why, who we share it with, and your rights. Here's a summary; where they differ, the Privacy Policy controls.",
       "• Most day-to-day data, such as conversation details, location points, food entries, health day records and usage details, is deleted after 14 days. We keep a short summary of each day.",
       "• Things you ask OVOA to remember, places you've named, and the words and summaries of recordings you chose to keep are kept until you delete them.",
       "• Recording audio stays on your iPhone.",
@@ -200,7 +200,7 @@ export const TERMS: TermsSection[] = [
       "• Plan or carry out violence, fraud or scams, use OVOA's output to harm or deceive people, or use it to make decisions about people's credit, employment, housing, insurance, education or legal status.",
       "• Copy, sell, rent, sublicense or resell the Service or access to it.",
       "• Reverse engineer or decompile the app, the Band's software or our server, or try to extract their source code, models, prompts or instructions, except where the law expressly allows it.",
-      "• Probe the Service for vulnerabilities, get around its security, or access accounts, data or systems that aren't yours. If you find a security problem, please tell us at [CONTACT EMAIL].",
+      "• Probe the Service for vulnerabilities, get around its security, or access accounts, data or systems that aren't yours. If you find a security problem, please tell us at admin@ovoa.ai.",
       "• Overload the Service, or get around usage limits, plan restrictions or the \"AI and your data\" agreement, for example with multiple accounts, scripts or modified apps.",
       "• Access the Service by automated means we don't provide, or use it or its output to build a competing product or train AI models.",
       "• Break the usage rules of the companies whose services OVOA uses, including the AI providers in section 8.",
@@ -225,7 +225,7 @@ export const TERMS: TermsSection[] = [
     paragraphs: [
       "The Service, including the app, the Band's design and software, our server, and the OVOA name, logos, voice, sounds and designs (but not your content), belongs to us or our licensors and is protected by intellectual property laws.",
       "Subject to these Terms, we give you a personal, limited, non-exclusive, non-transferable, revocable license to install and use the OVOA app on iPhones you own or control, and to use the Service, for your own non-commercial use. We keep all rights we don't expressly give you. Don't use our name, logos or trademarks without our written permission. Open-source parts of the app are covered by their own licenses.",
-      "If you believe something in the Service infringes your rights, contact us at [CONTACT EMAIL] with the details.",
+      "If you believe something in the Service infringes your rights, contact us at admin@ovoa.ai with the details.",
       "If you send us ideas, suggestions or other feedback, we may use them for any purpose without paying you or owing you anything. Please don't send feedback you want kept confidential.",
     ],
   },
@@ -234,7 +234,7 @@ export const TERMS: TermsSection[] = [
     paragraphs: [
       "You can stop using OVOA at any time, and you can delete your account in Settings. If you have a paid plan, also make sure it's cancelled (see section 4) so you aren't charged again.",
       "We may suspend, limit or close your account if you break these Terms or the law (or we reasonably believe you have); if your use puts others, the Service or us at risk or could expose us to legal liability; if the law, a court or a platform such as Apple requires it; if you don't pay what you owe; or if we stop offering the Service or part of it. Where reasonable, we'll tell you first and give you a chance to fix the problem, unless there's a legal, safety or security reason not to.",
-      "When your account is deleted, we delete or de-identify your account data in our active systems within [ACCOUNT DELETION PERIOD — e.g. 30 days]. Copies may remain in backups for a limited time until overwritten, and we may keep some information, such as payment records, where the law requires it or to resolve disputes, prevent fraud or abuse, or enforce these Terms.",
+      "When your account is deleted, we delete or de-identify your account data in our active systems within 30 days. Copies may remain in backups for a limited time until overwritten, and we may keep some information, such as payment records, where the law requires it or to resolve disputes, prevent fraud or abuse, or enforce these Terms.",
       "Deleted data can't be recovered. Data on your iPhone, including recording audio, stays there until you delete it or remove the app, and data in other services, such as your calendar or Apple Health, stays there.",
       "When your account ends, so does your right to use the Service, but anything you owe us and the sections listed in section 25 still apply.",
     ],
@@ -252,16 +252,16 @@ export const TERMS: TermsSection[] = [
     title: "20. Limitation of liability",
     paragraphs: [
       "In plain terms: if something goes wrong, what we owe you is limited.",
-      "TO THE FULLEST EXTENT THE LAW ALLOWS, [COMPANY LEGAL NAME] AND ITS AFFILIATES, OFFICERS, EMPLOYEES, AGENTS, SUPPLIERS AND LICENSORS WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, DATA, GOODWILL OR OPPORTUNITY, ARISING OUT OF OR RELATING TO THESE TERMS OR THE SERVICE, EVEN IF WE WERE TOLD SUCH DAMAGES WERE POSSIBLE.",
+      "TO THE FULLEST EXTENT THE LAW ALLOWS, OVOA LLC AND ITS AFFILIATES, OFFICERS, EMPLOYEES, AGENTS, SUPPLIERS AND LICENSORS WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, DATA, GOODWILL OR OPPORTUNITY, ARISING OUT OF OR RELATING TO THESE TERMS OR THE SERVICE, EVEN IF WE WERE TOLD SUCH DAMAGES WERE POSSIBLE.",
       "THIS INCLUDES LOSS OR HARM ARISING FROM: RELYING ON AI OUTPUT; MESSAGES, EMAILS, CALLS, DELETIONS OR CHANGES MADE ON YOUR BEHALF; MISSED OR LATE ALARMS, REMINDERS OR SOS ALERTS; RECORDINGS YOU MAKE; HEALTH, FOOD OR MONEY INFORMATION; THIRD-PARTY SERVICES; AND UNAUTHORIZED ACCESS TO YOUR ACCOUNT OR DATA.",
-      "OUR TOTAL LIABILITY FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THESE TERMS OR THE SERVICE WILL NOT BE MORE THAN THE GREATER OF (A) THE AMOUNTS YOU PAID US FOR THE SERVICE IN THE 12 MONTHS BEFORE THE EVENT THAT GAVE RISE TO THE CLAIM, AND (B) $[AMOUNT].",
+      "OUR TOTAL LIABILITY FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THESE TERMS OR THE SERVICE WILL NOT BE MORE THAN THE GREATER OF (A) THE AMOUNTS YOU PAID US FOR THE SERVICE IN THE 12 MONTHS BEFORE THE EVENT THAT GAVE RISE TO THE CLAIM, AND (B) $100.",
       "These limits apply under any legal theory, including contract, tort (including negligence) and product liability, even if a limited remedy fails of its essential purpose. They don't limit liability the law doesn't allow to be limited, such as for fraud, or for death or personal injury caused by our negligence, so some may not apply to you.",
     ],
   },
   {
     title: "21. Indemnification",
     paragraphs: [
-      "To the extent the law allows, you agree to defend, indemnify and hold harmless [COMPANY LEGAL NAME] and its affiliates, officers, employees and agents from any claims, losses, liabilities, damages, costs and expenses (including reasonable attorneys' fees) arising from:",
+      "To the extent the law allows, you agree to defend, indemnify and hold harmless OVOA LLC and its affiliates, officers, employees and agents from any claims, losses, liabilities, damages, costs and expenses (including reasonable attorneys' fees) arising from:",
       "• your use of the Service;",
       "• your content;",
       "• messages, emails, calls or other actions taken on your behalf;",
@@ -275,13 +275,13 @@ export const TERMS: TermsSection[] = [
     title: "22. Disputes, arbitration and governing law",
     paragraphs: [
       "This section affects your legal rights, including your right to go to court.",
-      "Talk to us first. Before starting a formal dispute, send a written notice to [CONTACT EMAIL] or [COMPANY ADDRESS] with your name, your account's email address, the problem, and what you'd like us to do. We'll do the same for a dispute with you. We'll both try in good faith to resolve it within 60 days before either of us starts arbitration or a court case.",
-      "Binding arbitration. If we can't resolve it informally, you and we agree that any dispute, claim or controversy arising out of or relating to these Terms, the Service or the OVOA Band (a \"Dispute\"), including whether this agreement to arbitrate applies or can be enforced, will be resolved by binding individual arbitration, not in court. It will be administered by [ARBITRATION PROVIDER / VENUE] under its consumer rules then in effect. The Federal Arbitration Act governs this section.",
+      "Talk to us first. Before starting a formal dispute, send a written notice to admin@ovoa.ai with your name, your account's email address, the problem, and what you'd like us to do. We'll do the same for a dispute with you. We'll both try in good faith to resolve it within 60 days before either of us starts arbitration or a court case.",
+      "Binding arbitration. If we can't resolve it informally, you and we agree that any dispute, claim or controversy arising out of or relating to these Terms, the Service or the OVOA Band (a \"Dispute\"), including whether this agreement to arbitrate applies or can be enforced, will be resolved by binding individual arbitration, not in court. It will be administered by the American Arbitration Association (AAA) under its consumer rules then in effect. The Federal Arbitration Act governs this section.",
       "The arbitrator can award the same individual relief a court could, but only to the individual party bringing the claim. The arbitration will take place in the county where you live, or by phone or video, unless we both agree otherwise. Fees follow the provider's consumer rules, and where those rules or the law require, we'll pay any fees above what you'd pay to file in court.",
       "Exceptions. Either of us may bring a qualifying individual claim in small claims court, or ask a court to stop infringement or misuse of intellectual property or unauthorized access to the Service.",
       "CLASS ACTION AND JURY TRIAL WAIVER. YOU AND WE MAY BRING CLAIMS AGAINST EACH OTHER ONLY IN AN INDIVIDUAL CAPACITY, AND NOT AS A PLAINTIFF OR CLASS MEMBER IN ANY CLASS, COLLECTIVE, CONSOLIDATED OR REPRESENTATIVE PROCEEDING. YOU AND WE BOTH GIVE UP THE RIGHT TO A JURY TRIAL. If this waiver is found unenforceable for a particular claim, that claim alone will be decided in court.",
-      "Opting out. You can opt out of arbitration by emailing [CONTACT EMAIL] or writing to [COMPANY ADDRESS] within 30 days after you first agree to these Terms, with your name, your account's email address, and a clear statement that you're opting out. The rest of these Terms still applies. If we later make a material change to this section, you can reject that change by telling us within 30 days after it takes effect.",
-      "Governing law. These Terms and any Dispute are governed by the laws of the State of [GOVERNING LAW STATE] and applicable U.S. federal law, without regard to conflict-of-law rules. A Dispute that goes to court will be decided only in the state or federal courts located in [GOVERNING LAW STATE], and you and we consent to their jurisdiction. This doesn't take away protections you have under the mandatory consumer laws where you live.",
+      "Opting out. You can opt out of arbitration by emailing admin@ovoa.ai within 30 days after you first agree to these Terms, with your name, your account's email address, and a clear statement that you're opting out. The rest of these Terms still applies. If we later make a material change to this section, you can reject that change by telling us within 30 days after it takes effect.",
+      "Governing law. These Terms and any Dispute are governed by the laws of the State of Florida and applicable U.S. federal law, without regard to conflict-of-law rules. A Dispute that goes to court will be decided only in the state or federal courts located in Florida, and you and we consent to their jurisdiction. This doesn't take away protections you have under the mandatory consumer laws where you live.",
     ],
   },
   {
@@ -296,7 +296,7 @@ export const TERMS: TermsSection[] = [
     title: "24. Apple App Store terms",
     paragraphs: [
       "This section applies because the OVOA app is distributed through Apple (the App Store and TestFlight). Where it conflicts with the rest of these Terms, it controls for the app.",
-      "• These Terms are between you and [COMPANY LEGAL NAME] only, not Apple. We, not Apple, are solely responsible for the app and its content.",
+      "• These Terms are between you and OVOA LLC only, not Apple. We, not Apple, are solely responsible for the app and its content.",
       "• Your license to use the app is limited to a non-transferable license to use it on Apple-branded products that you own or control, as allowed by the Usage Rules in Apple's Media Services Terms and Conditions, except that other accounts associated with you may access it through Family Sharing or volume purchasing where Apple allows.",
       "• Apple has no obligation to provide any maintenance or support for the app.",
       "• If the app fails to conform to any applicable warranty, you may notify Apple, and Apple will refund the app's purchase price to you, if any (paid plans are bought from us, not Apple). To the maximum extent the law allows, Apple has no other warranty obligation for the app, and any other claims, losses, liabilities, damages, costs or expenses caused by a failure to conform to a warranty are our responsibility, to the extent these Terms don't disclaim them.",
@@ -316,7 +316,7 @@ export const TERMS: TermsSection[] = [
       "No waiver. Not enforcing part of these Terms doesn't mean we give up the right to enforce it later.",
       "Assignment. You may not transfer your rights or duties under these Terms without our written consent. We may transfer ours, for example in a merger, acquisition or sale of assets.",
       "Force majeure. We aren't responsible for delays or failures caused by things beyond our reasonable control, such as outages at Apple or our providers, natural disasters, war, government action, or attacks on our systems.",
-      "Notices. We may send you notices by email, in the app, or by notification, and you agree to receive notices and agreements electronically. Legal notices to us must be sent to [CONTACT EMAIL] or [COMPANY ADDRESS].",
+      "Notices. We may send you notices by email, in the app, or by notification, and you agree to receive notices and agreements electronically. Legal notices to us must be sent to admin@ovoa.ai.",
       "Relationship. You and we are independent parties; these Terms don't create a partnership, employment or agency relationship. Except for Apple (section 24) and the people protected by sections 20 and 21, no one else has rights under these Terms.",
       "Interpretation. Section titles are for convenience only, and \"including\" means \"including without limitation\". If we translate these Terms, the English version controls.",
       "Survival. Sections 4 (for amounts owed), 7, 11, 12, 13, 17 through 22, 24 and 25 continue to apply after these Terms end.",
@@ -326,9 +326,8 @@ export const TERMS: TermsSection[] = [
     title: "26. Contact us",
     paragraphs: [
       "Questions about these Terms, a problem with OVOA, a legal notice, or an arbitration opt-out? Contact us:",
-      "[COMPANY LEGAL NAME]",
-      "[COMPANY ADDRESS]",
-      "Email: [CONTACT EMAIL]",
+      "OVOA LLC",
+      "Email: admin@ovoa.ai",
       "Website: ovoa.ai",
       "If you're a California resident, you may report complaints to the Complaint Assistance Unit of the Division of Consumer Services of the California Department of Consumer Affairs, in writing at 1625 North Market Blvd., Suite N 112, Sacramento, CA 95834, or by phone at (800) 952-5210.",
     ],
