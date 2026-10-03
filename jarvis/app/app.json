@@ -2,13 +2,13 @@
   "expo": {
     "name": "OVOA",
     "slug": "ovoa",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.ovoa.app",
+      "bundleIdentifier": "ai.ovoa.app",
       "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -135,7 +135,7 @@
               "appExtensions": [
                 {
                   "targetName": "LiveActivity",
-                  "bundleIdentifier": "com.ovoa.app.LiveActivity",
+                  "bundleIdentifier": "ai.ovoa.app.LiveActivity",
                   "entitlements": {}
                 }
               ]
