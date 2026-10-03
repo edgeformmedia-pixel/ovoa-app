@@ -133,7 +133,7 @@ export const ROUTE_TIERS: RouteRule[] = [
   // Texting OVOA itself arrives on the webhook (public) and is checked there,
   // like a turn (index.ts textTurn): these only link and unlink the number, and
   // turn texting first on or off.
-  { method: "*", path: /^\/texting(\/link)?$/, tier: "free", why: "linking the number you text OVOA from (texting it is base)" },
+  { method: "*", path: /^\/texting(\/link|\/join)?$/, tier: "free", why: "linking the number you text OVOA from, by code or by the join link (texting it is base)" },
   // Websites are built by a model, from a turn (base, and gated at the model
   // call); listing and deleting the ones you have calls none.
   { method: "GET", path: /^\/sites$/, tier: "free", why: "the websites you have (building one is a turn)" },

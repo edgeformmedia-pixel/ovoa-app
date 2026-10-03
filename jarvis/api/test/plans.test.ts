@@ -49,6 +49,7 @@ function eq(label: string, got: unknown, want: unknown) {
 eq("chat is base", tierForRoute("POST", "/chat"), "base");
 eq("resuming a turn is base", tierForRoute("POST", "/chat/resume"), "base");
 eq("Siri is base", tierForRoute("POST", "/siri"), "base");
+eq("the join link is free (it is the way to pay)", tierForRoute("POST", "/texting/join"), "free");
 eq("the brief is base", tierForRoute("GET", "/brief"), "base");
 eq("voicing is base (Deepgram)", tierForRoute("POST", "/voice/speak"), "base");
 eq("the old token route is free with or without the wake word's mode", tierForRoute("POST", "/voice/token", (k) => (k === "mode" ? "wake" : undefined)), "free");
