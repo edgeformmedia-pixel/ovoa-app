@@ -9,7 +9,11 @@ import type {
   DecodeResult,
   DeviceStatus,
   EncodingFormat,
+  BandSample,
   GyroReading,
+  HealthConfig,
+  HealthConfigResult,
+  SleepSegment,
   HeartRateMethod,
   MotionSource,
   SensorSupport,
@@ -51,6 +55,9 @@ type UteBleNativeModule = {
   setHeartRate(method: HeartRateMethod, on: boolean): Promise<{ open?: number; worn?: number; value?: number }>;
   setMotionSource(source: MotionSource, on: boolean, intervalMs: number): Promise<void>;
   readActivity(): Promise<{ totals: string; calories: number }>;
+  configureHealth(opts: HealthConfig): Promise<HealthConfigResult>;
+  readHealthHistory(startSec: number, endSec: number): Promise<{ samples: BandSample[]; frames: number }>;
+  readSleep(startSec: number, endSec: number): Promise<{ segments: SleepSegment[]; summary: string }>;
   setSdkLogging(on: boolean): Promise<void>;
   probeWearFunctions(): Promise<{ functions: { type: number; value: number }[] }>;
   startRecord(): Promise<{ sessionId: number; result: number }>;
@@ -165,6 +172,13 @@ export const setMotionSource = (source: MotionSource, on: boolean, intervalMs = 
   native().setMotionSource(source, on, intervalMs);
 /** Today's activity totals as the SDK describes them (text), for spotting step changes. iOS only. */
 export const readActivity = () => native().readActivity();
+
+/** Has the band measure heart rate, blood oxygen and sleep by itself and keep them (iOS only). */
+export const configureHealth = (opts: HealthConfig) => native().configureHealth(opts);
+/** The minutes the band stored between two times, in seconds (iOS only). */
+export const readHealthHistory = (startSec: number, endSec: number) => native().readHealthHistory(startSec, endSec);
+/** The sleep the band recorded between two times, in seconds (iOS only). */
+export const readSleep = (startSec: number, endSec: number) => native().readSleep(startSec, endSec);
 /** Forward every SDK log line (raw packets included) as onLog, not only during a connect. iOS only. */
 export const setSdkLogging = (on: boolean) => native().setSdkLogging(on);
 /** Factory functions a wearable reports (type 7 = 3-axis accelerometer, 9 = 6-axis). Times out on other devices. iOS only. */

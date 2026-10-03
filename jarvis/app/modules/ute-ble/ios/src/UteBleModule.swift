@@ -233,6 +233,27 @@ public class UteBleModule: Module {
     }
     .runOnQueue(.main)
 
+    AsyncFunction("configureHealth") { (opts: [String: Any], promise: Promise) in
+      self.bridge.configureHealth(opts) { errorCode, result in
+        Self.settle(promise, errorCode, result, "configure health")
+      }
+    }
+    .runOnQueue(.main)
+
+    AsyncFunction("readHealthHistory") { (startSec: Int, endSec: Int, promise: Promise) in
+      self.bridge.readHealthHistory(startSec: startSec, endSec: endSec) { errorCode, result in
+        Self.settle(promise, errorCode, result, "health history")
+      }
+    }
+    .runOnQueue(.main)
+
+    AsyncFunction("readSleep") { (startSec: Int, endSec: Int, promise: Promise) in
+      self.bridge.readSleep(startSec: startSec, endSec: endSec) { errorCode, result in
+        Self.settle(promise, errorCode, result, "sleep")
+      }
+    }
+    .runOnQueue(.main)
+
     AsyncFunction("buzz") { (count: Int, option: Int, promise: Promise) in
       self.bridge.buzz(count: count, option: option) { errorCode, result in
         Self.settle(promise, errorCode, result, "buzz option \(option)")

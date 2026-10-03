@@ -307,13 +307,13 @@ eq("the night in numbers", sleptSaid.days, [
   },
 ]);
 const heartSaid = await said("slept", { about: "heart" });
-eq("about heart: the latest reading and its age", heartSaid.heartNow, { bpm: 61, ago: "3 min ago", from: "your OVOA Band" });
+eq("about heart: the latest reading and its age", heartSaid.heartNow, { bpm: 61, ago: "3 min ago", from: "your OVOA Fit" });
 eq("and why there's no resting yet, nothing else", heartSaid.missing, { restingBpm: "not enough readings yet: wearing the band overnight gives a resting heart rate" });
 
 addUser("nosleep", { timeZone: U });
 putDay("nosleep", TODAY, { hrvMs: 40 });
 eq("no sleep recorded: why, and only that", (await said("nosleep", { about: "sleep" })).missing, {
-  sleep: "nothing is recording sleep: an Apple Watch or the iPhone's Sleep schedule would",
+  sleep: "nothing is recording sleep: wearing OVOA Fit to bed, an Apple Watch or the iPhone's Sleep schedule would",
 });
 const body = await said("nosleep", { about: "body" });
 eq("about body: HRV, and one line for what needs a watch", [body.days[0]?.hrvMs, Object.keys(body.missing)], [40, ["bloodOxygenPct, breathsPerMin", "weightKg"]]);
@@ -339,7 +339,7 @@ await call("quiet", "PUT", "/health/days", { from: quietDay, to: quietDay, days:
 const quietSaid = await said("quiet", { about: "sleep" }, Date.now());
 eq("today sent again, unchanged: not old, and the real reason", [quietSaid.healthSyncedAgo, quietSaid.missing?.sleep], [
   undefined,
-  "nothing is recording sleep: an Apple Watch or the iPhone's Sleep schedule would",
+  "nothing is recording sleep: wearing OVOA Fit to bed, an Apple Watch or the iPhone's Sleep schedule would",
 ]);
 
 addUser("walker", { timeZone: U });
@@ -351,6 +351,21 @@ const walked = await said("walker", { about: "activity", days: 7 });
 eq("a week of activity, newest first", walked.days.map((d: Record<string, unknown>) => d.steps), [8000, 6000, 7000]);
 eq("with the average", walked.averages, { steps: 7000 });
 eq("sleep isn't in an activity answer", "sleep" in (walked.missing ?? {}), false);
+
+// ---------- OVOA Fit's own blood oxygen and sleep ----------
+
+addUser("fit", { timeZone: U });
+const fitDay = buckets(Date.now(), U).day;
+const fitNight = { asleepMin: 410, start: at(fitDay, -60, U), end: at(fitDay, 6 * 60 + 50, U), stages: { deep: 70, core: 250, rem: 90, awake: 15 }, source: "OVOA Fit" };
+eq("the band's day is stored", (await call("fit", "PUT", "/band/days", { days: [{ day: fitDay, spo2Pct: 96.4, spo2Low: 91, sleep: fitNight }] })).body, { stored: 1 });
+await call("fit", "PUT", "/band/days", { days: [{ day: fitDay, spo2Pct: 97 }] });
+eq("sent again without sleep: the night is kept", rows("SELECT spo2_pct, spo2_low, sleep_json IS NOT NULL AS slept FROM band_days WHERE user_id = 'fit'"), [{ spo2_pct: 97, spo2_low: 91, slept: 1 }]);
+const fitSaid = await said("fit", { about: "sleep" }, Date.now());
+eq("with no Health at all, the band's night is the answer", [fitSaid.days[0]?.sleep?.from, fitSaid.days[0]?.sleep?.deepMin], ["OVOA Fit", 70]);
+eq("and GET /health/days shows its blood oxygen", ((await call("fit", "GET", "/health/days?days=1")).body.days as Record<string, unknown>[])[0]?.spo2Pct, 97);
+putDay("fit", fitDay, { sleep: { asleepMin: 420, start: at(fitDay, -50, U), end: at(fitDay, 6 * 60 + 55, U), source: "Sam's Apple Watch" } });
+eq("a watch's night wins over the band's", (await said("fit", { about: "sleep" }, Date.now())).days[0]?.sleep?.from, "Sam's Apple Watch");
+eq("without AI consent the band's day isn't kept", (await call("noai", "PUT", "/band/days", { days: [{ day: fitDay, spo2Pct: 97 }] })).body, { stored: 0, skipped: "no_ai_consent" });
 
 console.log(fails ? `\n${fails} FAILED` : "\nall passed");
 process.exit(fails ? 1 : 0);

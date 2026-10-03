@@ -90,6 +90,22 @@ NS_SWIFT_NAME(UteBleBridge)
 - (void)readActivity:(UteBleResultCallback)completion NS_SWIFT_NAME(readActivity(completion:));
 /// Which factory functions a wearable reports (type = UTEWearFunction, e.g. 7 Gsensor3, 9 Gsensor6).
 - (void)probeWearFunctions:(UteBleResultCallback)completion NS_SWIFT_NAME(probeWearFunctions(completion:));
+/// Has the band measure by itself and keep what it measured (2026-10-02). opts: hrMode "continuous" |
+/// "auto" | "off", hrIntervalMin (auto only), spo2IntervalMin (0: off), sleep (scientific sleep on/off).
+/// Each setting is sent one after another; result has each one's code by name (0 ok), so a firmware that
+/// refuses one still gets the rest. Also starts forwarding the band's "data ready" notice as onInput
+/// kind "healthReady" (value: its type bits, 0x01/0x02 activity and samples, 0x04/0x10 sleep).
+- (void)configureHealth:(NSDictionary<NSString *, id> *)opts completion:(UteBleResultCallback)completion
+    NS_SWIFT_NAME(configureHealth(_:completion:));
+/// The minute-by-minute samples the band stored between two times (seconds): result.samples, each
+/// {ts (seconds), hr, restingHr, maxHr, minHr, spo2, steps, hrv, stress (mood)}; 0 where it has none.
+- (void)readHealthHistory:(NSInteger)startSec endSec:(NSInteger)endSec completion:(UteBleResultCallback)completion
+    NS_SWIFT_NAME(readHealthHistory(startSec:endSec:completion:));
+/// The sleep the band recorded between two times (seconds): result.segments, each {start (seconds),
+/// minutes, type: 1 deep, 2 light, 3 awake, 4 REM, 5 sporadic, 6 snoring, 7 start, 8 end}, plus
+/// result.summary, the SDK's own day-by-day text, for the log.
+- (void)readSleep:(NSInteger)startSec endSec:(NSInteger)endSec completion:(UteBleResultCallback)completion
+    NS_SWIFT_NAME(readSleep(startSec:endSec:completion:));
 - (void)beginRecording:(UteBleResultCallback)completion NS_SWIFT_NAME(startRecord(completion:));
 - (void)pauseRecordingSession:(NSInteger)sessionId completion:(UteBleResultCallback)completion
     NS_SWIFT_NAME(pauseRecord(sessionId:completion:));

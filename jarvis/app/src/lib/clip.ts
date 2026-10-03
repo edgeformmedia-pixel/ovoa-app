@@ -310,6 +310,9 @@ function ensureStarted() {
     } else if (input.kind === "heartRate" || input.kind === "spo2") {
       noteInput(input.kind === "spo2" ? "Blood oxygen" : "Heart rate", `${input.value} (${input.detail ?? ""})`);
       if (input.kind === "heartRate" && input.value > 0) heartListeners.forEach((l) => l(input.value, input.detail ?? ""));
+    } else if (input.kind === "healthReady") {
+      noteInput("Health data", `ready (type ${input.value})`);
+      healthReadyListeners.forEach((l) => l(input.value));
     } else {
       noteInput("Voice audio", `${input.value} bytes (${input.detail ?? ""})`);
     }
@@ -1226,6 +1229,14 @@ const heartListeners = new Set<HeartListener>();
 export function onHeartRate(listener: HeartListener) {
   heartListeners.add(listener);
   return () => void heartListeners.delete(listener);
+}
+
+const healthReadyListeners = new Set<(type: number) => void>();
+
+/** The band stored new health history and wants it read (it repeats the notice until it is). Returns an unsubscribe. */
+export function onHealthReady(listener: (type: number) => void) {
+  healthReadyListeners.add(listener);
+  return () => void healthReadyListeners.delete(listener);
 }
 
 /** Whether the clip is free for a quick command: linked, and not recording, downloading or being probed. */

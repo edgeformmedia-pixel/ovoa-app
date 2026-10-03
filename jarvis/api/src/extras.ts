@@ -199,8 +199,15 @@ export async function readiness(env: Env, userId: string, timeZone: string) {
     baselineFor(db, userId, timeZone),
     db.prepare("SELECT bpm FROM hr_samples WHERE user_id = ? AND ts >= ? AND ts < ?").bind(userId, from, from + 6 * 3_600_000).all<{ bpm: number }>(),
     // The newest day the phone synced. Today's row holds the night that ended this morning (healthdays.ts).
+    // OVOA Fit's own sleep (band_days) counts too; on the same day, a night from Health wins.
     db
-      .prepare("SELECT day, sleep_json FROM health_days WHERE user_id = ? AND day <= ? ORDER BY day DESC LIMIT 1")
+      .prepare(
+        `SELECT day, sleep_json FROM (
+           SELECT day, sleep_json, 1 AS pick FROM health_days WHERE user_id = ?1 AND day <= ?2
+           UNION ALL
+           SELECT day, sleep_json, 0 AS pick FROM band_days WHERE user_id = ?1 AND day <= ?2 AND sleep_json IS NOT NULL)
+         ORDER BY day DESC, sleep_json IS NOT NULL DESC, pick DESC LIMIT 1`,
+      )
       .bind(userId, today)
       .first<{ day: string; sleep_json: string | null }>(),
     db.prepare("SELECT sleep_hours, updated_at FROM device_state WHERE user_id = ?").bind(userId).first<{ sleep_hours: number | null; updated_at: number }>(),

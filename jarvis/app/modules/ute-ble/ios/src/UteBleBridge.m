@@ -51,6 +51,8 @@ static const NSTimeInterval UteSyncStallSeconds = 15;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSTimer *> *pollTimers;
 /// Bumped whenever a g-sensor source is turned on or off, so a reopen still waiting from the last tick is dropped.
 @property (nonatomic, assign) NSInteger gsensorGeneration;
+/// The band's "new health data" notice is forwarded (configureHealth registers it once).
+@property (nonatomic, assign) BOOL healthNoticeOn;
 
 // The transfer in flight. The SDK hands data over in small pieces and sometimes stops
 // short of the end; the demo appends the pieces itself and asks again for the rest.
@@ -729,6 +731,146 @@ static NSInteger UteSignedByte(NSInteger value) {
     return;
   }
   reply(-600, nil);
+}
+
+#pragma mark - Health the band keeps by itself
+
+/// Runs SDK commands one at a time (one command at a time keeps the clip from freezing), collecting
+/// each one's normalized code under its name. A command that never answers counts as 408 after 4 s.
+static void UteRunSteps(NSArray<NSArray *> *steps, NSUInteger i, NSMutableDictionary *codes, void (^done)(void)) {
+  if (i >= steps.count) {
+    done();
+    return;
+  }
+  NSString *name = steps[i][0];
+  void (^step)(void (^)(NSInteger)) = steps[i][1];
+  __block BOOL moved = NO;
+  void (^next)(NSInteger) = ^(NSInteger code) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (moved) return;
+      moved = YES;
+      codes[name] = @(code);
+      UteRunSteps(steps, i + 1, codes, done);
+    });
+  };
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ next(408); });
+  step(next);
+}
+
+- (void)configureHealth:(NSDictionary<NSString *, id> *)opts completion:(UteBleResultCallback)completion {
+  UTEDeviceMgr *dev = [UTEDeviceMgr sharedInstance];
+  UteBleResultCallback reply = UteOnce(completion, 30);
+  NSString *hrMode = [opts[@"hrMode"] isKindOfClass:[NSString class]] ? opts[@"hrMode"] : @"auto";
+  NSInteger hrEvery = MAX(1, [opts[@"hrIntervalMin"] integerValue] ?: 5);
+  NSInteger spo2Every = [opts[@"spo2IntervalMin"] integerValue];
+  BOOL sleep = opts[@"sleep"] ? [opts[@"sleep"] boolValue] : YES;
+  BOOL continuous = [hrMode isEqualToString:@"continuous"];
+  BOOL autoHr = [hrMode isEqualToString:@"auto"];
+
+  if (!self.healthNoticeOn) {
+    self.healthNoticeOn = YES;
+    __weak UteBleBridge *weakSelf = self;
+    // The band repeats this notice until the matching history is read, so the app answers each one with a sync.
+    [dev onNotifySportData:^(NSInteger type, NSDictionary *uteDict) {
+      [weakSelf reportInput:@{@"kind" : @"healthReady", @"value" : @(type), @"detail" : @"band has new health data"}];
+    }];
+  }
+
+  NSMutableArray<NSArray *> *steps = [NSMutableArray array];
+  [steps addObject:@[ @"continuousHr", ^(void (^next)(NSInteger)) {
+    [dev setContinueMeasureHeartRateSwitch:continuous block:^(NSInteger errorCode, NSDictionary *uteDict) { next(UteNormalize(errorCode)); }];
+  } ]];
+  [steps addObject:@[ @"autoHr", ^(void (^next)(NSInteger)) {
+    [dev setAutoHeartRate:autoHr block:^(NSInteger errorCode, NSDictionary *uteDict) { next(UteNormalize(errorCode)); }];
+  } ]];
+  if (autoHr) {
+    [steps addObject:@[ @"autoHrInterval", ^(void (^next)(NSInteger)) {
+      [dev setAutoHeartRateInterval:hrEvery block:^(NSInteger errorCode) { next(UteNormalize(errorCode)); }];
+    } ]];
+  }
+  [steps addObject:@[ @"spo2", ^(void (^next)(NSInteger)) {
+    [dev setPeriodSpo2Enable:spo2Every > 0 block:^(NSInteger errorCode, NSDictionary *uteDict) { next(UteNormalize(errorCode)); }];
+  } ]];
+  if (spo2Every > 0) {
+    [steps addObject:@[ @"spo2Interval", ^(void (^next)(NSInteger)) {
+      [dev setPeriodSpo2EnableInterval:spo2Every block:^(NSInteger errorCode) { next(UteNormalize(errorCode)); }];
+    } ]];
+  }
+  [steps addObject:@[ @"sleep", ^(void (^next)(NSInteger)) {
+    [dev setProfessionalSleep:sleep block:^(NSInteger errorCode, NSDictionary *uteDict) { next(UteNormalize(errorCode)); }];
+  } ]];
+
+  NSMutableDictionary *codes = [NSMutableDictionary dictionary];
+  codes[@"healthExpansion"] = @([self mgr].connnectModel.hasHealthExpansion);
+  UteRunSteps(steps, 0, codes, ^{ reply(0, codes); });
+}
+
+/// Fetches frames index..count-1 one at a time, then calls done.
+static void UteFetchFrames(NSInteger startSec, NSInteger endSec, NSInteger index, NSInteger count, NSMutableArray<NSDictionary *> *samples,
+                           void (^done)(void)) {
+  if (index >= count) {
+    done();
+    return;
+  }
+  [[UTEDeviceMgr sharedInstance] getSampleDetailData:startSec
+                                             endTime:endSec
+                                               index:index
+                                               block:^(UTEModelMotionFrame *frame, NSInteger errorCode, NSDictionary *uteDict) {
+    for (UTEModelMotionFrameItem *item in frame.frameItemList) {
+      UTEModelMotionFrameItemContent *c = item.content;
+      if (!c) continue;
+      NSInteger hr = c.dynamicHeartRate ?: c.heartRateAve;
+      if (!hr && !c.bloodOxygen && !c.step && !c.heartRateVariability) continue;
+      [samples addObject:@{
+        @"ts" : @(frame.startTime + item.offset * 60),
+        @"hr" : @(hr),
+        @"restingHr" : @(c.restingHeartRateV3 ?: (c.restingHeartRateV2 ?: c.restingHeartRate)),
+        @"maxHr" : @(c.heartRateMax),
+        @"minHr" : @(c.heartRateMin),
+        @"spo2" : @(c.bloodOxygen),
+        @"steps" : @(c.step),
+        @"hrv" : @(c.heartRateVariability),
+        @"stress" : @(c.mood),
+      }];
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{ UteFetchFrames(startSec, endSec, index + 1, count, samples, done); });
+  }];
+}
+
+- (void)readHealthHistory:(NSInteger)startSec endSec:(NSInteger)endSec completion:(UteBleResultCallback)completion {
+  UTEDeviceMgr *dev = [UTEDeviceMgr sharedInstance];
+  UteBleResultCallback reply = UteOnce(completion, 90);
+  NSMutableArray<NSDictionary *> *samples = [NSMutableArray array];
+  void (^counted)(NSInteger, NSInteger, NSDictionary *) = ^(NSInteger frameCount, NSInteger errorCode, NSDictionary *uteDict) {
+    NSInteger code = UteNormalize(errorCode);
+    if (code != 0 || frameCount <= 0) {
+      reply(code, @{@"samples" : samples, @"frames" : @(MAX(0, frameCount))});
+      return;
+    }
+    UteFetchFrames(startSec, endSec, 0, frameCount, samples, ^{ reply(0, @{@"samples" : samples, @"frames" : @(frameCount)}); });
+  };
+  // Firmware with the health expansion (blood pressure, mood, HRV) needs the newer count call.
+  if ([self mgr].connnectModel.hasHealthExpansion) {
+    [dev getSampleFrameListNew:startSec endTime:endSec block:counted];
+  } else {
+    [dev getSampleFrameList:startSec endTime:endSec block:counted];
+  }
+}
+
+- (void)readSleep:(NSInteger)startSec endSec:(NSInteger)endSec completion:(UteBleResultCallback)completion {
+  UteBleResultCallback reply = UteOnce(completion, 60);
+  [[UTEDeviceMgr sharedInstance] getSciSleepModelWithStartTime:startSec
+                                                       endTime:endSec
+                                                         block:^(NSArray<UTEModelSciSleepFileData *> *debugArray, CGFloat process, BOOL isSuccess,
+                                                                 NSInteger errorCode, NSString *filePath, NSDictionary *uteDict) {
+    NSInteger code = UteNormalize(errorCode);
+    if (!isSuccess && code == 0) return;  // still downloading
+    NSMutableArray<NSDictionary *> *segments = [NSMutableArray array];
+    for (UTEModelSciSleepFileData *s in debugArray ?: @[]) {
+      [segments addObject:@{@"start" : @(s.timeStamp), @"minutes" : @(s.sleepTime), @"type" : @(s.sleepType)}];
+    }
+    reply(isSuccess ? 0 : code, @{@"segments" : segments, @"summary" : UteString([uteDict description])});
+  }];
 }
 
 - (void)buzz:(NSInteger)count option:(NSInteger)option completion:(UteBleResultCallback)completion {

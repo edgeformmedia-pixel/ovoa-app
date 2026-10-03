@@ -1341,6 +1341,9 @@ export const api = {
 
   sendHeartRate: (token: string, source: "health" | "band", samples: { ts: number; bpm: number }[]) =>
     request<{ stored: number }>("/hr", token, { method: "POST", body: JSON.stringify({ source, samples }) }),
+  /** What OVOA Fit measured by itself, a day at a time (blood oxygen, sleep). Kept only with AI consent. */
+  putBandDays: (token: string, days: { day: string; spo2Pct?: number; spo2Low?: number; sleep?: SleepNight }[]) =>
+    request<{ stored: number; skipped?: "no_ai_consent" }>("/band/days", token, { method: "PUT", body: JSON.stringify({ days }) }),
   heartToday: (token: string) =>
     request<{ baseline: number; latest: { ts: number; bpm: number } | null; count: number }>("/hr/today", token),
   /** Today, or `day` (YYYY-MM-DD, in their time zone). */

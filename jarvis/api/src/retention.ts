@@ -208,6 +208,8 @@ export const RULES: Rule[] = [
   { name: "step_days", table: "step_days", where: "day < ?", args: (c) => [c.cutoffDay] },
   // Apple Health's day numbers (healthdays.ts), kept only for accounts that agreed to AI.
   { name: "health_days", table: "health_days", where: "day < ?", args: (c) => [c.cutoffDay] },
+  // OVOA Fit's own blood oxygen and sleep (healthdays.ts), on the same terms.
+  { name: "band_days", table: "band_days", where: "day < ?", args: (c) => [c.cutoffDay] },
   // Found in heart rate, or recorded by a watch (healthdays.ts). The ones they logged by voice are 'manual'.
   { name: "workouts.detected", table: "workouts", where: "source IN ('detected', 'health') AND start_at < ?", args: (c) => [c.cutoff] },
   at("created_at", "safety_events"),
@@ -304,6 +306,7 @@ export const TABLES = {
   memories: "mixed",
   step_days: "delete",
   health_days: "delete",
+  band_days: "delete",
   emergency_contacts: "keep",
   safety_events: "delete",
   google_accounts: "keep",

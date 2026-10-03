@@ -1,6 +1,7 @@
 import { AppState } from "react-native";
 import * as ute from "../../modules/ute-ble";
 import { api } from "./api";
+import { selfMeasuring } from "./bandHealth";
 import * as clip from "./clip";
 import { devlog, logFail } from "./devlog";
 import { saveBandReading, startHealthSync, syncHealth } from "./healthSync";
@@ -20,6 +21,11 @@ import { onSignOut } from "./signOut";
 // 2026-09-23 it only ever reached OVOA's server. What a watch writes to Health
 // goes up to the server from there too. Either source is enough; the server
 // merges them and finds the workouts in whatever arrives.
+//
+// Since 2026-10-02 the band measures by itself once told to (bandHealth.ts),
+// and its readings arrive when its history is copied. The five-minute asking
+// below goes on only for firmware that refused that (selfMeasuring false), and
+// while heart rate is up, so a workout still has its minute-by-minute shape.
 
 const EVERY_MS = 5 * 60_000;
 /** Once heart rate is up, readings come this often, so a workout has a shape. */
@@ -122,6 +128,10 @@ export function startHeartRate(token: string) {
     void syncHealth(token);
     const raised = lastReading >= resting + RAISED_BY;
     if (Date.now() - lastAsked < (raised ? WORKOUT_EVERY_MS : EVERY_MS) - 5_000) return;
+    if (!raised && selfMeasuring()) {
+      void flushBand(token);
+      return;
+    }
     lastAsked = Date.now();
     void askBand();
     void flushBand(token);

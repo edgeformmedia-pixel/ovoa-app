@@ -115,9 +115,10 @@ export type InputEvent = {
   /**
    * battery: percent; voiceButton: AI/voice button state 1-7; voiceData: bytes of opus the button
    * captured; offWrist: the wear state the clip reported (watches send it when taken off);
-   * heartRate / spo2: a reading (0 while it has none yet), detail says which method and whether it's worn.
+   * heartRate / spo2: a reading (0 while it has none yet), detail says which method and whether it's worn;
+   * healthReady: the band has stored new history (value: type bits, 0x01/0x02 samples, 0x04/0x10 sleep).
    */
-  kind: "battery" | "voiceButton" | "voiceData" | "offWrist" | "heartRate" | "spo2";
+  kind: "battery" | "voiceButton" | "voiceData" | "offWrist" | "heartRate" | "spo2" | "healthReady";
   value: number;
   detail?: string;
 };
@@ -258,3 +259,33 @@ export type UteBleEvents = {
   /** iOS only: vendor SDK log lines while a connect is in flight, or all of them while setSdkLogging is on. */
   onLog: (event: { message: string }) => void;
 };
+
+/** What the band measures by itself (configureHealth). */
+export type HealthConfig = {
+  /** continuous: heart rate all the time; auto: every hrIntervalMin minutes; off: only when asked. */
+  hrMode: "continuous" | "auto" | "off";
+  hrIntervalMin?: number;
+  /** Blood oxygen every this many minutes; 0 turns it off. */
+  spo2IntervalMin: number;
+  /** Scientific sleep (stages). */
+  sleep: boolean;
+};
+
+/** Each setting's code by name, 0 ok (408: the band didn't answer), and whether the firmware has the health expansion. */
+export type HealthConfigResult = Record<string, number | boolean>;
+
+/** One stored minute from the band; 0 where it measured nothing. Seconds, not ms. */
+export type BandSample = {
+  ts: number;
+  hr: number;
+  restingHr: number;
+  maxHr: number;
+  minHr: number;
+  spo2: number;
+  steps: number;
+  hrv: number;
+  stress: number;
+};
+
+/** One stretch of the band's sleep. type: 1 deep, 2 light, 3 awake, 4 REM, 5 sporadic, 6 snoring, 7 start, 8 end. */
+export type SleepSegment = { start: number; minutes: number; type: number };

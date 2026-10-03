@@ -338,6 +338,43 @@ function parsed<T>(json: string | null): T | null {
   }
 }
 
+type BandDayRow = { day: string; spo2_pct: number | null; sleep_json: string | null; updated_at: number };
+
+/**
+ * Health's days with OVOA Fit's filling the gaps: the band's blood oxygen and
+ * night where Health has none (a watch is the better sensor, so it wins when
+ * both have one). A day only the band measured gets a row of its own.
+ */
+function withBand(rows: HealthDayRow[], band: BandDayRow[]) {
+  const byDay = new Map(rows.map((r) => [r.day, r]));
+  for (const b of band) {
+    const row = byDay.get(b.day);
+    byDay.set(b.day, {
+      ...(row ?? EMPTY_DAY),
+      day: b.day,
+      spo2_pct: row?.spo2_pct ?? b.spo2_pct,
+      sleep_json: row && sleepOf(row) ? row.sleep_json : (b.sleep_json ?? row?.sleep_json ?? null),
+      updated_at: row?.updated_at ?? b.updated_at,
+    });
+  }
+  return byDay;
+}
+
+const EMPTY_DAY: HealthDayRow = {
+  day: "",
+  active_kcal: null,
+  exercise_min: null,
+  stand_hours: null,
+  resting_hr: null,
+  hrv_ms: null,
+  spo2_pct: null,
+  resp_rate: null,
+  weight_kg: null,
+  sleep_json: null,
+  sources_json: null,
+  updated_at: 0,
+};
+
 /** A night worth talking about: some sleep, or at least time in bed. */
 function sleepOf(row: HealthDayRow | undefined) {
   const sleep = parsed<SleepIn>(row?.sleep_json ?? null);
@@ -352,7 +389,7 @@ async function loadDays(db: D1Database, userId: string, timeZone: string, n: num
   const today = buckets(now, timeZone).day;
   const days = Array.from({ length: n }, (_, i) => addDays(today, i - n + 1));
   const [from] = dayRange(days[0], timeZone);
-  const [samples, { results: rows }, { results: steps }, { results: workouts }, synced] = await Promise.all([
+  const [samples, { results: rows }, { results: steps }, { results: workouts }, synced, { results: band }] = await Promise.all([
     want.heart ? samplesSince(db, userId, Math.min(from, now - DAY_MS)) : Promise.resolve([]),
     db
       .prepare(
@@ -371,8 +408,12 @@ async function loadDays(db: D1Database, userId: string, timeZone: string, n: num
           .all<WorkoutRow>()
       : { results: [] as WorkoutRow[] },
     db.prepare("SELECT MAX(updated_at) AS at FROM health_days WHERE user_id = ?").bind(userId).first<{ at: number | null }>(),
+    db
+      .prepare("SELECT day, spo2_pct, sleep_json, updated_at FROM band_days WHERE user_id = ? AND day >= ? AND day <= ?")
+      .bind(userId, days[0], today)
+      .all<BandDayRow>(),
   ]);
-  const byDay = new Map(rows.map((r) => [r.day, r]));
+  const byDay = withBand(rows, band);
   const stepsByDay = new Map(steps.map((s) => [s.day, s.steps]));
   const workoutsOn = (day: string) => {
     const [start, end] = dayRange(day, timeZone);
@@ -454,7 +495,7 @@ const RESTING_WORDS: Record<RestingFrom, string> = {
 const WHY = {
   heart: "no readings: the OVOA Band takes one every few minutes while it's worn",
   resting: "not enough readings yet: wearing the band overnight gives a resting heart rate",
-  sleep: "nothing is recording sleep: an Apple Watch or the iPhone's Sleep schedule would",
+  sleep: "nothing is recording sleep: wearing OVOA Fit to bed, an Apple Watch or the iPhone's Sleep schedule would",
   steps: "the phone hasn't sent a step count for these days",
   watch: "needs an Apple Watch",
   weight: "nothing logs weight: a smart scale or the Health app would",
@@ -571,7 +612,7 @@ export async function healthSummaryFor(
   const heartNow = newest && {
     bpm: newest.bpm,
     ago: agoWords(now - newest.ts),
-    from: newest.source === "band" ? "your OVOA Band" : watchName(data.byDay),
+    from: newest.source === "band" ? "your OVOA Fit" : watchName(data.byDay),
   };
 
   const averages: Record<string, unknown> = {};
@@ -641,6 +682,51 @@ healthDays.put("/health/days", async (c) => {
   // it (the health plan, 2026-09-23); the phone stops sending on this answer.
   if ((await aiConsentFor(c.env, userId)) !== "given") return c.json({ stored: 0, skipped: "no_ai_consent" });
   return c.json(await storeHealthDays(c.env.DB, userId, await timeZoneOf(c.env.DB, userId), body.data));
+});
+
+const bandDaysSchema = z.object({
+  days: z
+    .array(
+      z.object({
+        day,
+        spo2Pct: reading(50, 100),
+        spo2Low: reading(50, 100),
+        sleep: sleepSchema.optional().catch(undefined),
+      }),
+    )
+    .min(1)
+    .max(31),
+});
+
+/**
+ * PUT /band/days: what OVOA Fit measured by itself, a row a day (migration
+ * 0067). Heart rate goes to /hr like any band reading; this is blood oxygen and
+ * sleep. A day sent again is overwritten, but a value left out is kept: the
+ * phone may have copied only part of the band's history this time.
+ */
+healthDays.put("/band/days", async (c) => {
+  const body = bandDaysSchema.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "Invalid band data" }, 400);
+  const { userId } = c.var;
+  if ((await aiConsentFor(c.env, userId)) !== "given") return c.json({ stored: 0, skipped: "no_ai_consent" });
+  const db = c.env.DB;
+  const now = Date.now();
+  const days = body.data.days.filter((d) => d.spo2Pct != null || d.sleep);
+  if (days.length) {
+    await db.batch(
+      days.map((d) =>
+        db
+          .prepare(
+            `INSERT INTO band_days (user_id, day, spo2_pct, spo2_low, sleep_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT (user_id, day) DO UPDATE SET
+               spo2_pct = COALESCE(excluded.spo2_pct, spo2_pct), spo2_low = COALESCE(excluded.spo2_low, spo2_low),
+               sleep_json = COALESCE(excluded.sleep_json, sleep_json), updated_at = excluded.updated_at`,
+          )
+          .bind(userId, d.day, round1(d.spo2Pct), round1(d.spo2Low), d.sleep ? JSON.stringify(d.sleep) : null, now),
+      ),
+    );
+  }
+  return c.json({ stored: days.length });
 });
 
 healthDays.get("/health/days", async (c) => {
