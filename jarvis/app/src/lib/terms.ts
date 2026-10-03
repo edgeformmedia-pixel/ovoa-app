@@ -13,7 +13,7 @@ export const TERMS: TermsSection[] = [
   {
     title: "1. Agreeing to these Terms",
     paragraphs: [
-      "These Terms of Service (the \"Terms\") are a legal agreement between you and OVOA LLC, a Florida limited liability company (\"OVOA\", \"we\" or \"us\"). They cover the OVOA iPhone app, the OVOA Band, our website at ovoa.ai, and our server at api.ovoa.ai (together, the \"Service\").",
+      "These Terms of Service (the \"Terms\") are a legal agreement between you and Kalimba, LLC, an Indiana limited liability company doing business as OVOA (\"OVOA\", \"we\" or \"us\"). They cover the OVOA iPhone app, the OVOA Band, our website at ovoa.ai, and our server at api.ovoa.ai (together, the \"Service\").",
       "By creating an account, tapping Agree, or using the Service, you agree to these Terms. If you don't agree, don't use the Service.",
       "Our Privacy Policy at ovoa.ai/privacy explains what information we collect and how we use it. It's part of these Terms, and so are the separate agreements some features ask for, such as the \"AI and your data\" screen.",
       "Section 22 says that most disputes will be settled by binding individual arbitration, not in court, and that you give up the right to join a class action. You can opt out within 30 days.",
@@ -252,7 +252,7 @@ export const TERMS: TermsSection[] = [
     title: "20. Limitation of liability",
     paragraphs: [
       "In plain terms: if something goes wrong, what we owe you is limited.",
-      "TO THE FULLEST EXTENT THE LAW ALLOWS, OVOA LLC AND ITS AFFILIATES, OFFICERS, EMPLOYEES, AGENTS, SUPPLIERS AND LICENSORS WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, DATA, GOODWILL OR OPPORTUNITY, ARISING OUT OF OR RELATING TO THESE TERMS OR THE SERVICE, EVEN IF WE WERE TOLD SUCH DAMAGES WERE POSSIBLE.",
+      "TO THE FULLEST EXTENT THE LAW ALLOWS, KALIMBA, LLC AND ITS AFFILIATES, OFFICERS, EMPLOYEES, AGENTS, SUPPLIERS AND LICENSORS WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, DATA, GOODWILL OR OPPORTUNITY, ARISING OUT OF OR RELATING TO THESE TERMS OR THE SERVICE, EVEN IF WE WERE TOLD SUCH DAMAGES WERE POSSIBLE.",
       "THIS INCLUDES LOSS OR HARM ARISING FROM: RELYING ON AI OUTPUT; MESSAGES, EMAILS, CALLS, DELETIONS OR CHANGES MADE ON YOUR BEHALF; MISSED OR LATE ALARMS, REMINDERS OR SOS ALERTS; RECORDINGS YOU MAKE; HEALTH, FOOD OR MONEY INFORMATION; THIRD-PARTY SERVICES; AND UNAUTHORIZED ACCESS TO YOUR ACCOUNT OR DATA.",
       "OUR TOTAL LIABILITY FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THESE TERMS OR THE SERVICE WILL NOT BE MORE THAN THE GREATER OF (A) THE AMOUNTS YOU PAID US FOR THE SERVICE IN THE 12 MONTHS BEFORE THE EVENT THAT GAVE RISE TO THE CLAIM, AND (B) $100.",
       "These limits apply under any legal theory, including contract, tort (including negligence) and product liability, even if a limited remedy fails of its essential purpose. They don't limit liability the law doesn't allow to be limited, such as for fraud, or for death or personal injury caused by our negligence, so some may not apply to you.",
@@ -261,7 +261,7 @@ export const TERMS: TermsSection[] = [
   {
     title: "21. Indemnification",
     paragraphs: [
-      "To the extent the law allows, you agree to defend, indemnify and hold harmless OVOA LLC and its affiliates, officers, employees and agents from any claims, losses, liabilities, damages, costs and expenses (including reasonable attorneys' fees) arising from:",
+      "To the extent the law allows, you agree to defend, indemnify and hold harmless Kalimba, LLC and its affiliates, officers, employees and agents from any claims, losses, liabilities, damages, costs and expenses (including reasonable attorneys' fees) arising from:",
       "• your use of the Service;",
       "• your content;",
       "• messages, emails, calls or other actions taken on your behalf;",
@@ -281,7 +281,7 @@ export const TERMS: TermsSection[] = [
       "Exceptions. Either of us may bring a qualifying individual claim in small claims court, or ask a court to stop infringement or misuse of intellectual property or unauthorized access to the Service.",
       "CLASS ACTION AND JURY TRIAL WAIVER. YOU AND WE MAY BRING CLAIMS AGAINST EACH OTHER ONLY IN AN INDIVIDUAL CAPACITY, AND NOT AS A PLAINTIFF OR CLASS MEMBER IN ANY CLASS, COLLECTIVE, CONSOLIDATED OR REPRESENTATIVE PROCEEDING. YOU AND WE BOTH GIVE UP THE RIGHT TO A JURY TRIAL. If this waiver is found unenforceable for a particular claim, that claim alone will be decided in court.",
       "Opting out. You can opt out of arbitration by emailing admin@ovoa.ai within 30 days after you first agree to these Terms, with your name, your account's email address, and a clear statement that you're opting out. The rest of these Terms still applies. If we later make a material change to this section, you can reject that change by telling us within 30 days after it takes effect.",
-      "Governing law. These Terms and any Dispute are governed by the laws of the State of Florida and applicable U.S. federal law, without regard to conflict-of-law rules. A Dispute that goes to court will be decided only in the state or federal courts located in Florida, and you and we consent to their jurisdiction. This doesn't take away protections you have under the mandatory consumer laws where you live.",
+      "Governing law. These Terms and any Dispute are governed by the laws of the State of Indiana and applicable U.S. federal law, without regard to conflict-of-law rules. A Dispute that goes to court will be decided only in the state or federal courts located in Indiana, and you and we consent to their jurisdiction. This doesn't take away protections you have under the mandatory consumer laws where you live.",
     ],
   },
   {
@@ -296,7 +296,7 @@ export const TERMS: TermsSection[] = [
     title: "24. Apple App Store terms",
     paragraphs: [
       "This section applies because the OVOA app is distributed through Apple (the App Store and TestFlight). Where it conflicts with the rest of these Terms, it controls for the app.",
-      "• These Terms are between you and OVOA LLC only, not Apple. We, not Apple, are solely responsible for the app and its content.",
+      "• These Terms are between you and Kalimba, LLC only, not Apple. We, not Apple, are solely responsible for the app and its content.",
       "• Your license to use the app is limited to a non-transferable license to use it on Apple-branded products that you own or control, as allowed by the Usage Rules in Apple's Media Services Terms and Conditions, except that other accounts associated with you may access it through Family Sharing or volume purchasing where Apple allows.",
       "• Apple has no obligation to provide any maintenance or support for the app.",
       "• If the app fails to conform to any applicable warranty, you may notify Apple, and Apple will refund the app's purchase price to you, if any (paid plans are bought from us, not Apple). To the maximum extent the law allows, Apple has no other warranty obligation for the app, and any other claims, losses, liabilities, damages, costs or expenses caused by a failure to conform to a warranty are our responsibility, to the extent these Terms don't disclaim them.",
@@ -326,7 +326,7 @@ export const TERMS: TermsSection[] = [
     title: "26. Contact us",
     paragraphs: [
       "Questions about these Terms, a problem with OVOA, a legal notice, or an arbitration opt-out? Contact us:",
-      "OVOA LLC",
+      "Kalimba, LLC",
       "Email: admin@ovoa.ai",
       "Website: ovoa.ai",
       "If you're a California resident, you may report complaints to the Complaint Assistance Unit of the Division of Consumer Services of the California Department of Consumer Affairs, in writing at 1625 North Market Blvd., Suite N 112, Sacramento, CA 95834, or by phone at (800) 952-5210.",
