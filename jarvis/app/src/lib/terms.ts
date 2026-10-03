@@ -35,7 +35,8 @@ export const TERMS: TermsSection[] = [
     title: "3. What OVOA is, early access, and how it changes",
     paragraphs: [
       "OVOA is an AI personal assistant for iPhone. You talk or type to it, and it helps with everyday things, from reminders, notes and your calendar to messages, health, food, a simple picture of your money, and small personal apps like trackers.",
-      "The optional OVOA Band is a clip you wear. It connects to your iPhone over Bluetooth, so you can talk to OVOA through it, feel a buzz for alarms and reminders, and share your heart rate.",
+      "The optional OVOA Band (sold on ovoa.ai as OVOA Fit) is a clip you wear. It connects to your iPhone over Bluetooth, so you can talk to OVOA through it, feel a buzz for alarms and reminders, and share your heart rate.",
+      "You can also text OVOA from Messages on your iPhone. Texting OVOA is the same assistant and the same account, and these Terms cover it. Our texts reach you through Sendblue, a messaging provider. Message and data rates from your carrier may apply, and how often OVOA texts you depends on how you use it and on what you ask it to remind you about. To stop OVOA texting you first, tell it to stop; to stop texts altogether, unlink your number at ovoa.ai/account or delete your account. For help, email admin@ovoa.ai.",
       "Health, notes and other features that don't use AI work on the Free plan. Features that use AI need a paid plan and your agreement on the \"AI and your data\" screen (see sections 4 and 8).",
       "You need a compatible iPhone and iOS version, and most features need an internet connection. Many features need permissions you grant in iOS, such as the microphone, notifications, location, contacts, calendars, Apple Health and Bluetooth; without them, those features won't work.",
       "OVOA is in early access and is distributed through Apple's TestFlight, whose terms also apply. Test builds may expire, and you may need to install a newer one. During early access, and for anything we call beta or experimental, features may be unfinished or unreliable, and may change or be removed without notice. Don't rely on them for anything important.",
@@ -53,7 +54,7 @@ export const TERMS: TermsSection[] = [
       "• Pro, $25.95 a month: the same features as Plus, with 1,200,000 credits a month (up to 40,000 a day).",
       "Credits measure AI use. What you do uses them at its real cost, so a spoken reply uses more than a typed one and a web search more again. Unused credits don't carry over to the next day, and credits have no cash value.",
       "Paid plans are bought on ovoa.ai, not in the App Store. Stripe processes payments under its own terms, and we don't receive your full card number.",
-      "Your plan renews automatically every month until you cancel. By subscribing, you authorize us, through Stripe, to charge your payment method the plan's price plus any taxes at the start of each monthly period. If a payment fails, we may retry it and may pause your paid features or move you to Free until it succeeds.",
+      "Each plan can be paid monthly, or yearly at the price shown on ovoa.ai. Your plan renews automatically every month, or every year on a yearly plan, until you cancel. By subscribing, you authorize us, through Stripe, to charge your payment method the plan's price plus any taxes at the start of each monthly or yearly period. If a payment fails, we may retry it and may pause your paid features or move you to Free until it succeeds.",
       "You can cancel at any time, as described on ovoa.ai, or by emailing admin@ovoa.ai. Cancelling stops future renewals. You keep your plan until the end of the period you've paid for, and then your account moves to Free. Cancelling doesn't delete your account or data (see section 18), and deleting the app doesn't cancel your plan.",
       "Refunds: if a charge goes through and OVOA isn't for you, email us within 14 days and we'll refund it; otherwise we don't refund partial months. This doesn't limit any refund rights you have under the law where you live.",
       "We may change prices, what each plan includes, and its limits. We'll tell you about a price increase by email or in the app at least 30 days before it applies to you. If you don't want to pay the new price, cancel before then.",
@@ -63,8 +64,7 @@ export const TERMS: TermsSection[] = [
   {
     title: "5. Usage limits and fair use",
     paragraphs: [
-      "Base includes up to 20 AI uses a day, and Pro up to 60. In general, each request that OVOA answers with AI counts as one use, and we decide how uses are counted. Daily limits reset each day, and unused uses don't carry over.",
-      "Every paid plan also has the monthly credit allowance listed in section 4, which keeps OVOA affordable and available for everyone.",
+      "Each paid plan's limits are the credits listed in section 4: a monthly amount, of which up to a daily amount can be used each day. We decide how credits are counted. These limits keep OVOA affordable and available for everyone.",
       "When you reach a limit, AI features pause until the limit resets or you change plans, and features that don't use AI keep working. Work OVOA does in the background, such as the background agent's checks, may count toward your limits.",
       "Plans are for one person's own use. Don't use scripts, bots, or shared or multiple accounts to get more usage, and don't resell or share access. We may slow, limit or suspend use that is automated, far above normal, or looks like abuse.",
     ],
