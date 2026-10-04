@@ -55,6 +55,24 @@ const LINK_EMAIL_EVERY_MS = 10 * 60_000;
 const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 export const emailIn = (text: string) => text.match(EMAIL)?.[0]?.toLowerCase() ?? null;
 
+/** A number-only account's stand-in address: OVOA never emails it (no MX), and checkout is keyed by it. */
+export const phoneEmail = (phone: string) => `p${phone.replace(/\D/g, "")}@phone.ovoa.ai`;
+export const isPhoneEmail = (email: string) => email.endsWith("@phone.ovoa.ai");
+
+/**
+ * The join link opened signed out: this number's trial account becomes a real
+ * one, keyed by the number, no email. Null when the number has no trial account.
+ */
+export async function claimTrial(db: D1Database, phone: string): Promise<string | null> {
+  const row = await db.prepare("SELECT id FROM users WHERE trial_phone = ?").bind(phone).first<{ id: string }>();
+  if (!row) return null;
+  await db
+    .prepare("UPDATE users SET trial_phone = NULL, plan_override = NULL, email = ? WHERE id = ? AND trial_phone = ?")
+    .bind(phoneEmail(phone), row.id, phone)
+    .run();
+  return row.id;
+}
+
 /** The trial account's address: .invalid never receives mail (emailauth.ts sendEmail won't try). */
 const trialEmail = (phone: string) => `trial-${phone.replace(/\D/g, "")}@trial.ovoa.invalid`;
 export const isTrialEmail = (email: string) => email.endsWith(".invalid");

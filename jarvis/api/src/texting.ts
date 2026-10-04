@@ -1,10 +1,11 @@
 import { noDashes } from "./sentences";
 import { Hono } from "hono";
+import { createSession } from "./auth";
 import { approveAction, type PendingAction } from "./google/assistant";
 import { allowed, tooMany } from "./limits";
 import type { CallTool, ToolSpec } from "./llm";
 import { CONTACT_CARD_PATH } from "./contactcard";
-import { BASE_PRICE, joinPhone, mergeTrial, trialAccount, trialGate, type TrialProgress } from "./guest";
+import { BASE_PRICE, claimTrial, joinPhone, mergeTrial, trialAccount, trialGate, type TrialProgress } from "./guest";
 import { appFor, describeScreen, type MadeApp } from "./myapps";
 import { describeImage, transcribeAudio } from "./llm";
 import { recordError, say } from "./obs";
@@ -1443,6 +1444,23 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0,
  */
 export function textingWebhook(turn: TextTurn) {
   const routes = new Hono<{ Bindings: Env; Variables: Vars }>();
+  // ovoa.ai/join?id=…, signed out: the link is proof of the number (only it was
+  // texted the link), so its trial account becomes a real account, keyed by the
+  // number with no email, and is signed in. Email or Google can be added later.
+  routes.post("/texting/claim", async (c) => {
+    const body = (await c.req.json().catch(() => null)) as { id?: unknown } | null;
+    const ip = c.req.header("cf-connecting-ip") ?? "anon";
+    if (!(await allowed(c.env, "RL_AUTH", `textclaim:${ip}`))) return tooMany(c, "join attempts");
+    const phone = typeof body?.id === "string" ? await joinPhone(c.env.DB, body.id) : null;
+    if (!phone) return c.json({ error: "That link was already used or has expired. Text OVOA and I'll send a new one." }, 404);
+    const userId = await claimTrial(c.env.DB, phone);
+    if (!userId) return c.json({ error: "That link was already used. Text OVOA and I'll send a new one." }, 404);
+    await linkPhone(c.env.DB, userId, phone, Date.now());
+    const token = await createSession(c.env.DB, userId, { kind: "web" });
+    say("text", { outcome: "claimed", user: userId });
+    return c.json({ ok: true, token, phone, number: c.env.SENDBLUE_NUMBER ?? null });
+  });
+
   routes.post("/texting/webhook", async (c) => {
     const env = c.env;
     if (!textingReady(env)) {
