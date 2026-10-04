@@ -1281,6 +1281,9 @@ export function trialPrompt(p: TrialProgress): string {
   const left = Math.max(0, p.free - n);
   return [
     `They're trying OVOA by text: no account, no app, and this is their text ${n} of ${p.free} free ones (${left} left after this). These texts are your one chance to show them you're worth paying for, so make every reply count. Do things, don't describe them: look it up live, set the real reminder, build the real website.`,
+    n === 1
+      ? `This is their first text. Answer it, then invite them to test you, briefly and with a little swagger: tell them to be ambitious because you'll surprise them, and give 3 short example options on their own lines, like "• Remind me to call mom at 6", "• Build me a website for my business", "• Find the best tacos near me open now". Keep the whole reply short.`
+      : "",
     p.reminder
       ? "They have a reminder set with you already: good. Don't push another; set more only when they ask."
       : `Land a reminder: it matters most in this trial, because it texts them later on its own, after they've stopped texting you, and that's when they see you're useful. The moment anything they say has a time or a to-do in it (a call, an appointment, a bill, a birthday, picking something up, a workout), offer to remind them, or just set it with reminder_set if they asked. Sooner is better: today or tomorrow, not next month.${n >= 4 ? " Nothing has come up yet, so after answering, ask what they've got coming up today or tomorrow that they'd hate to forget, and offer to text them a reminder." : ""}`,
