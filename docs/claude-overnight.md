@@ -1053,3 +1053,8 @@ consent-wording check, see task 17) when the auth rate limit doesn't trip on a f
   jarvis/api/src/texting.ts). texting.ts was already in the conflict set, so the conflict set against main is
   unchanged (same 8 files as before). Stopped without code changes. The merge decision from 2026-09-29 20:56 UTC
   still needs the owner.
+- 2026-10-04 01:56 UTC (scheduled session): every task is [x], nothing left to take. origin/main moved from
+  d487eb8 to 094933c (POST /texting/claim turns a number's trial account into a real one; touches
+  jarvis/api/src/guest.ts and jarvis/api/src/texting.ts). Both were already in the conflict set, so the conflict
+  set against main is unchanged (same 8 files as before). Stopped without code changes. The merge decision from
+  2026-09-29 20:56 UTC still needs the owner.
