@@ -104,17 +104,17 @@ function demoName() {
  * The hidden trial account for this number, made and linked to it the first
  * time. Its user id. Its AI consent is the texting itself: they texted an AI.
  */
-export async function trialAccount(db: D1Database, phone: string, now = Date.now()): Promise<string> {
+export async function trialAccount(db: D1Database, phone: string, now = Date.now(), ref: string | null = null): Promise<string> {
   const had = await db.prepare("SELECT id FROM users WHERE trial_phone = ?").bind(phone).first<{ id: string }>();
   const id = had?.id ?? crypto.randomUUID();
   if (!had) {
     await db.batch([
       db
         .prepare(
-          `INSERT OR IGNORE INTO users (id, email, password_hash, password_salt, name, created_at, trial_phone, username, username_at, ai_consent_at, ai_consent_version, plan_override)
-           VALUES (?, ?, '', '', '', ?, ?, ?, ?, ?, 1, 'free')`,
+          `INSERT OR IGNORE INTO users (id, email, password_hash, password_salt, name, created_at, trial_phone, username, username_at, ai_consent_at, ai_consent_version, plan_override, signup_ref)
+           VALUES (?, ?, '', '', '', ?, ?, ?, ?, ?, 1, 'free', ?)`,
         )
-        .bind(id, trialEmail(phone), now, phone, demoName(), now, now),
+        .bind(id, trialEmail(phone), now, phone, demoName(), now, now, ref),
       db.prepare("INSERT OR IGNORE INTO settings (user_id, assistant_name, updated_at) VALUES (?, 'OVOA', ?)").bind(id, now),
     ]);
   }
