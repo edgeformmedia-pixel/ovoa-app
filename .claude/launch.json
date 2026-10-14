@@ -23,10 +23,72 @@
       "port": 8082
     },
     {
+      "name": "ovoa-site",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "C:/Users/thoma/OneDrive/Documents/GitHub/ovoa-team",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "8080"
+      ],
+      "port": 8080
+    },
+    {
+      "name": "ovoa-site-worker",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "wrangler",
+        "dev",
+        "-c",
+        "C:/Users/thoma/OneDrive/Documents/GitHub/ovoa-team/wrangler.site.jsonc",
+        "--local",
+        "--port",
+        "8811",
+        "--persist-to",
+        "C:/Users/thoma/OneDrive/Documents/GitHub/ovoa-team/.wrangler/state"
+      ],
+      "port": 8811
+    },
+    {
       "name": "affiliate-portal",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "http-server", "C:/Users/thoma/OneDrive/Documents/GitHub/affiliate.edgeformmarketing.com", "-p", "5500", "-c-1", "--silent"],
+      "runtimeArgs": [
+        "--yes",
+        "http-server",
+        "C:/Users/thoma/OneDrive/Documents/GitHub/affiliate.edgeformmarketing.com",
+        "-p",
+        "5500",
+        "-c-1",
+        "--silent"
+      ],
       "port": 5500
+    },
+    {
+      "name": "jarvis-api-local",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/thoma/AppData/Local/Temp/claude/C--Users-thoma-OneDrive-Documents-GitHub-ovoa-app/5633e387-ea9f-4a19-af9f-6ca1b8b55e57/scratchpad/api-local.mjs"
+      ],
+      "port": 8788
+    },
+    {
+      "name": "jarvis-web-local",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/thoma/AppData/Local/Temp/claude/C--Users-thoma-OneDrive-Documents-GitHub-ovoa-app/5633e387-ea9f-4a19-af9f-6ca1b8b55e57/scratchpad/web-local.mjs"
+      ],
+      "port": 8083
+    },
+    {
+      "name": "jarvis-web-clear",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/thoma/AppData/Local/Temp/claude/C--Users-thoma-OneDrive-Documents-GitHub-ovoa-app/23216cbb-9ce0-4e6f-916e-7f8422931895/scratchpad/web-clear.mjs"
+      ],
+      "port": 8083
     }
   ]
 }
