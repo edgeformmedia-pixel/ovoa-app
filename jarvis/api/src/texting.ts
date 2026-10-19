@@ -1018,7 +1018,10 @@ export async function receive(env: Env, ctx: Waiter, raw: unknown, deps: Deps): 
 
   if (!link) {
     // Not linked: the free trial (guest.ts), on a hidden trial account linked to this number.
-    await trialAccount(db, m.from, now);
+    // The site's hello ends with the partner's ref code ("Hi OVOA! #maya"): kept on the trial, off the text.
+    const tagged = /\s+#([a-z0-9-]{3,24})$/i.exec(m.content);
+    if (tagged) m.content = m.content.slice(0, tagged.index).trim();
+    await trialAccount(db, m.from, now, tagged ? tagged[1].toLowerCase() : null);
     link = await linkByPhone(db, m.from);
     if (!link) return { outcome: "trial failed" };
   }
