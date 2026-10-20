@@ -75,6 +75,7 @@ import {
   type Turn,
 } from "./llm";
 import { labelFor, noteEngines, noteTick, observe, recordError, say } from "./obs";
+import { textFunnel } from "./funnel";
 import { describeToolCall, kindForTool, logAction, toolSucceeded } from "./actionlog";
 import { dropRepeats, noDashes, sentenceStream } from "./sentences";
 import { isPhoneTool, type PhoneCaps } from "./phone";
@@ -3476,6 +3477,21 @@ app.get("/debug/usage", async (c) => {
   const people = await usageByPerson(c.env.DB, from);
   const microUsd = people.reduce((n, p) => n + p.total.microUsd, 0);
   return c.json({ from, days, people, total: { microUsd, estUsd: usd(microUsd), people: people.length } });
+});
+
+/**
+ * The texting trial's funnel, as counts: trial starts, how many free texts the
+ * numbers still on the trial have used, how many reached the paywall, and how
+ * many linked an account.
+ *
+ *   GET /debug/funnel?days=7   (header: x-debug-key)
+ *
+ * No numbers, emails or words (funnel.ts).
+ */
+app.get("/debug/funnel", async (c) => {
+  if (!c.env.DEBUG_KEY || c.req.header("x-debug-key") !== c.env.DEBUG_KEY) return c.json({ error: "Not found" }, 404);
+  const days = Math.min(Math.max(Number(c.req.query("days") ?? 7) || 7, 1), 180);
+  return c.json(await textFunnel(c.env.DB, days));
 });
 
 /**
