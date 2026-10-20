@@ -18,7 +18,7 @@ type AppleModule = typeof import("expo-apple-authentication");
  * Sign in with Apple, where it can work. Loaded lazily and only when the
  * native side is in the build, so web, Android and a build from before it was
  * added never import it. Not in Expo Go: Apple would sign its tokens for Expo
- * Go's bundle id, and the server only takes com.ovoa.app's.
+ * Go's bundle id, and the server only takes the app's own (ai.ovoa.app, or com.ovoa.app for older builds).
  */
 const Apple: AppleModule | null =
   Platform.OS === "ios" && !isRunningInExpoGo() && requireOptionalNativeModule("ExpoAppleAuthentication")

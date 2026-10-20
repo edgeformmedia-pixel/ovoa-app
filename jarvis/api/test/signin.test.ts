@@ -318,6 +318,7 @@ async function appleToken(claims: Record<string, unknown>, { kid = "test-kid", a
   eq("a boolean email_verified counts too", appleIdentityFrom(appleClaims({ email_verified: true }), T0) !== null, true);
   eq("a Hide My Email address is fine", appleIdentityFrom(appleClaims({ email: "x1y2@privaterelay.appleid.com" }), T0)?.email, "x1y2@privaterelay.appleid.com");
   eq("another issuer's isn't", appleIdentityFrom(appleClaims({ iss: "https://evil.example" }), T0), null);
+  eq("a token from the older com.ovoa.app builds still counts", appleIdentityFrom(appleClaims({ aud: "com.ovoa.app" }), T0)?.email, "grace@example.com");
   eq("nor one for another app", appleIdentityFrom(appleClaims({ aud: "com.someone.else" }), T0), null);
   eq("the site's Services ID is its own audience", appleIdentityFrom(appleClaims({ aud: APPLE_WEB_AUDIENCE }), T0, APPLE_WEB_AUDIENCE)?.email, "grace@example.com");
   eq("and the app's token isn't the site's", appleIdentityFrom(appleClaims(), T0, APPLE_WEB_AUDIENCE), null);
