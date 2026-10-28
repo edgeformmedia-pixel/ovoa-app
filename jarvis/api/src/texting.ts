@@ -1059,6 +1059,29 @@ async function queue(env: Env, ctx: Waiter, m: Inbound, link: TextLink, now: num
   return { outcome: "queued", work: processThread(env, ctx, link.user_id, m.handle, deps, onlyMedia) };
 }
 
+/**
+ * Something said into their ring (ring.ts), answered by text as if they'd
+ * texted it: same inbox, same turn, same thread. `key`: the same recording
+ * delivered twice has the same one. Null when no number is linked to text them on.
+ */
+export async function fromRing(env: Env, ctx: Waiter, userId: string, words: string, key: string, deps: Deps) {
+  const link = await linkOf(env.DB, userId);
+  if (!link) return null;
+  const m: Inbound = {
+    handle: `ring:${key}`,
+    from: link.phone,
+    line: null,
+    content: `(voice note, said into their ring) ${words}`.slice(0, MAX_TEXT),
+    media: false,
+    mediaUrl: null,
+    outbound: false,
+    group: false,
+    sms: false,
+    optedOut: false,
+  };
+  return queue(env, ctx, m, link, Date.now(), deps, true);
+}
+
 // ---------- The cron ----------
 
 /** Collects what a turn leaves running (ctx.waitUntil), for a caller with no request to hang it on. */

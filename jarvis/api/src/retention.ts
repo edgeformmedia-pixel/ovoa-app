@@ -301,6 +301,7 @@ export const RULES: Rule[] = [
 export const TABLES = {
   users: "mixed",
   sessions: "expires",
+  ring_keys: "keep",
   settings: "keep",
   messages: "delete",
   memories: "mixed",
