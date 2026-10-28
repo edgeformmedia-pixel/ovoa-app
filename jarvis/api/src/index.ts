@@ -82,6 +82,7 @@ import { isShortcutTool, shortcutAssistant, shortcutFiles } from "./shortcuts/as
 import type { Env, Vars } from "./types";
 import { speechStream, TTS_ENGINES, ttsEngineFrom, voice, VOICES, type TtsEngine, type VoiceId } from "./voice";
 import { logs } from "./logs";
+import { ringRoutes, ringWebhook } from "./ring";
 import { forgetPushToken, registerPushToken } from "./push";
 import { BUZZ_PATTERNS, sendBuzz, type BuzzPattern } from "./buzz";
 import { capabilities, deviceStateSchema, saveDeviceState } from "./capabilities";
@@ -389,6 +390,7 @@ app.route("/", instagramPublic);
 app.route("/", verifyLinkRoutes);
 // Texts to OVOA's number, from Sendblue: no session, the webhook secret is the proof (texting.ts).
 app.route("/", textingWebhook(textTurn));
+app.route("/", ringWebhook(textTurn));
 app.route("/", contactRoutes());
 // The photos on the websites OVOA builds: public, like the sites.
 app.get("/site-photos/:file", (c) => sitePhoto(c.env, c.req.param("file")));
@@ -3622,6 +3624,7 @@ authed.route("/", googleAuthed);
 authed.route("/", actions);
 authed.route("/", voice);
 authed.route("/", textingRoutes(textTurn));
+authed.route("/", ringRoutes);
 authed.route("/", siteRoutes);
 authed.route("/", usernameRoutes);
 authed.route("/", networkRoutes);
